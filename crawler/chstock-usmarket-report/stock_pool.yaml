@@ -1,0 +1,61 @@
+# 美股日报观察池配置
+
+indices:
+  - ticker: QQQ
+    name: 纳指100
+    desc: 跟踪纳斯达克100指数 ETF
+
+
+groups:
+  - name: Mag7
+    desc: 科技七巨头
+    emoji: 🚀
+    stocks:
+      - NVDA
+      - TSLA
+      - META
+      - AMZN
+      - GOOGL
+      - AAPL
+      - MSFT
+
+  - name: AI
+    desc: AI 硬件
+    emoji: 🤖
+    stocks:
+      - LITE
+      - COHR
+      - TSEM
+      - VRT
+      - GEV
+
+  - name: Semi & 存储
+    desc: 半导体与存储设备
+    emoji: 💾
+    stocks:
+      - LRCX
+      - KLAC
+      - ASML
+      - TSM
+      - MU
+      - SNDK
+
+  - name: Token Infra
+    desc: Token基础设施
+    emoji: ☁️
+    stocks:
+      - NET
+      - FAST
+      - DDOG
+      - SNOW
+
+
+thresholds:
+  big_drop: -10.0
+  big_rise: 10.0
+  warning: -5.0
+  highlight: 5.0
+
+output:
+  show_5day_trend: true
+  show_volume: false

@@ -1,0 +1,178 @@
+{
+  "total_pages": 0,
+  "total_records": 10,
+  "announcements": [
+    {
+      "announcement_time": "2026-03-18",
+      "sec_name": "网宿科技",
+      "sec_code": "300017",
+      "title": "关于全资子公司参与设立投资基金的进展公告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-18/1225013592.PDF",
+      "announcement_id": "1225013592",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2026-03-18",
+      "sec_name": "网宿科技",
+      "sec_code": "300017",
+      "title": "关于开展以套期保值为目的的金融衍生品交易业务的可行性分析报告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-18/1225013591.PDF",
+      "announcement_id": "1225013591",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2026-03-18",
+      "sec_name": "网宿科技",
+      "sec_code": "300017",
+      "title": "关于继续开展以套期保值为目的的金融衍生品交易业务的公告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-18/1225013590.PDF",
+      "announcement_id": "1225013590",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2026-03-18",
+      "sec_name": "网宿科技",
+      "sec_code": "300017",
+      "title": "关于为全资子公司提供担保的公告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-18/1225013589.PDF",
+      "announcement_id": "1225013589",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2026-03-18",
+      "sec_name": "网宿科技",
+      "sec_code": "300017",
+      "title": "关于召开2026年第一次临时股东会的通知",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-18/1225013588.PDF",
+      "announcement_id": "1225013588",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2026-03-18",
+      "sec_name": "网宿科技",
+      "sec_code": "300017",
+      "title": "第六届董事会第三十二次会议决议公告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-18/1225013587.PDF",
+      "announcement_id": "1225013587",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2026-03-18",
+      "sec_name": "网宿科技",
+      "sec_code": "300017",
+      "title": "关于调整使用闲置自有资金购买理财产品的额度并延长投资期限的公告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-18/1225013586.PDF",
+      "announcement_id": "1225013586",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2026-03-13",
+      "sec_name": "网宿科技",
+      "sec_code": "300017",
+      "title": "关于持股5%以上股东、董事减持股份触及1%整数倍的公告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-13/1225008508.PDF",
+      "announcement_id": "1225008508",
+      "category": "上市公司公开信息",
+      "subcategory": "减持",
+      "rule_id": "cninfo.fulltext.decrease_hold.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "减持"
+      ]
+    },
+    {
+      "announcement_time": "2026-03-10",
+      "sec_name": "网宿科技",
+      "sec_code": "300017",
+      "title": "关于全资子公司参与认购投资基金份额的进展公告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-10/1225003516.PDF",
+      "announcement_id": "1225003516",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2026-03-02",
+      "sec_name": "网宿科技",
+      "sec_code": "300017",
+      "title": "关于全资子公司参与认购投资基金份额的进展公告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-02/1224990178.PDF",
+      "announcement_id": "1224990178",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    }
+  ],
+  "query": {
+    "tabtype": "fulltext",
+    "se_date": "2026-03-01~2026-03-28",
+    "stock": "300017,9900008387",
+    "searchkey": "",
+    "category": "",
+    "trade": "",
+    "page_num": 1,
+    "page_size": 30,
+    "include_excluded": false
+  },
+  "filtered_count": 10
+}

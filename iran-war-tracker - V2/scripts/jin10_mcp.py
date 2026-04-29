@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -19,8 +20,7 @@ import httpx
 
 JIN10_SERVER_URL = "https://mcp.jin10.com/mcp"
 JIN10_PROTOCOL_VERSION = "2025-11-25"
-# 金十公开 token，与 ch-topic-researcher 项目保持一致
-JIN10_AUTH_TOKEN = "sk-z3u1AKwr3BZeSlp2l6DGQIx2x_Hq9Emhb-XQsZ0Btes"
+JIN10_AUTH_TOKEN = os.getenv("JIN10_AUTH_TOKEN")
 
 
 class Jin10McpError(RuntimeError):
@@ -34,9 +34,11 @@ class JsonRpcResponse:
 
 
 class Jin10McpClient:
-    def __init__(self, server_url: str = JIN10_SERVER_URL, token: str = JIN10_AUTH_TOKEN):
+    def __init__(self, server_url: str = JIN10_SERVER_URL, token: str | None = None):
         self.server_url = server_url
-        self.token = token
+        self.token = token or JIN10_AUTH_TOKEN
+        if not self.token:
+            raise Jin10McpError("Missing JIN10_AUTH_TOKEN environment variable")
         self.protocol_version = JIN10_PROTOCOL_VERSION
         self._http = httpx.Client(
             headers={

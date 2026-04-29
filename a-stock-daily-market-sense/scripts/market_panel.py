@@ -36,8 +36,16 @@ DEFAULT_BASIC_FIELDS = (
     "ts_code,trade_date,turnover_rate,turnover_rate_f,volume_ratio,pe,pb,total_mv,circ_mv"
 )
 DEFAULT_STOCK_FIELDS = "ts_code,name,market,list_date"
-DEFAULT_INDEX_FIELDS = "ts_code,trade_date,close,pct_chg,amount"
-CACHE_ROOT = Path(__file__).resolve().parents[1] / "data" / "cache"
+DEFAULT_INDEX_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
+SKILL_ROOT = Path(__file__).resolve().parents[1]
+CACHE_ROOT = SKILL_ROOT / "data" / "cache"
+REFERENCE_ROOT = SKILL_ROOT / "reference"
+DEFAULT_MARKET_HISTORY_CSV = REFERENCE_ROOT / "market_data.csv"
+
+MARKET_TREND_INDEXES = {
+    "shanghai": {"name": "上证指数", "ts_code": "000001.SH"},
+    "chinext": {"name": "创业板指数", "ts_code": "399006.SZ"},
+}
 
 
 def get_tushare_token() -> str:
@@ -101,6 +109,61 @@ def cache_file(endpoint: str, trade_date: str) -> Path:
     return CACHE_ROOT / endpoint / f"{trade_date}.parquet"
 
 
+def cache_dataset_file(endpoint: str, key: str) -> Path:
+    safe_key = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(key))
+    return CACHE_ROOT / endpoint / f"{safe_key}.parquet"
+
+
+def read_cached_dataset(endpoint: str, key: str, fields: Optional[str] = None) -> Optional[pd.DataFrame]:
+    path = cache_dataset_file(endpoint, key)
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_parquet(path)
+    except Exception as exc:
+        print(f"[warn] failed to read cache {path}: {exc}", file=sys.stderr)
+        return None
+
+    if fields:
+        missing = [field for field in split_fields(fields) if field not in df.columns]
+        if missing:
+            print(f"[warn] ignoring stale cache {path}, missing fields: {','.join(missing)}", file=sys.stderr)
+            return None
+    return df
+
+
+def write_cached_dataset(endpoint: str, key: str, df: pd.DataFrame) -> None:
+    path = cache_dataset_file(endpoint, key)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(path, index=False)
+    except Exception as exc:
+        print(f"[warn] failed to write cache {path}: {exc}", file=sys.stderr)
+
+
+def date_range_filter(df: pd.DataFrame, column: str, start_date: str, end_date: str) -> pd.DataFrame:
+    if df is None or df.empty or column not in df.columns:
+        return pd.DataFrame()
+    out = df.copy()
+    out[column] = out[column].astype(str)
+    return out.loc[(out[column] >= start_date) & (out[column] <= end_date)].copy()
+
+
+def missing_edge_ranges(df: pd.DataFrame, column: str, start_date: str, end_date: str) -> List[Tuple[str, str]]:
+    if df is None or df.empty or column not in df.columns:
+        return [(start_date, end_date)]
+
+    dates = df[column].astype(str)
+    cached_min = dates.min()
+    cached_max = dates.max()
+    ranges: List[Tuple[str, str]] = []
+    if start_date < cached_min:
+        ranges.append((start_date, (ymd_to_dt(cached_min) - timedelta(days=1)).strftime("%Y%m%d")))
+    if end_date > cached_max:
+        ranges.append(((ymd_to_dt(cached_max) + timedelta(days=1)).strftime("%Y%m%d"), end_date))
+    return [(start, end) for start, end in ranges if start <= end]
+
+
 def read_cached_frame(endpoint: str, trade_date: str, fields: str) -> Optional[pd.DataFrame]:
     path = cache_file(endpoint, trade_date)
     if not path.exists():
@@ -139,7 +202,51 @@ def nullable_value(value: Any) -> Any:
     return value
 
 
-def fetch_trade_dates(pro, asof: str, lookback: int, offset: int, allow_future: bool) -> Tuple[str, List[str]]:
+def fetch_trade_cal(
+    pro,
+    start_date: str,
+    end_date: str,
+    cache_enabled: bool = True,
+    refresh_cache: bool = False,
+) -> pd.DataFrame:
+    fields = "cal_date,is_open"
+    cache_key = "all"
+    cached = None if refresh_cache or not cache_enabled else read_cached_dataset("trade_cal", cache_key, fields)
+    fetch_ranges = missing_edge_ranges(cached, "cal_date", start_date, end_date) if cached is not None else [(start_date, end_date)]
+
+    frames: List[pd.DataFrame] = []
+    if cached is not None and not cached.empty:
+        frames.append(cached)
+
+    for fetch_start, fetch_end in fetch_ranges:
+        try:
+            df = pro.trade_cal(exchange="", start_date=fetch_start, end_date=fetch_end, fields=fields)
+        except Exception as exc:
+            print(f"[warn] trade_cal failed for {fetch_start}-{fetch_end}: {exc}", file=sys.stderr)
+            continue
+        if df is not None and not df.empty:
+            frames.append(df)
+
+    if not frames:
+        return pd.DataFrame(columns=["cal_date", "is_open"])
+
+    merged = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["cal_date"], keep="last")
+    merged["cal_date"] = merged["cal_date"].astype(str)
+    merged = merged.sort_values("cal_date")
+    if cache_enabled and not merged.empty:
+        write_cached_dataset("trade_cal", cache_key, merged)
+    return date_range_filter(merged, "cal_date", start_date, end_date)
+
+
+def fetch_trade_dates(
+    pro,
+    asof: str,
+    lookback: int,
+    offset: int,
+    allow_future: bool,
+    cache_enabled: bool = True,
+    refresh_cache: bool = False,
+) -> Tuple[str, List[str]]:
     """Resolve the analysis trade date and lookback dates using Tushare trade_cal."""
     asof_dt = ymd_to_dt(asof)
     start = (asof_dt - timedelta(days=max(lookback * 3, 260))).strftime("%Y%m%d")
@@ -147,7 +254,13 @@ def fetch_trade_dates(pro, asof: str, lookback: int, offset: int, allow_future: 
     end_dt = max(asof_dt, ymd_to_dt(today))
     end = (end_dt + timedelta(days=10)).strftime("%Y%m%d") if allow_future else today
 
-    cal = pro.trade_cal(exchange="", start_date=start, end_date=end, fields="cal_date,is_open")
+    cal = fetch_trade_cal(
+        pro,
+        start,
+        end,
+        cache_enabled=cache_enabled,
+        refresh_cache=refresh_cache,
+    )
     if cal is None or cal.empty:
         raise RuntimeError("trade_cal returned no data.")
 
@@ -207,26 +320,66 @@ def fetch_by_trade_dates(
     return pd.concat(frames, ignore_index=True).drop_duplicates()
 
 
-def fetch_stock_basic(pro) -> pd.DataFrame:
+def fetch_stock_basic(
+    pro,
+    cache_enabled: bool = True,
+    refresh_cache: bool = False,
+) -> pd.DataFrame:
+    cached = None if refresh_cache or not cache_enabled else read_cached_dataset("stock_basic", "all", DEFAULT_STOCK_FIELDS)
+    if cached is not None and not cached.empty:
+        return cached
+
     try:
-        return pro.stock_basic(exchange="", list_status="L", fields=DEFAULT_STOCK_FIELDS)
+        df = pro.stock_basic(exchange="", list_status="L", fields=DEFAULT_STOCK_FIELDS)
     except Exception as exc:
         print(f"[warn] stock_basic failed: {exc}", file=sys.stderr)
+        if cached is not None and not cached.empty:
+            return cached
         return pd.DataFrame(columns=["ts_code", "name", "market", "list_date"])
+    if df is not None and not df.empty and cache_enabled:
+        write_cached_dataset("stock_basic", "all", df)
+    return df if df is not None else pd.DataFrame(columns=["ts_code", "name", "market", "list_date"])
 
 
-def fetch_index_daily(pro, index_code: str, start_date: str, end_date: str) -> pd.DataFrame:
-    try:
-        df = pro.index_daily(
-            ts_code=index_code,
-            start_date=start_date,
-            end_date=end_date,
-            fields=DEFAULT_INDEX_FIELDS,
-        )
-    except Exception as exc:
-        print(f"[warn] index_daily failed for {index_code}: {exc}", file=sys.stderr)
+def fetch_index_daily(
+    pro,
+    index_code: str,
+    start_date: str,
+    end_date: str,
+    cache_enabled: bool = True,
+    refresh_cache: bool = False,
+) -> pd.DataFrame:
+    cache_key = index_code
+    cached = None if refresh_cache or not cache_enabled else read_cached_dataset("index_daily", cache_key, DEFAULT_INDEX_FIELDS)
+    fetch_ranges = missing_edge_ranges(cached, "trade_date", start_date, end_date) if cached is not None else [(start_date, end_date)]
+
+    frames: List[pd.DataFrame] = []
+    if cached is not None and not cached.empty:
+        frames.append(cached)
+
+    for fetch_start, fetch_end in fetch_ranges:
+        try:
+            df = pro.index_daily(
+                ts_code=index_code,
+                start_date=fetch_start,
+                end_date=fetch_end,
+                fields=DEFAULT_INDEX_FIELDS,
+            )
+        except Exception as exc:
+            print(f"[warn] index_daily failed for {index_code} {fetch_start}-{fetch_end}: {exc}", file=sys.stderr)
+            continue
+        if df is not None and not df.empty:
+            frames.append(df)
+
+    if not frames:
         return pd.DataFrame()
-    return df if df is not None else pd.DataFrame()
+
+    merged = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
+    merged["trade_date"] = merged["trade_date"].astype(str)
+    merged = merged.sort_values("trade_date")
+    if cache_enabled and not merged.empty:
+        write_cached_dataset("index_daily", cache_key, merged)
+    return date_range_filter(merged, "trade_date", start_date, end_date)
 
 
 def fetch_limit_list(pro, trade_date: str) -> pd.DataFrame:
@@ -465,6 +618,8 @@ def build_amount_concentration(features: pd.DataFrame, target_date: str, previou
     top_amount_samples = day.nlargest(min(20, len(day)), "amount")
     top_cols = [
         "ts_code",
+        "name",
+        "market",
         "trade_date",
         "close",
         "pct_chg",
@@ -475,7 +630,7 @@ def build_amount_concentration(features: pd.DataFrame, target_date: str, previou
     ]
     top_cols = [col for col in top_cols if col in top_amount_samples.columns]
     for col in top_cols:
-        if col not in {"ts_code", "trade_date"}:
+        if col not in {"ts_code", "name", "market", "trade_date"}:
             top_amount_samples[col] = pd.to_numeric(top_amount_samples[col], errors="coerce").round(4)
 
     return {
@@ -499,6 +654,461 @@ def build_amount_concentration(features: pd.DataFrame, target_date: str, previou
             "Higher top10/top20/top50 ratios indicate more concentrated trading and potentially higher crowding.",
             "Rising top50 concentration over multiple sessions can indicate consensus formation and trend acceleration.",
             "Use top_amount_samples as evidence only; infer themes from company facts and price-volume behavior, not preset labels.",
+        ],
+    }
+
+
+def round_optional(value: Any, digits: int = 2) -> Optional[float]:
+    numeric = safe_float(value)
+    if numeric is None:
+        return None
+    return round(numeric, digits)
+
+
+def pct_change_optional(current: Any, base: Any) -> Optional[float]:
+    current_float = safe_float(current)
+    base_float = safe_float(base)
+    if current_float is None or base_float in (None, 0):
+        return None
+    return round((current_float / base_float - 1.0) * 100.0, 2)
+
+
+def parse_numeric_text_series(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(
+        series.astype(str)
+        .str.replace("%", "", regex=False)
+        .str.replace(",", "", regex=False)
+        .str.strip(),
+        errors="coerce",
+    )
+
+
+def classify_ma_alignment(close: Any, ma5: Any, ma20: Any, ma60: Any) -> Optional[str]:
+    values = [safe_float(item) for item in (close, ma5, ma20, ma60)]
+    if any(item is None for item in values):
+        return None
+    close_v, ma5_v, ma20_v, ma60_v = values
+    if close_v > ma5_v > ma20_v > ma60_v:
+        return "bullish_alignment"
+    if close_v < ma5_v < ma20_v < ma60_v:
+        return "bearish_alignment"
+    if close_v >= ma20_v and ma20_v >= ma60_v:
+        return "medium_term_positive"
+    if close_v < ma20_v and ma20_v < ma60_v:
+        return "medium_term_negative"
+    return "mixed_alignment"
+
+
+def classify_price_volume_state(ret_1d: Any, amount_ratio_20d: Any) -> Optional[str]:
+    ret = safe_float(ret_1d)
+    amount_ratio = safe_float(amount_ratio_20d)
+    if ret is None or amount_ratio is None:
+        return None
+    if ret > 0 and amount_ratio >= 1.2:
+        return "up_volume_expansion"
+    if ret > 0 and amount_ratio <= 0.8:
+        return "up_volume_contraction"
+    if ret < 0 and amount_ratio >= 1.2:
+        return "down_volume_expansion"
+    if ret < 0 and amount_ratio <= 0.8:
+        return "down_volume_contraction"
+    return "neutral_volume"
+
+
+def classify_index_trend_stage(close: Any, ma20: Any, ma60: Any, ret_20d: Any, ret_60d: Any) -> Optional[str]:
+    close_v = safe_float(close)
+    ma20_v = safe_float(ma20)
+    ma60_v = safe_float(ma60)
+    ret20_v = safe_float(ret_20d)
+    ret60_v = safe_float(ret_60d)
+    if any(item is None for item in (close_v, ma20_v, ma60_v, ret20_v, ret60_v)):
+        return None
+    if close_v > ma20_v > ma60_v and ret20_v > 0 and ret60_v > 0:
+        return "uptrend"
+    if close_v < ma20_v < ma60_v and ret20_v < 0:
+        return "breakdown"
+    if close_v >= ma60_v and close_v < ma20_v and ret20_v < 0:
+        return "pullback"
+    if close_v > ma20_v and ret20_v > 0 and ret60_v <= 0:
+        return "breakdown_repair"
+    if abs(ret20_v) <= 2.0:
+        return "sideways"
+    return "mixed"
+
+
+def build_level(label: str, value: Any) -> Dict[str, Any]:
+    return {"label": label, "value": round_optional(value, 2)}
+
+
+def build_index_trend_summary(index_daily: pd.DataFrame, index_name: str, ts_code: str, target_date: str, trend_days: int) -> Dict[str, Any]:
+    if index_daily is None or index_daily.empty:
+        return {
+            "available": False,
+            "name": index_name,
+            "ts_code": ts_code,
+            "reason": "index_daily returned no data",
+        }
+
+    df = index_daily.copy()
+    df["trade_date"] = df["trade_date"].astype(str)
+    numeric_cols = ["open", "high", "low", "close", "pre_close", "change", "pct_chg", "vol", "amount"]
+    for column in numeric_cols:
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+    df = df.loc[df["trade_date"] <= target_date].sort_values("trade_date")
+    df = df.dropna(subset=["close"])
+    if df.empty:
+        return {
+            "available": False,
+            "name": index_name,
+            "ts_code": ts_code,
+            "reason": "no rows on or before target date",
+        }
+
+    df = df.tail(max(int(trend_days), 60))
+    for period in (1, 5, 20, 60):
+        df[f"ret_{period}d"] = pct_return(df["close"], period)
+    for period in (5, 20, 60):
+        df[f"ma{period}"] = df["close"].rolling(period, min_periods=max(3, period // 2)).mean()
+
+    liquidity_col = "amount" if "amount" in df.columns and df["amount"].notna().any() else "vol"
+    if liquidity_col in df.columns:
+        df["liquidity_ma5_prev"] = df[liquidity_col].shift(1).rolling(5, min_periods=3).mean()
+        df["liquidity_ma20_prev"] = df[liquidity_col].shift(1).rolling(20, min_periods=5).mean()
+        df["liquidity_ratio_5d"] = df[liquidity_col] / df["liquidity_ma5_prev"]
+        df["liquidity_ratio_20d"] = df[liquidity_col] / df["liquidity_ma20_prev"]
+    else:
+        df["liquidity_ratio_5d"] = None
+        df["liquidity_ratio_20d"] = None
+
+    df["high_20d"] = df["high"].rolling(20, min_periods=5).max() if "high" in df.columns else None
+    df["low_20d"] = df["low"].rolling(20, min_periods=5).min() if "low" in df.columns else None
+    df["high_60d"] = df["high"].rolling(60, min_periods=20).max() if "high" in df.columns else None
+    df["low_60d"] = df["low"].rolling(60, min_periods=20).min() if "low" in df.columns else None
+
+    latest = df.iloc[-1]
+    ma5 = latest.get("ma5")
+    ma20 = latest.get("ma20")
+    ma60 = latest.get("ma60")
+    close = latest.get("close")
+    ret_1d = latest.get("pct_chg") if pd.notna(latest.get("pct_chg")) else latest.get("ret_1d")
+
+    kline_cols = [
+        col
+        for col in ["trade_date", "open", "high", "low", "close", "pct_chg", "vol", "amount"]
+        if col in df.columns
+    ]
+    kline_records = df[kline_cols].tail(int(trend_days)).copy()
+    for column in kline_cols:
+        if column != "trade_date":
+            kline_records[column] = pd.to_numeric(kline_records[column], errors="coerce").round(4)
+
+    return {
+        "available": True,
+        "name": index_name,
+        "ts_code": ts_code,
+        "trade_date": str(latest.get("trade_date")),
+        "window_start": str(df["trade_date"].iloc[0]),
+        "window_end": str(df["trade_date"].iloc[-1]),
+        "records_loaded": int(len(df)),
+        "kline_days": int(min(int(trend_days), len(kline_records))),
+        "latest": {
+            "close": round_optional(close, 2),
+            "pct_chg": round_optional(ret_1d, 2),
+            "amount": round_optional(latest.get("amount"), 4) if "amount" in df.columns else None,
+            "amount_100m_yuan": round_optional(latest.get("amount") / 100000, 2) if "amount" in df.columns and pd.notna(latest.get("amount")) else None,
+            "vol": round_optional(latest.get("vol"), 4) if "vol" in df.columns else None,
+        },
+        "returns": {
+            "ret_1d": round_optional(ret_1d, 2),
+            "ret_5d": round_optional(latest.get("ret_5d"), 2),
+            "ret_20d": round_optional(latest.get("ret_20d"), 2),
+            "ret_60d": round_optional(latest.get("ret_60d"), 2),
+        },
+        "moving_averages": {
+            "ma5": round_optional(ma5, 2),
+            "ma20": round_optional(ma20, 2),
+            "ma60": round_optional(ma60, 2),
+            "close_vs_ma5_pct": pct_change_optional(close, ma5),
+            "close_vs_ma20_pct": pct_change_optional(close, ma20),
+            "close_vs_ma60_pct": pct_change_optional(close, ma60),
+            "ma_alignment_hint": classify_ma_alignment(close, ma5, ma20, ma60),
+        },
+        "volume_price": {
+            "liquidity_field": liquidity_col if liquidity_col in df.columns else None,
+            "liquidity_ratio_5d": round_optional(latest.get("liquidity_ratio_5d"), 2),
+            "liquidity_ratio_20d": round_optional(latest.get("liquidity_ratio_20d"), 2),
+            "price_volume_state_hint": classify_price_volume_state(ret_1d, latest.get("liquidity_ratio_20d")),
+        },
+        "trend_stage_hint": classify_index_trend_stage(
+            close,
+            ma20,
+            ma60,
+            latest.get("ret_20d"),
+            latest.get("ret_60d"),
+        ),
+        "levels": {
+            "high_20d": round_optional(latest.get("high_20d"), 2),
+            "low_20d": round_optional(latest.get("low_20d"), 2),
+            "high_60d": round_optional(latest.get("high_60d"), 2),
+            "low_60d": round_optional(latest.get("low_60d"), 2),
+            "support_candidates": [
+                build_level("low_20d", latest.get("low_20d")),
+                build_level("low_60d", latest.get("low_60d")),
+                build_level("ma20", ma20),
+                build_level("ma60", ma60),
+            ],
+            "resistance_candidates": [
+                build_level("high_20d", latest.get("high_20d")),
+                build_level("high_60d", latest.get("high_60d")),
+            ],
+        },
+        "kline_records": kline_records.astype(object).where(pd.notnull(kline_records), None).to_dict(orient="records"),
+    }
+
+
+def count_consecutive_moves(series: pd.Series, direction: str) -> int:
+    values = [safe_float(value) for value in series.dropna().tolist()]
+    values = [value for value in values if value is not None]
+    count = 0
+    for index in range(len(values) - 1, 0, -1):
+        if direction == "up" and values[index] > values[index - 1]:
+            count += 1
+        elif direction == "down" and values[index] < values[index - 1]:
+            count += 1
+        else:
+            break
+    return count
+
+
+def classify_volume_temperature(amount_ratio_20d: Any) -> Optional[str]:
+    ratio = safe_float(amount_ratio_20d)
+    if ratio is None:
+        return None
+    if ratio >= 1.25:
+        return "clear_expansion"
+    if ratio >= 1.05:
+        return "mild_expansion"
+    if ratio <= 0.80:
+        return "clear_contraction"
+    if ratio <= 0.95:
+        return "mild_contraction"
+    return "stable_volume"
+
+
+def classify_sentiment_temperature(activity: Any, limit_up_down_ratio: Any) -> Optional[str]:
+    activity_value = safe_float(activity)
+    if activity_value is not None:
+        if activity_value < 20:
+            return "cold"
+        if activity_value < 40:
+            return "weak"
+        if activity_value <= 60:
+            return "neutral"
+        if activity_value <= 80:
+            return "hot"
+        return "overheated"
+
+    ratio = safe_float(limit_up_down_ratio)
+    if ratio is None:
+        return None
+    if ratio < 0.5:
+        return "cold"
+    if ratio < 1.0:
+        return "weak"
+    if ratio <= 2.0:
+        return "neutral"
+    if ratio <= 4.0:
+        return "hot"
+    return "overheated"
+
+
+def classify_breadth_temperature(up_ratio: Any) -> Optional[str]:
+    ratio = safe_float(up_ratio)
+    if ratio is None:
+        return None
+    if ratio >= 0.65:
+        return "broad_rise"
+    if ratio >= 0.52:
+        return "partial_repair"
+    if ratio <= 0.35:
+        return "broad_decline"
+    if ratio <= 0.48:
+        return "partial_weakness"
+    return "split"
+
+
+def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
+    csv_path = DEFAULT_MARKET_HISTORY_CSV
+    if not csv_path.exists():
+        return {
+            "available": False,
+            "source": str(csv_path),
+            "reason": "reference/market_data.csv not found",
+        }
+
+    try:
+        raw = pd.read_csv(csv_path)
+    except Exception as exc:
+        return {
+            "available": False,
+            "source": str(csv_path),
+            "reason": f"failed to read market_data.csv: {exc}",
+        }
+
+    if raw is None or raw.empty or "日期" not in raw.columns:
+        return {
+            "available": False,
+            "source": str(csv_path),
+            "reason": "market_data.csv is empty or missing 日期 column",
+        }
+
+    df = raw.copy()
+    df["date"] = pd.to_datetime(df["日期"], errors="coerce")
+    df = df.dropna(subset=["date"])
+    df["trade_date"] = df["date"].dt.strftime("%Y%m%d")
+    df = df.loc[df["trade_date"] <= target_date].sort_values("trade_date")
+    if df.empty:
+        return {
+            "available": False,
+            "source": str(csv_path),
+            "reason": "no sentiment rows on or before target date",
+        }
+
+    expected_columns = ["上涨", "下跌", "平盘", "涨停", "跌停", "活跃度", "成交额"]
+    for column in expected_columns:
+        if column in df.columns:
+            df[column] = parse_numeric_text_series(df[column])
+
+    df = df.tail(int(trend_days)).copy()
+    flat = df["平盘"] if "平盘" in df.columns else 0
+    breadth_total = df["上涨"] + df["下跌"] + flat
+    df["up_ratio"] = df["上涨"] / breadth_total.replace(0, pd.NA)
+    df["limit_up_down_ratio"] = df["涨停"] / df["跌停"].replace(0, pd.NA)
+    if "成交额" in df.columns:
+        df["amount_trillion_yuan"] = df["成交额"] / 1e9
+        df["amount_ma5"] = df["成交额"].rolling(5, min_periods=3).mean()
+        df["amount_ma20"] = df["成交额"].rolling(20, min_periods=5).mean()
+        df["amount_ratio_5d"] = df["成交额"] / df["amount_ma5"].replace(0, pd.NA)
+        df["amount_ratio_20d"] = df["成交额"] / df["amount_ma20"].replace(0, pd.NA)
+
+    latest = df.iloc[-1]
+    previous = df.iloc[-2] if len(df) >= 2 else None
+    amount_ma5 = latest.get("amount_ma5") if "amount_ma5" in df.columns else None
+    amount_ma20 = latest.get("amount_ma20") if "amount_ma20" in df.columns else None
+
+    recent_cols = [
+        col
+        for col in [
+            "trade_date",
+            "上涨",
+            "下跌",
+            "涨停",
+            "跌停",
+            "活跃度",
+            "成交额",
+            "amount_trillion_yuan",
+            "up_ratio",
+            "limit_up_down_ratio",
+        ]
+        if col in df.columns
+    ]
+    recent = df[recent_cols].tail(min(20, len(df))).copy()
+    for column in recent_cols:
+        if column != "trade_date":
+            recent[column] = pd.to_numeric(recent[column], errors="coerce").round(4)
+
+    return {
+        "available": True,
+        "source": str(csv_path),
+        "trade_date": str(latest.get("trade_date")),
+        "matches_target_date": str(latest.get("trade_date")) == target_date,
+        "window_start": str(df["trade_date"].iloc[0]),
+        "window_end": str(df["trade_date"].iloc[-1]),
+        "records_loaded": int(len(df)),
+        "latest": {
+            "up_count": round_optional(latest.get("上涨"), 0),
+            "down_count": round_optional(latest.get("下跌"), 0),
+            "limit_up_count": round_optional(latest.get("涨停"), 0),
+            "limit_down_count": round_optional(latest.get("跌停"), 0),
+            "activity": round_optional(latest.get("活跃度"), 2),
+            "amount": round_optional(latest.get("成交额"), 4),
+            "amount_trillion_yuan": round_optional(latest.get("amount_trillion_yuan"), 2),
+            "up_ratio": round_optional(latest.get("up_ratio"), 4),
+            "limit_up_down_ratio": round_optional(latest.get("limit_up_down_ratio"), 2),
+        },
+        "rolling": {
+            "amount_ma5": round_optional(amount_ma5, 4),
+            "amount_ma20": round_optional(amount_ma20, 4),
+            "amount_ma5_trillion_yuan": round_optional(amount_ma5 / 1e9, 2) if amount_ma5 is not None and pd.notna(amount_ma5) else None,
+            "amount_ma20_trillion_yuan": round_optional(amount_ma20 / 1e9, 2) if amount_ma20 is not None and pd.notna(amount_ma20) else None,
+            "amount_ratio_5d": round_optional(latest.get("amount_ratio_5d"), 2) if "amount_ratio_5d" in df.columns else None,
+            "amount_ratio_20d": round_optional(latest.get("amount_ratio_20d"), 2) if "amount_ratio_20d" in df.columns else None,
+            "up_ratio_ma5": round_optional(df["up_ratio"].rolling(5, min_periods=3).mean().iloc[-1], 4),
+            "activity_ma5": round_optional(df["活跃度"].rolling(5, min_periods=3).mean().iloc[-1], 2) if "活跃度" in df.columns else None,
+            "limit_up_down_ratio_ma5": round_optional(df["limit_up_down_ratio"].rolling(5, min_periods=3).mean().iloc[-1], 2),
+        },
+        "changes": {
+            "up_count_vs_previous": compare_scalar(latest.get("上涨"), previous.get("上涨") if previous is not None else None),
+            "down_count_vs_previous": compare_scalar(latest.get("下跌"), previous.get("下跌") if previous is not None else None),
+            "activity_vs_previous": compare_scalar(latest.get("活跃度"), previous.get("活跃度") if previous is not None else None),
+            "amount_vs_previous": compare_scalar(latest.get("成交额"), previous.get("成交额") if previous is not None else None),
+            "amount_vs_20d_avg_pct": pct_change_optional(latest.get("成交额"), amount_ma20),
+            "up_ratio_improving_days": count_consecutive_moves(df["up_ratio"], "up"),
+            "up_ratio_deteriorating_days": count_consecutive_moves(df["up_ratio"], "down"),
+        },
+        "temperature_hints": {
+            "volume": classify_volume_temperature(latest.get("amount_ratio_20d") if "amount_ratio_20d" in df.columns else None),
+            "sentiment": classify_sentiment_temperature(latest.get("活跃度"), latest.get("limit_up_down_ratio")),
+            "breadth": classify_breadth_temperature(latest.get("up_ratio")),
+        },
+        "recent_series": recent.astype(object).where(pd.notnull(recent), None).to_dict(orient="records"),
+    }
+
+
+def build_market_trend(
+    pro,
+    target_date: str,
+    trade_dates: List[str],
+    trend_days: int,
+    cache_enabled: bool = True,
+    refresh_cache: bool = False,
+) -> Dict[str, Any]:
+    safe_trend_days = max(20, int(trend_days))
+    start_date = trade_dates[0] if trade_dates else target_date
+    indices: Dict[str, Any] = {}
+    for key, config in MARKET_TREND_INDEXES.items():
+        index_daily = fetch_index_daily(
+            pro,
+            config["ts_code"],
+            start_date,
+            target_date,
+            cache_enabled=cache_enabled,
+            refresh_cache=refresh_cache,
+        )
+        indices[key] = build_index_trend_summary(
+            index_daily=index_daily,
+            index_name=config["name"],
+            ts_code=config["ts_code"],
+            target_date=target_date,
+            trend_days=safe_trend_days,
+        )
+
+    return {
+        "metadata": {
+            "trend_days_requested": safe_trend_days,
+            "index_start_date": start_date,
+            "index_end_date": target_date,
+            "sentiment_source": str(DEFAULT_MARKET_HISTORY_CSV),
+            "included_indices": list(MARKET_TREND_INDEXES.keys()),
+        },
+        "indices": indices,
+        "sentiment": build_sentiment_trend(target_date, safe_trend_days),
+        "interpretation_hints": [
+            "Use only shanghai and chinext index trend evidence in module 1.",
+            "Index trend evidence is deterministic; the model should write the concise trend judgment.",
+            "Sentiment uses reference/market_data.csv when available and only rows on or before the analysis date.",
+            "Do not add financing, GEM PE, external assets, style indexes, or STAR Market index to module 1.",
         ],
     }
 
@@ -533,6 +1143,8 @@ def clean_candidates(df: pd.DataFrame, limit: int) -> List[Dict[str, Any]]:
         return []
     cols = [c for c in candidate_columns() if c in df.columns]
     out = df[cols].head(limit).copy()
+    if "amount" in out.columns:
+        out["amount_100m_yuan"] = pd.to_numeric(out["amount"], errors="coerce") / 100000
     numeric_cols = [c for c in out.columns if c not in {"ts_code", "name", "market", "trade_date"}]
     for col in numeric_cols:
         out[col] = pd.to_numeric(out[col], errors="coerce").round(4)
@@ -1318,10 +1930,184 @@ def build_resilient_against_index_samples(
     }
 
 
+def compact_record(record: Dict[str, Any], fields: List[str]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    source = dict(record)
+    if source.get("amount_100m_yuan") is None and source.get("amount") is not None:
+        amount = safe_float(source.get("amount"))
+        if amount is not None:
+            source["amount_100m_yuan"] = round(amount / 100000, 2)
+    for field in fields:
+        if field in source:
+            out[field] = source.get(field)
+    return out
+
+
+def compact_records(records: List[Dict[str, Any]], fields: List[str], limit: int) -> List[Dict[str, Any]]:
+    return [compact_record(record, fields) for record in (records or [])[:limit]]
+
+
+def compact_index_trend(index: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "name": index.get("name"),
+        "latest": index.get("latest"),
+        "returns": index.get("returns"),
+        "moving_averages": index.get("moving_averages"),
+        "volume_price": index.get("volume_price"),
+        "levels": index.get("levels"),
+    }
+
+
+def build_report_context(
+    evidence: Dict[str, Any],
+    money_limit: int = 80,
+    decline_limit: int = 20,
+    low_limit: int = 20,
+    amount_limit: int = 20,
+) -> Dict[str, Any]:
+    money_fields = [
+        "ts_code",
+        "name",
+        "market",
+        "pct_chg",
+        "amount_100m_yuan",
+        "ret_3d",
+        "ret_5d",
+        "rel_ret_5d",
+        "amount_ratio_20d",
+        "sustained_volume_days_5",
+        "close_position_120d",
+        "drawdown_120_high",
+    ]
+    decline_fields = money_fields + ["decline_intensity"]
+    low_fields = [
+        "ts_code",
+        "name",
+        "market",
+        "scenario",
+        "quality_tier",
+        "matched_models",
+        "trigger_date",
+        "days_since_trigger",
+        "trigger_pct_chg",
+        "trigger_amount_ratio_15d",
+        "trigger_amount_100m_yuan",
+        "trigger_low_track",
+        "trigger_drawdown_120_high",
+        "trigger_close_position_120d",
+        "trigger_close_to_high",
+        "trigger_break_prev_high_10d",
+        "post_trigger_min_volume_ratio",
+        "post_trigger_recent3_volume_ratio",
+        "today_close",
+        "today_close_ma5",
+        "today_amount_100m_yuan",
+    ]
+    amount_fields = [
+        "ts_code",
+        "name",
+        "market",
+        "pct_chg",
+        "amount_100m_yuan",
+        "ret_3d",
+        "ret_5d",
+        "amount_ratio_20d",
+    ]
+
+    market_trend = evidence.get("market_trend", {})
+    sentiment = dict(market_trend.get("sentiment") or {})
+    sentiment.pop("recent_series", None)
+
+    return {
+        "metadata": {
+            **(evidence.get("metadata") or {}),
+            "context_generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "source": "market_panel.build_report_context",
+        },
+        "market": {
+            "temperature": evidence.get("market_temperature"),
+            "temperature_previous": evidence.get("market_temperature_previous"),
+            "temperature_change": evidence.get("market_temperature_change"),
+            "trend": {
+                "sentiment": sentiment,
+                "indices": {
+                    key: compact_index_trend(value)
+                    for key, value in (market_trend.get("indices") or {}).items()
+                },
+            },
+        },
+        "amount_concentration": {
+            "current": (evidence.get("amount_concentration") or {}).get("current"),
+            "previous": (evidence.get("amount_concentration") or {}).get("previous"),
+            "change": (evidence.get("amount_concentration") or {}).get("change"),
+            "trend": (evidence.get("amount_concentration") or {}).get("trend"),
+            "top_amount_samples": compact_records(
+                (evidence.get("amount_concentration") or {}).get("top_amount_samples", []),
+                amount_fields,
+                amount_limit,
+            ),
+        },
+        "money_effect": {
+            "filter_criteria": (evidence.get("money_effect_samples") or {}).get("filter_criteria"),
+            "summary": (evidence.get("money_effect_samples") or {}).get("summary"),
+            "theme_grouping_aid": {
+                "records": compact_records(
+                    (evidence.get("money_effect_samples") or {}).get("candidates", []),
+                    money_fields,
+                    money_limit,
+                ),
+                "sorting": "amount_100m_yuan desc",
+                "model_responsibility": "Group by business facts; do not use preset industry labels or this helper as a mechanical classifier.",
+            },
+        },
+        "volume_decline": {
+            "filter_criteria": (evidence.get("volume_decline_samples") or {}).get("filter_criteria"),
+            "summary": (evidence.get("volume_decline_samples") or {}).get("summary"),
+            "top_candidates": compact_records(
+                (evidence.get("volume_decline_samples") or {}).get("candidates", []),
+                decline_fields,
+                decline_limit,
+            ),
+        },
+        "low_position_volume_anomaly": {
+            "filter_criteria": (evidence.get("low_position_volume_anomaly_samples") or {}).get("filter_criteria"),
+            "summary": (evidence.get("low_position_volume_anomaly_samples") or {}).get("summary"),
+            "candidates": compact_records(
+                (evidence.get("low_position_volume_anomaly_samples") or {}).get("candidates", []),
+                low_fields,
+                low_limit,
+            ),
+        },
+        "resilient_against_index": {
+            "index_environment": (evidence.get("resilient_against_index_samples") or {}).get("index_environment"),
+            "summary": (evidence.get("resilient_against_index_samples") or {}).get("summary"),
+            "candidates": compact_records(
+                (evidence.get("resilient_against_index_samples") or {}).get("candidates", []),
+                money_fields,
+                decline_limit,
+            ),
+        },
+        "reporting_notes": [
+            "This context is a compact model-facing helper, not a full evidence archive.",
+            "Final leading-line names and ratings remain model judgments based on business facts and the skill rules.",
+            "External closing-summary verification is intentionally omitted from the automation path.",
+        ],
+    }
+
+
 def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
     pro = get_pro()
     asof = normalize_date(args.asof)
-    target_date, trade_dates = fetch_trade_dates(pro, asof, args.lookback, args.offset, args.allow_future)
+    cache_enabled = not bool(args.no_cache)
+    target_date, trade_dates = fetch_trade_dates(
+        pro,
+        asof,
+        args.lookback,
+        args.offset,
+        args.allow_future,
+        cache_enabled=cache_enabled,
+        refresh_cache=args.refresh_cache,
+    )
     previous_trade_date = trade_dates[-2] if len(trade_dates) >= 2 else None
 
     daily = fetch_by_trade_dates(
@@ -1330,7 +2116,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         trade_dates,
         DEFAULT_DAILY_FIELDS,
         args.sleep,
-        cache_enabled=not args.no_cache,
+        cache_enabled=cache_enabled,
         refresh_cache=args.refresh_cache,
     )
     if daily.empty:
@@ -1346,10 +2132,18 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         else pd.DataFrame()
     )
 
-    basic = fetch_by_trade_dates(pro, "daily_basic", [target_date], DEFAULT_BASIC_FIELDS, args.sleep)
+    basic = fetch_by_trade_dates(
+        pro,
+        "daily_basic",
+        [target_date],
+        DEFAULT_BASIC_FIELDS,
+        args.sleep,
+        cache_enabled=cache_enabled,
+        refresh_cache=args.refresh_cache,
+    )
     panel = merge_optional(panel, basic, ["ts_code", "trade_date"])
 
-    stock_basic = fetch_stock_basic(pro)
+    stock_basic = fetch_stock_basic(pro, cache_enabled=cache_enabled, refresh_cache=args.refresh_cache)
     if not stock_basic.empty:
         panel = panel.merge(stock_basic, on="ts_code", how="left")
         features = features.merge(stock_basic, on="ts_code", how="left")
@@ -1359,7 +2153,14 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         features["name"] = None
         features["market"] = None
 
-    index_daily = fetch_index_daily(pro, args.index, trade_dates[0], target_date)
+    index_daily = fetch_index_daily(
+        pro,
+        args.index,
+        trade_dates[0],
+        target_date,
+        cache_enabled=cache_enabled,
+        refresh_cache=args.refresh_cache,
+    )
     panel, index_summary = add_index_features(panel, index_daily)
     previous_index_summary = summarize_index(index_daily, previous_trade_date or "")
 
@@ -1375,6 +2176,14 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         build_market_temperature(previous_panel, previous_index_summary)
         if previous_panel is not None and not previous_panel.empty
         else {}
+    )
+    market_trend = build_market_trend(
+        pro,
+        target_date,
+        trade_dates,
+        args.market_trend_days,
+        cache_enabled=cache_enabled,
+        refresh_cache=args.refresh_cache,
     )
     limit_stats = build_limit_stats(limit_df)
     previous_limit_stats = build_limit_stats(previous_limit_df)
@@ -1430,8 +2239,9 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "index": args.index,
             "daily_rows": int(len(daily)),
             "panel_rows": int(len(panel)),
-            "daily_cache_enabled": not bool(args.no_cache),
-            "daily_cache_root": str(CACHE_ROOT / "daily"),
+            "cache_enabled": cache_enabled,
+            "cache_root": str(CACHE_ROOT),
+            "cached_endpoints": ["daily", "daily_basic", "stock_basic", "trade_cal", "index_daily"] if cache_enabled else [],
             "future_data_allowed": bool(args.allow_future),
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         },
@@ -1442,6 +2252,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             if previous_market_temperature
             else {}
         ),
+        "market_trend": market_trend,
         "amount_concentration": build_amount_concentration(features, target_date, previous_trade_date),
         "limit_stats": limit_stats,
         "limit_stats_previous": previous_limit_stats,
@@ -1460,6 +2271,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "Do not use market/industry/concept labels as preset grouping rules; infer themes from evidence and business facts.",
             "Tushare daily amount is returned in thousand yuan; total_amount_100m_yuan is converted to 100 million yuan.",
             "limit_up_approx_count and limit_down_approx_count are daily pct_chg threshold approximations. Official limit_list_d stats are skipped by default to avoid rate limits; use --with-limit only when needed.",
+            "market_trend is module 1 evidence only: shanghai index, chinext index, and sentiment trend from reference/market_data.csv.",
             "amount_concentration measures trading amount concentration only; it does not assign themes or sectors.",
             "money_effect_samples filters by pct_chg and amount thresholds and sorts by amount; it is the canonical pool for daily money-effect / leading-line analysis.",
             "volume_decline_samples filters by pct_chg, amount_ratio_20d and amount thresholds, sorted by decline_intensity = amount_ratio_20d * abs(pct_chg).",
@@ -1480,6 +2292,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     panel.add_argument("--lookback", type=int, default=120, help="Number of trading days to load.")
     panel.add_argument("--index", default="000300.SH", help="Benchmark index ts_code, default CSI 300.")
     panel.add_argument("--sample-limit", type=int, default=40, help="Max rows in each candidate sample.")
+    panel.add_argument("--market-trend-days", type=int, default=90,
+                       help="Module 1 market-trend window in trading/history rows (default 90).")
     panel.add_argument("--sleep", type=float, default=0.12, help="Sleep seconds between API calls.")
     panel.add_argument("--no-cache", action="store_true", help="Disable local daily parquet cache.")
     panel.add_argument("--refresh-cache", action="store_true", help="Force refetch daily data and overwrite local cache.")

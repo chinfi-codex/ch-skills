@@ -1,0 +1,14 @@
+26q1/
+AGENTS.md
+eval.md
+eval/
+evals/
+**/eval/
+**/evals/
+
+.env
+.env.*
+*.pem
+*.key
+id_rsa
+id_ed25519

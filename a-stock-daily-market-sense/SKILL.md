@@ -1,7 +1,7 @@
 ---
 name: tushare-daily-market-sense
-description: 基于 Tushare Pro A 股 daily 日线数据生成盘后市场研报的方法论 skill。当用户要求做每日盘面感知、赚钱效应与上涨主线分析、爆量下跌识别、低位放量异动筛选、指数背离个股分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 的核心方法论是以成交额为首要指标：赚钱效应使用涨幅与成交额硬阈值筛选候选池，再由模型基于业务事实归纳临时主题，按成交额厚度、5 日持续性、连续放量天数评定主线确认度（★★★/★★/★）；亏钱效应聚焦爆量下跌；低位放量异动用双轨低位定义 + 3 倍放量 + 7% 异动 + 三情形分类（starter/sustain/quiet）；指数背离只在指数走弱时输出"该弱不弱就是强"的逆势上涨候选。默认产出研报，不导出 CSV/Parquet，不提供买卖建议；不按申万、同花顺、东方财富等现成行业/概念口径分组。
-version: 1.6.1
+description: 基于 Tushare Pro A 股 daily 日线数据生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板指数趋势、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、低位放量异动筛选、指数背离个股分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先用上证与创业板 K 线、量价、均线、支撑压力和情绪历史判断盘面趋势，再以成交额为首要指标识别赚钱效应、亏钱效应、低位异动和抗跌股。默认产出研报，不导出 CSV/Parquet，不提供买卖建议；不按申万、同花顺、东方财富等现成行业/概念口径分组。
+version: 1.7.0
 ---
 
 # Tushare Daily Market Sense
@@ -42,11 +42,24 @@ A 股研究中，**成交额是首要指标，优先于涨跌幅、优先于换�
 
 ## 领域方法论
 
-### 1. 先看盘面温度，再看主线
+### 1. 先看盘面趋势，再看主线
 
-判断市场状态：普涨、普跌、局部主线、情绪退潮、还是指数掩盖结构分化。观察项：涨跌家数、涨跌幅中位数、大涨大跌数量、上涨/下跌成交额占比、成交额集中度、涨停跌停炸板结构、主要指数与全市场中位数的背离。
+第 1 模块只回答三件事：上证指数趋势、创业板指数趋势、盘面情绪趋势。它不分析科创板，不分析风格指数，也不引入融资、创业板 PE、外围资产。这样做是为了让开篇先判断"大盘环境是否支持主线扩散"，再进入个股赚钱效应。
 
-不要直接从涨幅榜命名主线。涨幅榜只是样本，主线需要共同特征、持续性和扩散证据。
+**指数趋势分析框架**：只看 `market_trend.indices.shanghai` 与 `market_trend.indices.chinext`。每个指数按四个维度判断：
+
+1. **趋势阶段**：结合 20/60 日收益、收盘价相对 MA20/MA60、MA20 与 MA60 关系，判断上升、回调、横盘、破位或破位修复。不要把单日涨跌写成趋势。
+2. **量价配合**：用 `volume_price.price_volume_state_hint` 和成交额/成交量相对 20 日均值判断上涨放量、上涨缩量、下跌放量、下跌缩量。指数上涨但缩量，写"反弹质量待确认"；指数下跌且放量，写"抛压释放/风险放大"。
+3. **均线位置**：用 `moving_averages` 判断收盘价相对 MA5/20/60，以及短中期均线是否多头、空头或纠缠。指数站上 MA20 但仍低于 MA60，属于修复，不直接写成强趋势。
+4. **支撑压力**：用 `levels.low_20d/low_60d/high_20d/high_60d` 与 MA20/MA60 给出关键支撑压力候选。只写离当前价格最近、最有解释力的 1-2 个位置。
+
+**情绪趋势分析框架**：只看 `market_trend.sentiment`。按三维温度判断：
+
+1. **量能温度**：看成交额相对 5/20 日均值与 `temperature_hints.volume`，区分明显缩量、温和缩量、平稳、温和放量、明显放量。
+2. **情绪温度**：看活跃度、涨停/跌停比、涨停跌停数量变化与 `temperature_hints.sentiment`，判断冰点、弱修复、中性、偏热、过热。
+3. **广度温度**：看上涨占比、上涨/下跌家数 5 日趋势与 `temperature_hints.breadth`，判断普涨、普跌、分化或修复。
+
+盘面趋势结论必须写出指数与情绪的关系：**共振**（指数和情绪同向）、**背离**（指数强但情绪弱，或指数弱但情绪修复）、或**分化**（上证与创业板方向不一致）。不要直接从涨幅榜命名主线。涨幅榜只是样本，主线需要共同特征、持续性和扩散证据。
 
 ### 2. 主题主线由模型归纳，不套现成口径
 
@@ -197,8 +210,8 @@ A 股研究中，**成交额是首要指标，优先于涨跌幅、优先于换�
 ## 工作流程
 
 1. **确定交易日**：解析"今天/最近"或具体日期，用 `trade_cal` 找到分析交易日 `D`。默认只用 `<= D` 数据；只有用户明确要求后验时才允许 `D+N`。
-2. **生成证据包**：调用 `scripts/market_panel.py panel`，得到盘面温度、成交额集中度、赚钱效应候选池、爆量下跌候选池、低位放量异动候选池、抗跌股候选池。
-3. **判断盘面状态**：写清楚普涨/普跌/局部主线/指数掩盖分化。没有广度证据不要说"行情很好"。
+2. **生成证据包**：优先调用 `scripts/run_daily_panel.py`，它会清理本地 proxy、用 UTF-8 捕获输出，并同时写出完整证据包 `evidence_YYYYMMDD_utf8.json` 与轻量上下文 `report_context_YYYYMMDD.json`。默认先读 `report_context` 写报告；只有需要追查细节时再读完整 evidence。
+3. **判断盘面趋势**：先读 `market_trend`，只分析上证指数、创业板指数和情绪趋势，写清楚指数与情绪是共振、背离还是分化。没有广度与情绪证据不要说"行情很好"。
 4. **归纳赚钱效应与主线**：读 `money_effect_samples`，先看候选总数和合计成交额，再分组（不套现成行业），最后按 ★★★/★★/★ 评级，给"主线行情"或"资金轮动"明确定性。
 5. **识别爆量下跌风险**：读 `volume_decline_samples`，先总览，再归纳风险类型，列高强度个股。互查 ★★★ 主线代表股是否进入爆量池，发主线见顶预警。
 6. **识别低位异动**：读 `low_position_volume_anomaly_samples`，先看 `quality_tier` 与 `matched_models`，优先解释高质量池 A/B；再按 starter/sustain/quiet/undetermined 四类呈现。对 D-N 历史触发的候选，确认 `today_above_ma5 = true`，否则脚本已过滤，不应补回。
@@ -213,19 +226,19 @@ A 股研究中，**成交额是首要指标，优先于涨跌幅、优先于换�
 TUSHARE_TOKEN=your_token
 ```
 
-依赖：Python 3.9+、`tushare`、`pandas`。
+依赖：Python 3.9+、`tushare`、`pandas`。盘面情绪趋势默认读取本 skill 包内的 `reference/market_data.csv`，脚本只使用分析日 `D` 及以前的记录。
 
 基础命令：
 
 ```bash
-cd C:\Users\chenh\OneDrive\skills\tushare-daily-market-sense
-python scripts/market_panel.py panel --asof 20260424 --lookback 120 --index 000300.SH
+cd C:\Users\chenh\OneDrive\skills\a-stock-daily-market-sense
+python scripts/run_daily_panel.py --asof 20260424 --lookback 120 --market-trend-days 90 --index 000300.SH
 ```
 
 带筛选参数的完整命令（默认值已等同于此命令）：
 
 ```bash
-python scripts/market_panel.py panel --asof 20260424 \
+python scripts/run_daily_panel.py --asof 20260424 --market-trend-days 90 \
     --money-pct-threshold 7.0 --money-amount-threshold 2.0 --money-sample-limit 80 \
     --decline-pct-max -3.0 --decline-volume-ratio 2.0 --decline-amount-threshold 1.0 --decline-sample-limit 60 \
     --low-drawdown-min 35.0 --low-close-position-max 0.20 --low-cv-max 0.03 \
@@ -240,6 +253,7 @@ python scripts/market_panel.py panel --asof 20260424 \
 | `--money-pct-threshold` | 赚钱效应：最低当日涨幅（%） | 7.0 |
 | `--money-amount-threshold` | 赚钱效应：最低成交额（亿元） | 2.0 |
 | `--money-sample-limit` | 赚钱效应：最大样本数 | 80 |
+| `--market-trend-days` | 盘面趋势：指数 K 线与情绪历史窗口 | 90 |
 | `--decline-pct-max` | 爆量下跌：最大当日涨幅（%） | -3.0 |
 | `--decline-volume-ratio` | 爆量下跌：最低放量倍数（基于 20 日均值） | 2.0 |
 | `--decline-amount-threshold` | 爆量下跌：最低成交额（亿元） | 1.0 |
@@ -273,6 +287,7 @@ python scripts/market_panel.py panel --asof 20260424 \
 
 - `metadata`：交易日、窗口、指数、数据行数。
 - `market_temperature` / `_previous` / `_change`：今日盘面温度与对前一交易日变化。
+- **`market_trend`：第 1 模块主入口**。只包含 `indices.shanghai`、`indices.chinext` 与 `sentiment`。指数字段含 K 线记录、1/5/20/60 日涨跌幅、MA5/20/60、量价状态、趋势阶段提示、20/60 日高低点和支撑压力候选；情绪字段读取 `reference/market_data.csv`，含成交额、活跃度、上涨/下跌家数、涨停/跌停、量能/情绪/广度温度提示。若 `reference/market_data.csv` 不存在，`sentiment.available=false` 并标注原因。
 - `amount_concentration`：Top10/20/50/100 集中度、近 10 日趋势、成交额前排样本。
 - `limit_stats` / `_previous` / `_change`：涨跌停炸板（接口可用时）。
 - `strong_samples` / `weak_samples`：复合评分排序（保留作辅助证据，不再作主入口）。
@@ -283,6 +298,23 @@ python scripts/market_panel.py panel --asof 20260424 \
 - `low_position_volume_samples`：旧版低位放量候选（保留兼容，但研报应使用 `low_position_volume_anomaly_samples`）。
 - `divergence_samples`：旧版双向背离（保留兼容，但研报应使用 `resilient_against_index_samples` 仅看抗跌股）。
 
+轻量上下文 `report_context_YYYYMMDD.json` 字段：
+
+- `market`：盘面温度、上证/创业板趋势、情绪摘要（不含长历史序列）。
+- `amount_concentration`：集中度摘要与成交额 Top 样本。
+- `money_effect.theme_grouping_aid.records`：赚钱效应候选的分组辅助表，含名称、成交额（亿元）、当日涨幅、5 日收益、相对超额、放量倍数与位置指标。该表只辅助模型归纳主线，不替模型命名主题。
+- `volume_decline.top_candidates`：爆量下跌核心样本。
+- `low_position_volume_anomaly.candidates`：低位放量异动核心样本。
+- `resilient_against_index`：弱指数环境与抗跌样本。
+
+缓存说明：
+
+- `daily`、`daily_basic` 按交易日缓存到 `data/cache/<endpoint>/YYYYMMDD.parquet`。
+- `stock_basic` 缓存到 `data/cache/stock_basic/all.parquet`。
+- `trade_cal` 缓存到 `data/cache/trade_cal/all.parquet`，缺边界日期时增量补齐。
+- `index_daily` 按指数代码缓存到 `data/cache/index_daily/<ts_code>.parquet`，缺边界日期时增量补齐。
+- 如需强制刷新，使用 `--refresh-cache`；如需完全绕过缓存，使用 `--no-cache`。
+
 成交额口径：
 
 - `daily.amount` 单位为千元；`total_amount_100m_yuan` 已转为亿元用于研报展示。
@@ -291,7 +323,9 @@ python scripts/market_panel.py panel --asof 20260424 \
 降级规则：
 
 - `daily_basic` 不可用：仍可分析涨跌、成交额、相对强弱，但缺换手率、量比、市值。
-- `limit_list_d` 不可用：跳过情绪数据，研报标注。
+- `reference/market_data.csv` 不可用：第 1 模块情绪趋势只用 `market_temperature` 的当日快照降级，必须标注"情绪历史不可用"，不补写活跃度趋势。
+- 上证或创业板指数 K 线不可用：第 1 模块对应指数小节标注不可用，不用科创板或风格指数替代。
+- `limit_list_d` 不可用：跳过官方涨跌停炸板明细，使用近似涨跌停与 `reference/market_data.csv` 情绪趋势降级，研报标注。
 - 指数数据不可用：第 6 模块 `is_weak` 无法判定，整模块跳过并标注原因。
 - `money_effect_samples` 候选 < 5 只：定性"今日无清晰赚钱效应"，第 3 模块只保留总览小节。
 - `volume_decline_samples` 候选为 0：第 4 模块只写"今日无大面积爆量下跌"。
@@ -300,7 +334,7 @@ python scripts/market_panel.py panel --asof 20260424 \
 
 ## 输出规范
 
-研报采用固定的模块顺序：1.盘面温度 / 2.成交额集中度 / 3.赚钱效应与上涨主线 / 4.亏钱效应（爆量下跌） / 5.低位放量异动 / 6.抗跌股（该弱不弱就是强）。默认 800-1500 字。
+研报采用固定的模块顺序：1.盘面趋势 / 2.成交额集中度 / 3.赚钱效应与上涨主线 / 4.亏钱效应（爆量下跌） / 5.低位放量异动 / 6.抗跌股（该弱不弱就是强）。默认 800-1500 字。
 
 **完整研报模板（含每个模块的表头与填写要点）放在 `reference/report_template.md`。** 在前 7 步工作流程全部完成、所有候选池数据都已读取之后，view 一次该文件，按模板逐模块填空。模板只是结构骨架，下面的"写作要求"是模型每次撰写都必须遵守的纪律。
 
@@ -308,8 +342,9 @@ python scripts/market_panel.py panel --asof 20260424 \
 
 - 写清楚数据日期和窗口，例如"截至 2026-04-24，近 120 个交易日"。
 - 所有强弱判断必须有成交额数字支撑（呼应"成交额优先"原则）；无成交额证据的"该方向较强"视为方法论失败。
-- 盘面温度优先呈现今日数据，对比信息只列差异显著项。
-- 基准指数研报中只保留今日涨跌幅。
+- 第 1 模块只写上证指数、创业板指数和盘面情绪趋势；不要加入科创板、风格指数、融资、创业板 PE、外围资产。
+- 第 1 模块必须判断指数与情绪是共振、背离还是分化；不要只罗列指标。
+- 上证/创业板趋势判断要覆盖趋势阶段、量价配合、均线位置、支撑压力四项，但每项只写最关键证据。
 - 总成交额用亿元展示，保留 1-2 位小数。
 - 第 3 模块"主线确认度"严格按 ★★★/★★/★ 规则，不主观放宽。
 - 第 3 模块"主线 vs 资金轮动结论"必须明确定性，不能含糊。
@@ -336,14 +371,15 @@ python scripts/market_panel.py panel --asof 20260424 \
 执行：
 
 ```bash
-cd C:\Users\chenh\OneDrive\skills\tushare-daily-market-sense
-python scripts/market_panel.py panel --asof 20260424 --lookback 120 --index 000300.SH
+cd C:\Users\chenh\OneDrive\skills\a-stock-daily-market-sense
+python scripts/run_daily_panel.py --asof 20260424 --lookback 120 --market-trend-days 90 --index 000300.SH
 ```
 
 输出步骤：
 
-1. 模块 1-2 判断盘面温度与拥挤度。
-2. 模块 3 读 `money_effect_samples`：先列总览，再按业务事实分组，按 ★★★/★★/★ 评定，给"主线行情"或"资金轮动"明确定性。
-3. 模块 4 读 `volume_decline_samples`：先列总览，再归纳风险类型，列高强度个股明细，互查 ★★★ 主线代表股，必要时发主线见顶预警。
-4. 模块 5 读 `low_position_volume_anomaly_samples`：先列四类计数总览，再分别呈现 starter / sustain / quiet 三类（undetermined 简短带过）。
-5. 模块 6 读 `resilient_against_index_samples`：先看 `index_environment.is_weak`，弱环境列抗跌股并归纳抗跌方向；不弱时直接写"指数环境不弱，本模块无输出"。
+1. 模块 1 读 `market_trend`：先写情绪趋势，再写上证与创业板指数趋势，最后判断指数与情绪是共振、背离还是分化。
+2. 模块 2 判断成交额集中度与拥挤度。
+3. 模块 3 读 `money_effect_samples`：先列总览，再按业务事实分组，按 ★★★/★★/★ 评定，给"主线行情"或"资金轮动"明确定性。
+4. 模块 4 读 `volume_decline_samples`：先列总览，再归纳风险类型，列高强度个股明细，互查 ★★★ 主线代表股，必要时发主线见顶预警。
+5. 模块 5 读 `low_position_volume_anomaly_samples`：先列四类计数总览，再分别呈现 starter / sustain / quiet 三类（undetermined 简短带过）。
+6. 模块 6 读 `resilient_against_index_samples`：先看 `index_environment.is_weak`，弱环境列抗跌股并归纳抗跌方向；不弱时直接写"指数环境不弱，本模块无输出"。

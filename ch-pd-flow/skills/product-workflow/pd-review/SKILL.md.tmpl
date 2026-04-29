@@ -1,0 +1,99 @@
+---
+name: pd-review
+version: 0.1.0
+default-mode: DOC_MODE
+default-mode-strict: true
+implementation-mode: IMPLEMENT_MODE
+implementation-mode-requires-explicit-user-approval: true
+implementation-approval-phrases:
+  - 批准写代码
+  - go implement
+  - 开始实现
+description: |
+  Documentation-first PRD review skill.
+  Default mode is DOC_MODE. Revise documentation artifacts only unless the user
+  explicitly approves IMPLEMENT_MODE.
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Grep
+  - Glob
+  - AskUserQuestion
+---
+
+{{MODE_GUARD}}
+
+{{PREAMBLE}}
+
+{{ARTIFACT_PATHS}}
+
+{{COMPLETION_STATUS}}
+
+{{DOC_WRITING_RULES}}
+
+{{REVIEW_METHOD}}
+
+# /pd-review
+
+Current task boundary:
+- `/pd-review` may revise documentation artifacts directly.
+- `/pd-review` must not modify source code, tests, scaffolding, or runtime configuration unless the user explicitly switches to `IMPLEMENT_MODE`.
+
+## 角色职责
+
+- 读取输入 PRD
+- 按 6 个维度进行完整评审
+- 对低于 8 分的维度直接补文档
+- 输出可交接版本的 PRD 与 `pd-review-report`
+
+## 输入
+
+- 已确认的唯一 `feature-slug`
+- 当前 PRD
+- 上游 `feature brief`
+- 必要的 `project memo`
+- 已知约束、跨团队协作信息
+
+## 输出
+
+- 一份改好的 PRD
+- 一份 `pd-review-report`
+- 一个交付结论：`可交付` / `可交付但有风险` / `阻塞`
+- 一个完成状态：`已完成` / `已完成但有风险` / `阻塞` / `需补充上下文`
+
+## 工作方式
+
+1. 先确认唯一 `feature-slug`，读取该目录下最新 PRD、最新 `feature brief`，并补读最新 `project memo`
+2. 通读 PRD，识别目标、范围、规则、状态、验收是否完整
+3. 按 6 个维度评分
+4. 对每一个低于 8 分的维度，直接修改 PRD，不停留在意见层
+5. 只有在存在真实 tradeoff 且无法从上下文裁决时才提问
+6. 输出修订后的 PRD 与评审报告
+
+## 评审重点
+
+- 文档是否已足够被技术、设计、测试直接承接
+- 是否存在缺失规则、缺失状态、缺失边界
+- 是否存在验收无法执行的问题
+- 是否把关键决策错误地下放给实现阶段
+
+## 交付结论规则
+
+- 若文档已可直接交接，结论为 `可交付`
+- 若文档可交接但仍有明确 concern，结论为 `可交付但有风险`
+- 若存在无法继续推进的核心缺口，结论为 `阻塞`
+
+## 边界
+
+- review 的核心动作是修订文档，不是罗列建议
+- 不引入不必要的技术实现细节
+- 不为了保留“作者原意”而放过明显缺口
+
+## 交付格式
+
+- 先给出交付结论
+- 再给出完成状态
+- 回显当前匹配的 `feature-slug`
+- 再输出改好的 PRD
+- 最后输出 `pd-review-report`

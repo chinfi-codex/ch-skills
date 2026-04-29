@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""美股日报生成脚本。"""
+"""Fetch Yahoo Finance evidence for a US-market watchlist.
+
+The script intentionally returns structured data only. It does not write the
+daily brief, name conclusions, or produce investment advice; the skill user
+does that in SKILL.md after reading the evidence package.
+"""
 
 from __future__ import annotations
 
@@ -17,9 +22,9 @@ import yaml
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_CONFIG_PATH = ROOT_DIR / "stock_pool.yaml"
+DEFAULT_CONFIG_PATH = ROOT_DIR / "assets" / "stock_pool.yaml"
 LOOKBACK_DAYS = 15
-REPORT_TYPE = "us_market_report"
+EVIDENCE_TYPE = "us_market_watchlist_evidence"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
 REQUEST_HEADERS = {"User-Agent": "Mozilla/5.0"}
 
@@ -45,10 +50,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
 
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
-    """加载配置文件。"""
+    """Load watchlist config and merge missing keys from defaults."""
     path = Path(config_path).expanduser().resolve() if config_path else DEFAULT_CONFIG_PATH
     if not path.exists():
-        return DEFAULT_CONFIG
+        return json.loads(json.dumps(DEFAULT_CONFIG))
 
     with path.open("r", encoding="utf-8") as file:
         loaded = yaml.safe_load(file) or {}
@@ -63,14 +68,13 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
 
 
 def parse_report_date(value: Optional[str]) -> Optional[date]:
-    """解析命令行传入的日期。"""
     if not value:
         return None
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
 def fetch_chart_history(ticker: str) -> list[Dict[str, Any]]:
-    """从 Yahoo chart 接口获取单只股票日线。"""
+    """Fetch one month of daily chart history from Yahoo Finance."""
     response = requests.get(
         YAHOO_CHART_URL.format(ticker=ticker),
         params={
@@ -111,11 +115,14 @@ def fetch_chart_history(ticker: str) -> list[Dict[str, Any]]:
 
     if len(rows) < 2:
         raise RuntimeError(f"{ticker} 历史行情不足。")
-    return rows
+    return rows[-LOOKBACK_DAYS:]
 
 
-def get_latest_completed_trading_day(history_by_ticker: Dict[str, list[Dict[str, Any]]], reference_ticker: str = "SPY") -> date:
-    """根据日线数据确定最近一个已结束交易日。"""
+def get_latest_completed_trading_day(
+    history_by_ticker: Dict[str, Optional[list[Dict[str, Any]]]],
+    reference_ticker: str = "SPY",
+) -> date:
+    """Resolve the latest completed trading day from available history."""
     reference_history = history_by_ticker.get(reference_ticker)
     if not reference_history:
         available_histories = [history for history in history_by_ticker.values() if history]
@@ -125,8 +132,10 @@ def get_latest_completed_trading_day(history_by_ticker: Dict[str, list[Dict[str,
     return reference_history[-1]["date"]
 
 
-def resolve_target_row(history: list[Dict[str, Any]], requested_date: Optional[date]) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """从日线数据中定位目标交易日和前一交易日。"""
+def resolve_target_row(
+    history: list[Dict[str, Any]], requested_date: Optional[date]
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Locate target and previous trading rows in one ticker history."""
     if not history or len(history) < 2:
         raise RuntimeError("历史行情不足，至少需要两个交易日的数据。")
 
@@ -146,313 +155,191 @@ def resolve_target_row(history: list[Dict[str, Any]], requested_date: Optional[d
     return history[target_position], history[target_position - 1]
 
 
-def build_stock_snapshot(ticker: str, history: Optional[list[Dict[str, Any]]], report_date: Optional[date] = None) -> Optional[Dict[str, Any]]:
-    """从历史日线构造单只股票在目标交易日的快照。"""
-    try:
-        if not history:
-            return None
-        target_row, prev_row = resolve_target_row(history, report_date)
+def build_stock_snapshot(
+    ticker: str,
+    history: Optional[list[Dict[str, Any]]],
+    report_date: Optional[date] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build a deterministic price snapshot for one ticker."""
+    if not history:
+        return None
+    target_row, prev_row = resolve_target_row(history, report_date)
 
-        close_price = float(target_row["close"])
-        prev_close = float(prev_row["close"])
-        if prev_close == 0:
-            return None
-
-        change_pct = (close_price - prev_close) / prev_close * 100
-
-        five_day_trend = None
-        target_index = history.index(target_row)
-        if target_index >= 4:
-            base_close = float(history[target_index - 4]["close"])
-            if base_close != 0:
-                five_day_trend = (close_price - base_close) / base_close * 100
-
-        return {
-            "ticker": ticker,
-            "price": close_price,
-            "change_pct": change_pct,
-            "prev_close": prev_close,
-            "after_hours": None,
-            "after_hours_change": None,
-            "five_day_trend": five_day_trend,
-            "volume": target_row.get("volume"),
-            "trade_date": target_row["date"].isoformat(),
-        }
-    except Exception:
+    close_price = float(target_row["close"])
+    prev_close = float(prev_row["close"])
+    if prev_close == 0:
         return None
 
+    change_pct = (close_price - prev_close) / prev_close * 100
+    five_day_trend = None
+    target_index = history.index(target_row)
+    if target_index >= 4:
+        base_close = float(history[target_index - 4]["close"])
+        if base_close != 0:
+            five_day_trend = (close_price - base_close) / base_close * 100
 
-def format_price(price: Optional[float]) -> str:
-    if price is None:
-        return "N/A"
-    return f"${price:,.2f}"
-
-
-def format_change(pct: Optional[float]) -> str:
-    if pct is None:
-        return "N/A"
-    sign = "+" if pct >= 0 else ""
-    return f"{sign}{pct:.2f}%"
-
-
-def format_volume(volume: Optional[int]) -> str:
-    if volume is None:
-        return "N/A"
-    if volume >= 100_000_000:
-        return f"{volume / 100_000_000:.2f}亿"
-    if volume >= 10_000:
-        return f"{volume / 10_000:.2f}万"
-    return str(volume)
+    return {
+        "ticker": ticker,
+        "trade_date": target_row["date"].isoformat(),
+        "close": round(close_price, 4),
+        "prev_close": round(prev_close, 4),
+        "change_pct": round(change_pct, 4),
+        "five_day_trend_pct": round(five_day_trend, 4) if five_day_trend is not None else None,
+        "volume": target_row.get("volume"),
+    }
 
 
-def get_trend_desc(change_pct: float) -> str:
-    if change_pct > 3:
-        return "强势上涨"
-    if change_pct > 1:
-        return "温和上涨"
-    if change_pct > -1:
-        return "横盘震荡"
-    if change_pct > -3:
-        return "温和下跌"
-    return "弱势下跌"
-
-
-def generate_market_overview(indices_data: list[Dict[str, Any]], show_5day_trend: bool) -> str:
-    """生成大盘概览。"""
-    lines = ["## 【大盘概览】", ""]
-    for data in indices_data:
-        ticker = data["ticker"]
-        name = data.get("name", ticker)
-        trend_emoji = "📈" if data["change_pct"] >= 0 else "📉"
-        lines.append(f"**{name} ({ticker})** {trend_emoji}")
-        lines.append(f"- 收盘价: {format_price(data['price'])} ({format_change(data['change_pct'])})")
-        if show_5day_trend and data.get("five_day_trend") is not None:
-            trend_desc = get_trend_desc(data["five_day_trend"])
-            lines.append(f"- 5日走势: {trend_desc} ({format_change(data['five_day_trend'])})")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def generate_group_section(group: Dict[str, Any], stocks_data: Dict[str, Dict[str, Any]]) -> str:
-    """生成分组板块。"""
-    name = group["name"]
-    emoji = group.get("emoji", "📊")
-    lines = [f"**{emoji} {name}**", "", "```", "| 股票 | 收盘价 | 涨跌幅 |", "|-----|--------|--------|"]
-
-    for ticker in group["stocks"]:
-        data = stocks_data.get(ticker)
-        if data is None:
-            lines.append(f"| {ticker} | N/A | N/A |")
-            continue
-
-        change_str = format_change(data["change_pct"])
-        if data["change_pct"] <= -5:
-            change_str += " ⚠️"
-        elif data["change_pct"] >= 5:
-            change_str += " 🚀"
-
-        lines.append(f"| {ticker} | {format_price(data['price'])} | **{change_str}** |")
-
-    lines.extend(["```", ""])
-    return "\n".join(lines)
-
-
-def generate_abnormal_scan(all_stocks_data: Dict[str, Dict[str, Any]], thresholds: Dict[str, float]) -> str:
-    """生成异动扫描。"""
-    big_drop_threshold = thresholds.get("big_drop", -10.0)
-    big_rise_threshold = thresholds.get("big_rise", 10.0)
-    warning_threshold = thresholds.get("warning", -5.0)
-
-    big_drops = []
-    big_rises = []
-    warnings = []
-
-    for ticker, data in all_stocks_data.items():
-        if not data:
-            continue
-        change = data["change_pct"]
-        if change <= big_drop_threshold:
-            big_drops.append((ticker, change))
-        elif change >= big_rise_threshold:
-            big_rises.append((ticker, change))
-        elif change <= warning_threshold:
-            warnings.append((ticker, change))
-
-    lines = ["## 【异动扫描】", ""]
-
-    if big_drops:
-        lines.extend(
-            [
-                f"**🔴 跌幅超过 {abs(big_drop_threshold):.0f}% 的个股**",
-                "",
-                "```",
-                "| 股票 | 跌幅 | 备注 |",
-                "|-----|------|------|",
-            ]
-        )
-        for ticker, change in sorted(big_drops, key=lambda item: item[1]):
-            lines.append(f"| **{ticker}** | **{change:.2f}%** | 建议复盘业绩、指引或事件催化 |")
-        lines.extend(["```", ""])
-
-    if big_rises:
-        lines.extend(
-            [
-                f"**🟢 涨幅超过 {big_rise_threshold:.0f}% 的个股**",
-                "",
-                "```",
-                "| 股票 | 涨幅 | 备注 |",
-                "|-----|------|------|",
-            ]
-        )
-        for ticker, change in sorted(big_rises, key=lambda item: item[1], reverse=True):
-            lines.append(f"| **{ticker}** | **+{change:.2f}%** | 建议追踪财报、订单或政策催化 |")
-        lines.extend(["```", ""])
-
-    if warnings and not big_drops:
-        warning_list = [f"{ticker} ({change:.2f}%)" for ticker, change in sorted(warnings, key=lambda item: item[1])[:5]]
-        lines.append(f"**⚠️ 跌幅超过 {abs(warning_threshold):.0f}% 的关注名单**")
-        lines.append(", ".join(warning_list))
-        lines.append("")
-
-    if not big_drops and not big_rises and not warnings:
-        lines.append("当日波动整体可控，未出现显著异动个股。")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-def generate_sector_observation(groups_data: Dict[str, list[str]], all_stocks_data: Dict[str, Dict[str, Any]]) -> str:
-    """生成板块观察。"""
-    lines = ["## 【板块观察】", ""]
-    for group_name, tickers in groups_data.items():
-        changes = [all_stocks_data[ticker]["change_pct"] for ticker in tickers if all_stocks_data.get(ticker)]
-        if not changes:
-            lines.append(f"- **{group_name}**: 缺少有效行情数据")
-            continue
-
-        avg_change = sum(changes) / len(changes)
-        up_count = sum(1 for item in changes if item > 0)
-        down_count = sum(1 for item in changes if item < 0)
-        trend = "📈" if avg_change > 1 else "📉" if avg_change < -1 else "➡️"
-        lines.append(f"- **{group_name}**: {trend} 平均 {format_change(avg_change)} (上涨 {up_count} / 下跌 {down_count})")
-
-    lines.append("")
-    return "\n".join(lines)
-
-
-def generate_summary(all_stocks_data: Dict[str, Dict[str, Any]]) -> str:
-    """生成一句话摘要。"""
-    valid_items = [(ticker, data) for ticker, data in all_stocks_data.items() if data]
-    if not valid_items:
-        return "## 【一句话总结】\n\n目标股票池暂无可用数据。\n"
-
-    sorted_items = sorted(valid_items, key=lambda item: item[1]["change_pct"])
-    weakest_ticker, weakest_data = sorted_items[0]
-    strongest_ticker, strongest_data = sorted_items[-1]
-    return (
-        "## 【一句话总结】\n\n"
-        f"关注池中最强个股为 **{strongest_ticker}** ({format_change(strongest_data['change_pct'])})，"
-        f"最弱个股为 **{weakest_ticker}** ({format_change(weakest_data['change_pct'])})，"
-        "建议优先复盘极端波动标的对应的财报、指引和盘后消息。\n"
-    )
-
-
-def generate_full_report(config: Dict[str, Any], report_date: Optional[date] = None) -> tuple[str, str]:
-    """生成完整日报。"""
-    output_config = config.get("output", {})
-    show_5day_trend = bool(output_config.get("show_5day_trend", True))
-    show_volume = bool(output_config.get("show_volume", False))
-
-    all_tickers = []
+def collect_unique_tickers(config: Dict[str, Any]) -> list[str]:
+    tickers: list[str] = []
     for index_item in config.get("indices", []):
-        all_tickers.append(index_item["ticker"])
+        tickers.append(index_item["ticker"])
     for group in config.get("groups", []):
-        all_tickers.extend(group["stocks"])
-    unique_tickers = list(dict.fromkeys(all_tickers))
+        tickers.extend(group.get("stocks", []))
+    return list(dict.fromkeys(tickers))
 
-    history_by_ticker = {}
+
+def classify_move(change_pct: float, thresholds: Dict[str, float]) -> str:
+    if change_pct <= thresholds.get("big_drop", -10.0):
+        return "big_drop"
+    if change_pct >= thresholds.get("big_rise", 10.0):
+        return "big_rise"
+    if change_pct <= thresholds.get("warning", -5.0):
+        return "warning_drop"
+    if change_pct >= thresholds.get("highlight", 5.0):
+        return "highlight_rise"
+    return "normal"
+
+
+def build_group_evidence(
+    config: Dict[str, Any],
+    snapshots: Dict[str, Optional[Dict[str, Any]]],
+) -> list[Dict[str, Any]]:
+    groups: list[Dict[str, Any]] = []
+    for group in config.get("groups", []):
+        rows = []
+        changes = []
+        for ticker in group.get("stocks", []):
+            snapshot = snapshots.get(ticker)
+            rows.append({"ticker": ticker, "snapshot": snapshot})
+            if snapshot:
+                changes.append(snapshot["change_pct"])
+
+        groups.append(
+            {
+                "name": group.get("name", ""),
+                "emoji": group.get("emoji", ""),
+                "tickers": group.get("stocks", []),
+                "stocks": rows,
+                "summary": {
+                    "valid_count": len(changes),
+                    "up_count": sum(1 for item in changes if item > 0),
+                    "down_count": sum(1 for item in changes if item < 0),
+                    "avg_change_pct": round(sum(changes) / len(changes), 4) if changes else None,
+                },
+            }
+        )
+    return groups
+
+
+def build_abnormal_evidence(
+    snapshots: Dict[str, Optional[Dict[str, Any]]],
+    thresholds: Dict[str, float],
+) -> Dict[str, list[Dict[str, Any]]]:
+    buckets: Dict[str, list[Dict[str, Any]]] = {
+        "big_drops": [],
+        "big_rises": [],
+        "warning_drops": [],
+        "highlight_rises": [],
+    }
+    for ticker, snapshot in snapshots.items():
+        if not snapshot:
+            continue
+        label = classify_move(snapshot["change_pct"], thresholds)
+        item = {"ticker": ticker, **snapshot}
+        if label == "big_drop":
+            buckets["big_drops"].append(item)
+        elif label == "big_rise":
+            buckets["big_rises"].append(item)
+        elif label == "warning_drop":
+            buckets["warning_drops"].append(item)
+        elif label == "highlight_rise":
+            buckets["highlight_rises"].append(item)
+
+    buckets["big_drops"].sort(key=lambda item: item["change_pct"])
+    buckets["big_rises"].sort(key=lambda item: item["change_pct"], reverse=True)
+    buckets["warning_drops"].sort(key=lambda item: item["change_pct"])
+    buckets["highlight_rises"].sort(key=lambda item: item["change_pct"], reverse=True)
+    return buckets
+
+
+def build_market_evidence(config: Dict[str, Any], report_date: Optional[date] = None) -> Dict[str, Any]:
+    """Fetch all configured tickers and return a JSON-serializable evidence package."""
+    unique_tickers = collect_unique_tickers(config)
+    history_by_ticker: Dict[str, Optional[list[Dict[str, Any]]]] = {}
+    errors: Dict[str, str] = {}
+
     for ticker in unique_tickers:
         try:
             history_by_ticker[ticker] = fetch_chart_history(ticker)
-        except Exception:
+        except Exception as exc:
             history_by_ticker[ticker] = None
+            errors[ticker] = str(exc)
 
     if not any(history_by_ticker.values()):
         raise RuntimeError("所有股票的行情拉取都失败了，请稍后重试。")
 
     resolved_date = report_date or get_latest_completed_trading_day(history_by_ticker)
 
-    lines = [f"# 美股日报 - {resolved_date.isoformat()}", "", "---", ""]
-
-    indices_data = []
+    index_snapshots = []
     for index_item in config.get("indices", []):
-        data = build_stock_snapshot(index_item["ticker"], history_by_ticker.get(index_item["ticker"]), resolved_date)
-        if data:
-            data["name"] = index_item.get("name", index_item["ticker"])
-            indices_data.append(data)
-    lines.append(generate_market_overview(indices_data, show_5day_trend))
+        snapshot = build_stock_snapshot(index_item["ticker"], history_by_ticker.get(index_item["ticker"]), resolved_date)
+        if snapshot:
+            snapshot["name"] = index_item.get("name", index_item["ticker"])
+        index_snapshots.append({"ticker": index_item["ticker"], "snapshot": snapshot})
 
-    all_stocks_data: Dict[str, Dict[str, Any]] = {}
-    groups_data: Dict[str, list[str]] = {}
-    lines.extend(["## 【目标股票池表现】", ""])
-
+    stock_snapshots: Dict[str, Optional[Dict[str, Any]]] = {}
     for group in config.get("groups", []):
-        group_name = group["name"]
-        groups_data[group_name] = group["stocks"]
-        for ticker in group["stocks"]:
-            if ticker not in all_stocks_data:
-                all_stocks_data[ticker] = build_stock_snapshot(ticker, history_by_ticker.get(ticker), resolved_date)
-        lines.append(generate_group_section(group, all_stocks_data))
+        for ticker in group.get("stocks", []):
+            if ticker not in stock_snapshots:
+                try:
+                    stock_snapshots[ticker] = build_stock_snapshot(ticker, history_by_ticker.get(ticker), resolved_date)
+                except Exception as exc:
+                    stock_snapshots[ticker] = None
+                    errors[ticker] = str(exc)
 
-    lines.append(generate_abnormal_scan(all_stocks_data, config.get("thresholds", {})))
-    lines.append(generate_sector_observation(groups_data, all_stocks_data))
-    lines.append(generate_summary(all_stocks_data))
-
-    if show_volume:
-        lines.extend(["## 【成交量补充】", ""])
-        for ticker, data in all_stocks_data.items():
-            if data:
-                lines.append(f"- {ticker}: {format_volume(data.get('volume'))}")
-        lines.append("")
-
-    return "\n".join(lines), resolved_date.isoformat()
-
-
-def build_output_payload(report: str, report_date: str, config: Dict[str, Any]) -> Dict[str, Any]:
-    """构造 JSON 输出。"""
     return {
-        "type": REPORT_TYPE,
-        "date": report_date,
+        "type": EVIDENCE_TYPE,
+        "date": resolved_date.isoformat(),
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "content": report,
-        "config": config,
+        "config_path": str(DEFAULT_CONFIG_PATH),
+        "thresholds": config.get("thresholds", {}),
+        "indices": index_snapshots,
+        "groups": build_group_evidence(config, stock_snapshots),
+        "abnormal_moves": build_abnormal_evidence(stock_snapshots, config.get("thresholds", {})),
+        "errors": errors,
     }
 
 
 def main() -> None:
-    """CLI 入口。"""
-    parser = argparse.ArgumentParser(description="生成美股日报")
+    parser = argparse.ArgumentParser(description="Fetch structured evidence for a US-market watchlist")
     parser.add_argument("--config", "-c", help="配置文件路径", default=str(DEFAULT_CONFIG_PATH))
-    parser.add_argument("--date", "-d", help="报告日期，格式 YYYY-MM-DD；默认取最近一个已结束交易日", default=None)
-    parser.add_argument("--output", "-o", help="输出文件路径", default=None)
-    parser.add_argument("--json", "-j", action="store_true", help="输出 JSON 格式")
+    parser.add_argument("--date", "-d", help="交易日，格式 YYYY-MM-DD；默认取最近一个已结束交易日")
+    parser.add_argument("--output", "-o", help="输出 JSON 文件路径")
+    parser.add_argument("--json", "-j", action="store_true", help="兼容旧参数；当前默认总是输出 JSON")
     args = parser.parse_args()
 
     config = load_config(args.config)
-    report, report_date = generate_full_report(config, parse_report_date(args.date))
-
-    if args.json:
-        print(json.dumps(build_output_payload(report, report_date, config), ensure_ascii=False, indent=2))
-        return
+    evidence = build_market_evidence(config, parse_report_date(args.date))
+    content = json.dumps(evidence, ensure_ascii=False, indent=2, default=str)
 
     if args.output:
         output_path = Path(args.output).expanduser().resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(report, encoding="utf-8")
-        print(json.dumps({"status": "success", "output": str(output_path), "date": report_date}, ensure_ascii=False))
+        output_path.write_text(content, encoding="utf-8")
+        print(json.dumps({"status": "success", "output": str(output_path), "date": evidence["date"]}, ensure_ascii=False))
         return
 
-    print(report)
+    print(content)
 
 
 if __name__ == "__main__":

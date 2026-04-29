@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-"""
-Fund buy-point analysis orchestrator.
-"""
+"""Build deterministic evidence for fund buy-point analysis."""
 
 from typing import Any, Dict
 
 import pandas as pd
 
 from fund_data_fetcher import FundDataFetcher
-from buy_point_reporting import build_ai_analysis, format_buy_point_report
 from buy_point_rules import (
     analyze_buy_signals,
-    build_suggestion,
+    build_observation_points,
     calculate_risk_levels,
     process_market_data,
     process_nav_data,
@@ -19,7 +16,7 @@ from buy_point_rules import (
 
 
 class BuyPointAnalyzer:
-    """基金买点分析器"""
+    """Fetch fund/market data and evaluate deterministic rule evidence."""
 
     def __init__(self, fetcher: FundDataFetcher):
         self.fetcher = fetcher
@@ -33,9 +30,8 @@ class BuyPointAnalyzer:
             "nav_data": {},
             "market_data": {},
             "buy_signals": {},
-            "risk_levels": {},
-            "suggestion": {},
-            "ai_analysis": "",
+            "reference_levels": {},
+            "observation_points": {},
         }
 
         fund_info = self.fetcher.get_fund_info(ts_code)
@@ -57,15 +53,11 @@ class BuyPointAnalyzer:
         result["nav_data"] = process_nav_data(nav_df)
         result["market_data"] = process_market_data(market_df)
         result["buy_signals"] = analyze_buy_signals(result["nav_data"], result["market_data"])
-        result["risk_levels"] = calculate_risk_levels(result["nav_data"])
-        result["suggestion"] = build_suggestion(result["buy_signals"])
-        result["ai_analysis"] = build_ai_analysis(self.fetcher, nav_df, result)
+        result["reference_levels"] = calculate_risk_levels(result["nav_data"])
+        result["observation_points"] = build_observation_points(result["buy_signals"])
         result["success"] = True
-        result["message"] = "分析完成"
+        result["message"] = "evidence_ready"
         return result
-
-    def format_buy_point_report(self, analysis: Dict[str, Any]) -> str:
-        return format_buy_point_report(self.fetcher, analysis)
 
 
 if __name__ == "__main__":

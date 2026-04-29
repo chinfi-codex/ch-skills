@@ -151,22 +151,23 @@ def evaluate_left_mode(nav_data: Dict[str, Any], market_data: Dict[str, Any]) ->
     passed_count = sum(1 for value in checks.values() if value["passed"])
 
     stage = "条件不足"
-    position_hint = "0%"
+    evidence_level = "none"
     if required_passed and current_ratio <= 0.70:
-        stage = "左侧试仓"
-        position_hint = "25%" if current_ratio > 0.65 else "40%"
+        stage = "左侧折扣证据较强"
+        evidence_level = "high"
     elif required_passed:
-        stage = "左侧观察"
-        position_hint = "10%"
+        stage = "左侧折扣证据初步成立"
+        evidence_level = "medium"
     elif passed_count >= 4:
-        stage = "左侧关注"
+        stage = "左侧证据待确认"
+        evidence_level = "low"
 
     return {
         "checks": checks,
         "required_passed": required_passed,
         "passed_count": passed_count,
         "stage": stage,
-        "position_hint": position_hint,
+        "evidence_level": evidence_level,
         "summary": left_summary(stage),
     }
 
@@ -251,19 +252,20 @@ def evaluate_right_mode(nav_data: Dict[str, Any], market_data: Dict[str, Any]) -
     passed_count = sum(1 for value in checks.values() if value["passed"])
 
     stage = "条件不足"
-    position_hint = "0%"
+    evidence_level = "none"
     if required_passed and RIGHT_PULLBACK_PREFERRED_MIN <= pullback_ratio <= RIGHT_PULLBACK_PREFERRED_MAX:
-        stage = "右侧确认"
-        position_hint = "20%-30%"
+        stage = "右侧突破回踩证据较强"
+        evidence_level = "high"
     elif checks["trend_breakout"]["passed"] and checks["multi_ma_alignment"]["passed"]:
-        stage = "右侧跟踪"
+        stage = "右侧突破证据待确认"
+        evidence_level = "low"
 
     return {
         "checks": checks,
         "required_passed": required_passed,
         "passed_count": passed_count,
         "stage": stage,
-        "position_hint": position_hint,
+        "evidence_level": evidence_level,
         "summary": right_summary(stage),
     }
 
@@ -271,43 +273,37 @@ def evaluate_right_mode(nav_data: Dict[str, Any], market_data: Dict[str, Any]) -
 def evaluate_overall(left_mode: Dict[str, Any], right_mode: Dict[str, Any]) -> Dict[str, Any]:
     if left_mode["required_passed"] and right_mode["required_passed"]:
         return {
-            "dominant_mode": "左侧优先，右侧视为加仓确认",
-            "action": "分批建仓",
-            "position_hint": "左侧 10%-25%，右侧加仓至总仓 30%-40%",
-            "rationale": "双模式同时满足时，优先保留左侧更低成本，右侧只作为趋势确认后的加仓触发。",
+            "dominant_pattern": "左侧折扣 + 右侧突破回踩",
+            "evidence_level": "high",
+            "rationale": "折扣、时间、趋势突破和回踩条件同时满足，规则证据较完整。",
         }
-    if right_mode["stage"] == "右侧确认":
+    if right_mode["evidence_level"] == "high":
         return {
-            "dominant_mode": "右侧",
-            "action": "分批建仓",
-            "position_hint": right_mode["position_hint"],
-            "rationale": "净值完成突破并处于健康回踩窗口，市场趋势背景同步配合。",
+            "dominant_pattern": "右侧突破回踩",
+            "evidence_level": "high",
+            "rationale": "净值完成突破并处于回踩窗口，市场趋势背景同步配合。",
         }
-    if left_mode["stage"] == "左侧试仓":
+    if left_mode["evidence_level"] == "high":
         return {
-            "dominant_mode": "左侧",
-            "action": "试仓",
-            "position_hint": left_mode["position_hint"],
-            "rationale": "折扣、时间和市场衰竭条件已经基本成立，但仍需继续观察趋势修复。",
+            "dominant_pattern": "左侧折扣",
+            "evidence_level": "high",
+            "rationale": "折扣、调整时间和市场衰竭条件基本成立，但仍需观察趋势修复。",
         }
-    if right_mode["stage"] == "右侧跟踪":
+    if right_mode["evidence_level"] == "low":
         return {
-            "dominant_mode": "右侧",
-            "action": "跟踪",
-            "position_hint": "0%-10%",
-            "rationale": "趋势突破已经出现，但回踩和市场确认还不够完整。",
+            "dominant_pattern": "右侧突破待确认",
+            "evidence_level": "low",
+            "rationale": "趋势突破已经出现，但回踩和市场确认还不完整。",
         }
-    if left_mode["stage"] in {"左侧观察", "左侧关注"}:
+    if left_mode["evidence_level"] in {"medium", "low"}:
         return {
-            "dominant_mode": "左侧",
-            "action": "等待",
-            "position_hint": left_mode["position_hint"],
-            "rationale": "估值折扣逐步接近，但关键企稳信号还未完全落地。",
+            "dominant_pattern": "左侧折扣待确认",
+            "evidence_level": left_mode["evidence_level"],
+            "rationale": "折扣或调整条件部分接近，但关键企稳信号还未完全落地。",
         }
     return {
-        "dominant_mode": "双模式均不成立",
-        "action": "放弃",
-        "position_hint": "0%",
+        "dominant_pattern": "双模式均不成立",
+        "evidence_level": "none",
         "rationale": "当前既没有足够的左侧折扣，也没有有效的右侧趋势确认。",
     }
 
@@ -320,15 +316,14 @@ def calculate_risk_levels(nav_data: Dict[str, Any]) -> Dict[str, Any]:
     left_stop = recent_high * LEFT_STOP_RATIO if recent_high > 0 else current_nav * LEFT_STOP_RATIO
     right_stop = breakout_floor * RIGHT_BREAKDOWN_BUFFER if breakout_floor > 0 else ma20
     return {
-        "left_stop": left_stop,
-        "right_stop": right_stop,
-        "take_profit": recent_high * 1.05 if recent_high > 0 else None,
-        "trailing_take_profit": ma20,
+        "left_breakdown_reference": left_stop,
+        "right_breakdown_reference": right_stop,
+        "recent_high_extension_reference": recent_high * 1.05 if recent_high > 0 else None,
+        "ma20_reference": ma20,
     }
 
 
-def build_suggestion(signals: Dict[str, Any]) -> Dict[str, Any]:
-    overall = signals["overall"]
+def build_observation_points(signals: Dict[str, Any]) -> Dict[str, Any]:
     left_checks = signals["left_mode"]["checks"]
     right_checks = signals["right_mode"]["checks"]
     waiting_for: List[str] = []
@@ -342,11 +337,7 @@ def build_suggestion(signals: Dict[str, Any]) -> Dict[str, Any]:
         waiting_for.append("回踩进入突破后第 3-8 个交易日窗口")
     if not right_checks["market_trend_background"]["passed"]:
         waiting_for.append("上证重新站稳 20 日线并扩大 MACD 红柱")
-    return {
-        "action": overall["action"],
-        "position_hint": overall["position_hint"],
-        "waiting_for": waiting_for,
-    }
+    return {"next_observations": waiting_for}
 
 
 def detect_recent_breakout(nav_series: pd.Series) -> Dict[str, Any]:
@@ -494,19 +485,19 @@ def bullish_alignment(
 
 
 def left_summary(stage: str) -> str:
-    if stage == "左侧试仓":
-        return "折扣、时间和市场衰竭条件基本满足，已进入左侧试仓区。"
-    if stage == "左侧观察":
-        return "已接近左侧关注区，但仍需等待更明确的企稳确认。"
-    if stage == "左侧关注":
-        return "部分左侧条件成立，位置开始值得关注，但性价比还不够完整。"
+    if stage == "左侧折扣证据较强":
+        return "折扣、时间和市场衰竭条件基本满足，左侧规则证据较完整。"
+    if stage == "左侧折扣证据初步成立":
+        return "已接近左侧折扣观察区，但仍需等待更明确的企稳确认。"
+    if stage == "左侧证据待确认":
+        return "部分左侧条件成立，但折扣、时间或市场衰竭证据还不完整。"
     return "左侧条件不足，折扣或市场衰竭信号未形成闭环。"
 
 
 def right_summary(stage: str) -> str:
-    if stage == "右侧确认":
+    if stage == "右侧突破回踩证据较强":
         return "突破、回踩和市场趋势背景已形成较完整的右侧确认结构。"
-    if stage == "右侧跟踪":
+    if stage == "右侧突破证据待确认":
         return "趋势突破存在，但回踩幅度、时间窗或市场确认尚未完成。"
     return "右侧条件不足，当前仍不是高质量的突破回踩结构。"
 

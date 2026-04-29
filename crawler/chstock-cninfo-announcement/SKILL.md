@@ -1,135 +1,154 @@
 ---
 name: cninfo-announcement-search
-description: 查询巨潮资讯网公告，支持按 tabtype、日期区间、stock、searchkey、category、trade 等参数抓取公告，并对 fulltext 公告按内置 cninfo rules 做分类和过滤。用户提到“巨潮公告”“cninfo 公告”“查公告”“按日期查某只股票公告”“按规则过滤公告”“问询回复/减持/增持/监管函公告筛选”等场景时，应优先使用此 skill。
-trigger_patterns:
-  - "查询巨潮公告"
-  - "按日期查 cninfo 公告"
-  - "查 {stock} 的公告"
-  - "按规则过滤巨潮公告"
-  - "查问询回复/减持/增持/监管函公告"
+description: 当用户要查询巨潮资讯网公告、按日期查某只 A 股公告、用 cninfo/fulltext/relation 参数抓公告、筛选问询回复/监管函/增持/减持/回购/股权激励/业绩快报/重大合作公告，或需要把公告结果导出 JSON 作为后续分析证据时使用此 skill。脚本只抓取公开公告元数据并按标题规则打标签或过滤，模型负责判断公告重要性、组织摘要和说明不确定性。不用于读取 PDF 正文、法律意见判断、公告真实性背书或投资建议。
 ---
 
 # CNInfo Announcement Search
 
-用于查询巨潮资讯网历史公告，并按规则做分类与过滤。
+## 目标
 
-## 适用场景
+1. **做什么**：查询巨潮资讯网公告列表，按标题规则补充分类标签，输出 JSON 证据。
+2. **不做什么**：不读取 PDF 正文、不生成完整公告分析报告、不对公告做法律判断、不替用户下投资结论。
+3. **给谁用**：面向需要快速定位 A 股公告、批量筛选事件类型、为后续研究准备公告证据的模型和研究者。
 
-- 查询某只股票在指定日期区间内的公告
-- 指定 `tabtype=fulltext` 或 `tabtype=relation` 抓取公告
-- 通过 `searchkey`、`category`、`trade` 缩小范围
-- 对 `fulltext` 公告按标题规则分类
-- 默认排除异常波动问询回复、减持进展等低价值噪声公告
+## 适用场景与边界
 
-## 命令语法
+| 适用 | 不适用 |
+|---|---|
+| 查某股票某日期区间公告 | 逐页阅读 PDF 正文 |
+| 按关键词或公告类别筛选 | 判断公告法律效力 |
+| 标记问询回复、监管函、增减持、回购等类型 | 生成投资建议 |
+| 导出公告 JSON 供后续分析 | 替代交易所/公司正式披露核验 |
+
+规则过滤只基于公告标题，不能替代正文审阅。若用户需要公告正文，先返回 `adjunct_url`，再由其他 PDF/网页读取流程处理。
+
+## 领域方法论
+
+公告检索的核心是“先提高召回，再控制噪声”。
+
+1. **查询收窄优先**：股票代码、日期、关键词、category、trade 能越早限定越好，避免结果过宽。
+2. **标题规则只做初筛**：标题可以识别事件类型，但不能判断事件影响大小。
+3. **默认降噪**：异常波动问询回复、减持进展/时间过半等低信息密度公告默认排除；用户明确要求时保留。
+4. **重要性由模型二次判断**：重大合作、监管函、业绩快报等只是标签，模型要结合公司、日期、公告类型和后续任务判断优先级。
+5. **保留可追溯字段**：输出必须保留公告时间、标题、股票代码、公告链接和 rule_id。
+
+## 工作流程
+
+1. **解析查询意图**
+   - 识别股票、日期范围、关键词、公告类型和是否保留默认排除项。
+   - 产出：脚本参数。
+
+2. **运行公告抓取**
+   - 使用 `scripts/cninfo_announcement_search.py`。
+   - 输出 JSON，包含 query、统计、announcements。
+   - 产出：公告证据包。
+
+3. **模型筛选与解释**
+   - 对结果按 `category/subcategory/tags/excluded` 分组。
+   - 明确哪些公告只是标题命中，哪些需要进一步读正文。
+   - 产出：用户可读摘要或下一步研究清单。
+
+## 数据获取（脚本抓手）
+
+脚本：`scripts/cninfo_announcement_search.py`
+
+基础命令：
 
 ```bash
-cd cninfo-announcement-search
+cd crawler/chstock-cninfo-announcement
 python scripts/cninfo_announcement_search.py --tabtype fulltext --date 2026-03-01~2026-03-28 --stock 300017
 ```
 
 按标题关键词搜索：
 
 ```bash
-cd cninfo-announcement-search
 python scripts/cninfo_announcement_search.py --tabtype fulltext --date 2026-03-01~2026-03-28 --searchkey 回购
 ```
 
-指定 `code,orgId`：
+保留默认排除项：
 
 ```bash
-cd cninfo-announcement-search
-python scripts/cninfo_announcement_search.py --tabtype fulltext --date 2026-03-01~2026-03-28 --stock 300017,9900008387
-```
-
-保留被规则排除的公告：
-
-```bash
-cd cninfo-announcement-search
 python scripts/cninfo_announcement_search.py --tabtype fulltext --date 2026-03-01~2026-03-28 --stock 300017 --include-excluded
 ```
 
-写入 JSON 文件：
+写入 JSON：
 
 ```bash
-cd cninfo-announcement-search
-python scripts/cninfo_announcement_search.py --tabtype fulltext --date 2026-03-01~2026-03-28 --stock 300017 --output data/cninfo_300017.json
+python scripts/cninfo_announcement_search.py --tabtype fulltext --date 2026-03-01~2026-03-28 --stock 300017 --output outputs/cninfo_300017.json
 ```
 
-## 参数说明
+参数：
 
 - `--tabtype`: `fulltext` 或 `relation`
-- `--date`: 日期范围，格式 `YYYY-MM-DD~YYYY-MM-DD`
-- `--stock`: 股票代码，支持 `300017` 或 `300017,9900008387`
+- `--date`: `YYYY-MM-DD~YYYY-MM-DD`
+- `--stock`: `300017` 或 `300017,9900008387`
 - `--searchkey`: 标题关键词
-- `--category`: 巨潮原始分类参数，例如 `category_ndbg_szsh`
+- `--category`: 巨潮原始分类参数
 - `--trade`: 行业参数
-- `--page-num`: 页码，默认 `1`
-- `--page-size`: 每页条数，默认 `30`
-- `--include-excluded`: 保留 rules 标记为 `excluded=true` 的公告
-- `--disable-orgid-resolve`: 当 `stock` 仅给代码时，不自动补全 `orgId`
-- `--output`: 输出 JSON 文件路径
+- `--page-num` / `--page-size`
+- `--include-excluded`
+- `--disable-orgid-resolve`
+- `--output`
 
-## 输出格式
+依赖：
 
-输出为 JSON，对每条公告补充以下字段：
+```bash
+pip install requests
+```
 
-- `announcement_time`
-- `sec_name`
-- `sec_code`
-- `title`
-- `adjunct_url`
-- `announcement_id`
-- `category`
-- `subcategory`
-- `rule_id`
-- `excluded`
-- `exclude_reason`
-- `tags`
+示例输出见 `examples/sample_output.json`。
 
-顶层结果包含：
+## 输出规范
 
-- `query`
-- `total_pages`
-- `total_records`
-- `filtered_count`
-- `announcements`
+当用户要“查结果”，输出精简列表：
 
-## 规则过滤说明
+```markdown
+**查询条件**
+[stock/date/searchkey/category]
 
-当 `tabtype=fulltext` 时，会按标题规则分类：
+**结果概览**
+- 返回公告数：...
+- 过滤后公告数：...
+- 主要类型：...
 
-- 问询回复
-- 监管函
-- 员工持股计划
-- 特定对象发行
-- 股权激励
-- 增持
-- 减持
-- 重大合作/投资项目
-- 业绩快报
+**重点公告**
+| 时间 | 股票 | 标题 | 类型 | 链接 |
+|---|---|---|---|---|
 
-默认排除：
+**过滤/噪声说明**
+[默认排除了哪些类别；如 include-excluded 则说明保留]
+```
 
-- 异常波动类问询回复
-- 减持进展、减持完成、时间过半等进度类公告
+当用户要“后续分析”，只把公告列表作为证据，不要凭标题直接写影响结论。需要正文时明确提示继续读取公告 PDF。
 
-当 `tabtype=relation` 时，仅做基础标记，不做同样的标题规则过滤。
+## 示例
 
-## 依赖
+### Input
 
-- Python 3.9+
-- `requests`
+> 查一下 300017 三月以来有没有回购、减持、监管函这类公告。
 
-## 环境变量说明
+### 执行
 
-本 skill 不强依赖额外环境变量。
+```bash
+python scripts/cninfo_announcement_search.py --tabtype fulltext --date 2026-03-01~2026-03-31 --stock 300017 --searchkey 回购
+```
 
-- 发布到 ClawHub 时需要 `CLAWHUB_TOKEN`
-- 若后续扩展联网搜索，可按仓库规范使用环境变量保存密钥
+如需覆盖多类关键词，分多次查询或放宽 `searchkey` 后由规则标签过滤。
 
-## 注意事项
+### Output 摘要
 
-- `stock` 传入纯股票代码时，脚本默认会先查询 `orgId`，再拼成 `code,orgId`
-- 规则过滤只基于公告标题，不读取 PDF 正文
-- 如果需要更细的行业或公告类型筛选，优先通过 `category`、`trade`、`searchkey` 先收窄结果
+```markdown
+**查询条件**
+- 股票：300017
+- 日期：2026-03-01 至 2026-03-31
+
+**结果概览**
+共返回 8 条公告，规则识别出 1 条回购相关、1 条监管类公告。
+
+**重点公告**
+| 时间 | 股票 | 标题 | 类型 | 链接 |
+|---|---|---|---|---|
+| 2026-03-12 | 300017 | 关于回购股份进展的公告 | 回购 | ... |
+
+标题规则只能说明公告类型，具体影响需继续读取公告正文。
+```

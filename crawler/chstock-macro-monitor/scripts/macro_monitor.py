@@ -7,6 +7,8 @@
 """
 
 import io
+import argparse
+import json
 import logging
 import os
 import sys
@@ -449,9 +451,64 @@ class MacroDataMonitor:
         return results
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Fetch macro and market evidence as JSON")
+    parser.add_argument(
+        "dataset",
+        nargs="?",
+        default="all",
+        choices=[
+            "all",
+            "market",
+            "backup-market",
+            "china-macro",
+            "cpi",
+            "ppi",
+            "soci",
+            "pmi",
+            "fx",
+            "us-rates",
+            "crypto",
+            "energy",
+        ],
+    )
+    parser.add_argument("--use-backup", action="store_true", help="Force Stooq backup for market data")
+    return parser
+
+
+def fetch_dataset(dataset: str, use_backup: bool = False) -> Dict:
+    monitor = MacroDataMonitor()
+    if dataset == "all":
+        return monitor.get_all_data(use_backup=use_backup)
+    if dataset == "market":
+        return monitor.fetch_market_data(use_backup=use_backup)
+    if dataset == "backup-market":
+        return {"sources": {"stooq_backup": "OK"}, "data": monitor.fetch_backup_market_data()}
+    if dataset == "china-macro":
+        return {"sources": {"tushare": "OK" if monitor.tushare_client.is_configured() else "MISSING_CONFIG"}, "data": monitor.fetch_china_macro_data()}
+    if dataset == "cpi":
+        return {"data": monitor.fetch_china_cpi_data()}
+    if dataset == "ppi":
+        return {"data": monitor.fetch_china_ppi_data()}
+    if dataset == "soci":
+        return {"data": monitor.fetch_china_soci_data()}
+    if dataset == "pmi":
+        return {"data": monitor.fetch_china_pmi_data()}
+    if dataset == "fx":
+        return {"data": monitor.fetch_fx_data()}
+    if dataset == "us-rates":
+        return {"data": monitor.fetch_us_rates_data()}
+    if dataset == "crypto":
+        return {"data": monitor.fetch_crypto_data()}
+    if dataset == "energy":
+        return {"data": monitor.fetch_energy_data()}
+    raise ValueError(f"Unsupported dataset: {dataset}")
+
+
 if __name__ == "__main__":
     if sys.platform == "win32":
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-    monitor = MacroDataMonitor()
-    print(monitor.get_all_data())
+    args = build_parser().parse_args()
+    payload = fetch_dataset(args.dataset, use_backup=args.use_backup)
+    print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))

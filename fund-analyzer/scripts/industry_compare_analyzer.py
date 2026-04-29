@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -19,16 +19,8 @@ from industry_compare_metrics import (
     annual_return,
     downside_protection,
     drawdown_repair_days,
-    fmt_aum_total,
-    fmt_days,
-    fmt_focus,
-    fmt_num,
-    fmt_pct,
-    fmt_percentile,
-    format_date,
     max_drawdown,
 )
-from industry_compare_reporting import format_report
 
 TRADING_DAYS = 252
 RISK_FREE_RATE = 0.015
@@ -69,18 +61,6 @@ INDUSTRY_ALIASES: Dict[str, Dict[str, Any]] = {
     },
 }
 
-PROHIBITED_TERMS = [
-    "买入",
-    "卖出",
-    "持有",
-    "加仓",
-    "减仓",
-    "高位",
-    "低位",
-    "择时",
-]
-
-
 @dataclass
 class IndustryContext:
     input_name: str
@@ -97,20 +77,89 @@ class IndustryCompareAnalyzer:
         self._manager_cache: Dict[str, Optional[pd.DataFrame]] = {}
         self._nav_cache: Dict[str, Optional[pd.DataFrame]] = {}
 
-    def compare(self, industry_term: str) -> str:
+    def compare(self, industry_term: str) -> Dict[str, Any]:
         context = self._resolve_industry(industry_term)
         if context is None:
-            return "未识别行业词，请使用支持的行业名称或别名。"
+            return {
+                "success": False,
+                "message": "unrecognized_industry",
+                "input": industry_term,
+                "supported_aliases": {
+                    key: payload["aliases"] for key, payload in INDUSTRY_ALIASES.items()
+                },
+            }
 
         candidates = self._screen_funds(context)
         if len(candidates) < MIN_FUND_COUNT:
-            return "该行业可选基金不足"
+            return {
+                "success": False,
+                "message": "insufficient_candidates",
+                "input": industry_term,
+                "candidate_count": len(candidates),
+                "min_required": MIN_FUND_COUNT,
+            }
 
         selected = candidates[:MIN_FUND_COUNT]
         metrics = self._build_comparison_metrics(context, selected)
         if metrics is None:
-            return "该行业可选基金不足"
-        return format_report(context, metrics, PROHIBITED_TERMS)
+            return {
+                "success": False,
+                "message": "insufficient_metric_data",
+                "input": industry_term,
+                "candidate_count": len(selected),
+            }
+        return self._to_evidence_payload(context, metrics)
+
+    def _to_evidence_payload(self, context: IndustryContext, payload: Dict[str, Any]) -> Dict[str, Any]:
+        funds = []
+        for fund in payload["funds"]:
+            manager = fund.get("manager")
+            manager_payload = {}
+            if manager is not None:
+                manager_payload = {
+                    "name": clean_value(manager.get("name")),
+                    "begin_date": clean_value(manager.get("begin_date")),
+                    "resume": clean_value(manager.get("resume")),
+                }
+            funds.append(
+                {
+                    "ts_code": fund["ts_code"],
+                    "name": fund["name"],
+                    "aum_yi": clean_value(fund.get("aum")),
+                    "manager": manager_payload,
+                    "industry_alpha": clean_value(fund.get("industry_alpha")),
+                    "market_excess": clean_value(fund.get("market_excess")),
+                    "excess_stability": clean_value(fund.get("excess_stability")),
+                    "industry_win_rate": clean_value(fund.get("industry_win_rate")),
+                    "annual_return": clean_value(fund.get("annual_return")),
+                    "sharpe": clean_value(fund.get("sharpe_calc")),
+                    "calmar": clean_value(fund.get("calmar")),
+                    "max_drawdown": clean_value(fund.get("max_drawdown")),
+                    "repair_days": clean_value(fund.get("repair_days")),
+                    "downside_protection": clean_value(fund.get("downside_protection")),
+                    "manager_metrics": clean_value(fund.get("manager_metrics")),
+                }
+            )
+        return {
+            "success": True,
+            "type": "fund_industry_compare_evidence",
+            "input": context.input_name,
+            "industry_name": context.canonical_name,
+            "industry_index": context.index_code,
+            "date": payload["date"],
+            "screening_constraints": {
+                "min_fund_count": MIN_FUND_COUNT,
+                "min_found_days": MIN_FOUND_DAYS,
+                "aum_range_yi": [MIN_AUM, MAX_AUM],
+                "trading_days": TRADING_DAYS,
+            },
+            "funds": funds,
+            "industry_benchmarks": {
+                "industry_drawdown": clean_value(payload.get("industry_drawdown")),
+                "industry_repair_days": clean_value(payload.get("industry_repair")),
+            },
+            "rankings": clean_value(payload.get("rankings")),
+        }
 
     def _resolve_industry(self, industry_term: str) -> Optional[IndustryContext]:
         query = industry_term.strip().lower()
@@ -555,3 +604,30 @@ class IndustryCompareAnalyzer:
             return 0.0
         begin_dt = pd.to_datetime(begin_date)
         return max((pd.Timestamp(datetime.now()) - begin_dt).days / 365.25, 0.0)
+
+
+def clean_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): clean_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [clean_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [clean_value(item) for item in value]
+    if isinstance(value, pd.Series):
+        return clean_value(value.to_dict())
+    if isinstance(value, pd.Timestamp):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(value, np.generic):
+        return clean_value(value.item())
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value

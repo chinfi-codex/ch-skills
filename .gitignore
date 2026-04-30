@@ -12,3 +12,10 @@ evals/
 *.key
 id_rsa
 id_ed25519
+
+__pycache__/
+*.py[cod]
+stock-skills/a-stock-daily-market-sense/data/cache/
+stock-skills/a-stock-daily-market-sense/reports/evidence_*
+stock-skills/a-stock-daily-market-sense/reports/report_context_*.json
+stock-skills/a-stock-daily-market-sense/reports/module_context_*/

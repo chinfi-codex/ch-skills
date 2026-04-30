@@ -1,224 +1,39 @@
 ---
 name: tushare-daily-market-sense
-description: 基于 Tushare Pro A 股 daily 日线数据生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板指数趋势、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、低位放量异动筛选、指数背离个股分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先用上证与创业板 K 线、量价、均线、支撑压力和情绪历史判断盘面趋势，再以成交额为首要指标识别赚钱效应、亏钱效应、低位异动和抗跌股。默认产出研报，不导出 CSV/Parquet，不提供买卖建议；不按申万、同花顺、东方财富等现成行业/概念口径分组。
-version: 1.7.0
+description: 基于 Tushare Pro A 股 daily 日线数据生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板指数趋势、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、低位放量异动筛选、指数背离/抗跌股分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
+version: 1.8.0
 ---
 
 # Tushare Daily Market Sense
 
-## 核心理念：成交额优先
+## 目标
 
-A 股研究中，**成交额是首要指标，优先于涨跌幅、优先于换手率、优先于市值**。本 skill 的所有筛选、分组、定性规则都源自这条原则。
+基于 Tushare 日线、指数、成交额与本地情绪历史，为 A 股盘后复盘生成结构化研报：盘面趋势、成交额集中度、赚钱效应与上涨主线、爆量下跌风险、低位放量异动、弱指数环境下的抗跌股。
 
-**为什么是成交额：**
+不做单股基本面深度研究、港股/美股/基金/期货/加密分析、分钟级交易决策、自动下单、组合优化或买卖建议。脚本只负责取数、计算、筛选、切分 JSON；主题归纳、风险措辞和研报写作由模型完成。
 
-1. **资金行为先于消息公开**。在 A 股的信息扩散结构里，资金的进出常常领先于公开新闻、研报、公告。涨跌幅是结果，成交额变化是资金正在动作的痕迹。看涨跌幅是看"已经发生了什么"，看成交额是看"正在发生什么"。
-2. **成交额变化可以独立于价格被验证**。同样涨 5%，1 亿成交和 10 亿成交是完全不同的事件——前者可能是浮筹自动生成的脉冲，后者是有体量资金在建仓。这种区分用单看价格根本看不出来。
-3. **顶部与底部的异常放量是最值得关注的信号**。顶部爆量往往意味着资金在派发与撤离，底部爆量往往意味着资金在建仓。这两类信号的研判价值显著高于趋势中的均匀放量。
+## 核心理念
 
-**这条理念在 skill 各模块中的具体落地：**
+成交额优先。所有强弱判断都要有成交额证据：上涨主线按成交额厚度确认，爆量下跌按放量异常与跌幅强度识别，低位异动按放量触发与触发后成交额行为分类，抗跌股要求有至少 1 亿成交额证明资金参与。
 
-- 第 3 模块**赚钱效应**：候选池用涨幅 + 成交额双阈值筛选，但**排序按成交额降序**（不是按涨幅降序）。主线评级的首要规则是"组成交额占总成交额比 ≥ 30%"。
-- 第 4 模块**爆量下跌**：使用 `decline_intensity = 放量倍数 × |跌幅|` 排序，把"放量异常"提到与"跌幅深度"同等权重。
-- 第 5 模块**低位放量异动**：3 倍放量是触发的硬门槛；触发日之后的"持续换手"或"缩量企稳"由成交量行为而非价格行为决定情形归类。
-- 第 6 模块**指数背离**：只输出"该弱不弱就是强"的逆势上涨候选，不输出逆势下跌；并要求候选有真实成交额（≥ 1 亿）证明资金参与。
-
-**写作纪律**：研报中所有强弱判断都要有成交额数字支撑。出现"该方向较强"但不给成交额证据的句子，视为方法论失败。
-
-## 这个 skill 解决什么
-
-帮助模型像盘后研究员一样，用数据证据回答四个核心问题：
-
-1. **赚钱效应在哪里？** 哪些股票今天真的涨了，资金真的进了。
-2. **真正的主线在哪里？** 赚钱方向是清晰的市场主线，还是单纯的资金轮动？
-3. **风险在哪里？** 哪些股票在爆量下跌，可能预示什么风险叙事？
-4. **结构性机会在哪里？** 哪些股票在低位放量启动？指数走弱时哪些股票"该弱不弱"？
-
-## 适用与不适用
-
-适用：每日盘后复盘、赚钱效应/主线识别、爆量下跌风险跟踪、低位放量观察、指数走弱时的逆势抗跌股筛选、历史某日复盘或 D+N 后验。
-
-不适用：单股深度基本面/财务分析（用个股分析 skill）、港股美股基金期货加密资产、分钟级或实时交易决策、自动下单和组合优化。
-
-## 领域方法论
-
-### 1. 先看盘面趋势，再看主线
-
-第 1 模块只回答三件事：上证指数趋势、创业板指数趋势、盘面情绪趋势。它不分析科创板，不分析风格指数，也不引入融资、创业板 PE、外围资产。这样做是为了让开篇先判断"大盘环境是否支持主线扩散"，再进入个股赚钱效应。
-
-**指数趋势分析框架**：只看 `market_trend.indices.shanghai` 与 `market_trend.indices.chinext`。每个指数按四个维度判断：
-
-1. **趋势阶段**：结合 20/60 日收益、收盘价相对 MA20/MA60、MA20 与 MA60 关系，判断上升、回调、横盘、破位或破位修复。不要把单日涨跌写成趋势。
-2. **量价配合**：用 `volume_price.price_volume_state_hint` 和成交额/成交量相对 20 日均值判断上涨放量、上涨缩量、下跌放量、下跌缩量。指数上涨但缩量，写"反弹质量待确认"；指数下跌且放量，写"抛压释放/风险放大"。
-3. **均线位置**：用 `moving_averages` 判断收盘价相对 MA5/20/60，以及短中期均线是否多头、空头或纠缠。指数站上 MA20 但仍低于 MA60，属于修复，不直接写成强趋势。
-4. **支撑压力**：用 `levels.low_20d/low_60d/high_20d/high_60d` 与 MA20/MA60 给出关键支撑压力候选。只写离当前价格最近、最有解释力的 1-2 个位置。
-
-**情绪趋势分析框架**：只看 `market_trend.sentiment`。按三维温度判断：
-
-1. **量能温度**：看成交额相对 5/20 日均值与 `temperature_hints.volume`，区分明显缩量、温和缩量、平稳、温和放量、明显放量。
-2. **情绪温度**：看活跃度、涨停/跌停比、涨停跌停数量变化与 `temperature_hints.sentiment`，判断冰点、弱修复、中性、偏热、过热。
-3. **广度温度**：看上涨占比、上涨/下跌家数 5 日趋势与 `temperature_hints.breadth`，判断普涨、普跌、分化或修复。
-
-盘面趋势结论必须写出指数与情绪的关系：**共振**（指数和情绪同向）、**背离**（指数强但情绪弱，或指数弱但情绪修复）、或**分化**（上证与创业板方向不一致）。不要直接从涨幅榜命名主线。涨幅榜只是样本，主线需要共同特征、持续性和扩散证据。
-
-### 2. 主题主线由模型归纳，不套现成口径
-
-不按申万、同花顺、东方财富等标签分组，也不把脚本返回的股票名称机械拼成概念。做法：
-
-1. 从候选池里找共同点：业务、产品、产业链位置、事件刺激、量价结构、是否同日/连续联动。
-2. 临时命名主线，例如"光芯片/光通信链"、"端侧 AI 设备链"、"机器人零部件链"。
-3. 每条主线必须给出代表股票、共同业务事实、强度证据、持续性证据、反证。
-4. 共同性不足时明确写"暂不构成主线"。
-
-如果仅凭股票名称无法判断业务共同点，可以补查公司简介、主营、公告或公开资料；但这些只用于解释共同特征，不作为预设行业分组。
-
-### 3. 赚钱效应（含上涨主线）：先筛、再分组、再判主线
-
-按"先筛、再分组、再判主线"三步走，避免直接从涨幅榜命名主线。
-
-**第一步：硬阈值筛选候选池**
-
-候选池由脚本 `money_effect_samples` 输出，使用两条硬阈值：
-
-- 当日涨幅 `pct_chg >= 7%`（默认，可由 `--money-pct-threshold` 调整）。
-- 当日成交额 `amount >= 2 亿元`（默认，可由 `--money-amount-threshold` 调整）。
-
-候选股**按成交额降序排列**（不是按涨幅）。这呼应"成交额优先"原则。
-
-**第二步：模型按业务事实自行分组**
-
-候选池里的股票必须由模型自行归纳分组，组号用"组1 / 组2 / 组3"或临时主题名。分组依据：业务事实、产品环节、产业链位置、事件催化、量价同步性。**不允许**套用申万/同花顺/东方财富现成行业概念。
-
-每组至少给出：组名、代表股票（按组内成交额前 3）、共同业务事实、入选股票数、组内合计成交额、占赚钱效应总成交额比。少于 3 只股票不构成一个组，列入"其他/孤立强势股"。
-
-**第三步：用成交额厚度判定主线**
-
-| 评级 | 判定规则（同时满足） |
-|---|---|
-| ★★★ 主线 | **组成交额占比 ≥ 30%** + 5 日涨幅中位 > 0 + 5 日相对指数超额中位 > 0 + 连续放量天数中位 ≥ 2 |
-| ★★ 潜在主线 | 满足上述 4 条中的 3 条 |
-| ★ 局部异动/资金轮动 | 满足 ≤ 2 条，或候选股票数 < 3 |
-
-成交额占比是首要门槛。若候选总数 < 20 只、最大组占比 < 20%、各组都缺少持续性证据，要明确定性为**"今日属于资金轮动而非清晰主线"**。
-
-### 4. 亏钱效应：聚焦"爆量下跌"
-
-亏钱效应不是按跌幅排序，而是聚焦**爆量下跌**——大跌叠加放量异常。在"成交额优先"前提下，爆量是顶部派发的核心证据，比跌幅本身更重要。
-
-候选池由脚本 `volume_decline_samples` 输出，使用三条硬阈值：
-
-- 当日跌幅 `pct_chg <= -3%`（默认）。
-- 放量倍数 `amount_ratio_20d >= 2.0`（默认）。
-- 当日成交额 `amount >= 1 亿元`（默认）。
-
-候选股按 `decline_intensity = amount_ratio_20d × |pct_chg|` 降序排列。这个排序口径同时奖励"放量异常"和"跌幅深"。
-
-风险类型分组由模型自行归纳：
-
-- **高位抱团瓦解**：距 120 日高点回撤浅（≥ -15%）+ 前 20 日累计涨幅大 + 当日放量崩塌。顶部派发典型形态。
-- **业绩雷/事件冲击**：单日重挫但 5 日跌幅未必大，通常伴随成交额跳升至 3 倍以上。
-- **退潮补跌**：5 日已累计跌幅明显，今日继续放量下跌，前期是某条主线的成员。
-- **ST/风险股出清**：小市值 + 名称含 ST/退 + 接近跌停。
-- **流动性杀跌**：与上述任何一类都不匹配，普跌环境中的放量个股，需标注"无清晰风险叙事"。
-
-不要把"小幅下跌+正常成交"列为爆量下跌。
-
-**风险传导提示**：如果某条 ★★★ 主线代表股出现在爆量下跌候选池里（典型为"退潮补跌"或"高位抱团瓦解"），是该主线见顶的早期信号，必须互相标注。
-
-### 5. 低位放量异动：双轨低位 + 严格放量 + 三情形分类
-
-旧版的"低位"判定过于模糊（仅靠回撤幅度），本版升级为**双轨低位 + 严格放量阈值 + 触发日之后的三情形分类**。
-
-候选池由脚本 `low_position_volume_anomaly_samples` 输出。新版输出分为**基础观察池**与**高质量池 A/B**：观察池用于覆盖低位放量异动，高质量池用于在报告中优先展示更有 10 日内延续潜力的强信号。
-
-**第一步：判定"低位"（A 轨或 B 轨任一满足）**
-
-- **A 轨：历史底部区域**——`close_position_120d <= 0.20`，即收盘价在 120 日 [低-高] 区间的底部 20% 以内。这对应"月线底部区域"的近似量化。
-- **B 轨：深度回撤后走平**——`drawdown_120_high <= -35%` AND `close_cv_10d <= 0.03`。前者要求距 120 日高点回撤至少 35%，后者要求最近 10 日 close 的变异系数（标准差/均值）不超过 3%，即"缩量走平 1-2 周"的近似量化。
-
-模型在研报中可标注每只候选触发的是 A 轨还是 B 轨（脚本的 `trigger_low_track` 字段）。
-
-**第二步：判定"放量异动"触发日**
-
-某交易日同时满足以下条件，视为"触发日"：
-
-- `amount_ratio_15d >= 3.0`：当日成交量相对前 10-15 日均值 ≥ 3 倍。
-- `pct_chg >= 7%`：当日涨幅至少 7%。
-- 当日满足"低位"判定（A 轨或 B 轨）。
-
-脚本回看从 D 日起向前 5 个交易日（含 D 日），找最近一个触发日。若触发日不是 D 日，而是 D-N 的历史触发，则 D 日继续展示的额外条件是：**D 日收盘价不得跌破 5 日线**（`today_close >= today_close_ma5`）。跌破 5 日线视为触发后的结构失败，候选不再展示。
-
-**高质量池 A：深回撤强启动**
-
-同时满足：`drawdown_120_high <= -45%`、`amount_ratio_15d >= 2.5`、`pct_chg >= 10%`、触发日成交额 `>= 1 亿元`、`history_days >= 60`，并排除 ST / *ST / 退市 / C 新股。含义是跌深后出现第一根有体量的强反身向上。
-
-**高质量池 B：宽低位强动量质量**
-
-同时满足：`close_position_120d <= 0.35`、`drawdown_120_high <= -20%`、`amount_ratio_15d >= 3.0`、`pct_chg >= 15%`、触发日成交额 `>= 1 亿元`、`close >= prev_high_10d`、`close / high >= 0.95`、`history_days >= 60`，并排除 ST / *ST / 退市 / C 新股。含义是低位区间可以略放宽，但必须是强收盘、突破前 10 日高点的高质量异动。
-
-**第三步：按触发日相对今日的位置 + 触发后行为分类**
-
-| 情形 | 分类规则 | 含义 |
-|---|---|---|
-| **starter（启动型）** | 触发日 = D（今日） | 第一天放量，后续行为尚未验证 |
-| **sustain（持续换手型）** | 触发日落在 [D-5, D-1] AND 触发日后每个交易日成交额 ≥ 触发日成交额 × 0.7 AND D 日 close ≥ 触发日 open | 资金在换手吃筹码，放量拉升后维持高换手 |
-| **quiet（缩量企稳型）** | 触发日落在 [D-5, D-1] AND 最近 3 日成交额中位 ≤ 触发日成交额 × 0.5 AND D 日 close ≥ 0.95 × 触发日 close | 放量拉升后缩量横盘，等待方向选择 |
-| **undetermined（分歧型）** | 触发日落在窗口内但既不满足 sustain 也不满足 quiet | 通常对应冲高回落或量价分歧 |
-
-分类优先级：starter > sustain > quiet > undetermined。脚本按此优先级排序输出。
-
-**为什么 sustain 和 quiet 的判定都基于成交额而非价格？** 呼应"成交额优先"原则——价格在触发日之后的小幅波动可能是噪声，但**成交额是否维持**直接反映资金是否还在场。维持高换手 = 资金没走，缩量企稳 = 资金已建仓不动。
-
-**研报中的解读取向：**
-
-- starter 数量多 = 市场有新增机会，但需 D+N 后验证。
-- sustain 数量多 = 市场有持续抱团方向，强度可能延续。
-- quiet 数量多 = 市场处于"建仓后等待"阶段，方向选择临近。
-- undetermined 占比高 = 资金分歧大，慎追。
-
-### 6. 指数背离：该弱不弱就是强（仅看逆势上涨）
-
-旧版"指数背离"双向输出（逆势上涨 + 逆势下跌）信息冗余——逆势下跌的票本就被第 4 模块爆量下跌覆盖。本版改为**单向输出**，专注捕捉"该弱不弱就是强"的抗跌股，对应资金在大盘弱势中的避险/抱团方向。
-
-候选池由脚本 `resilient_against_index_samples` 输出。
-
-**第一步：指数环境前置门控**
-
-只在指数处于"偏弱环境"时才输出候选；指数走平/上涨时该模块直接 skipped 并标注原因，不强行产出。
-
-偏弱环境（任一满足）：
-
-- 指数 5 日涨跌幅 ≤ -2%。
-- 指数 10 日涨跌幅 ≤ -3%。
-
-**第二步：候选股筛选**
-
-满足以下全部条件：
-
-- `rel_ret_5d >= 5pct`：5 日相对指数超额收益 ≥ 5 个百分点。
-- `ret_5d >= 0`：5 日绝对收益为正（在指数下跌的环境里，绝对正收益本身就是稀缺信号）。
-- `amount >= 1 亿元`：当日成交额至少 1 亿，确保有真实资金参与。
-
-排序：按 `rel_ret_5d` 降序，次序按 `ret_5d` 降序、`amount` 降序。
-
-**第三步：模型归纳共同性**
-
-抗跌股出现往往不是孤立事件。模型应把候选股按业务事实再分组，回答："资金在大盘弱势中往什么方向避险/抱团？"——可能是稳定红利、防御性消费、新催化主题、或某条独立产业逻辑。如果分组共同性弱，明确写"分散个股韧性，无统一抱团方向"。
-
-**研报输出原则**：此模块只列逆势上涨/抗跌股，不列逆势下跌。指数走强时此模块为空，并标注"指数环境不弱，本模块跳过"。
+主题主线由模型基于业务事实临时归纳，不套现成行业或概念标签。共同性不足时明确写“暂不构成主线”或“资金轮动”。
 
 ## 工作流程
 
-1. **确定交易日**：解析"今天/最近"或具体日期，用 `trade_cal` 找到分析交易日 `D`。默认只用 `<= D` 数据；只有用户明确要求后验时才允许 `D+N`。
-2. **生成证据包**：优先调用 `scripts/run_daily_panel.py`，它会清理本地 proxy、用 UTF-8 捕获输出，并同时写出完整证据包 `evidence_YYYYMMDD_utf8.json` 与轻量上下文 `report_context_YYYYMMDD.json`。默认先读 `report_context` 写报告；只有需要追查细节时再读完整 evidence。
-3. **判断盘面趋势**：先读 `market_trend`，只分析上证指数、创业板指数和情绪趋势，写清楚指数与情绪是共振、背离还是分化。没有广度与情绪证据不要说"行情很好"。
-4. **归纳赚钱效应与主线**：读 `money_effect_samples`，先看候选总数和合计成交额，再分组（不套现成行业），最后按 ★★★/★★/★ 评级，给"主线行情"或"资金轮动"明确定性。
-5. **识别爆量下跌风险**：读 `volume_decline_samples`，先总览，再归纳风险类型，列高强度个股。互查 ★★★ 主线代表股是否进入爆量池，发主线见顶预警。
-6. **识别低位异动**：读 `low_position_volume_anomaly_samples`，先看 `quality_tier` 与 `matched_models`，优先解释高质量池 A/B；再按 starter/sustain/quiet/undetermined 四类呈现。对 D-N 历史触发的候选，确认 `today_above_ma5 = true`，否则脚本已过滤，不应补回。
-7. **识别抗跌股（指数走弱时）**：读 `resilient_against_index_samples`，先确认指数环境是否触发（脚本会标注 `is_weak`），再按业务事实归纳抗跌方向。指数不弱时此模块直接写"今日指数环境不弱，本模块无输出"。
-8. **写成盘后研报**：在前 7 步全部完成、所有候选池数据都已收齐后，view 一次 `reference/report_template.md`，按模板的固定结构（六个模块 + 表头）填空成稿。结论先行，表格呈现关键数据，短句和数字化表达。模板只规定结构，"输出规范"章节里的"写作要求"才是必须遵守的纪律。
+1. 确定交易日：解析“今天/最近”或具体日期，默认只使用 `D` 及以前数据；只有用户明确要求后验时才允许 `--allow-future`。
+2. 生成证据包：运行 `scripts/run_daily_panel.py`。脚本会直接调用数据管线，写出完整 evidence、轻量 `report_context` 和模块级 JSON。
+3. 选择撰写模式：
+   - 有 subagent 编排能力时，主 agent 将 6 个模块 JSON 分发给 6 个 subagent 并行撰写。
+   - 没有 subagent 能力时，按同样模块顺序单会话执行，每次只加载当前模块的 JSON、方法论和模板段。
+4. 聚合成稿：主 agent 读取 6 段输出、`assembled_checks.json` 与 `reference/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。默认不做外部收评校验、不搜索第三方行情综述、不在报告中加入“外部校验参考”；只有用户明确要求时才补充外部来源。
+5. 清理临时产物：确认 `reports/report_YYYYMMDD.md` 已写入并可读后，删除同日期的临时证据与上下文文件，只保留最终报告。必须清理：
+   - `reports/evidence_YYYYMMDD_utf8.json`
+   - `reports/evidence_YYYYMMDD_utf8.stderr.log`
+   - `reports/report_context_YYYYMMDD.json`
+   - `reports/module_context_YYYYMMDD/`
+   不要删除 `reports/report_YYYYMMDD.md`，不要跨日期批量清理，除非用户明确要求。
 
-## 数据获取（脚本抓手）
+## 数据获取
 
 环境变量：
 
@@ -226,160 +41,67 @@ A 股研究中，**成交额是首要指标，优先于涨跌幅、优先于换�
 TUSHARE_TOKEN=your_token
 ```
 
-依赖：Python 3.9+、`tushare`、`pandas`。盘面情绪趋势默认读取本 skill 包内的 `reference/market_data.csv`，脚本只使用分析日 `D` 及以前的记录。
-
 基础命令：
 
-```bash
-cd C:\Users\chenh\OneDrive\skills\a-stock-daily-market-sense
-python scripts/run_daily_panel.py --asof 20260424 --lookback 120 --market-trend-days 90 --index 000300.SH
+```powershell
+cd C:\Users\chenh\OneDrive\skills\stock-skills\a-stock-daily-market-sense
+python scripts\run_daily_panel.py --asof 20260429 --lookback 120 --market-trend-days 90 --index 000300.SH
 ```
 
-带筛选参数的完整命令（默认值已等同于此命令）：
+主要输出：
 
-```bash
-python scripts/run_daily_panel.py --asof 20260424 --market-trend-days 90 \
-    --money-pct-threshold 7.0 --money-amount-threshold 2.0 --money-sample-limit 80 \
-    --decline-pct-max -3.0 --decline-volume-ratio 2.0 --decline-amount-threshold 1.0 --decline-sample-limit 60 \
-    --low-drawdown-min 35.0 --low-close-position-max 0.20 --low-cv-max 0.03 \
-    --low-spike-volume-ratio 3.0 --low-spike-pct-chg 7.0 --low-lookback-days 5 \
-    --low-sustain-ratio 0.7 --low-quiet-ratio 0.5 --low-sample-limit 60 \
-    --resilient-index-5d-max -2.0 --resilient-index-10d-max -3.0 \
-    --resilient-rel-ret-min 5.0 --resilient-abs-ret-min 0.0 --resilient-amount-threshold 1.0 --resilient-sample-limit 40
-```
+- `reports/evidence_YYYYMMDD_utf8.json`：完整证据包。
+- `reports/report_context_YYYYMMDD.json`：兼容旧流程的轻量上下文。
+- `reports/module_context_YYYYMMDD/`：供 subagent 分工的模块级 JSON。
+
+这些文件是研报撰写过程中的临时产物。最终报告生成并核对后，应按工作流程第 5 步删除，只保留 `reports/report_YYYYMMDD.md`。
+
+常用参数：
 
 | 参数 | 含义 | 默认 |
 |---|---|---:|
-| `--money-pct-threshold` | 赚钱效应：最低当日涨幅（%） | 7.0 |
-| `--money-amount-threshold` | 赚钱效应：最低成交额（亿元） | 2.0 |
-| `--money-sample-limit` | 赚钱效应：最大样本数 | 80 |
-| `--market-trend-days` | 盘面趋势：指数 K 线与情绪历史窗口 | 90 |
-| `--decline-pct-max` | 爆量下跌：最大当日涨幅（%） | -3.0 |
-| `--decline-volume-ratio` | 爆量下跌：最低放量倍数（基于 20 日均值） | 2.0 |
-| `--decline-amount-threshold` | 爆量下跌：最低成交额（亿元） | 1.0 |
-| `--decline-sample-limit` | 爆量下跌：最大样本数 | 60 |
-| `--low-drawdown-min` | 低位 B 轨：最低回撤幅度（%） | 35.0 |
-| `--low-close-position-max` | 低位 A 轨：最大 close_position_120d | 0.20 |
-| `--low-cv-max` | 低位 B 轨：最大 10 日 close 变异系数 | 0.03 |
-| `--low-spike-volume-ratio` | 触发日：最低放量倍数（基于 15 日均值） | 3.0 |
-| `--low-spike-pct-chg` | 触发日：最低当日涨幅（%） | 7.0 |
-| `--low-lookback-days` | 触发日回看窗口（交易日） | 5 |
-| `--low-sustain-ratio` | sustain 情形：触发日后每日成交额维持比例 | 0.7 |
-| `--low-quiet-ratio` | quiet 情形：触发日后最近 3 日成交额最大比例 | 0.5 |
-| `--low-sample-limit` | 低位放量异动：最大样本数 | 60 |
-| `--resilient-index-5d-max` | 抗跌股：指数 5 日涨跌幅触发上限（%） | -2.0 |
-| `--resilient-index-10d-max` | 抗跌股：指数 10 日涨跌幅触发上限（%） | -3.0 |
-| `--resilient-rel-ret-min` | 抗跌股：最低 5 日相对指数超额（pct） | 5.0 |
-| `--resilient-abs-ret-min` | 抗跌股：最低 5 日绝对收益（%） | 0.0 |
-| `--resilient-amount-threshold` | 抗跌股：最低成交额（亿元） | 1.0 |
-| `--resilient-sample-limit` | 抗跌股：最大样本数 | 40 |
+| `--fetch-workers` | cache/API 获取线程数；排查限流时设为 1 | 6 |
+| `--money-pct-threshold` | 赚钱效应最低当日涨幅 | 7.0 |
+| `--money-amount-threshold` | 赚钱效应最低成交额，单位亿元 | 2.0 |
+| `--decline-pct-max` | 爆量下跌最大当日涨幅 | -3.0 |
+| `--decline-volume-ratio` | 爆量下跌最低 20 日放量倍数 | 2.0 |
+| `--low-lookback-days` | 低位放量触发回看窗口 | 5 |
+| `--resilient-index-5d-max` | 抗跌股模块的弱指数 5 日门槛 | -2.0 |
 
-阈值调整原则：
+## Subagent 编排契约
 
-- 赚钱效应阈值在弱市可下调（例如 5% / 1.5 亿）查看资金扩散面，但必须在研报中标注"已调整为 X% / X 亿"。
-- 爆量下跌阈值建议保持稳定，避免风险信号被噪声稀释。
-- 低位放量异动的 3 倍放量阈值是核心，下调会显著降低信号质量。
-- 抗跌股的指数环境阈值在结构性慢熊行情中可适当放宽到 -1.5% / -2.5%，标注后使用。
+主 agent 先生成模块级 JSON，然后按下列最小上下文分发。每个 subagent 只看自己的模块数据，不读取其他模块数据。
 
-日期平移：`--offset -5` 看 D-5；后验验证用 `--offset 5 --allow-future`。
+| 模块 | JSON | 方法论 | 模板 |
+|---|---|---|---|
+| 1 盘面趋势 | `module1_market_trend.json` | `reference/methodology/module1_trend.md` | `reference/template/section1.md` |
+| 2 集中度 | `module2_concentration.json` | `reference/methodology/module2_concentration.md` | `reference/template/section2.md` |
+| 3 赚钱效应 | `module3_money_effect.json` | `reference/methodology/module3_money_effect.md` | `reference/template/section3.md` |
+| 4 爆量下跌 | `module4_decline.json` | `reference/methodology/module4_decline.md` | `reference/template/section4.md` |
+| 5 低位放量 | `module5_low_position.json` | `reference/methodology/module5_low_position.md` | `reference/template/section5.md` |
+| 6 抗跌股 | `module6_resilient.json` | `reference/methodology/module6_resilient.md` | `reference/template/section6.md` |
 
-输出 JSON 字段：
+聚合 agent 额外读取：
 
-- `metadata`：交易日、窗口、指数、数据行数。
-- `market_temperature` / `_previous` / `_change`：今日盘面温度与对前一交易日变化。
-- **`market_trend`：第 1 模块主入口**。只包含 `indices.shanghai`、`indices.chinext` 与 `sentiment`。指数字段含 K 线记录、1/5/20/60 日涨跌幅、MA5/20/60、量价状态、趋势阶段提示、20/60 日高低点和支撑压力候选；情绪字段读取 `reference/market_data.csv`，含成交额、活跃度、上涨/下跌家数、涨停/跌停、量能/情绪/广度温度提示。若 `reference/market_data.csv` 不存在，`sentiment.available=false` 并标注原因。
-- `amount_concentration`：Top10/20/50/100 集中度、近 10 日趋势、成交额前排样本。
-- `limit_stats` / `_previous` / `_change`：涨跌停炸板（接口可用时）。
-- `strong_samples` / `weak_samples`：复合评分排序（保留作辅助证据，不再作主入口）。
-- **`money_effect_samples`：赚钱效应主入口**。
-- **`volume_decline_samples`：爆量下跌主入口**。
-- **`low_position_volume_anomaly_samples`：低位放量异动主入口**。含 `filter_criteria`、`candidates`（每只含 `scenario`、`quality_tier`、`matched_models`、`observation_pool`、`trigger_date`、`days_since_trigger`、`trigger_amount_ratio_15d`、`trigger_amount_100m_yuan`、`trigger_pct_chg`、`trigger_low_track`、`trigger_close_to_high`、`trigger_break_prev_high_10d`、`today_close_ma5`、`today_above_ma5`、`post_trigger_min_volume_ratio`、`post_trigger_recent3_volume_ratio` 等）、`summary`（按情形与质量层级分类计数）。
-- **`resilient_against_index_samples`：抗跌股主入口**。含 `index_environment`（`is_weak`、`weakness_reasons`）、`candidates`（指数走弱时才有内容）、`summary`。
-- `low_position_volume_samples`：旧版低位放量候选（保留兼容，但研报应使用 `low_position_volume_anomaly_samples`）。
-- `divergence_samples`：旧版双向背离（保留兼容，但研报应使用 `resilient_against_index_samples` 仅看抗跌股）。
+- `assembled_checks.json`：M3 赚钱效应池与 M4 爆量下跌池的确定性交叉检查。
+- `reference/methodology/output_discipline.md`：最终成稿纪律。
 
-轻量上下文 `report_context_YYYYMMDD.json` 字段：
-
-- `market`：盘面温度、上证/创业板趋势、情绪摘要（不含长历史序列）。
-- `amount_concentration`：集中度摘要与成交额 Top 样本。
-- `money_effect.theme_grouping_aid.records`：赚钱效应候选的分组辅助表，含名称、成交额（亿元）、当日涨幅、5 日收益、相对超额、放量倍数与位置指标。该表只辅助模型归纳主线，不替模型命名主题。
-- `volume_decline.top_candidates`：爆量下跌核心样本。
-- `low_position_volume_anomaly.candidates`：低位放量异动核心样本。
-- `resilient_against_index`：弱指数环境与抗跌样本。
-
-缓存说明：
-
-- `daily`、`daily_basic` 按交易日缓存到 `data/cache/<endpoint>/YYYYMMDD.parquet`。
-- `stock_basic` 缓存到 `data/cache/stock_basic/all.parquet`。
-- `trade_cal` 缓存到 `data/cache/trade_cal/all.parquet`，缺边界日期时增量补齐。
-- `index_daily` 按指数代码缓存到 `data/cache/index_daily/<ts_code>.parquet`，缺边界日期时增量补齐。
-- 如需强制刷新，使用 `--refresh-cache`；如需完全绕过缓存，使用 `--no-cache`。
-
-成交额口径：
-
-- `daily.amount` 单位为千元；`total_amount_100m_yuan` 已转为亿元用于研报展示。
-- `limit_up_approx_count` / `limit_down_approx_count` 是 ±9.8% 阈值近似口径；`limit_stats` 可用时优先使用官方计数。
-
-降级规则：
-
-- `daily_basic` 不可用：仍可分析涨跌、成交额、相对强弱，但缺换手率、量比、市值。
-- `reference/market_data.csv` 不可用：第 1 模块情绪趋势只用 `market_temperature` 的当日快照降级，必须标注"情绪历史不可用"，不补写活跃度趋势。
-- 上证或创业板指数 K 线不可用：第 1 模块对应指数小节标注不可用，不用科创板或风格指数替代。
-- `limit_list_d` 不可用：跳过官方涨跌停炸板明细，使用近似涨跌停与 `reference/market_data.csv` 情绪趋势降级，研报标注。
-- 指数数据不可用：第 6 模块 `is_weak` 无法判定，整模块跳过并标注原因。
-- `money_effect_samples` 候选 < 5 只：定性"今日无清晰赚钱效应"，第 3 模块只保留总览小节。
-- `volume_decline_samples` 候选为 0：第 4 模块只写"今日无大面积爆量下跌"。
-- `low_position_volume_anomaly_samples` 候选为 0：第 5 模块写"今日低位无符合 3 倍放量 + 7% 异动条件的个股"。
-- `resilient_against_index_samples` 在指数不弱时为空：第 6 模块写"今日指数环境不弱，本模块无输出"。
+Python 不调用 Anthropic API、不调用任何 LLM、不硬编码模型名。Codex、Claude Code 或其他通用 agent 的 subagent 编排能力负责并行撰写。
 
 ## 输出规范
 
-研报采用固定的模块顺序：1.盘面趋势 / 2.成交额集中度 / 3.赚钱效应与上涨主线 / 4.亏钱效应（爆量下跌） / 5.低位放量异动 / 6.抗跌股（该弱不弱就是强）。默认 800-1500 字。
+完整研报仍按六个模块输出。每段结论先行，表格只放关键证据，所有强弱判断必须有成交额或放量倍数支撑。不要写“板块轮动明显”这类空句；要写“候选数、合计成交额、最大主题占比、代表股成交额”。
 
-**完整研报模板（含每个模块的表头与填写要点）放在 `reference/report_template.md`。** 在前 7 步工作流程全部完成、所有候选池数据都已读取之后，view 一次该文件，按模板逐模块填空。模板只是结构骨架，下面的"写作要求"是模型每次撰写都必须遵守的纪律。
-
-写作要求：
-
-- 写清楚数据日期和窗口，例如"截至 2026-04-24，近 120 个交易日"。
-- 所有强弱判断必须有成交额数字支撑（呼应"成交额优先"原则）；无成交额证据的"该方向较强"视为方法论失败。
-- 第 1 模块只写上证指数、创业板指数和盘面情绪趋势；不要加入科创板、风格指数、融资、创业板 PE、外围资产。
-- 第 1 模块必须判断指数与情绪是共振、背离还是分化；不要只罗列指标。
-- 上证/创业板趋势判断要覆盖趋势阶段、量价配合、均线位置、支撑压力四项，但每项只写最关键证据。
-- 总成交额用亿元展示，保留 1-2 位小数。
-- 第 3 模块"主线确认度"严格按 ★★★/★★/★ 规则，不主观放宽。
-- 第 3 模块"主线 vs 资金轮动结论"必须明确定性，不能含糊。
-- 第 4 模块禁止用"普跌""市场情绪低迷"等空泛描述代替风险类型归纳。
-- 第 4 模块如发现 ★★★ 主线代表股进入爆量下跌池，必须在"风险传导提示"标注。
-- 第 4 模块的"风险定性"列必须写具体描述（如"主线内部分歧加剧""高位筹码松动""弱势股出清"），禁止使用"加速恶化/趋稳/局部"这类抽象词。
-- 第 3.4 主线明细合并展示，所有 ★★★ 主线放在同一个表格里，按主题分块（每块用空行或主题行分隔），每个主线 5 只代表股；不要为每个主线另起一个独立段落。
-- 第 5 模块严格使用 starter/sustain/quiet/undetermined 四类术语，不用旧版的"启动型/确认型/分歧型"，因为新分类的判定标准与旧版不同。
-- 第 6 模块在指数不弱时直接写"今日指数环境不弱，本模块无输出"，并附上指数 5 日/10 日涨跌幅与门槛值（自解释写法），不强行产出抗跌股；只列逆势上涨，不列逆势下跌。
-- 数字优先放表格；表格后文字只解释结论，不重复堆数字。
-- 不用"板块轮动明显"等空泛结论，除非给出代表股票和证据。
-- 不把单日上涨说成趋势；持续性至少看 3-5 个交易日。
-- 不确定时直接写不确定，不硬凑主线。
-- 不输出"次日观察点"，不写"建议买入/卖出/持有"。
+禁止输出买卖建议。可以写“风险传导”“持续性待验证”“主线确认度”，不要写“买入/卖出/止损/目标价”。
 
 ## 示例
 
-输入：
-
-```text
-帮我看一下 2026-04-24 的盘后，赚钱效应在哪里，主线还是资金轮动？爆量下跌有哪些风险点？低位有什么放量异动？指数如果偏弱有哪些抗跌股？
-```
+用户：`复盘 2026-04-29 的 A 股盘面，重点看赚钱效应和低位放量。`
 
 执行：
 
-```bash
-cd C:\Users\chenh\OneDrive\skills\a-stock-daily-market-sense
-python scripts/run_daily_panel.py --asof 20260424 --lookback 120 --market-trend-days 90 --index 000300.SH
+```powershell
+python scripts\run_daily_panel.py --asof 20260429
 ```
 
-输出步骤：
-
-1. 模块 1 读 `market_trend`：先写情绪趋势，再写上证与创业板指数趋势，最后判断指数与情绪是共振、背离还是分化。
-2. 模块 2 判断成交额集中度与拥挤度。
-3. 模块 3 读 `money_effect_samples`：先列总览，再按业务事实分组，按 ★★★/★★/★ 评定，给"主线行情"或"资金轮动"明确定性。
-4. 模块 4 读 `volume_decline_samples`：先列总览，再归纳风险类型，列高强度个股明细，互查 ★★★ 主线代表股，必要时发主线见顶预警。
-5. 模块 5 读 `low_position_volume_anomaly_samples`：先列四类计数总览，再分别呈现 starter / sustain / quiet 三类（undetermined 简短带过）。
-6. 模块 6 读 `resilient_against_index_samples`：先看 `index_environment.is_weak`，弱环境列抗跌股并归纳抗跌方向；不弱时直接写"指数环境不弱，本模块无输出"。
+然后按 subagent 契约加载 `reports/module_context_20260429/` 下的模块 JSON。若没有 subagent，就顺序加载每个模块的 JSON + 方法论 + 模板段，最后聚合为完整研报。

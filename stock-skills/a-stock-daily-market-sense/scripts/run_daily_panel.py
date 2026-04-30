@@ -2,21 +2,22 @@
 """
 Stable runner for daily A-share market evidence generation.
 
-This wrapper avoids Windows shell redirection issues by capturing the panel
-subprocess as UTF-8 text, clearing broken local proxy variables, and writing
+This wrapper avoids Windows shell redirection issues by calling the panel
+builder directly, clearing broken local proxy variables, and writing
 both the full evidence pack and a compact report_context JSON.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import market_panel
 
@@ -57,12 +58,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sample-limit", type=int, default=40, help="Generic candidate sample limit.")
     parser.add_argument("--market-trend-days", type=int, default=90, help="Market-trend window.")
     parser.add_argument("--sleep", type=float, default=0.12, help="Sleep seconds between uncached API calls.")
+    parser.add_argument("--fetch-workers", type=int, default=6, help="Max worker threads for cache/API fetching.")
     parser.add_argument("--no-cache", action="store_true", help="Disable cache in market_panel.py.")
     parser.add_argument("--refresh-cache", action="store_true", help="Force refetch and overwrite cache.")
     parser.add_argument("--with-limit", action="store_true", help="Fetch official limit_list_d stats.")
     parser.add_argument("--reports-dir", default=str(DEFAULT_REPORTS_DIR), help="Directory for generated files.")
     parser.add_argument("--evidence-out", default=None, help="Full evidence JSON output path.")
     parser.add_argument("--context-out", default=None, help="Compact report_context JSON output path.")
+    parser.add_argument("--module-context-dir", default=None, help="Directory for module-level subagent JSON files.")
+    parser.add_argument("--no-module-context", action="store_true", help="Skip module-level subagent JSON files.")
     parser.add_argument("--stderr-out", default=None, help="Stderr log output path.")
     parser.add_argument("--money-context-limit", type=int, default=80, help="Money-effect rows in context.")
     parser.add_argument("--decline-context-limit", type=int, default=20, help="Volume-decline rows in context.")
@@ -71,10 +75,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def build_panel_command(args: argparse.Namespace, extra_args: List[str]) -> List[str]:
-    cmd = [
-        sys.executable,
-        str(SCRIPT_ROOT / "market_panel.py"),
+def build_panel_argv(args: argparse.Namespace, extra_args: List[str]) -> List[str]:
+    argv = [
         "panel",
         "--lookback",
         str(args.lookback),
@@ -86,26 +88,49 @@ def build_panel_command(args: argparse.Namespace, extra_args: List[str]) -> List
         str(args.market_trend_days),
         "--sleep",
         str(args.sleep),
+        "--fetch-workers",
+        str(args.fetch_workers),
         "--offset",
         str(args.offset),
     ]
     if args.asof:
-        cmd.extend(["--asof", args.asof])
+        argv.extend(["--asof", args.asof])
     if args.allow_future:
-        cmd.append("--allow-future")
+        argv.append("--allow-future")
     if args.no_cache:
-        cmd.append("--no-cache")
+        argv.append("--no-cache")
     if args.refresh_cache:
-        cmd.append("--refresh-cache")
+        argv.append("--refresh-cache")
     if args.with_limit:
-        cmd.append("--with-limit")
-    cmd.extend(extra_args)
-    return cmd
+        argv.append("--with-limit")
+    argv.extend(extra_args)
+    return argv
 
 
 def default_stem(asof: Optional[str]) -> str:
     date = market_panel.normalize_date(asof) if asof else datetime.now().strftime("%Y%m%d")
     return f"evidence_{date}_utf8"
+
+
+@contextlib.contextmanager
+def patched_environment(env: Dict[str, str]):
+    original = os.environ.copy()
+    try:
+        os.environ.clear()
+        os.environ.update(env)
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(original)
+
+
+def write_module_contexts(evidence: dict, module_dir: Path) -> None:
+    module_dir.mkdir(parents=True, exist_ok=True)
+    for name, payload in market_panel.build_module_contexts(evidence).items():
+        (module_dir / f"{name}.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -119,35 +144,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     stderr_path = Path(args.stderr_out) if args.stderr_out else sibling_stderr_path(preliminary_evidence)
 
     env = clear_proxy_env(os.environ)
-    cmd = build_panel_command(args, extra_args)
-    proc = subprocess.run(
-        cmd,
-        cwd=str(SKILL_ROOT),
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-
-    stderr_path.write_text(proc.stderr, encoding="utf-8")
-    if proc.returncode != 0:
-        preliminary_evidence.write_text(proc.stdout, encoding="utf-8")
-        print(proc.stderr, file=sys.stderr, end="")
-        return proc.returncode
-
+    panel_argv = build_panel_argv(args, extra_args)
+    stderr_buffer = io.StringIO()
     try:
-        evidence = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        preliminary_evidence.write_text(proc.stdout, encoding="utf-8")
-        raise RuntimeError(f"market_panel output was not valid JSON; raw stdout saved to {preliminary_evidence}") from exc
+        panel_args = market_panel.build_arg_parser().parse_args(panel_argv)
+        with patched_environment(env), contextlib.redirect_stderr(stderr_buffer):
+            evidence = market_panel.build_panel(panel_args)
+    finally:
+        stderr_path.write_text(stderr_buffer.getvalue(), encoding="utf-8")
 
     resolved_date = evidence.get("metadata", {}).get("resolved_trade_date") or market_panel.normalize_date(args.asof)
     evidence_path = Path(args.evidence_out) if args.evidence_out else reports_dir / f"evidence_{resolved_date}_utf8.json"
     context_path = Path(args.context_out) if args.context_out else reports_dir / f"report_context_{resolved_date}.json"
     if args.stderr_out is None:
         stderr_path = sibling_stderr_path(evidence_path)
-        stderr_path.write_text(proc.stderr, encoding="utf-8")
+        stderr_path.write_text(stderr_buffer.getvalue(), encoding="utf-8")
 
     evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
     report_context = market_panel.build_report_context(
@@ -159,10 +170,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     context_path.write_text(json.dumps(report_context, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    module_context_dir = None
+    if not args.no_module_context:
+        module_context_dir = Path(args.module_context_dir) if args.module_context_dir else reports_dir / f"module_context_{resolved_date}"
+        write_module_contexts(evidence, module_context_dir)
+
     print(json.dumps({
         "resolved_trade_date": resolved_date,
         "evidence": str(evidence_path),
         "report_context": str(context_path),
+        "module_context_dir": str(module_context_dir) if module_context_dir else None,
         "stderr": str(stderr_path),
     }, ensure_ascii=False, indent=2))
     return 0

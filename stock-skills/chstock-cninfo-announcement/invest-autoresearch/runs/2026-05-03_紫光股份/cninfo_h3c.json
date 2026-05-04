@@ -1,0 +1,146 @@
+{
+  "total_pages": 0,
+  "total_records": 8,
+  "announcements": [
+    {
+      "announcement_time": "2026-04-29",
+      "sec_name": "紫光股份",
+      "sec_code": "000938",
+      "title": "<em>新华</em><em>三</em>集团有限公司2025年度审计报告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-29/1225231858.PDF",
+      "announcement_id": "1225231858",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2026-04-29",
+      "sec_name": "紫光股份",
+      "sec_code": "000938",
+      "title": "紫光股份有限公司发行股份拟收购股权涉及的<em>新华</em><em>三</em>集团有限公司股东全部权益价值评估项目资产评估报告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-29/1225231857.PDF",
+      "announcement_id": "1225231857",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2025-11-29",
+      "sec_name": "紫光股份",
+      "sec_code": "000938",
+      "title": "关于紫光国际与投资者受让<em>新华</em><em>三</em>少数股东所持剩余9%股权的公告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2025-11-29/1224836014.PDF",
+      "announcement_id": "1224836014",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2025-11-18",
+      "sec_name": "紫光股份",
+      "sec_code": "000938",
+      "title": "<em>新华</em><em>三</em>集团有限公司审计报告（2024年度以及截至2025年6月30日止六个月期间）",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2025-11-18/1224811027.PDF",
+      "announcement_id": "1224811027",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2025-11-18",
+      "sec_name": "紫光股份",
+      "sec_code": "000938",
+      "title": "关于紫光国际与投资者受让<em>新华</em><em>三</em>少数股东所持部分股权暨关联交易的公告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2025-11-18/1224811026.PDF",
+      "announcement_id": "1224811026",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2024-05-25",
+      "sec_name": "紫光股份",
+      "sec_code": "000938",
+      "title": "紫光股份有限公司拟收购<em>新华</em><em>三</em>集团有限公司股权涉及的<em>新华</em><em>三</em>集团有限公司股东全部权益价值项目资产评估报告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2024-05-25/1220160169.PDF",
+      "announcement_id": "1220160169",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2024-05-25",
+      "sec_name": "紫光股份",
+      "sec_code": "000938",
+      "title": "关于收购<em>新华</em><em>三</em>集团有限公司少数股东股权事项调整的提示性公告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2024-05-25/1220160162.PDF",
+      "announcement_id": "1220160162",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    },
+    {
+      "announcement_time": "2024-05-25",
+      "sec_name": "紫光股份",
+      "sec_code": "000938",
+      "title": "<em>新华</em><em>三</em>集团有限公司2022年度、2023年度审计报告",
+      "adjunct_url": "http://static.cninfo.com.cn/finalpage/2024-05-25/1220160160.PDF",
+      "announcement_id": "1220160160",
+      "category": "上市公司公开信息",
+      "subcategory": "其他",
+      "rule_id": "cninfo.fulltext.other.v1",
+      "excluded": false,
+      "exclude_reason": "",
+      "tags": [
+        "其他"
+      ]
+    }
+  ],
+  "query": {
+    "tabtype": "fulltext",
+    "se_date": "2024-01-01~2026-05-03",
+    "stock": "000938,gssz0000938",
+    "searchkey": "新华三",
+    "category": "",
+    "trade": "",
+    "page_num": 1,
+    "page_size": 30,
+    "include_excluded": false
+  },
+  "filtered_count": 8
+}

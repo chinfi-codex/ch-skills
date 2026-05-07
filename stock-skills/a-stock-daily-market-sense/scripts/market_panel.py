@@ -29,6 +29,11 @@ try:
 except ImportError as exc:  # pragma: no cover - dependency check
     raise RuntimeError("Missing dependency: install tushare before using this script.") from exc
 
+try:
+    import akshare as ak
+except ImportError:  # pragma: no cover - optional runtime dependency
+    ak = None
+
 
 DEFAULT_DAILY_FIELDS = (
     "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
@@ -47,6 +52,8 @@ MARKET_TREND_INDEXES = {
     "shanghai": {"name": "上证指数", "ts_code": "000001.SH"},
     "chinext": {"name": "创业板指数", "ts_code": "399006.SZ"},
 }
+MARKET_HISTORY_PRIMARY_SOURCE = "akshare.stock_market_activity_legu"
+MARKET_HISTORY_SUPPLEMENT_SOURCE = "tushare.daily"
 
 
 def get_tushare_token() -> str:
@@ -563,6 +570,238 @@ def build_market_temperature(panel: pd.DataFrame, index_summary: Dict[str, Optio
     }
 
 
+def format_history_date(trade_date: str) -> str:
+    return datetime.strptime(str(trade_date), "%Y%m%d").strftime("%Y/%m/%d")
+
+
+def history_date_to_trade_date(value: Any) -> Optional[str]:
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.strftime("%Y%m%d")
+
+
+def is_blank_value(value: object) -> bool:
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip() == ""
+
+
+def should_fill_turnover(existing_value: object, new_value: object) -> bool:
+    if is_blank_value(new_value):
+        return False
+
+    new_amount = pd.to_numeric(pd.Series([new_value]), errors="coerce").iloc[0]
+    if pd.isna(new_amount) or float(new_amount) <= 0:
+        return False
+
+    if is_blank_value(existing_value):
+        return True
+
+    existing_amount = pd.to_numeric(pd.Series([existing_value]), errors="coerce").iloc[0]
+    return pd.isna(existing_amount) or float(existing_amount) <= 0
+
+
+def upsert_market_history_row(
+    row: Dict[str, Any],
+    columns: List[str],
+    csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
+) -> None:
+    """Write one market-history row while preserving existing non-empty values."""
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    ordered_columns = list(dict.fromkeys(columns + list(row.keys())))
+
+    if csv_path.exists():
+        df = pd.read_csv(csv_path)
+        if "日期" not in df.columns:
+            if len(df.columns) == len(ordered_columns):
+                df.columns = ordered_columns
+            else:
+                fixed = list(df.columns)
+                if fixed:
+                    fixed[0] = "日期"
+                    df.columns = fixed
+
+        for col in ordered_columns:
+            if col not in df.columns:
+                df[col] = ""
+
+        target_date = row.get("日期")
+        existing_dates = df["日期"].apply(history_date_to_trade_date)
+        target_key = history_date_to_trade_date(target_date)
+        matches = df.index[existing_dates == target_key] if target_key else df.index[df["日期"] == target_date]
+        if len(matches) > 0:
+            idx = matches[0]
+            for col, new_value in row.items():
+                if col == "日期":
+                    continue
+                current_value = df.at[idx, col]
+                if col == "成交额":
+                    if should_fill_turnover(current_value, new_value):
+                        df.at[idx, col] = new_value
+                    continue
+                if is_blank_value(current_value) and not is_blank_value(new_value):
+                    df.at[idx, col] = new_value
+            df.to_csv(csv_path, index=False)
+            return
+
+        final_columns = list(df.columns) + [col for col in ordered_columns if col not in df.columns]
+        new_row = pd.DataFrame([row], columns=final_columns)
+        df = pd.concat([new_row, df.reindex(columns=final_columns)], ignore_index=True)
+        df.to_csv(csv_path, index=False)
+        return
+
+    pd.DataFrame([row], columns=ordered_columns).to_csv(csv_path, index=False)
+
+
+def fetch_tushare_market_snapshot_from_daily(
+    daily: pd.DataFrame,
+    target_date: str,
+) -> Tuple[Optional[float], Optional[int], Optional[int], Optional[int]]:
+    if daily is None or daily.empty or "trade_date" not in daily.columns:
+        return None, None, None, None
+
+    day = daily.loc[daily["trade_date"].astype(str) == str(target_date)].copy()
+    if day.empty:
+        return None, None, None, None
+
+    total_amount = None
+    if "amount" in day.columns:
+        amount_series = pd.to_numeric(day["amount"], errors="coerce")
+        amount_sum = amount_series.sum(min_count=1)
+        if pd.notna(amount_sum) and float(amount_sum) > 0:
+            total_amount = float(amount_sum)
+
+    up_count = None
+    down_count = None
+    flat_count = None
+    if "pct_chg" in day.columns:
+        pct_series = pd.to_numeric(day["pct_chg"], errors="coerce")
+        up_count = int((pct_series > 0).sum())
+        down_count = int((pct_series < 0).sum())
+        flat_count = int((pct_series == 0).sum())
+
+    return total_amount, up_count, down_count, flat_count
+
+
+def fetch_akshare_market_history_row(target_date: str) -> Tuple[Dict[str, Any], List[str], Dict[str, Any]]:
+    detail: Dict[str, Any] = {
+        "primary_source": MARKET_HISTORY_PRIMARY_SOURCE,
+        "primary_trade_date": None,
+        "primary_available": False,
+        "fallback_reason": None,
+    }
+    if ak is None:
+        detail["fallback_reason"] = "akshare is not installed"
+        return {}, [], detail
+
+    try:
+        market_data = ak.stock_market_activity_legu()
+    except Exception as exc:
+        detail["fallback_reason"] = f"akshare stock_market_activity_legu failed: {exc}"
+        return {}, [], detail
+
+    if market_data is None or market_data.empty or "item" not in market_data.columns or "value" not in market_data.columns:
+        detail["fallback_reason"] = "akshare stock_market_activity_legu returned empty or invalid data"
+        return {}, [], detail
+
+    stat_date = None
+    if "统计日期" in market_data["item"].astype(str).values:
+        raw_date = market_data.loc[market_data["item"].astype(str) == "统计日期", "value"].values[0]
+        parsed = pd.to_datetime(raw_date, errors="coerce")
+        if pd.notna(parsed):
+            stat_date = parsed.strftime("%Y/%m/%d")
+
+    if not stat_date:
+        detail["fallback_reason"] = "akshare data missing 统计日期"
+        return {}, [], detail
+
+    stat_trade_date = history_date_to_trade_date(stat_date)
+    detail["primary_trade_date"] = stat_trade_date
+    if stat_trade_date != target_date:
+        detail["fallback_reason"] = f"akshare stat date {stat_trade_date} does not match target date {target_date}"
+        return {}, [], detail
+
+    row: Dict[str, Any] = {"日期": stat_date}
+    columns = ["日期"]
+    for _, item_row in market_data.iterrows():
+        item = str(item_row.get("item", "")).strip()
+        if not item or item == "统计日期":
+            continue
+        row[item] = item_row.get("value")
+        columns.append(item)
+        if len(columns) >= 12:
+            break
+
+    detail["primary_available"] = any(not is_blank_value(value) for key, value in row.items() if key != "日期")
+    if not detail["primary_available"]:
+        detail["fallback_reason"] = "akshare data contains no market activity fields"
+        return {}, [], detail
+    return row, columns, detail
+
+
+def update_market_history(
+    target_date: str,
+    daily: pd.DataFrame,
+    csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
+) -> Dict[str, Any]:
+    row, columns, detail = fetch_akshare_market_history_row(target_date)
+    total_amount, up_count, down_count, flat_count = fetch_tushare_market_snapshot_from_daily(daily, target_date)
+
+    fallback_reason = detail.get("fallback_reason")
+    if not row:
+        row = {"日期": format_history_date(target_date)}
+        columns = ["日期"]
+
+    row["成交额"] = total_amount if total_amount is not None else row.get("成交额", "")
+    if ("成交额" not in columns):
+        columns.append("成交额")
+
+    if ("上涨" not in row or is_blank_value(row.get("上涨"))) and up_count is not None:
+        row["上涨"] = up_count
+    if "上涨" not in columns:
+        columns.append("上涨")
+
+    if ("下跌" not in row or is_blank_value(row.get("下跌"))) and down_count is not None:
+        row["下跌"] = down_count
+    if "下跌" not in columns:
+        columns.append("下跌")
+
+    if ("平盘" not in row or is_blank_value(row.get("平盘"))) and flat_count is not None:
+        row["平盘"] = flat_count
+    if "平盘" not in columns:
+        columns.append("平盘")
+
+    confirmed_values = {
+        key: value for key, value in row.items() if key != "日期" and not is_blank_value(value)
+    }
+    result: Dict[str, Any] = {
+        "updated": False,
+        "trade_date": target_date,
+        "path": str(csv_path),
+        "primary_source": MARKET_HISTORY_PRIMARY_SOURCE,
+        "supplement_source": MARKET_HISTORY_SUPPLEMENT_SOURCE,
+        "primary_trade_date": detail.get("primary_trade_date"),
+        "fallback_reason": fallback_reason,
+        "fields": sorted(confirmed_values.keys()),
+    }
+    if not confirmed_values:
+        result["fallback_reason"] = fallback_reason or "no confirmed market history fields from akshare or tushare.daily"
+        return result
+
+    try:
+        upsert_market_history_row(row, columns, csv_path=csv_path)
+    except Exception as exc:
+        result["fallback_reason"] = f"failed to update market history csv: {exc}"
+        return result
+
+    result["updated"] = True
+    return result
+
+
 def build_limit_stats(limit_df: pd.DataFrame) -> Dict[str, Any]:
     if limit_df is None or limit_df.empty:
         return {"available": False}
@@ -1040,7 +1279,7 @@ def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
             df[column] = parse_numeric_text_series(df[column])
 
     df = df.tail(int(trend_days)).copy()
-    flat = df["平盘"] if "平盘" in df.columns else 0
+    flat = df["平盘"].fillna(0) if "平盘" in df.columns else 0
     breadth_total = df["上涨"] + df["下跌"] + flat
     df["up_ratio"] = df["上涨"] / breadth_total.replace(0, pd.NA)
     df["limit_up_down_ratio"] = df["涨停"] / df["跌停"].replace(0, pd.NA)
@@ -2378,24 +2617,24 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             cache_enabled=cache_enabled,
             refresh_cache=args.refresh_cache,
         )
-        market_trend_future = executor.submit(
-            build_market_trend,
-            pro,
-            target_date,
-            trade_dates,
-            args.market_trend_days,
-            cache_enabled,
-            args.refresh_cache,
-        )
 
         daily = daily_future.result()
         basic = basic_future.result()
         stock_basic = stock_basic_future.result()
         index_daily = index_daily_future.result()
-        market_trend = market_trend_future.result()
 
     if daily.empty:
         raise RuntimeError("daily returned no data for the requested window.")
+
+    market_history_update = update_market_history(target_date, daily)
+    market_trend = build_market_trend(
+        pro,
+        target_date,
+        trade_dates,
+        args.market_trend_days,
+        cache_enabled,
+        args.refresh_cache,
+    )
 
     screening_features = add_screening_features(daily)
     panel = screening_features.loc[screening_features["trade_date"] == target_date].copy()
@@ -2537,6 +2776,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             else {}
         ),
         "market_trend": market_trend,
+        "market_history_update": market_history_update,
         "amount_concentration": build_amount_concentration(
             screening_features,
             target_date,

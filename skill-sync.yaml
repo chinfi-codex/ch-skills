@@ -1,0 +1,48 @@
+# Skill Sync Hub —— 跨 Agent 技能同步配置
+# 参考 neuDrive Bundle Sync 思路：本仓库作为 canonical source，
+# 通过 Git Hook 在 commit 后自动单向同步到各 Agent 安装目录。
+#
+# 使用方式:
+#   python scripts/skill_sync.py              # 一次性复制同步
+#   python scripts/skill_sync.py --link       # 建立 Junction（开发推荐，实时生效）
+#   python scripts/skill_sync.py --dry-run    # 预览变更
+#   python scripts/skill_sync.py --install-hook   # 安装 post-commit Git Hook
+
+targets:
+  # Agent 品牌目录（Kimi CLI 启动时会按优先级自动扫描）
+  # 开启 merge_all_available_skills = true 后，Kimi 会合并所有品牌目录
+  kimi:    "$env:USERPROFILE/.kimi/skills"
+  claude:  "$env:USERPROFILE/.claude/skills"
+  codex:   "$env:USERPROFILE/.codex/skills"
+  agents:  "$env:USERPROFILE/.agents/skills"
+
+# 重命名映射：源目录名 → 目标 skill 名
+# 键为相对于仓库根的路径，值为目标目录名
+rename:
+  "iran-war-tracker - V2": "iran-war-tracker-v2"
+
+# 排除规则（开发/评测产物，不同步到 Agent 安装目录）
+exclude:
+  dirs:
+    - .git
+    - __pycache__
+    - .pytest_cache
+    - evals
+    - benchmarks
+    - "*-workspace"
+    - node_modules
+    - venv
+    - .venv
+  files:
+    - benchmark.json
+    - benchmark.md
+    - grading.json
+    - timing.json
+    - metrics.json
+    - transcript.md
+    - review.html
+    - feedback.json
+    - test_*.py
+    - "*_test.py"
+    - .env
+    - "*.pyc"

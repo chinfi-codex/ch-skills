@@ -15,6 +15,13 @@ id_ed25519
 
 __pycache__/
 *.py[cod]
+health-butler/health.db
+health-butler/profile.json
+health-butler/daily-log.md
+health-butler/chronic-conditions.md
+health-butler/data/
+health-butler/dashboard/data/
+health-butler/dashboard/index.html
 stock-skills/a-stock-daily-market-sense/data/cache/
 stock-skills/a-stock-daily-market-sense/reports/evidence_*
 stock-skills/a-stock-daily-market-sense/reports/report_context_*.json

@@ -570,6 +570,38 @@ def build_market_temperature(panel: pd.DataFrame, index_summary: Dict[str, Optio
     }
 
 
+def calculate_market_turnover_rate(daily: pd.DataFrame, daily_basic: pd.DataFrame, target_date: str) -> Tuple[Optional[float], Optional[str]]:
+    """Calculate full-market turnover rate using amount / circulating market value."""
+    if daily is None or daily.empty:
+        return None, "daily data is empty"
+    if daily_basic is None or daily_basic.empty:
+        return None, "daily_basic data is empty"
+
+    daily_day = daily.loc[daily["trade_date"].astype(str) == str(target_date)].copy()
+    basic_day = daily_basic.loc[daily_basic["trade_date"].astype(str) == str(target_date)].copy()
+    if daily_day.empty:
+        return None, f"daily data missing target date {target_date}"
+    if basic_day.empty:
+        return None, f"daily_basic data missing target date {target_date}"
+    if "amount" not in daily_day.columns:
+        return None, "daily data missing amount column"
+    if "circ_mv" not in basic_day.columns:
+        return None, "daily_basic data missing circ_mv column"
+
+    amount = pd.to_numeric(daily_day["amount"], errors="coerce")
+    circ_mv = pd.to_numeric(basic_day["circ_mv"], errors="coerce")
+    total_amount_thousand_yuan = amount[amount > 0].sum(min_count=1)
+    total_circ_mv_10k_yuan = circ_mv[circ_mv > 0].sum(min_count=1)
+
+    if pd.isna(total_amount_thousand_yuan) or float(total_amount_thousand_yuan) <= 0:
+        return None, "daily amount has no positive values"
+    if pd.isna(total_circ_mv_10k_yuan) or float(total_circ_mv_10k_yuan) <= 0:
+        return None, "daily_basic circ_mv has no positive values"
+
+    turnover_rate = (float(total_amount_thousand_yuan) * 1000.0) / (float(total_circ_mv_10k_yuan) * 10000.0) * 100.0
+    return round(turnover_rate, 4), None
+
+
 def format_history_date(trade_date: str) -> str:
     return datetime.strptime(str(trade_date), "%Y%m%d").strftime("%Y/%m/%d")
 
@@ -615,7 +647,7 @@ def upsert_market_history_row(
     ordered_columns = list(dict.fromkeys(columns + list(row.keys())))
 
     if csv_path.exists():
-        df = pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path, encoding="utf-8-sig")
         if "日期" not in df.columns:
             if len(df.columns) == len(ordered_columns):
                 df.columns = ordered_columns
@@ -643,18 +675,22 @@ def upsert_market_history_row(
                     if should_fill_turnover(current_value, new_value):
                         df.at[idx, col] = new_value
                     continue
+                if col == "全市场换手率":
+                    if should_fill_positive_numeric(current_value, new_value):
+                        df.at[idx, col] = new_value
+                    continue
                 if is_blank_value(current_value) and not is_blank_value(new_value):
                     df.at[idx, col] = new_value
-            df.to_csv(csv_path, index=False)
+            df.to_csv(csv_path, index=False, encoding="utf-8-sig")
             return
 
         final_columns = list(df.columns) + [col for col in ordered_columns if col not in df.columns]
         new_row = pd.DataFrame([row], columns=final_columns)
         df = pd.concat([new_row, df.reindex(columns=final_columns)], ignore_index=True)
-        df.to_csv(csv_path, index=False)
+        df.to_csv(csv_path, index=False, encoding="utf-8-sig")
         return
 
-    pd.DataFrame([row], columns=ordered_columns).to_csv(csv_path, index=False)
+    pd.DataFrame([row], columns=ordered_columns).to_csv(csv_path, index=False, encoding="utf-8-sig")
 
 
 def fetch_tushare_market_snapshot_from_daily(
@@ -685,6 +721,21 @@ def fetch_tushare_market_snapshot_from_daily(
         flat_count = int((pct_series == 0).sum())
 
     return total_amount, up_count, down_count, flat_count
+
+
+def should_fill_positive_numeric(existing_value: object, new_value: object) -> bool:
+    if is_blank_value(new_value):
+        return False
+
+    new_numeric = pd.to_numeric(pd.Series([new_value]), errors="coerce").iloc[0]
+    if pd.isna(new_numeric) or float(new_numeric) <= 0:
+        return False
+
+    if is_blank_value(existing_value):
+        return True
+
+    existing_numeric = pd.to_numeric(pd.Series([existing_value]), errors="coerce").iloc[0]
+    return pd.isna(existing_numeric) or float(existing_numeric) <= 0
 
 
 def fetch_akshare_market_history_row(target_date: str) -> Tuple[Dict[str, Any], List[str], Dict[str, Any]]:
@@ -746,10 +797,16 @@ def fetch_akshare_market_history_row(target_date: str) -> Tuple[Dict[str, Any], 
 def update_market_history(
     target_date: str,
     daily: pd.DataFrame,
+    daily_basic: Optional[pd.DataFrame] = None,
     csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
 ) -> Dict[str, Any]:
     row, columns, detail = fetch_akshare_market_history_row(target_date)
     total_amount, up_count, down_count, flat_count = fetch_tushare_market_snapshot_from_daily(daily, target_date)
+    market_turnover_rate, market_turnover_reason = calculate_market_turnover_rate(
+        daily,
+        daily_basic if daily_basic is not None else pd.DataFrame(),
+        target_date,
+    )
 
     fallback_reason = detail.get("fallback_reason")
     if not row:
@@ -775,6 +832,11 @@ def update_market_history(
     if "平盘" not in columns:
         columns.append("平盘")
 
+    if market_turnover_rate is not None:
+        row["全市场换手率"] = market_turnover_rate
+    if "全市场换手率" not in columns:
+        columns.append("全市场换手率")
+
     confirmed_values = {
         key: value for key, value in row.items() if key != "日期" and not is_blank_value(value)
     }
@@ -786,6 +848,9 @@ def update_market_history(
         "supplement_source": MARKET_HISTORY_SUPPLEMENT_SOURCE,
         "primary_trade_date": detail.get("primary_trade_date"),
         "fallback_reason": fallback_reason,
+        "market_turnover_rate": market_turnover_rate,
+        "market_turnover_rate_unit": "percent",
+        "market_turnover_rate_reason": market_turnover_reason,
         "fields": sorted(confirmed_values.keys()),
     }
     if not confirmed_values:
@@ -1194,6 +1259,65 @@ def classify_volume_temperature(amount_ratio_20d: Any) -> Optional[str]:
     return "stable_volume"
 
 
+def classify_turnover_acceleration(turnover_series: pd.Series) -> Dict[str, Any]:
+    values = [safe_float(value) for value in turnover_series.dropna().tail(5).tolist()]
+    values = [value for value in values if value is not None]
+    if len(values) < 3:
+        return {
+            "status": "insufficient_data",
+            "window_days": len(values),
+            "reason": "fewer than 3 valid turnover observations",
+        }
+
+    current = values[-1]
+    first = values[0]
+    ma5 = sum(values) / len(values)
+    change_pct = ((current / first - 1.0) * 100.0) if first else None
+    above_ma5_pct = ((current / ma5 - 1.0) * 100.0) if ma5 else None
+    recent = pd.Series(values)
+    consecutive_up = count_consecutive_moves(recent, "up")
+    consecutive_down = count_consecutive_moves(recent, "down")
+
+    if consecutive_down >= 2 or (change_pct is not None and change_pct <= -5.0):
+        status = "cooling"
+    elif (
+        (consecutive_up >= 3 and change_pct is not None and change_pct >= 8.0)
+        or (
+            change_pct is not None
+            and above_ma5_pct is not None
+            and change_pct >= 8.0
+            and above_ma5_pct >= 5.0
+        )
+    ):
+        status = "accelerating"
+    elif (
+        (change_pct is not None and change_pct >= 3.0)
+        or consecutive_up >= 2
+        or (above_ma5_pct is not None and above_ma5_pct >= 3.0)
+    ):
+        status = "mild_acceleration"
+    else:
+        status = "stable"
+
+    risk_hint = {
+        "accelerating": "turnover_acceleration_watch",
+        "mild_acceleration": "mild_turnover_pickup",
+        "stable": "stable_turnover",
+        "cooling": "turnover_cooling",
+    }.get(status)
+    return {
+        "status": status,
+        "risk_hint": risk_hint,
+        "window_days": len(values),
+        "current": round(current, 4),
+        "window_start": round(first, 4),
+        "window_change_pct": round(change_pct, 2) if change_pct is not None else None,
+        "current_vs_window_avg_pct": round(above_ma5_pct, 2) if above_ma5_pct is not None else None,
+        "consecutive_up_days": consecutive_up,
+        "consecutive_down_days": consecutive_down,
+    }
+
+
 def classify_sentiment_temperature(activity: Any, limit_up_down_ratio: Any) -> Optional[str]:
     activity_value = safe_float(activity)
     if activity_value is not None:
@@ -1246,7 +1370,7 @@ def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
         }
 
     try:
-        raw = pd.read_csv(csv_path)
+        raw = pd.read_csv(csv_path, encoding="utf-8-sig")
     except Exception as exc:
         return {
             "available": False,
@@ -1273,7 +1397,7 @@ def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
             "reason": "no sentiment rows on or before target date",
         }
 
-    expected_columns = ["上涨", "下跌", "平盘", "涨停", "跌停", "活跃度", "成交额"]
+    expected_columns = ["上涨", "下跌", "平盘", "涨停", "跌停", "活跃度", "成交额", "全市场换手率"]
     for column in expected_columns:
         if column in df.columns:
             df[column] = parse_numeric_text_series(df[column])
@@ -1289,11 +1413,21 @@ def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
         df["amount_ma20"] = df["成交额"].rolling(20, min_periods=5).mean()
         df["amount_ratio_5d"] = df["成交额"] / df["amount_ma5"].replace(0, pd.NA)
         df["amount_ratio_20d"] = df["成交额"] / df["amount_ma20"].replace(0, pd.NA)
+    if "全市场换手率" in df.columns:
+        df["market_turnover_rate"] = df["全市场换手率"]
+        df["market_turnover_rate_ma5"] = df["market_turnover_rate"].rolling(5, min_periods=3).mean()
+        df["market_turnover_rate_ma20"] = df["market_turnover_rate"].rolling(20, min_periods=5).mean()
+        df["market_turnover_rate_ratio_5d"] = df["market_turnover_rate"] / df["market_turnover_rate_ma5"].replace(0, pd.NA)
+        df["market_turnover_rate_ratio_20d"] = df["market_turnover_rate"] / df["market_turnover_rate_ma20"].replace(0, pd.NA)
 
     latest = df.iloc[-1]
     previous = df.iloc[-2] if len(df) >= 2 else None
     amount_ma5 = latest.get("amount_ma5") if "amount_ma5" in df.columns else None
     amount_ma20 = latest.get("amount_ma20") if "amount_ma20" in df.columns else None
+    turnover_ma5 = latest.get("market_turnover_rate_ma5") if "market_turnover_rate_ma5" in df.columns else None
+    turnover_ma20 = latest.get("market_turnover_rate_ma20") if "market_turnover_rate_ma20" in df.columns else None
+    turnover_valid = df["market_turnover_rate"].dropna() if "market_turnover_rate" in df.columns else pd.Series(dtype=float)
+    turnover_5d_base = turnover_valid.iloc[-5] if len(turnover_valid) >= 5 else None
 
     recent_cols = [
         col
@@ -1306,6 +1440,7 @@ def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
             "活跃度",
             "成交额",
             "amount_trillion_yuan",
+            "market_turnover_rate",
             "up_ratio",
             "limit_up_down_ratio",
         ]
@@ -1332,6 +1467,9 @@ def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
             "activity": round_optional(latest.get("活跃度"), 2),
             "amount": round_optional(latest.get("成交额"), 4),
             "amount_trillion_yuan": round_optional(latest.get("amount_trillion_yuan"), 2),
+            "market_turnover_rate": round_optional(latest.get("market_turnover_rate"), 4) if "market_turnover_rate" in df.columns else None,
+            "market_turnover_rate_ma5": round_optional(turnover_ma5, 4),
+            "market_turnover_rate_ma20": round_optional(turnover_ma20, 4),
             "up_ratio": round_optional(latest.get("up_ratio"), 4),
             "limit_up_down_ratio": round_optional(latest.get("limit_up_down_ratio"), 2),
         },
@@ -1342,6 +1480,10 @@ def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
             "amount_ma20_trillion_yuan": round_optional(amount_ma20 / 1e9, 2) if amount_ma20 is not None and pd.notna(amount_ma20) else None,
             "amount_ratio_5d": round_optional(latest.get("amount_ratio_5d"), 2) if "amount_ratio_5d" in df.columns else None,
             "amount_ratio_20d": round_optional(latest.get("amount_ratio_20d"), 2) if "amount_ratio_20d" in df.columns else None,
+            "market_turnover_rate_ma5": round_optional(turnover_ma5, 4),
+            "market_turnover_rate_ma20": round_optional(turnover_ma20, 4),
+            "market_turnover_rate_ratio_5d": round_optional(latest.get("market_turnover_rate_ratio_5d"), 2) if "market_turnover_rate_ratio_5d" in df.columns else None,
+            "market_turnover_rate_ratio_20d": round_optional(latest.get("market_turnover_rate_ratio_20d"), 2) if "market_turnover_rate_ratio_20d" in df.columns else None,
             "up_ratio_ma5": round_optional(df["up_ratio"].rolling(5, min_periods=3).mean().iloc[-1], 4),
             "activity_ma5": round_optional(df["活跃度"].rolling(5, min_periods=3).mean().iloc[-1], 2) if "活跃度" in df.columns else None,
             "limit_up_down_ratio_ma5": round_optional(df["limit_up_down_ratio"].rolling(5, min_periods=3).mean().iloc[-1], 2),
@@ -1352,8 +1494,26 @@ def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
             "activity_vs_previous": compare_scalar(latest.get("活跃度"), previous.get("活跃度") if previous is not None else None),
             "amount_vs_previous": compare_scalar(latest.get("成交额"), previous.get("成交额") if previous is not None else None),
             "amount_vs_20d_avg_pct": pct_change_optional(latest.get("成交额"), amount_ma20),
+            "market_turnover_rate_vs_previous": compare_scalar(
+                latest.get("market_turnover_rate") if "market_turnover_rate" in df.columns else None,
+                previous.get("market_turnover_rate") if previous is not None and "market_turnover_rate" in df.columns else None,
+            ),
+            "market_turnover_rate_5d_change": compare_scalar(
+                latest.get("market_turnover_rate") if "market_turnover_rate" in df.columns else None,
+                turnover_5d_base,
+            ),
+            "market_turnover_rate_vs_20d_avg_pct": pct_change_optional(
+                latest.get("market_turnover_rate") if "market_turnover_rate" in df.columns else None,
+                turnover_ma20,
+            ),
+            "market_turnover_rate_improving_days": count_consecutive_moves(df["market_turnover_rate"], "up") if "market_turnover_rate" in df.columns else 0,
+            "market_turnover_rate_deteriorating_days": count_consecutive_moves(df["market_turnover_rate"], "down") if "market_turnover_rate" in df.columns else 0,
             "up_ratio_improving_days": count_consecutive_moves(df["up_ratio"], "up"),
             "up_ratio_deteriorating_days": count_consecutive_moves(df["up_ratio"], "down"),
+        },
+        "turnover_acceleration": classify_turnover_acceleration(df["market_turnover_rate"]) if "market_turnover_rate" in df.columns else {
+            "status": "unavailable",
+            "reason": "market_turnover_rate column missing",
         },
         "temperature_hints": {
             "volume": classify_volume_temperature(latest.get("amount_ratio_20d") if "amount_ratio_20d" in df.columns else None),
@@ -2626,7 +2786,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
     if daily.empty:
         raise RuntimeError("daily returned no data for the requested window.")
 
-    market_history_update = update_market_history(target_date, daily)
+    market_history_update = update_market_history(target_date, daily, basic)
     market_trend = build_market_trend(
         pro,
         target_date,

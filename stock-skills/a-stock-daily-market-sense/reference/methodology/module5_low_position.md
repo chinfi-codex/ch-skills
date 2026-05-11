@@ -1,6 +1,6 @@
-# 模块 5：低位放量异动
+# 低位异动分组口径（兼容参考）
 
-使用 `module5_low_position.json`。
+模块 5 已改为 `module5_feature_groups.json`，正式写作方法论见 `module5_feature_groups.md`。本文只保留低位异动分组的内部筛选与解释口径。
 
 低位规则：
 

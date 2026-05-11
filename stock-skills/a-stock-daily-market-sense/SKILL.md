@@ -1,6 +1,6 @@
 ---
 name: tushare-daily-market-sense
-description: 基于 Tushare Pro A 股 daily 日线数据生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板指数趋势、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、低位放量异动筛选、指数背离/抗跌股分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
+description: 基于 Tushare Pro A 股 daily 日线数据生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板指数趋势、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、低位异动/科创板月线突破/10:30前涨停等特征分组分析、指数背离/抗跌股分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
 version: 2.0.0
 ---
 
@@ -8,13 +8,13 @@ version: 2.0.0
 
 ## 目标
 
-基于 Tushare 日线、指数、成交额与本地情绪历史，为 A 股盘后复盘生成结构化研报：盘面趋势、成交额集中度、赚钱效应与上涨主线、爆量下跌风险、低位放量异动、弱指数环境下的抗跌股。
+基于 Tushare 日线、指数、成交额与本地情绪历史，为 A 股盘后复盘生成结构化研报：盘面趋势、成交额集中度、赚钱效应与上涨主线、爆量下跌风险、特征分组分析、弱指数环境下的抗跌股。
 
 不做单股基本面深度研究、港股/美股/基金/期货/加密分析、分钟级交易决策、自动下单、组合优化或买卖建议。脚本只负责取数、计算、筛选、切分 JSON；主题归纳、风险措辞和研报写作由模型完成。
 
 ## 核心理念
 
-成交额优先。所有强弱判断都要有成交额证据：上涨主线按成交额厚度确认，爆量下跌按放量异常与跌幅强度识别，低位异动按放量触发与触发后成交额行为分类，抗跌股要求有至少 1 亿成交额证明资金参与。
+成交额优先。所有强弱判断都要有成交额证据：上涨主线按成交额厚度确认，爆量下跌按放量异常与跌幅强度识别，特征分组按命中规则与成交额证据分开呈现，抗跌股要求有至少 1 亿成交额证明资金参与。
 
 主题主线由模型基于业务事实临时归纳，不套现成行业或概念标签。共同性不足时明确写“暂不构成主线”或“资金轮动”。
 
@@ -80,7 +80,7 @@ python scripts\run_daily_panel.py --asof 20260429 --lookback 120 --market-trend-
 | 2 集中度 | `module2_concentration.json` | `reference/methodology/module2_concentration.md` | `reference/template/section2.md` |
 | 3 赚钱效应 | `module3_money_effect.json` | `reference/methodology/module3_money_effect.md` | `reference/template/section3.md` |
 | 4 爆量下跌 | `module4_decline.json` | `reference/methodology/module4_decline.md` | `reference/template/section4.md` |
-| 5 低位放量 | `module5_low_position.json` | `reference/methodology/module5_low_position.md` | `reference/template/section5.md` |
+| 5 特征分组 | `module5_feature_groups.json` | `reference/methodology/module5_feature_groups.md` | `reference/template/section5.md` |
 | 6 抗跌股 | `module6_resilient.json` | `reference/methodology/module6_resilient.md` | `reference/template/section6.md` |
 
 聚合 agent 额外读取：
@@ -94,7 +94,7 @@ Python 不调用 Anthropic API、不调用任何 LLM、不硬编码模型名。C
 
 完整研报仍按六个模块输出。每段结论先行，表格只放关键证据，所有强弱判断必须有成交额或放量倍数支撑。不要写“板块轮动明显”这类空句；要写“候选数、合计成交额、最大主题占比、代表股成交额”。
 
-每个一级大章节（1-6）里已有的总结/定性段落必须使用 Markdown 高亮样式 `==...==` 包裹，例如“盘面定性”“拥挤度判断”“主线 vs 资金轮动结论”“风险传导提示”“低位放量一句话判断”“抗跌方向判断”。不要为了高亮额外新增“本节总结”段落；高亮的是原本就承担总结作用的段落。
+每个一级大章节（1-6）里已有的总结/定性段落必须使用 Markdown 高亮样式 `==...==` 包裹，例如“盘面定性”“拥挤度判断”“主线 vs 资金轮动结论”“风险传导提示”“特征分组一句话判断”“抗跌方向判断”。不要为了高亮额外新增“本节总结”段落；高亮的是原本就承担总结作用的段落。
 
 禁止输出买卖建议。可以写“风险传导”“持续性待验证”“主线确认度”，不要写“买入/卖出/止损/目标价”。
 

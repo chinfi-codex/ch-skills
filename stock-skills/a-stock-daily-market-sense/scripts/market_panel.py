@@ -34,6 +34,11 @@ try:
 except ImportError:  # pragma: no cover - optional runtime dependency
     ak = None
 
+try:
+    import requests
+except ImportError:  # pragma: no cover - optional runtime dependency
+    requests = None
+
 
 DEFAULT_DAILY_FIELDS = (
     "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
@@ -54,6 +59,7 @@ MARKET_TREND_INDEXES = {
 }
 MARKET_HISTORY_PRIMARY_SOURCE = "akshare.stock_market_activity_legu"
 MARKET_HISTORY_SUPPLEMENT_SOURCE = "tushare.daily"
+JRJ_LIMIT_UP_URL = "https://gateway.jrj.com/quot-dc/zdt/v1/record"
 
 
 def get_tushare_token() -> str:
@@ -440,7 +446,10 @@ def add_numeric_features(daily: pd.DataFrame) -> pd.DataFrame:
         df[f"ret_{period}d"] = grouped["close"].pct_change(period) * 100.0
 
     df["close_ma5"] = grouped["close"].transform(lambda s: s.rolling(5, min_periods=5).mean())
+    df["close_ma20"] = grouped["close"].transform(lambda s: s.rolling(20, min_periods=20).mean())
+    df["close_ma60"] = grouped["close"].transform(lambda s: s.rolling(60, min_periods=60).mean())
     df["prev_high_10d"] = grouped["high"].transform(lambda s: s.shift(1).rolling(10, min_periods=5).max())
+    df["prev_high_120d"] = grouped["high"].transform(lambda s: s.shift(1).rolling(120, min_periods=60).max())
     df["close_to_high"] = df["close"] / df["high"].replace(0, pd.NA)
     df["amount_ma20_prev"] = grouped["amount"].transform(lambda s: s.shift(1).rolling(20, min_periods=5).mean())
     df["amount_ratio_20d"] = df["amount"] / df["amount_ma20_prev"]
@@ -2289,6 +2298,372 @@ def build_low_position_volume_anomaly_samples(
     }
 
 
+def code_to_ts_code(code: Any) -> Optional[str]:
+    code_str = str(code or "").strip()
+    if not code_str:
+        return None
+    if "." in code_str:
+        return code_str
+    if len(code_str) != 6 or not code_str.isdigit():
+        return None
+    if code_str.startswith("6"):
+        return f"{code_str}.SH"
+    if code_str.startswith(("0", "3")):
+        return f"{code_str}.SZ"
+    if code_str.startswith(("4", "8", "9")):
+        return f"{code_str}.BJ"
+    return None
+
+
+def fetch_jrj_limit_up_records(trade_date: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    if requests is None:
+        return [], "requests dependency is not installed"
+
+    headers = {
+        "authority": "gateway.jrj.com",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "zh-CN,zh;q=0.9",
+        "deviceinfo": json.dumps({
+            "productId": "6000021",
+            "version": "1.0.0",
+            "device": "Mozilla/5.0",
+            "sysName": "Chrome",
+            "sysVersion": ["chrome/145.0.0.0"],
+        }),
+        "origin": "https://summary.jrj.com.cn",
+        "productid": "6000021",
+        "referer": "https://summary.jrj.com.cn/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    }
+
+    records: List[Dict[str, Any]] = []
+    page_size = 100
+    try:
+        for page_num in range(1, 11):
+            payload = {
+                "td": trade_date,
+                "zdtType": "zt",
+                "pageNum": page_num,
+                "pageSize": page_size,
+            }
+            response = requests.post(JRJ_LIMIT_UP_URL, headers=headers, json=payload, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict) or data.get("code") != 20000:
+                response_code = data.get("code") if isinstance(data, dict) else type(data).__name__
+                return records, f"unexpected JRJ response code: {response_code}"
+            page_records = data.get("data", {}).get("list", [])
+            if not page_records:
+                break
+            records.extend(page_records)
+            if len(page_records) < page_size:
+                break
+    except Exception as exc:
+        return records, str(exc)
+
+    records.sort(key=lambda item: item.get("zdttm", 999999))
+    return records, None
+
+
+def build_star_monthly_breakout_samples(
+    features: pd.DataFrame,
+    target_date: str,
+    sample_limit: int,
+) -> Dict[str, Any]:
+    if features is None or features.empty:
+        return {
+            "available": False,
+            "filter_criteria": {},
+            "candidates": [],
+            "summary": {"candidate_count": 0},
+        }
+
+    df = features.copy()
+    df["trade_date"] = df["trade_date"].astype(str)
+    for column in (
+        "open", "high", "low", "close", "pct_chg", "amount",
+        "ret_5d", "ret_20d", "amount_ratio_20d", "history_days",
+        "prev_high_120d", "close_position_120d", "drawdown_120_high",
+        "close_ma20", "close_ma60",
+    ):
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    target_rows = df.loc[df["trade_date"] == target_date].copy()
+    if target_rows.empty:
+        return {
+            "available": True,
+            "filter_criteria": {},
+            "candidates": [],
+            "summary": {"candidate_count": 0},
+        }
+
+    market = target_rows["market"].fillna("").astype(str) if "market" in target_rows.columns else pd.Series("", index=target_rows.index)
+    ts_codes = target_rows["ts_code"].fillna("").astype(str)
+    target_rows = target_rows.loc[market.eq("科创板") | ts_codes.str.startswith(("688", "689"))].copy()
+
+    candidates: List[Dict[str, Any]] = []
+    grouped = df.loc[df["ts_code"].isin(target_rows["ts_code"])].groupby("ts_code", group_keys=False)
+    current_month = pd.Period(pd.to_datetime(target_date), freq="M")
+
+    for ts_code, sub in grouped:
+        sub = sub.sort_values("trade_date").reset_index(drop=True)
+        target_match = sub.loc[sub["trade_date"] == target_date]
+        if target_match.empty:
+            continue
+        target_row = target_match.iloc[-1]
+        history_days = safe_float(target_row.get("history_days")) or 0
+        prev_high_120d = safe_float(target_row.get("prev_high_120d"))
+        close = safe_float(target_row.get("close"))
+        if history_days < 120 or close is None or prev_high_120d is None or close < prev_high_120d:
+            continue
+
+        dated = sub.copy()
+        dated["_month"] = pd.to_datetime(dated["trade_date"]).dt.to_period("M")
+        current_month_rows = dated.loc[dated["_month"] == current_month]
+        previous_month_rows = dated.loc[dated["_month"] < current_month]
+        if current_month_rows.empty or previous_month_rows.empty:
+            continue
+        previous_month_high = safe_float(previous_month_rows["high"].max())
+        current_month_high = safe_float(current_month_rows["high"].max())
+        if previous_month_high is None or close <= previous_month_high:
+            continue
+
+        previous_rows = sub.loc[sub["trade_date"] < target_date]
+        prior_row = previous_rows.iloc[-1] if not previous_rows.empty else None
+        high_trend_excluded = False
+        if prior_row is not None:
+            prior_close = safe_float(prior_row.get("close"))
+            prior_ma20 = safe_float(prior_row.get("close_ma20"))
+            prior_ma60 = safe_float(prior_row.get("close_ma60"))
+            prior_position = safe_float(prior_row.get("close_position_120d"))
+            prior_ret20 = safe_float(prior_row.get("ret_20d"))
+            high_trend_excluded = bool(
+                prior_close is not None
+                and prior_ma20 is not None
+                and prior_ma60 is not None
+                and prior_position is not None
+                and prior_ret20 is not None
+                and prior_close > prior_ma20 > prior_ma60
+                and prior_position >= 0.70
+                and prior_ret20 > 20.0
+            )
+        if high_trend_excluded:
+            continue
+
+        amount = safe_float(target_row.get("amount"))
+        candidates.append({
+            "ts_code": ts_code,
+            "name": nullable_value(target_row.get("name")),
+            "market": nullable_value(target_row.get("market")),
+            "pct_chg": round_optional(target_row.get("pct_chg"), 2),
+            "amount_100m_yuan": round_optional(amount / 100000, 2) if amount is not None else None,
+            "close": round_optional(close, 2),
+            "prev_high_120d": round_optional(prev_high_120d, 2),
+            "close_vs_prev_high_120d_pct": pct_change_optional(close, prev_high_120d),
+            "previous_complete_month_high": round_optional(previous_month_high, 2),
+            "current_month_high": round_optional(current_month_high, 2),
+            "close_vs_previous_month_high_pct": pct_change_optional(close, previous_month_high),
+            "ret_5d": round_optional(target_row.get("ret_5d"), 2),
+            "ret_20d": round_optional(target_row.get("ret_20d"), 2),
+            "amount_ratio_20d": round_optional(target_row.get("amount_ratio_20d"), 2),
+            "drawdown_120_high": round_optional(target_row.get("drawdown_120_high"), 2),
+            "close_position_120d": round_optional(target_row.get("close_position_120d"), 4),
+            "trigger_reason": "科创板；今日收盘突破前120日高点；真实自然月K突破此前完整月份高点；未落入高位趋势排除条件",
+        })
+
+    candidates.sort(key=lambda item: (
+        -float(item.get("amount_100m_yuan") or 0),
+        -float(item.get("close_vs_previous_month_high_pct") or 0),
+    ))
+    candidates = candidates[:sample_limit]
+    return {
+        "available": True,
+        "filter_criteria": {
+            "market": "科创板，或 ts_code 以 688/689 开头",
+            "new_high": "今日收盘价突破前 120 个交易日最高价",
+            "monthly_breakout": "当前自然月最新收盘价突破此前完整自然月最高价",
+            "exclude_high_trend": "剔除前一日已处于 close > MA20 > MA60、120日位置 >= 0.70、近20日涨幅 > 20% 的高位趋势样本",
+            "sample_limit": sample_limit,
+            "sort_by": "成交额（亿元）降序，其次月线突破幅度降序",
+        },
+        "candidates": candidates,
+        "summary": {
+            "candidate_count": len(candidates),
+            "total_amount_100m_yuan": round(sum(float(item.get("amount_100m_yuan") or 0) for item in candidates), 2),
+        },
+    }
+
+
+def build_early_limit_up_1030_samples(
+    target_date: str,
+    panel: pd.DataFrame,
+    basic: pd.DataFrame,
+    sample_limit: int,
+) -> Dict[str, Any]:
+    records, error = fetch_jrj_limit_up_records(target_date)
+    if not records and error:
+        return {
+            "available": False,
+            "source": "JRJ zdt record",
+            "error": error,
+            "filter_criteria": {
+                "first_limit_time": "zdttm <= 103000",
+                "total_mv_100m_yuan_min": 50,
+                "exclude": "ST/*ST",
+            },
+            "candidates": [],
+            "summary": {"candidate_count": 0},
+        }
+
+    panel_by_ts = {str(row.get("ts_code")): row for _, row in panel.iterrows()} if panel is not None and not panel.empty else {}
+    basic_by_ts = {str(row.get("ts_code")): row for _, row in basic.iterrows()} if basic is not None and not basic.empty else {}
+
+    candidates: List[Dict[str, Any]] = []
+    for record in records:
+        name = str(record.get("name") or "").strip()
+        if "ST" in name.upper():
+            continue
+        try:
+            first_time = int(record.get("zdttm") or 0)
+        except Exception:
+            first_time = 0
+        if first_time <= 0 or first_time > 103000:
+            continue
+
+        code = str(record.get("code") or "").strip()
+        ts_code = code_to_ts_code(code)
+        if not ts_code:
+            continue
+        panel_row = panel_by_ts.get(ts_code)
+        basic_row = basic_by_ts.get(ts_code)
+
+        total_mv_100m = None
+        if basic_row is not None:
+            total_mv = safe_float(basic_row.get("total_mv"))
+            if total_mv is not None:
+                total_mv_100m = total_mv / 10000
+        if total_mv_100m is None:
+            total_mv_100m = safe_float(record.get("total_mv"))
+        if total_mv_100m is None or total_mv_100m < 50:
+            continue
+
+        amount = safe_float(panel_row.get("amount")) if panel_row is not None else None
+        time_str = str(first_time).zfill(6)
+        candidates.append({
+            "ts_code": ts_code,
+            "code": code,
+            "name": name or (nullable_value(panel_row.get("name")) if panel_row is not None else None),
+            "market": nullable_value(panel_row.get("market")) if panel_row is not None else None,
+            "first_limit_time": time_str,
+            "first_limit_time_label": f"{time_str[:2]}:{time_str[2:4]}",
+            "total_mv_100m_yuan": round(total_mv_100m, 2),
+            "pct_chg": round_optional(panel_row.get("pct_chg"), 2) if panel_row is not None else None,
+            "amount_100m_yuan": round_optional(amount / 100000, 2) if amount is not None else None,
+            "close": round_optional(panel_row.get("close"), 2) if panel_row is not None else None,
+            "open_times": nullable_value(record.get("open_times")),
+            "trigger_reason": "JRJ 涨停池；首次封板时间不晚于 10:30；总市值 >= 50 亿；已过滤 ST",
+        })
+
+    candidates.sort(key=lambda item: (
+        str(item.get("first_limit_time") or "999999"),
+        -float(item.get("total_mv_100m_yuan") or 0),
+    ))
+    candidates = candidates[:sample_limit]
+    return {
+        "available": True,
+        "source": "JRJ zdt record",
+        "error": error,
+        "filter_criteria": {
+            "first_limit_time": "zdttm <= 103000",
+            "total_mv_100m_yuan_min": 50,
+            "exclude": "ST/*ST",
+            "sample_limit": sample_limit,
+            "sort_by": "首次封板时间升序，其次总市值降序",
+        },
+        "candidates": candidates,
+        "summary": {
+            "candidate_count": len(candidates),
+            "source_record_count": len(records),
+        },
+    }
+
+
+def build_feature_group_overlaps(groups: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    labels = {
+        "low_position_anomaly": "低位异动",
+        "star_120_high_monthly_breakout": "科创板月线突破",
+        "early_limit_up_1030": "10:30前涨停",
+    }
+    by_code: Dict[str, Dict[str, Any]] = {}
+    for group_key, payload in groups.items():
+        for candidate in (payload or {}).get("candidates", []) or []:
+            ts_code = candidate.get("ts_code")
+            if not ts_code:
+                continue
+            item = by_code.setdefault(ts_code, {
+                "ts_code": ts_code,
+                "name": candidate.get("name"),
+                "matched_groups": [],
+                "matched_group_keys": [],
+                "group_reasons": {},
+                "evidence_by_group": {},
+            })
+            if not item.get("name") and candidate.get("name"):
+                item["name"] = candidate.get("name")
+            item["matched_groups"].append(labels.get(group_key, group_key))
+            item["matched_group_keys"].append(group_key)
+            item["group_reasons"][group_key] = candidate.get("trigger_reason")
+            item["evidence_by_group"][group_key] = candidate
+
+    overlaps = [
+        {
+            **item,
+            "matched_group_count": len(item.get("matched_group_keys") or []),
+        }
+        for item in by_code.values()
+        if len(item.get("matched_group_keys") or []) >= 2
+    ]
+    overlaps.sort(key=lambda item: (-int(item.get("matched_group_count") or 0), str(item.get("ts_code") or "")))
+    return overlaps
+
+
+def build_feature_group_analysis_samples(
+    low_position_anomaly: Dict[str, Any],
+    features: pd.DataFrame,
+    panel: pd.DataFrame,
+    basic: pd.DataFrame,
+    target_date: str,
+    sample_limit: int,
+) -> Dict[str, Any]:
+    low_group = {
+        "available": low_position_anomaly.get("available", False),
+        "filter_criteria": low_position_anomaly.get("filter_criteria"),
+        "summary": low_position_anomaly.get("summary"),
+        "candidates": low_position_anomaly.get("candidates", []),
+    }
+    star_group = build_star_monthly_breakout_samples(features, target_date, sample_limit)
+    early_group = build_early_limit_up_1030_samples(target_date, panel, basic, sample_limit)
+    groups = {
+        "low_position_anomaly": low_group,
+        "star_120_high_monthly_breakout": star_group,
+        "early_limit_up_1030": early_group,
+    }
+    overlaps = build_feature_group_overlaps(groups)
+    return {
+        "available": True,
+        "groups": groups,
+        "overlap_hits": overlaps,
+        "summary": {
+            "low_position_anomaly_count": len(low_group.get("candidates") or []),
+            "star_120_high_monthly_breakout_count": len(star_group.get("candidates") or []),
+            "early_limit_up_1030_count": len(early_group.get("candidates") or []),
+            "overlap_hit_count": len(overlaps),
+        },
+        "model_responsibility": "脚本只提供分组命中和确定性量价证据；交叉命中上涨归因由模型基于证据包撰写，不在脚本中调用 LLM。",
+    }
+
+
 def build_resilient_against_index_samples(
     panel: pd.DataFrame,
     index_summary: Dict[str, Optional[float]],
@@ -2484,6 +2859,46 @@ def build_report_context(
         "today_close_ma5",
         "today_amount_100m_yuan",
     ]
+    star_fields = [
+        "ts_code",
+        "name",
+        "market",
+        "pct_chg",
+        "amount_100m_yuan",
+        "close",
+        "prev_high_120d",
+        "close_vs_prev_high_120d_pct",
+        "previous_complete_month_high",
+        "current_month_high",
+        "close_vs_previous_month_high_pct",
+        "ret_5d",
+        "ret_20d",
+        "amount_ratio_20d",
+        "drawdown_120_high",
+        "close_position_120d",
+        "trigger_reason",
+    ]
+    early_limit_fields = [
+        "ts_code",
+        "code",
+        "name",
+        "market",
+        "first_limit_time",
+        "first_limit_time_label",
+        "total_mv_100m_yuan",
+        "pct_chg",
+        "amount_100m_yuan",
+        "close",
+        "open_times",
+        "trigger_reason",
+    ]
+    overlap_fields = [
+        "ts_code",
+        "name",
+        "matched_groups",
+        "matched_group_count",
+        "group_reasons",
+    ]
     amount_fields = [
         "ts_code",
         "name",
@@ -2498,6 +2913,8 @@ def build_report_context(
     market_trend = evidence.get("market_trend", {})
     sentiment = dict(market_trend.get("sentiment") or {})
     sentiment.pop("recent_series", None)
+    feature_groups = evidence.get("feature_group_analysis_samples") or {}
+    feature_group_payload = feature_groups.get("groups") or {}
 
     return {
         "metadata": {
@@ -2559,6 +2976,43 @@ def build_report_context(
                 low_limit,
             ),
         },
+        "feature_group_analysis": {
+            "summary": feature_groups.get("summary"),
+            "model_responsibility": feature_groups.get("model_responsibility"),
+            "groups": {
+                "low_position_anomaly": {
+                    "filter_criteria": (feature_group_payload.get("low_position_anomaly") or {}).get("filter_criteria"),
+                    "summary": (feature_group_payload.get("low_position_anomaly") or {}).get("summary"),
+                    "candidates": compact_records(
+                        (feature_group_payload.get("low_position_anomaly") or {}).get("candidates", []),
+                        low_fields,
+                        low_limit,
+                    ),
+                },
+                "star_120_high_monthly_breakout": {
+                    "filter_criteria": (feature_group_payload.get("star_120_high_monthly_breakout") or {}).get("filter_criteria"),
+                    "summary": (feature_group_payload.get("star_120_high_monthly_breakout") or {}).get("summary"),
+                    "candidates": compact_records(
+                        (feature_group_payload.get("star_120_high_monthly_breakout") or {}).get("candidates", []),
+                        star_fields,
+                        low_limit,
+                    ),
+                },
+                "early_limit_up_1030": {
+                    "available": (feature_group_payload.get("early_limit_up_1030") or {}).get("available"),
+                    "source": (feature_group_payload.get("early_limit_up_1030") or {}).get("source"),
+                    "error": (feature_group_payload.get("early_limit_up_1030") or {}).get("error"),
+                    "filter_criteria": (feature_group_payload.get("early_limit_up_1030") or {}).get("filter_criteria"),
+                    "summary": (feature_group_payload.get("early_limit_up_1030") or {}).get("summary"),
+                    "candidates": compact_records(
+                        (feature_group_payload.get("early_limit_up_1030") or {}).get("candidates", []),
+                        early_limit_fields,
+                        low_limit,
+                    ),
+                },
+            },
+            "overlap_hits": compact_records(feature_groups.get("overlap_hits", []), overlap_fields, low_limit),
+        },
         "resilient_against_index": {
             "index_environment": (evidence.get("resilient_against_index_samples") or {}).get("index_environment"),
             "summary": (evidence.get("resilient_against_index_samples") or {}).get("summary"),
@@ -2617,6 +3071,19 @@ def collect_candidate_codes(
             "ts_code",
         ].dropna().astype(str)
     )
+    market = (
+        screening_features["market"].fillna("").astype(str)
+        if "market" in screening_features.columns
+        else pd.Series("", index=screening_features.index)
+    )
+    ts_codes = screening_features["ts_code"].fillna("").astype(str)
+    star_codes = set(
+        screening_features.loc[
+            market.eq("科创板") | ts_codes.str.startswith(("688", "689")),
+            "ts_code",
+        ].dropna().astype(str)
+    )
+    m5_codes = m5_codes | star_codes
 
     index_ret_5d = index_summary.get("index_ret_5d") if index_summary else None
     index_ret_10d = index_summary.get("index_ret_10d") if index_summary else None
@@ -2688,7 +3155,7 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
                 "module2_concentration": ["module2_concentration.json", "reference/methodology/module2_concentration.md", "reference/template/section2.md", "成交额集中度"],
                 "module3_money_effect": ["module3_money_effect.json", "reference/methodology/module3_money_effect.md", "reference/template/section3.md", "赚钱效应与上涨主线"],
                 "module4_decline": ["module4_decline.json", "reference/methodology/module4_decline.md", "reference/template/section4.md", "爆量下跌风险"],
-                "module5_low_position": ["module5_low_position.json", "reference/methodology/module5_low_position.md", "reference/template/section5.md", "低位放量异动"],
+                "module5_feature_groups": ["module5_feature_groups.json", "reference/methodology/module5_feature_groups.md", "reference/template/section5.md", "特征分组分析"],
                 "module6_resilient": ["module6_resilient.json", "reference/methodology/module6_resilient.md", "reference/template/section6.md", "抗跌股"],
             },
             "aggregation_inputs": ["assembled_checks.json", "reference/methodology/output_discipline.md"],
@@ -2711,9 +3178,9 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
             "metadata": metadata,
             "volume_decline": context.get("volume_decline"),
         },
-        "module5_low_position": {
+        "module5_feature_groups": {
             "metadata": metadata,
-            "low_position_volume_anomaly": context.get("low_position_volume_anomaly"),
+            "feature_group_analysis": context.get("feature_group_analysis"),
         },
         "module6_resilient": {
             "metadata": metadata,
@@ -2892,6 +3359,14 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         quiet_volume_ratio_max=args.low_quiet_ratio,
         sample_limit=args.low_sample_limit,
     )
+    feature_group_analysis = build_feature_group_analysis_samples(
+        low_position_anomaly=low_position_anomaly,
+        features=features,
+        panel=panel,
+        basic=basic,
+        target_date=target_date,
+        sample_limit=args.low_sample_limit,
+    )
     resilient = build_resilient_against_index_samples(
         candidate_panel,
         index_summary=index_summary,
@@ -2953,6 +3428,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         "money_effect_samples": money_effect,
         "volume_decline_samples": volume_decline,
         "low_position_volume_anomaly_samples": low_position_anomaly,
+        "feature_group_analysis_samples": feature_group_analysis,
         "resilient_against_index_samples": resilient,
         "notes": [
             "脚本有意不做主题归纳。",
@@ -2964,6 +3440,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "money_effect_samples 按涨幅和成交额阈值筛选，并按成交额排序，是每日赚钱效应和上涨主线分析的标准候选池。",
             "volume_decline_samples 按涨跌幅、20日放量倍数和成交额阈值筛选，并按爆量下跌强度（20日放量倍数 * 跌幅绝对值）排序。",
             "low_position_volume_anomaly_samples 使用严格规则（3倍放量、涨幅7%以上、深回撤或底部区域），并分类为启动型、持续换手型、缩量企稳型和分歧型。",
+            "feature_group_analysis_samples 是模块 5 的新证据包：低位异动、科创板120日新高且真实月K突破、10:30前涨停三组分别输出，并提供 overlap_hits 供模型做交叉命中上涨归因。",
             "resilient_against_index_samples 只在弱指数环境输出（该弱不弱就是强），不输出逆势下跌股票。",
         ],
     }
@@ -3008,7 +3485,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     panel.add_argument("--decline-sample-limit", type=int, default=60,
                        help="Volume-decline pool: max rows after sorting (default 60).")
 
-    # Low-position volume anomaly (低位放量异动) — module 5.
+    # Low-position volume anomaly (低位放量异动) — module 5 feature-group subgroup.
     panel.add_argument("--low-drawdown-min", type=float, default=35.0,
                        help="Low-position pool rule B: minimum |drawdown_120_high| in percent (default 35.0).")
     panel.add_argument("--low-close-position-max", type=float, default=0.20,

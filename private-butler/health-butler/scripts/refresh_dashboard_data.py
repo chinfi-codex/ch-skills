@@ -18,6 +18,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from export_dashboard_data import all_rows, connect, export_daily
+from health_db import ensure_runtime_schema
 
 
 DEFAULT_DAILY_BASE = 2122
@@ -27,6 +28,14 @@ TIME_ZONE = ZoneInfo("Asia/Shanghai")
 
 def default_base_dir():
     return Path(__file__).resolve().parents[1]
+
+
+def default_dashboard_path(base_dir):
+    profile_root = base_dir.parents[1] if len(base_dir.parents) >= 2 else base_dir
+    chief_dashboard = profile_root / "skills" / "chief-butler" / "dashboard" / "index.html"
+    if chief_dashboard.exists():
+        return chief_dashboard
+    return base_dir / "dashboard" / "index.html"
 
 
 def shanghai_now():
@@ -64,6 +73,8 @@ def process_data(raw, daily_base=DEFAULT_DAILY_BASE):
 
     water = health_markers.get("water_intake_ml") or raw.get("nutrition_summary", {}).get("water_ml") or 0
     water_target = health_markers.get("water_target_ml") or 2000
+    budget = raw.get("energy_budget") or {}
+    daily_plan = raw.get("daily_plan") or {}
 
     weekday = raw.get("weekday") or ""
     profile = raw.get("profile_snapshot", {})
@@ -72,6 +83,23 @@ def process_data(raw, daily_base=DEFAULT_DAILY_BASE):
     nutrition = raw.get("nutrition_summary", {})
     exercise_items = exercise.get("items") or []
     exercise_label = " / ".join(item.get("name", "") for item in exercise_items if item.get("name"))
+
+    # Build per-session list for dashboard display
+    exercises_list = []
+    sessions = exercise.get("sessions") or []
+    for session in sessions:
+        sess_items = session.get("items") or []
+        label = " / ".join(item.get("name", "") for item in sess_items if item.get("name"))
+        if not label:
+            label = session.get("category") or session.get("type") or "运动"
+        exercises_list.append({
+            "name": label,
+            "type": session.get("type") or "",
+            "category": session.get("category") or "",
+            "duration_min": session.get("duration_min") or 0,
+            "burn": session.get("active_energy_kcal") or 0,
+            "done": session.get("status") == "completed",
+        })
 
     return {
         "date": raw.get("date"),
@@ -83,11 +111,17 @@ def process_data(raw, daily_base=DEFAULT_DAILY_BASE):
         "bmi": calculate_bmi(weight_kg, height_cm, profile.get("bmi")),
         "intake": intake,
         "targetIntake": target,
+        "dailyLimit": budget.get("intake_limit_kcal"),
+        "remainingCalories": budget.get("remaining_kcal"),
+        "budgetMode": budget.get("mode"),
+        "baseBurn": budget.get("base_burn_kcal"),
+        "targetDeficit": budget.get("target_deficit_kcal"),
         "exerciseBurn": exercise_burn,
         "exerciseMinutes": exercise_minutes,
         "exerciseType": exercise_type,
         "exerciseLabel": exercise_label,
         "exerciseDone": exercise.get("status") == "completed",
+        "exercises": exercises_list,
         "water": water,
         "waterTarget": water_target,
         "waterPct": round((water / water_target) * 100) if water_target else 0,
@@ -97,12 +131,22 @@ def process_data(raw, daily_base=DEFAULT_DAILY_BASE):
         "protein": nutrition.get("protein_g"),
         "carbs": nutrition.get("carbs_g"),
         "fat": nutrition.get("fat_g"),
+        "dailyPlan": {
+            "status": daily_plan.get("status"),
+            "plannedDurationMin": daily_plan.get("planned_duration_min"),
+            "adjustedDurationMin": daily_plan.get("adjusted_duration_min"),
+            "adjustmentLevel": daily_plan.get("adjustment_level"),
+            "adjustmentReason": daily_plan.get("adjustment_reason"),
+            "createdBy": daily_plan.get("created_by"),
+            "items": daily_plan.get("items") or [],
+        } if daily_plan else None,
     }
 
 
 def load_dashboard_data(db_path, daily_base=DEFAULT_DAILY_BASE):
     conn = connect(db_path)
     try:
+        ensure_runtime_schema(conn)
         data = {}
         for daily in all_rows(conn, "SELECT * FROM daily_logs ORDER BY date"):
             raw = export_daily(conn, daily)
@@ -141,12 +185,22 @@ def refresh_dashboard(db_path, dashboard_path):
         html,
         "allData",
     )
-    html = replace_one(
-        r"let currentWeekStart = getWeekStart\('[^']+'\);",
-        f"let currentWeekStart = getWeekStart('{today}');",
-        html,
-        "currentWeekStart",
-    )
+    # Update currentCenterDate - simple string replacement (handles line numbers)
+    center_date_replacement = f"let currentCenterDate = '{today}';"
+    lines = html.split('\n')
+    found = False
+    for i, line in enumerate(lines):
+        if 'let currentCenterDate = ' in line:
+            # Preserve line number prefix if present (e.g., "  968|")
+            prefix = ''
+            if '|' in line:
+                prefix = line.split('|')[0] + '|'
+            lines[i] = prefix + center_date_replacement
+            found = True
+            break
+    if not found:
+        raise RuntimeError("Could not update dashboard currentCenterDate")
+    html = '\n'.join(lines)
     html = replace_one(
         r"<span>数据更新于 .*? 上海时间 · 主人在，管家就在</span>",
         f"<span>数据更新于 {updated} 上海时间 · 主人在，管家就在</span>",
@@ -167,7 +221,7 @@ def main():
 
     base_dir = Path(args.base_dir).expanduser() if args.base_dir else default_base_dir()
     db_path = Path(args.db).expanduser() if args.db else base_dir / "health.db"
-    dashboard_path = Path(args.dashboard).expanduser() if args.dashboard else base_dir / "dashboard" / "index.html"
+    dashboard_path = Path(args.dashboard).expanduser() if args.dashboard else default_dashboard_path(base_dir)
 
     if not db_path.exists():
         raise SystemExit(f"Missing database: {db_path}")

@@ -13,7 +13,6 @@ targets:
   # 开启 merge_all_available_skills = true 后，Kimi 会合并所有品牌目录
   kimi:    "$env:USERPROFILE/.kimi/skills"
   claude:  "$env:USERPROFILE/.claude/skills"
-  codex:   "$env:USERPROFILE/.codex/skills"
   agents:  "$env:USERPROFILE/.agents/skills"
 
 # 重命名映射：源目录名 → 目标 skill 名

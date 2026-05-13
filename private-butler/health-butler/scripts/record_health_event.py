@@ -18,6 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from health_db import ensure_runtime_schema
+
 
 TIME_ZONE = ZoneInfo("Asia/Shanghai")
 WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
@@ -124,6 +126,12 @@ def validate_non_negative(value, label):
         require(value >= 0, f"{label} must be >= 0")
 
 
+def estimate_exercise_burn(exercise_type=None, category=None, duration_min=0):
+    label = f"{category or ''} {exercise_type or ''}"
+    kcal_per_min = 5 if any(key in label for key in ("有氧", "快走", "跑步", "walking", "步行")) else 4
+    return round((duration_min or 0) * kcal_per_min)
+
+
 def record_water(conn, daily_log_id, args):
     require(args.amount_ml > 0, "amount_ml must be > 0")
     ts = now_iso()
@@ -188,6 +196,13 @@ def record_weight(conn, daily_log_id, args):
         """,
         (daily_log_id, args.time or ts, args.weight_kg, args.body_fat_pct, bmi, target_weight, args.note, ts, ts),
     )
+    # 同步更新 profiles 表中的体重和 BMI
+    conn.execute(
+        """
+        UPDATE profiles SET weight_kg = ?, bmi = ?, updated_at = ? WHERE id = 1
+        """,
+        (args.weight_kg, bmi, ts),
+    )
     add_note(conn, daily_log_id, args.note)
 
 
@@ -250,17 +265,48 @@ def record_exercise(conn, daily_log_id, args):
         if isinstance(item, dict):
             if item.get("sets") is not None:
                 require(item["sets"] >= 0, "exercise item sets must be >= 0")
+            validate_non_negative(item.get("unit_value"), "exercise item unit_value")
+            validate_non_negative(item.get("duration_min_estimated"), "exercise item duration_min_estimated")
+            validate_non_negative(item.get("calories_burned"), "exercise item calories_burned")
     ts = now_iso()
     status = args.status or ("completed" if args.done else "planned")
+    item_burn = sum((item.get("calories_burned") or 0) for item in args.items or [] if isinstance(item, dict))
+    active_energy = args.active_energy_kcal
+    burn_source = args.burn_source
+    if active_energy is None and item_burn:
+        active_energy = item_burn
+        burn_source = burn_source or "manual_estimate"
+    if active_energy is None and args.duration_min:
+        active_energy = estimate_exercise_burn(args.exercise_type, args.category, args.duration_min)
+        burn_source = burn_source or "manual_estimate"
+    if active_energy is not None:
+        validate_non_negative(active_energy, "active_energy_kcal")
+    burn_source = burn_source or ("manual_estimate" if active_energy is not None else None)
     cur = conn.execute(
         """
         INSERT INTO exercise_sessions (
-          daily_log_id, type, category, start_time, duration_min, rpe, status,
-          notes, created_at, updated_at
+          daily_log_id, planned_instance_id, type, category, start_time, duration_min,
+          active_energy_kcal, burn_source, unit_summary, rpe, status, notes,
+          created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (daily_log_id, args.exercise_type, args.category, args.time, args.duration_min or 0, args.rpe, status, args.note, ts, ts),
+        (
+            daily_log_id,
+            args.planned_instance_id,
+            args.exercise_type,
+            args.category,
+            args.time,
+            args.duration_min or 0,
+            active_energy,
+            burn_source,
+            args.unit_summary,
+            args.rpe,
+            status,
+            args.note,
+            ts,
+            ts,
+        ),
     )
     session_id = cur.lastrowid
     for idx, item in enumerate(args.items or []):
@@ -269,11 +315,26 @@ def record_exercise(conn, daily_log_id, args):
         conn.execute(
             """
             INSERT INTO exercise_items (
-              exercise_session_id, name, sets, reps, done, sort_order, created_at, updated_at
+              exercise_session_id, name, sets, reps, unit_type, unit_value,
+              duration_min_estimated, calories_burned, done, sort_order,
+              created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (session_id, item.get("name", "未命名运动"), item.get("sets"), item.get("reps"), 1 if item.get("done", args.done) else 0, idx, ts, ts),
+            (
+                session_id,
+                item.get("name", "未命名运动"),
+                item.get("sets"),
+                item.get("reps"),
+                item.get("unit_type"),
+                item.get("unit_value"),
+                item.get("duration_min_estimated"),
+                item.get("calories_burned"),
+                1 if item.get("done", args.done) else 0,
+                idx,
+                ts,
+                ts,
+            ),
         )
     add_note(conn, daily_log_id, args.note)
 
@@ -288,6 +349,7 @@ def record_meal(conn, daily_log_id, args):
         validate_non_negative(item.get("protein_g"), "meal item protein_g")
         validate_non_negative(item.get("carbs_g"), "meal item carbs_g")
         validate_non_negative(item.get("fat_g"), "meal item fat_g")
+        validate_non_negative(item.get("water_ml"), "meal item water_ml")
     ts = now_iso()
     conn.execute(
         """
@@ -316,9 +378,10 @@ def record_meal(conn, daily_log_id, args):
             """
             INSERT INTO meal_items (
               meal_id, name, amount_text, calories, protein_g, carbs_g, fat_g,
+              water_ml, calorie_source, water_source, estimate_confidence,
               sort_order, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 meal_id,
@@ -328,6 +391,10 @@ def record_meal(conn, daily_log_id, args):
                 item.get("protein_g"),
                 item.get("carbs_g"),
                 item.get("fat_g"),
+                item.get("water_ml"),
+                item.get("calorie_source", "manual_estimate"),
+                item.get("water_source"),
+                item.get("estimate_confidence", "medium"),
                 next_order + idx,
                 ts,
                 ts,
@@ -339,8 +406,13 @@ def record_meal(conn, daily_log_id, args):
 def refresh_outputs(base_dir, skip_refresh=False):
     if skip_refresh:
         return
+    subprocess.run([str(base_dir / "scripts" / "calculate_daily_budget.py"), "--base-dir", str(base_dir), "--all", "--quiet"], check=True)
     subprocess.run([str(base_dir / "scripts" / "export_dashboard_data.py"), "--base-dir", str(base_dir)], check=True)
     subprocess.run([str(base_dir / "scripts" / "refresh_dashboard_data.py"), "--base-dir", str(base_dir)], check=True)
+    chief_dir = base_dir.parents[1] / "skills" / "chief-butler"
+    collect_script = chief_dir / "scripts" / "collect_status.py"
+    if collect_script.exists():
+        subprocess.run([str(collect_script), "--base-dir", str(chief_dir)], check=True, stdout=subprocess.DEVNULL)
 
 
 def parse_items(value):
@@ -379,6 +451,10 @@ def main():
     exercise.add_argument("--exercise-type")
     exercise.add_argument("--category")
     exercise.add_argument("--duration-min", type=int)
+    exercise.add_argument("--active-energy-kcal", type=float)
+    exercise.add_argument("--burn-source", choices=["manual_estimate", "user_reported", "future_apple", "apple", "unknown"])
+    exercise.add_argument("--unit-summary")
+    exercise.add_argument("--planned-instance-id", type=int)
     exercise.add_argument("--rpe", type=int)
     exercise.add_argument("--status", choices=["pending", "planned", "partial", "completed", "skipped"])
     exercise.add_argument("--done", action="store_true")
@@ -400,6 +476,7 @@ def main():
     try:
         with conn:
             init_schema(conn, schema_path)
+            ensure_runtime_schema(conn)
             daily_log_id = ensure_daily_log(conn, date_str)
             if args.event_type == "water":
                 record_water(conn, daily_log_id, args)

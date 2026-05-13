@@ -22,6 +22,13 @@ health-butler/chronic-conditions.md
 health-butler/data/
 health-butler/dashboard/data/
 health-butler/dashboard/index.html
+private-butler/health-butler/health.db
+private-butler/health-butler/data/
+private-butler/health-butler/dashboard/data/
+private-butler/health-butler/dashboard/index.legacy.html
+private-butler/chief-butler/data/
+private-butler/chief-butler/dashboard/index.html
+market-ai-news-research/data/
 stock-skills/a-stock-daily-market-sense/data/cache/
 stock-skills/a-stock-daily-market-sense/reports/evidence_*
 stock-skills/a-stock-daily-market-sense/reports/report_context_*.json

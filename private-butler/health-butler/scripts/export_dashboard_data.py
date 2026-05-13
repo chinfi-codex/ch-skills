@@ -8,6 +8,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+from health_db import ensure_runtime_schema
+
 
 def default_base_dir():
     return Path(__file__).resolve().parents[1]
@@ -29,6 +31,8 @@ def all_rows(conn, query, params=()):
 
 
 def estimate_exercise_burn(exercise):
+    if exercise["active_energy_kcal"] is not None:
+        return round(exercise["active_energy_kcal"])
     duration_min = exercise["duration_min"] or 0
     label = f"{exercise['category'] or ''} {exercise['type'] or ''}"
     kcal_per_min = 5 if any(key in label for key in ("有氧", "快走", "跑步")) else 4
@@ -51,6 +55,8 @@ def export_daily(conn, daily):
     water = one(conn, "SELECT * FROM daily_water_summary WHERE daily_log_id = ?", (daily_id,))
     targets = one(conn, "SELECT * FROM daily_nutrition_targets WHERE daily_log_id = ?", (daily_id,))
     markers = one(conn, "SELECT * FROM health_markers WHERE daily_log_id = ?", (daily_id,))
+    budget = one(conn, "SELECT * FROM daily_energy_budgets WHERE daily_log_id = ?", (daily_id,))
+    plan = one(conn, "SELECT * FROM daily_plan_instances WHERE daily_log_id = ?", (daily_id,))
     exercise_rows = all_rows(conn, "SELECT * FROM exercise_sessions WHERE daily_log_id = ? ORDER BY id", (daily_id,))
 
     data = {
@@ -70,6 +76,8 @@ def export_daily(conn, daily):
             "water_ml": water["water_intake_ml"] if water else 0,
         },
         "exercise": {},
+        "energy_budget": {},
+        "daily_plan": {},
         "medication": {},
         "health_markers": {},
         "notes": [],
@@ -98,6 +106,10 @@ def export_daily(conn, daily):
                 "name": item["name"],
                 "amount": item["amount_text"],
                 "calories": calories,
+                "water_ml": item["water_ml"],
+                "calorie_source": item["calorie_source"],
+                "water_source": item["water_source"],
+                "estimate_confidence": item["estimate_confidence"],
             })
         data["meals"][meal["meal_type"]] = {
             "time": meal["meal_time"],
@@ -116,6 +128,7 @@ def export_daily(conn, daily):
         duration_min = 0
         active_energy_kcal = 0
         rpes = []
+        sessions = []
         for exercise in exercise_rows:
             if exercise["type"] and exercise["type"] not in types:
                 types.append(exercise["type"])
@@ -128,13 +141,40 @@ def export_daily(conn, daily):
             active_energy_kcal += estimate_exercise_burn(exercise)
             if exercise["rpe"] is not None:
                 rpes.append(exercise["rpe"])
+            session_items = []
             for item in all_rows(conn, "SELECT * FROM exercise_items WHERE exercise_session_id = ? ORDER BY sort_order, id", (exercise["id"],)):
+                session_items.append({
+                    "name": item["name"],
+                    "sets": item["sets"],
+                    "reps": item["reps"],
+                    "unit_type": item["unit_type"],
+                    "unit_value": item["unit_value"],
+                    "duration_min_estimated": item["duration_min_estimated"],
+                    "calories_burned": item["calories_burned"],
+                    "done": bool(item["done"]),
+                })
                 items.append({
                     "name": item["name"],
                     "sets": item["sets"],
                     "reps": item["reps"],
+                    "unit_type": item["unit_type"],
+                    "unit_value": item["unit_value"],
+                    "duration_min_estimated": item["duration_min_estimated"],
+                    "calories_burned": item["calories_burned"],
                     "done": bool(item["done"]),
                 })
+            sessions.append({
+                "type": exercise["type"],
+                "category": exercise["category"],
+                "duration_min": exercise["duration_min"] or 0,
+                "active_energy_kcal": estimate_exercise_burn(exercise),
+                "burn_source": exercise["burn_source"],
+                "unit_summary": exercise["unit_summary"],
+                "status": exercise["status"],
+                "items": session_items,
+                "notes": exercise["notes"],
+                "rpe": exercise["rpe"],
+            })
         if statuses and all(status == "completed" for status in statuses):
             status = "completed"
         elif any(status == "completed" for status in statuses):
@@ -156,6 +196,46 @@ def export_daily(conn, daily):
             "rpe": max(rpes) if rpes else None,
             "status": status,
             "notes": "；".join(notes),
+            "sessions": sessions,
+        }
+
+    if budget:
+        data["energy_budget"] = {
+            "mode": budget["mode"],
+            "bmr": budget["bmr"],
+            "activity_multiplier": budget["activity_multiplier"],
+            "base_burn_kcal": budget["base_burn_kcal"],
+            "exercise_burn_kcal": budget["exercise_burn_kcal"],
+            "target_deficit_kcal": budget["target_deficit_kcal"],
+            "intake_limit_kcal": budget["intake_limit_kcal"],
+            "actual_intake_kcal": budget["actual_intake_kcal"],
+            "remaining_kcal": budget["remaining_kcal"],
+            "computed_at": budget["computed_at"],
+            "notes": budget["notes"],
+        }
+
+    if plan:
+        plan_items = []
+        for item in all_rows(conn, "SELECT * FROM daily_plan_items WHERE daily_plan_instance_id = ? ORDER BY sort_order, id", (plan["id"],)):
+            plan_items.append({
+                "name": item["name"],
+                "unit_type": item["unit_type"],
+                "target_value": item["target_value"],
+                "sets": item["sets"],
+                "reps": item["reps"],
+                "duration_min": item["duration_min"],
+                "priority": item["priority"],
+                "status": item["status"],
+                "notes": item["notes"],
+            })
+        data["daily_plan"] = {
+            "status": plan["status"],
+            "planned_duration_min": plan["planned_duration_min"],
+            "adjusted_duration_min": plan["adjusted_duration_min"],
+            "adjustment_level": plan["adjustment_level"],
+            "adjustment_reason": plan["adjustment_reason"],
+            "created_by": plan["created_by"],
+            "items": plan_items,
         }
 
     for med in all_rows(
@@ -226,6 +306,7 @@ def main():
     conn = connect(db_path)
     exported = 0
     try:
+        ensure_runtime_schema(conn)
         for daily in all_rows(conn, "SELECT * FROM daily_logs ORDER BY date"):
             data = export_daily(conn, daily)
             path = output_dir / f"{daily['date']}.json"

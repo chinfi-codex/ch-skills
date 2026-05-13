@@ -56,30 +56,26 @@ After migration, any agent handling health records should:
 
 ### profiles
 
-One row for the current person using the system. The existing `profile.json` maps here.
+One row for the current person using the system. All profile data lives here, no external JSON file.
 
-Examples:
+Fields:
 
-- age
-- gender
-- height
-- current target weight
-- BMR
-- diet preference
-- lifestyle notes
+- age, gender, height_cm
+- weight_kg, target_weight_kg, bmi (auto-updated when weight is recorded)
+- bmr
+- diet_preference, exercise_level
+- sleep_bedtime_pref, sleep_wake_time_pref, work_rhythm
+- chronic_conditions (JSON array)
+- medications (JSON array)
+- notes
 
 ### goals
 
 Tracks long-lived goals such as slow fat loss and target body weight. Goals are separated from profile because they may change over time.
 
-### conditions
+### conditions (deprecated)
 
-Tracks chronic conditions and related management notes.
-
-Current examples:
-
-- Chronic hepatitis B
-- Chronic prostatitis
+Chronic conditions now live in `profiles.chronic_conditions` as a JSON array. The separate `conditions` table is no longer used for new data.
 
 ### daily_logs
 
@@ -159,7 +155,7 @@ For existing data, historical totals can be represented as a single event per da
 
 ### medications
 
-Medication catalog.
+Medication catalog (for daily tracking events). Long-term medication list lives in `profiles.medications` as JSON array.
 
 Current medication:
 

@@ -1,0 +1,34 @@
+# RSS sources for market-ai-news-research.
+#
+# Add or remove items under `rss`. Keep `name` stable because it is written to
+# the SQLite `source_name` column and used for deduplication.
+
+rss:
+  - name: OpenAI Blog
+    url: https://openai.com/news/rss.xml
+    category: ai
+    enabled: true
+  - name: Google AI Blog
+    url: https://blog.google/technology/ai/rss/
+    category: ai
+    enabled: true
+  - name: The Decoder
+    url: https://the-decoder.com/feed/
+    category: ai
+    enabled: true
+  - name: Juya AI Daily
+    url: https://imjuya.github.io/juya-ai-daily/rss.xml
+    category: ai
+    enabled: true
+  - name: AI Hot
+    url: https://aihot.virxact.com/feed/all.xml
+    category: ai
+    enabled: true
+  - name: Federal Reserve Press Releases
+    url: https://www.federalreserve.gov/feeds/press_all.xml
+    category: finance
+    enabled: true
+  - name: SEC Press Releases
+    url: https://www.sec.gov/news/pressreleases.rss
+    category: finance
+    enabled: true

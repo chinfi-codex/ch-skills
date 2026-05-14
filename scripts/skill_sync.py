@@ -151,7 +151,7 @@ def _mirror_robocopy(
     exclude_files: list[str],
     dry_run: bool = False,
 ) -> None:
-    """Windows: 使用 robocopy /MIR 做镜像同步。"""
+    """Windows: 使用 robocopy 做增量覆盖同步（保留目标端原有文件）。"""
     if dry_run:
         print(f"  [DRY-RUN] 将同步: {src.name} -> {dst}")
         return
@@ -161,7 +161,7 @@ def _mirror_robocopy(
         "robocopy",
         str(src),
         str(dst),
-        "/MIR",
+        "/E",
         "/NFL",
         "/NDL",
         "/NJH",
@@ -182,13 +182,13 @@ def _mirror_rsync(
     exclude_files: list[str],
     dry_run: bool = False,
 ) -> None:
-    """Unix-like: 使用 rsync 做镜像同步。"""
+    """Unix-like: 使用 rsync 做增量覆盖同步（保留目标端原有文件）。"""
     if dry_run:
         print(f"  [DRY-RUN] 将同步: {src.name} -> {dst}")
         return
 
     dst.mkdir(parents=True, exist_ok=True)
-    cmd = ["rsync", "-av", "--delete"]
+    cmd = ["rsync", "-av"]
     for e in exclude_dirs + exclude_files:
         cmd.append(f"--exclude={e}")
     cmd.extend([str(src) + "/", str(dst) + "/"])
@@ -202,7 +202,7 @@ def mirror(
     exclude_files: list[str],
     dry_run: bool = False,
 ) -> None:
-    """跨平台镜像同步。"""
+    """跨平台增量覆盖同步（保留目标端原有文件）。"""
     if platform.system() == "Windows":
         _mirror_robocopy(src, dst, exclude_dirs, exclude_files, dry_run)
     else:

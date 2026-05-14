@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Query the market-ai-news-research SQLite database."""
+"""Query the ch-news-reporter SQLite database."""
 
 from __future__ import annotations
 

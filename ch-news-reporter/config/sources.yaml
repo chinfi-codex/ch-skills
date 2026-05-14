@@ -1,4 +1,4 @@
-# RSS sources for market-ai-news-research.
+# RSS sources for ch-news-reporter.
 #
 # Add or remove items under `rss`. Keep `name` stable because it is written to
 # the SQLite `source_name` column and used for deduplication.

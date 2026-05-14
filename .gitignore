@@ -29,6 +29,7 @@ private-butler/health-butler/dashboard/index.legacy.html
 private-butler/chief-butler/data/
 private-butler/chief-butler/dashboard/index.html
 market-ai-news-research/data/
+ch-news-reporter/data/
 stock-skills/a-stock-daily-market-sense/data/cache/
 stock-skills/a-stock-daily-market-sense/reports/evidence_*
 stock-skills/a-stock-daily-market-sense/reports/report_context_*.json

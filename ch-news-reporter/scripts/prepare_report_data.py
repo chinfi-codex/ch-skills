@@ -1,0 +1,449 @@
+#!/usr/bin/env python3
+"""Prepare profile-specific evidence packets from the unified news database."""
+
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import sqlite3
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse, urlunparse
+from zoneinfo import ZoneInfo
+
+import yaml
+
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+DEFAULT_DB = Path("data/news_research.sqlite")
+DEFAULT_CONFIG = Path("config/report_profiles.yaml")
+SOURCE_ALIASES = {
+    "github": "github_trending",
+    "ph": "product_hunt",
+    "hn": "hacker_news",
+}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Build a report-profile evidence packet from SQLite."
+    )
+    parser.add_argument("--profile", required=True, help="Profile name, e.g. ai_daily.")
+    parser.add_argument("--date", default="today", help="today, all, or YYYY-MM-DD.")
+    parser.add_argument("--db", default=str(DEFAULT_DB), help="SQLite database path.")
+    parser.add_argument(
+        "--config", default=str(DEFAULT_CONFIG), help="Report profiles YAML path."
+    )
+    parser.add_argument("--limit", type=int, default=200, help="Maximum base items.")
+    parser.add_argument(
+        "--include-enrichments",
+        action="store_true",
+        help="Attach rows from the optional enrichments table.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="json",
+        help="Evidence packet output format.",
+    )
+    return parser.parse_args()
+
+
+def now_iso() -> str:
+    return datetime.now(SHANGHAI).isoformat(timespec="seconds")
+
+
+def resolve_date_key(value: str) -> str | None:
+    if value == "all":
+        return None
+    if value == "today":
+        return datetime.now(SHANGHAI).strftime("%Y-%m-%d")
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError as exc:
+        raise SystemExit("--date must be 'today', 'all', or YYYY-MM-DD") from exc
+
+
+def load_profile(config_path: Path, profile_name: str) -> dict[str, Any]:
+    if not config_path.exists():
+        raise SystemExit(f"Profile config does not exist: {config_path}")
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    profiles = payload.get("profiles") or {}
+    profile = profiles.get(profile_name)
+    if not isinstance(profile, dict):
+        available = ", ".join(sorted(profiles)) or "(none)"
+        raise SystemExit(f"Unknown profile '{profile_name}'. Available: {available}")
+    return profile
+
+
+def connect(db_path: Path) -> sqlite3.Connection:
+    if not db_path.exists():
+        raise SystemExit(f"Database does not exist: {db_path}")
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    return con
+
+
+def normalize_source(source: str) -> str:
+    return SOURCE_ALIASES.get(source, source)
+
+
+def profile_sources(profile: dict[str, Any]) -> list[str]:
+    sources = profile.get("sources") or []
+    return [normalize_source(str(source)) for source in sources]
+
+
+def json_loads(value: str | None, fallback: Any) -> Any:
+    if not value:
+        return fallback
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return fallback
+
+
+def query_items(
+    con: sqlite3.Connection,
+    profile: dict[str, Any],
+    date_key: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    sources = profile_sources(profile)
+    params: list[Any] = []
+    where: list[str] = []
+    if date_key:
+        where.append("date_key = ?")
+        params.append(date_key)
+    if sources:
+        placeholders = ",".join("?" for _ in sources)
+        where.append(f"source_type IN ({placeholders})")
+        params.extend(sources)
+    sql = "SELECT * FROM items"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY COALESCE(published_at, fetched_at) DESC LIMIT ?"
+    params.append(limit)
+
+    rows: list[dict[str, Any]] = []
+    for row in con.execute(sql, params).fetchall():
+        item = dict(row)
+        item["tags"] = json_loads(item.pop("tags_json", None), [])
+        item["metadata"] = json_loads(item.pop("metadata_json", None), {})
+        item["raw"] = json_loads(item.pop("raw_json", None), {})
+        rows.append(item)
+    return rows
+
+
+def table_exists(con: sqlite3.Connection, table_name: str) -> bool:
+    row = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def query_enrichments(
+    con: sqlite3.Connection, item_ids: list[str]
+) -> dict[str, list[dict[str, Any]]]:
+    if not item_ids or not table_exists(con, "enrichments"):
+        return {}
+    placeholders = ",".join("?" for _ in item_ids)
+    sql = (
+        "SELECT * FROM enrichments "
+        f"WHERE item_id IN ({placeholders}) "
+        "ORDER BY target_type, fetched_at DESC"
+    )
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in con.execute(sql, item_ids).fetchall():
+        enrichment = dict(row)
+        enrichment["metadata"] = json_loads(enrichment.pop("metadata_json", None), {})
+        enrichment["raw"] = json_loads(enrichment.pop("raw_json", None), {})
+        grouped.setdefault(str(enrichment["item_id"]), []).append(enrichment)
+    return grouped
+
+
+def normalize_url(url: str) -> str:
+    parsed = urlparse((url or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    normalized = parsed._replace(fragment="")
+    if normalized.path == "/":
+        normalized = normalized._replace(path="")
+    return urlunparse(normalized)
+
+
+def github_repo_url(url: str) -> str:
+    parsed = urlparse((url or "").strip())
+    if parsed.netloc.lower() not in {"github.com", "www.github.com"}:
+        return ""
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 2:
+        return ""
+    owner, repo = parts[0], parts[1].removesuffix(".git")
+    if owner in {"features", "topics", "marketplace", "explore"}:
+        return ""
+    return f"https://github.com/{owner}/{repo}"
+
+
+def source_rank_key(item: dict[str, Any]) -> tuple[Any, ...]:
+    metadata = item.get("metadata") or {}
+    source_type = item.get("source_type")
+    if source_type == "product_hunt":
+        rank = metadata.get("daily_rank") or metadata.get("weekly_rank") or 999999
+        votes = metadata.get("votes_count") or 0
+        comments = metadata.get("comments_count") or 0
+        return (rank, -votes, -comments)
+    if source_type == "github_trending":
+        stars = metadata.get("stars") or (metadata.get("github_api") or {}).get(
+            "stargazers_count"
+        ) or 0
+        forks = metadata.get("forks") or (metadata.get("github_api") or {}).get(
+            "forks_count"
+        ) or 0
+        return (-stars, -forks)
+    if source_type == "hacker_news":
+        ranks = metadata.get("ranks") or {}
+        best_rank = min([rank for rank in ranks.values() if rank] or [999999])
+        score = metadata.get("score") or 0
+        comments = metadata.get("descendants") or 0
+        return (best_rank, -score, -comments)
+    return (item.get("published_at") or item.get("fetched_at") or "",)
+
+
+def select_source_items(
+    items: list[dict[str, Any]], source_type: str, max_items: int
+) -> list[dict[str, Any]]:
+    source_items = [item for item in items if item.get("source_type") == source_type]
+    return sorted(source_items, key=source_rank_key)[:max_items]
+
+
+def build_enrichment_candidates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add_target(item: dict[str, Any], target_type: str, url: str, reason: str) -> None:
+        target_url = normalize_url(github_repo_url(url) or url)
+        if not target_url:
+            return
+        key = (str(item["id"]), target_type, target_url)
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(
+            {
+                "item_id": item["id"],
+                "source_type": item.get("source_type"),
+                "title": item.get("title"),
+                "target_type": target_type,
+                "target_url": target_url,
+                "reason": reason,
+            }
+        )
+
+    for item in items:
+        source_type = item.get("source_type")
+        if source_type == "github_trending":
+            add_target(item, "github_repo", str(item.get("url") or ""), "GitHub repo")
+        elif source_type == "product_hunt":
+            metadata = item.get("metadata") or {}
+            url = str(metadata.get("website") or item.get("url") or "")
+            add_target(item, "product_website", url, "Product Hunt website")
+        elif source_type in {"hacker_news", "rss"}:
+            url = str(item.get("url") or "")
+            if "news.ycombinator.com/item" in url:
+                continue
+            repo_url = github_repo_url(url)
+            if repo_url:
+                add_target(item, "github_repo", repo_url, f"{source_type} GitHub link")
+            else:
+                add_target(item, "article_url", url, f"{source_type} external URL")
+
+    return candidates
+
+
+def build_packet(args: argparse.Namespace) -> dict[str, Any]:
+    profile = load_profile(Path(args.config), args.profile)
+    date_key = resolve_date_key(args.date)
+    con = connect(Path(args.db))
+    try:
+        items = query_items(con, profile, date_key, args.limit)
+        enrichments = (
+            query_enrichments(con, [str(item["id"]) for item in items])
+            if args.include_enrichments
+            else {}
+        )
+    finally:
+        con.close()
+
+    for item in items:
+        item["enrichments"] = enrichments.get(str(item["id"]), [])
+
+    return {
+        "profile": args.profile,
+        "profile_title": profile.get("title") or args.profile,
+        "date_key": date_key or "all",
+        "generated_at": now_iso(),
+        "sources": profile_sources(profile),
+        "items_count": len(items),
+        "items": items,
+        "enrichment_candidates": build_enrichment_candidates(items),
+        "include_enrichments": bool(args.include_enrichments),
+    }
+
+
+def compact_text(text: str | None, max_len: int = 360) -> str:
+    clean = " ".join((text or "").split())
+    if len(clean) <= max_len:
+        return clean
+    return clean[: max_len - 1] + "..."
+
+
+def metadata_highlights(item: dict[str, Any]) -> list[str]:
+    metadata = item.get("metadata") or {}
+    source_type = item.get("source_type")
+    if source_type == "github_trending":
+        repo = metadata.get("github_api") or {}
+        topics = metadata.get("topics") or repo.get("topics") or []
+        return [
+            f"stars={metadata.get('stars') or repo.get('stargazers_count')}",
+            f"forks={metadata.get('forks') or repo.get('forks_count')}",
+            f"language={metadata.get('language') or repo.get('language')}",
+            f"stars_today={metadata.get('stars_today')}",
+            f"license={repo.get('license')}",
+            f"pushed_at={repo.get('pushed_at')}",
+            f"topics={', '.join(topics[:8]) if isinstance(topics, list) else topics}",
+        ]
+    if source_type == "product_hunt":
+        topics = metadata.get("topics") or []
+        topic_names = [
+            topic.get("name")
+            for topic in topics
+            if isinstance(topic, dict) and topic.get("name")
+        ]
+        makers = [
+            maker.get("username") or maker.get("name")
+            for maker in metadata.get("makers") or []
+            if isinstance(maker, dict)
+        ]
+        return [
+            f"daily_rank={metadata.get('daily_rank')}",
+            f"votes={metadata.get('votes_count')}",
+            f"comments={metadata.get('comments_count')}",
+            f"website={metadata.get('website')}",
+            f"topics={', '.join(topic_names[:8])}",
+            f"makers={', '.join(makers[:6])}",
+        ]
+    if source_type == "hacker_news":
+        return [
+            f"score={metadata.get('score')}",
+            f"comments={metadata.get('descendants')}",
+            f"rank_sources={', '.join(metadata.get('rank_sources') or [])}",
+            f"ranks={json.dumps(metadata.get('ranks') or {}, ensure_ascii=False)}",
+        ]
+    if source_type == "rss":
+        return [
+            f"feed_url={metadata.get('feed_url')}",
+            f"category={metadata.get('category')}",
+        ]
+    return []
+
+
+def emit_markdown(packet: dict[str, Any]) -> None:
+    print(f"# Evidence Packet: {packet['profile']} / {packet['date_key']}\n")
+    print(f"- Generated: {packet['generated_at']}")
+    print(f"- Sources: {', '.join(packet['sources'])}")
+    print(f"- Items: {packet['items_count']}")
+    print(f"- Enrichment candidates: {len(packet['enrichment_candidates'])}\n")
+
+    if packet["enrichment_candidates"]:
+        print("## Enrichment Candidates\n")
+        for target in packet["enrichment_candidates"]:
+            print(
+                "- "
+                f"{target['target_type']} | {target['title']} | "
+                f"{target['target_url']} | {target['reason']}"
+            )
+        print()
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in packet["items"]:
+        grouped.setdefault(str(item.get("source_type")), []).append(item)
+
+    for source in packet["sources"]:
+        source_items = grouped.get(source) or []
+        if not source_items:
+            continue
+        print(f"## {source} ({len(source_items)})\n")
+        for item in source_items:
+            time_label = item.get("published_at") or item.get("fetched_at") or "unknown"
+            url = item.get("url") or ""
+            link = f" ([link]({url}))" if url else ""
+            print(f"### {item.get('title') or '(untitled)'}{link}")
+            print(f"- Time: {time_label}")
+            print(f"- Item ID: {item.get('id')}")
+            if item.get("content"):
+                print(f"- Summary: {compact_text(item.get('content'), 520)}")
+            highlights = [value for value in metadata_highlights(item) if value]
+            if highlights:
+                print(f"- Metadata: {'; '.join(highlights)}")
+            enrichments = item.get("enrichments") or []
+            if enrichments:
+                print("- Enrichments:")
+                for enrichment in enrichments:
+                    title = enrichment.get("title") or "(no title)"
+                    print(
+                        "  - "
+                        f"{enrichment.get('target_type')} "
+                        f"[{enrichment.get('status')}] {title} "
+                        f"{enrichment.get('target_url')}"
+                    )
+                    excerpt = compact_text(enrichment.get("text_excerpt"), 1200)
+                    if excerpt:
+                        print(f"    Excerpt: {excerpt}")
+                    metadata = enrichment.get("metadata") or {}
+                    if metadata:
+                        selected = {
+                            key: metadata.get(key)
+                            for key in (
+                                "description",
+                                "homepage",
+                                "language",
+                                "topics",
+                                "license",
+                                "pushed_at",
+                                "latest_release",
+                                "h1",
+                                "h2",
+                                "key_links",
+                                "cta_texts",
+                                "final_url",
+                            )
+                            if metadata.get(key)
+                        }
+                        if selected:
+                            print(
+                                "    Metadata: "
+                                + json.dumps(selected, ensure_ascii=False, default=str)
+                            )
+            print()
+
+
+def main() -> int:
+    args = parse_args()
+    packet = build_packet(args)
+    if args.format == "json":
+        print(json.dumps(packet, ensure_ascii=False, indent=2, default=str))
+    else:
+        emit_markdown(packet)
+    return 0
+
+
+if __name__ == "__main__":
+    if sys.platform == "win32":
+        sys.stdout = io.TextIOWrapper(
+            sys.stdout.buffer, encoding="utf-8", errors="replace"
+        )
+    raise SystemExit(main())

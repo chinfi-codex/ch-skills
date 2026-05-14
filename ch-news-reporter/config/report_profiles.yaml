@@ -1,0 +1,19 @@
+profiles:
+  ai_daily:
+    title: AI 日报
+    timezone: Asia/Shanghai
+    sources:
+      - product_hunt
+      - hacker_news
+      - github_trending
+      - rss
+      - jin10
+      - cls
+
+  iran_dynamic:
+    title: 美以伊动态播报
+    timezone: Asia/Shanghai
+    sources:
+      - jin10
+      - cls
+      - rss

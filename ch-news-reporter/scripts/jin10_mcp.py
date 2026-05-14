@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal Jin10 MCP client for market-ai-news-research."""
+"""Minimal Jin10 MCP client for ch-news-reporter."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ class Jin10McpClient:
                 "protocolVersion": JIN10_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {
-                    "name": "market-ai-news-research-skill",
+                    "name": "ch-news-reporter-skill",
                     "version": "0.1.0",
                 },
             },

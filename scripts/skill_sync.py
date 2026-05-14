@@ -3,14 +3,14 @@
 Skill Sync Hub —— 跨 Agent 技能同步工具
 
 参考 neuDrive Bundle Sync 思路：本仓库作为 canonical source，
-通过声明式配置 + Git Hook，单向同步到 Kimi CLI / Claude Code / Codex / .agents 安装目录。
+通过声明式配置 + Git Hook，单向同步到 Kimi CLI / Claude Code / Codex / .agents 等安装目录。
 
 用法:
     python scripts/skill_sync.py              # 一次性复制同步
     python scripts/skill_sync.py --link       # 建立 Junction/Symlink（开发推荐）
     python scripts/skill_sync.py --dry-run    # 预览变更，不实际执行
     python scripts/skill_sync.py --watch      # 监控文件变更并自动同步
-    python scripts/skill_sync.py --install-hook   # 安装 post-commit Git Hook
+    python scripts/skill_sync.py --install-hook   # 安装 post-commit / post-merge / post-rewrite Git Hooks
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,8 @@ except ImportError as exc:
     raise SystemExit(1) from exc
 
 REPO_ROOT = Path(__file__).parent.parent.resolve()
+MANAGED_HOOK_BEGIN = "# >>> Skill Sync Hub >>>"
+MANAGED_HOOK_END = "# <<< Skill Sync Hub <<<"
 
 # ---------------------------------------------------------------------------
 # 配置加载
@@ -52,9 +55,25 @@ def expand_path(path_str: str) -> Path:
     """
     expanded = path_str
     # PowerShell $env:NAME -> %NAME%
-    expanded = __import__("re").sub(r"\$env:([A-Za-z_][A-Za-z0-9_]*)", r"%\1%", expanded)
+    expanded = re.sub(r"\$env:([A-Za-z_][A-Za-z0-9_]*)", r"%\1%", expanded)
     expanded = os.path.expandvars(os.path.expanduser(expanded))
     return Path(expanded).resolve()
+
+
+def validate_target_path(target_name: str, target_path: Path) -> None:
+    """阻止把镜像同步打到根目录、用户目录或非 skills 目录。"""
+    home = Path.home().resolve()
+    root = Path(target_path.anchor).resolve()
+    resolved = target_path.resolve()
+
+    if resolved in {root, home, REPO_ROOT}:
+        raise ValueError(f"危险目标路径: {target_name} -> {resolved}")
+
+    if resolved.name != "skills":
+        raise ValueError(f"目标路径必须以 skills 结尾: {target_name} -> {resolved}")
+
+    if REPO_ROOT in resolved.parents:
+        raise ValueError(f"目标路径不能位于当前仓库内: {target_name} -> {resolved}")
 
 
 # ---------------------------------------------------------------------------
@@ -241,10 +260,14 @@ def run_sync(config: dict, mode: str = "copy", dry_run: bool = False) -> None:
 
     for target_name, target_path_tpl in targets.items():
         target_path = expand_path(target_path_tpl)
+        validate_target_path(target_name, target_path)
         print(f"\n{'=' * 50}")
         print(f"Target: {target_name} -> {target_path}")
         print(f"{'=' * 50}")
-        target_path.mkdir(parents=True, exist_ok=True)
+        if dry_run:
+            print(f"  [DRY-RUN] 将确保目标目录存在: {target_path}")
+        else:
+            target_path.mkdir(parents=True, exist_ok=True)
 
         for skill_name, skill_src in sorted(skills.items()):
             skill_dst = target_path / skill_name
@@ -293,31 +316,62 @@ def watch_and_sync(
 # ---------------------------------------------------------------------------
 
 
+def _hook_sync_block(hook_name: str, script_path: Path, config_path: Path) -> str:
+    """生成可嵌入现有 Git hook 的受管同步片段。"""
+    return f'''{MANAGED_HOOK_BEGIN}
+# Skill Sync Hub —— {hook_name}
+# 由 skill_sync.py --install-hook 自动生成；失败时不阻断 Git 操作。
+python "{script_path}" --config "{config_path}" || true
+{MANAGED_HOOK_END}
+'''
+
+
+def _upsert_git_hook(hook_path: Path, hook_name: str, script_path: Path, config_path: Path) -> None:
+    """创建或更新 Git hook，尽量保留用户已有自定义内容。"""
+    block = _hook_sync_block(hook_name, script_path, config_path)
+
+    if hook_path.exists():
+        existing = hook_path.read_text(encoding="utf-8")
+    else:
+        existing = "#!/bin/sh\n"
+
+    if MANAGED_HOOK_BEGIN in existing and MANAGED_HOOK_END in existing:
+        before, rest = existing.split(MANAGED_HOOK_BEGIN, 1)
+        _old, after = rest.split(MANAGED_HOOK_END, 1)
+        content = before.rstrip() + "\n" + block + after.lstrip("\n")
+    elif "Skill Sync Hub" in existing and "skill_sync.py --install-hook" in existing:
+        content = "#!/bin/sh\n" + block
+    else:
+        content = existing.rstrip() + "\n\n" + block
+        if not content.startswith("#!"):
+            content = "#!/bin/sh\n" + content
+
+    hook_path.write_text(content, encoding="utf-8", newline="\n")
+    os.chmod(hook_path, 0o755)
+
+
 def install_git_hook(repo_root: Path) -> None:
-    """在 .git/hooks/post-commit 写入自动同步调用。"""
+    """安装 commit 与 pull 后自动同步所需的 Git hooks。"""
     hooks_dir = repo_root / ".git" / "hooks"
     if not hooks_dir.exists():
         print("错误: 找不到 .git/hooks 目录。请确保在 Git 仓库内运行。")
         raise SystemExit(1)
 
-    hook_path = hooks_dir / "post-commit"
     script_path = repo_root / "scripts" / "skill_sync.py"
     config_path = repo_root / "skill-sync.yaml"
 
-    # 使用绝对路径，避免 MSYS/Cygwin 路径转换问题
-    content = f'''#!/bin/sh
-# =============================================================================
-# Skill Sync Hub —— post-commit hook
-# 由 skill_sync.py --install-hook 自动生成
-# =============================================================================
-python "{script_path}" --config "{config_path}"
-'''
+    hooks = {
+        "post-commit": "post-commit hook",
+        "post-merge": "post-merge hook (git pull / merge)",
+        "post-rewrite": "post-rewrite hook (git pull --rebase / rebase)",
+    }
 
-    hook_path.write_text(content, encoding="utf-8")
-    # Git for Windows 的 hooks 由 MSYS sh 执行，需要可执行权限
-    os.chmod(hook_path, 0o755)
-    print(f"Git Hook 已安装: {hook_path}")
-    print("此后每次 git commit 将自动同步技能到各 Agent 目录。")
+    for hook_file, hook_name in hooks.items():
+        hook_path = hooks_dir / hook_file
+        _upsert_git_hook(hook_path, hook_name, script_path, config_path)
+        print(f"Git Hook 已安装: {hook_path}")
+
+    print("此后 git commit、git pull、git pull --rebase 后都会自动同步技能到各 Agent 目录。")
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +412,7 @@ def main() -> None:
     parser.add_argument(
         "--install-hook",
         action="store_true",
-        help="安装 post-commit Git Hook",
+        help="安装 post-commit / post-merge / post-rewrite Git Hooks",
     )
     args = parser.parse_args()
 

@@ -1,19 +1,22 @@
 # Skill Sync Hub —— 跨 Agent 技能同步配置
 # 参考 neuDrive Bundle Sync 思路：本仓库作为 canonical source，
-# 通过 Git Hook 在 commit 后自动单向同步到各 Agent 安装目录。
+# 通过 Git Hook 在 commit / pull 后自动单向同步到各 Agent 安装目录。
 #
 # 使用方式:
 #   python scripts/skill_sync.py              # 一次性复制同步
 #   python scripts/skill_sync.py --link       # 建立 Junction（开发推荐，实时生效）
 #   python scripts/skill_sync.py --dry-run    # 预览变更
-#   python scripts/skill_sync.py --install-hook   # 安装 post-commit Git Hook
+#   python scripts/skill_sync.py --install-hook   # 安装 post-commit / post-merge / post-rewrite Git Hooks
 
 targets:
   # Agent 品牌目录（Kimi CLI 启动时会按优先级自动扫描）
   # 开启 merge_all_available_skills = true 后，Kimi 会合并所有品牌目录
   kimi:    "$env:USERPROFILE/.kimi/skills"
   claude:  "$env:USERPROFILE/.claude/skills"
+  codex:   "$env:USERPROFILE/.codex/skills"
   agents:  "$env:USERPROFILE/.agents/skills"
+  hermes:  "$env:USERPROFILE/.hermes/skills"
+  openclaw: "$env:USERPROFILE/.openclaw/skills"
 
 # 重命名映射：源目录名 → 目标 skill 名
 # 键为相对于仓库根的路径，值为目标目录名

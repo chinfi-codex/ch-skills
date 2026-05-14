@@ -10,6 +10,7 @@ investment recommendations. The model using the skill performs interpretation.
 from __future__ import annotations
 
 import argparse
+from html.parser import HTMLParser
 import json
 import os
 import sys
@@ -52,14 +53,31 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 CACHE_ROOT = SKILL_ROOT / "data" / "cache"
 REFERENCE_ROOT = SKILL_ROOT / "reference"
 DEFAULT_MARKET_HISTORY_CSV = REFERENCE_ROOT / "market_data.csv"
+MARKET_HISTORY_COLUMNS = [
+    "日期",
+    "上涨",
+    "涨停",
+    "下跌",
+    "跌停",
+    "平盘",
+    "活跃度",
+    "成交额",
+    "融资净买入",
+    "全市场换手率",
+]
+MARKET_ACTIVITY_COLUMNS = ["上涨", "涨停", "下跌", "跌停", "平盘", "活跃度", "成交额"]
+CORRUPTED_MARKET_TURNOVER_COLUMNS = {"?????", "??????"}
 
 MARKET_TREND_INDEXES = {
     "shanghai": {"name": "上证指数", "ts_code": "000001.SH"},
     "chinext": {"name": "创业板指数", "ts_code": "399006.SZ"},
 }
 MARKET_HISTORY_PRIMARY_SOURCE = "akshare.stock_market_activity_legu"
-MARKET_HISTORY_SUPPLEMENT_SOURCE = "tushare.daily"
+MARKET_HISTORY_SUPPLEMENT_SOURCE = "tushare.daily,daily_basic,margin"
+MARKET_HISTORY_SOHU_SOURCE = "sohu.zdt_history"
+SOHU_LIMIT_HISTORY_URL = "https://q.stock.sohu.com/cn/zdt.shtml"
 JRJ_LIMIT_UP_URL = "https://gateway.jrj.com/quot-dc/zdt/v1/record"
+SOHU_LIMIT_HISTORY_CACHE: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
 
 def get_tushare_token() -> str:
@@ -213,6 +231,8 @@ def safe_float(value: Any) -> Optional[float]:
 def nullable_value(value: Any) -> Any:
     if value is None or pd.isna(value):
         return None
+    if hasattr(value, "item"):
+        return value.item()
     return value
 
 
@@ -611,6 +631,44 @@ def calculate_market_turnover_rate(daily: pd.DataFrame, daily_basic: pd.DataFram
     return round(turnover_rate, 4), None
 
 
+def fetch_margin_net_buy(
+    pro,
+    target_date: str,
+    cache_enabled: bool = True,
+    refresh_cache: bool = False,
+) -> Tuple[Optional[float], Optional[str]]:
+    """Return market-wide financing net buy (rzmre - rzche), in yuan."""
+    fields = "trade_date,exchange_id,rzmre,rzche"
+    if cache_enabled and not refresh_cache:
+        cached = read_cached_frame("margin", target_date, fields)
+        if cached is not None:
+            margin = cached
+        else:
+            margin = None
+    else:
+        margin = None
+
+    try:
+        if margin is None:
+            margin = pro.margin(trade_date=target_date, fields=fields)
+            if margin is not None and not margin.empty and cache_enabled:
+                write_cached_frame("margin", target_date, margin)
+    except Exception as exc:
+        return None, f"tushare margin failed for {target_date}: {exc}"
+
+    if margin is None or margin.empty:
+        return None, f"tushare margin returned no data for {target_date}"
+    if "rzmre" not in margin.columns or "rzche" not in margin.columns:
+        return None, "tushare margin missing rzmre/rzche columns"
+
+    buy = pd.to_numeric(margin["rzmre"], errors="coerce")
+    repay = pd.to_numeric(margin["rzche"], errors="coerce")
+    net_buy = (buy - repay).sum(min_count=1)
+    if pd.isna(net_buy):
+        return None, "tushare margin rzmre/rzche has no numeric values"
+    return round(float(net_buy), 2), None
+
+
 def format_history_date(trade_date: str) -> str:
     return datetime.strptime(str(trade_date), "%Y%m%d").strftime("%Y/%m/%d")
 
@@ -646,6 +704,66 @@ def should_fill_turnover(existing_value: object, new_value: object) -> bool:
     return pd.isna(existing_amount) or float(existing_amount) <= 0
 
 
+def normalize_market_history_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Repair known historical CSV header issues before upserting rows."""
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+    if "日期" not in out.columns:
+        fixed = list(out.columns)
+        if fixed:
+            fixed[0] = "日期"
+            out.columns = fixed
+
+    for bad_col in CORRUPTED_MARKET_TURNOVER_COLUMNS:
+        if bad_col not in out.columns:
+            continue
+        if "全市场换手率" not in out.columns:
+            out = out.rename(columns={bad_col: "全市场换手率"})
+            continue
+        out["全市场换手率"] = out["全市场换手率"].where(
+            ~out["全市场换手率"].apply(is_blank_value),
+            out[bad_col],
+        )
+        out = out.drop(columns=[bad_col])
+
+    return out
+
+
+def order_market_history_columns(columns: Iterable[str]) -> List[str]:
+    seen = set()
+    ordered: List[str] = []
+    for col in MARKET_HISTORY_COLUMNS:
+        if col in columns and col not in seen:
+            ordered.append(col)
+            seen.add(col)
+    for col in columns:
+        if col not in seen and col not in CORRUPTED_MARKET_TURNOVER_COLUMNS:
+            ordered.append(col)
+            seen.add(col)
+    return ordered
+
+
+def verify_market_history_write(csv_path: Path, target_date: Any) -> None:
+    check = pd.read_csv(csv_path, encoding="utf-8-sig")
+    if "日期" not in check.columns:
+        raise RuntimeError(f"market history write verification failed: 日期 column missing in {csv_path}")
+    target_key = history_date_to_trade_date(target_date)
+    existing_dates = check["日期"].apply(history_date_to_trade_date)
+    if not target_key or not bool((existing_dates == target_key).any()):
+        raise RuntimeError(f"market history write verification failed: {target_date} not found in {csv_path}")
+
+
+def sort_market_history_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or "日期" not in df.columns:
+        return df
+    out = df.copy()
+    out["_sort_date"] = out["日期"].apply(history_date_to_trade_date)
+    out = out.sort_values("_sort_date", ascending=False, na_position="last").drop(columns=["_sort_date"])
+    return out.reset_index(drop=True)
+
+
 def upsert_market_history_row(
     row: Dict[str, Any],
     columns: List[str],
@@ -653,22 +771,18 @@ def upsert_market_history_row(
 ) -> None:
     """Write one market-history row while preserving existing non-empty values."""
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    ordered_columns = list(dict.fromkeys(columns + list(row.keys())))
+    ordered_columns = order_market_history_columns(list(dict.fromkeys(columns + list(row.keys()))))
 
     if csv_path.exists():
-        df = pd.read_csv(csv_path, encoding="utf-8-sig")
-        if "日期" not in df.columns:
-            if len(df.columns) == len(ordered_columns):
-                df.columns = ordered_columns
-            else:
-                fixed = list(df.columns)
-                if fixed:
-                    fixed[0] = "日期"
-                    df.columns = fixed
+        df = normalize_market_history_columns(pd.read_csv(csv_path, encoding="utf-8-sig"))
+        current_columns = order_market_history_columns(df.columns)
+        ordered_columns = [col for col in ordered_columns if col in current_columns]
+        row = {key: value for key, value in row.items() if key in current_columns}
 
         for col in ordered_columns:
             if col not in df.columns:
                 df[col] = ""
+        df = df.reindex(columns=current_columns)
 
         target_date = row.get("日期")
         existing_dates = df["日期"].apply(history_date_to_trade_date)
@@ -688,48 +802,33 @@ def upsert_market_history_row(
                     if should_fill_positive_numeric(current_value, new_value):
                         df.at[idx, col] = new_value
                     continue
+                if col in {"涨停", "跌停"}:
+                    if should_update_count(current_value, new_value):
+                        df.at[idx, col] = new_value
+                    continue
+                if col in {"上涨", "下跌", "平盘"}:
+                    if should_update_count(current_value, new_value):
+                        df.at[idx, col] = new_value
+                    continue
+                if col == "融资净买入":
+                    if should_update_numeric(current_value, new_value):
+                        df.at[idx, col] = new_value
+                    continue
                 if is_blank_value(current_value) and not is_blank_value(new_value):
                     df.at[idx, col] = new_value
-            df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+            sort_market_history_df(df).to_csv(csv_path, index=False, encoding="utf-8-sig")
+            verify_market_history_write(csv_path, target_date)
             return
 
-        final_columns = list(df.columns) + [col for col in ordered_columns if col not in df.columns]
+        final_columns = order_market_history_columns(list(df.columns) + [col for col in ordered_columns if col not in df.columns])
         new_row = pd.DataFrame([row], columns=final_columns)
         df = pd.concat([new_row, df.reindex(columns=final_columns)], ignore_index=True)
-        df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+        sort_market_history_df(df).to_csv(csv_path, index=False, encoding="utf-8-sig")
+        verify_market_history_write(csv_path, row.get("日期"))
         return
 
-    pd.DataFrame([row], columns=ordered_columns).to_csv(csv_path, index=False, encoding="utf-8-sig")
-
-
-def fetch_tushare_market_snapshot_from_daily(
-    daily: pd.DataFrame,
-    target_date: str,
-) -> Tuple[Optional[float], Optional[int], Optional[int], Optional[int]]:
-    if daily is None or daily.empty or "trade_date" not in daily.columns:
-        return None, None, None, None
-
-    day = daily.loc[daily["trade_date"].astype(str) == str(target_date)].copy()
-    if day.empty:
-        return None, None, None, None
-
-    total_amount = None
-    if "amount" in day.columns:
-        amount_series = pd.to_numeric(day["amount"], errors="coerce")
-        amount_sum = amount_series.sum(min_count=1)
-        if pd.notna(amount_sum) and float(amount_sum) > 0:
-            total_amount = float(amount_sum)
-
-    up_count = None
-    down_count = None
-    flat_count = None
-    if "pct_chg" in day.columns:
-        pct_series = pd.to_numeric(day["pct_chg"], errors="coerce")
-        up_count = int((pct_series > 0).sum())
-        down_count = int((pct_series < 0).sum())
-        flat_count = int((pct_series == 0).sum())
-
-    return total_amount, up_count, down_count, flat_count
+    sort_market_history_df(pd.DataFrame([row], columns=ordered_columns)).to_csv(csv_path, index=False, encoding="utf-8-sig")
+    verify_market_history_write(csv_path, row.get("日期"))
 
 
 def should_fill_positive_numeric(existing_value: object, new_value: object) -> bool:
@@ -745,6 +844,161 @@ def should_fill_positive_numeric(existing_value: object, new_value: object) -> b
 
     existing_numeric = pd.to_numeric(pd.Series([existing_value]), errors="coerce").iloc[0]
     return pd.isna(existing_numeric) or float(existing_numeric) <= 0
+
+
+def should_update_count(existing_value: object, new_value: object) -> bool:
+    if is_blank_value(new_value):
+        return False
+    new_numeric = pd.to_numeric(pd.Series([new_value]), errors="coerce").iloc[0]
+    if pd.isna(new_numeric) or float(new_numeric) < 0:
+        return False
+    if is_blank_value(existing_value):
+        return True
+    existing_numeric = pd.to_numeric(pd.Series([existing_value]), errors="coerce").iloc[0]
+    return pd.isna(existing_numeric) or int(existing_numeric) != int(new_numeric)
+
+
+def should_update_numeric(existing_value: object, new_value: object) -> bool:
+    if is_blank_value(new_value):
+        return False
+    new_numeric = pd.to_numeric(pd.Series([new_value]), errors="coerce").iloc[0]
+    if pd.isna(new_numeric):
+        return False
+    if is_blank_value(existing_value):
+        return True
+    existing_numeric = pd.to_numeric(pd.Series([existing_value]), errors="coerce").iloc[0]
+    return pd.isna(existing_numeric) or float(existing_numeric) != float(new_numeric)
+
+
+class SimpleTableParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.in_table = False
+        self.in_row = False
+        self.in_cell = False
+        self.cell_parts: List[str] = []
+        self.current_row: List[str] = []
+        self.rows: List[List[str]] = []
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if tag == "table":
+            self.in_table = True
+        elif self.in_table and tag == "tr":
+            self.in_row = True
+            self.current_row = []
+        elif self.in_row and tag in {"td", "th"}:
+            self.in_cell = True
+            self.cell_parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"td", "th"} and self.in_cell:
+            self.current_row.append("".join(self.cell_parts).strip())
+            self.in_cell = False
+            self.cell_parts = []
+        elif tag == "tr" and self.in_row:
+            if self.current_row:
+                self.rows.append(self.current_row)
+            self.in_row = False
+            self.current_row = []
+        elif tag == "table":
+            self.in_table = False
+
+    def handle_data(self, data: str) -> None:
+        if self.in_cell:
+            self.cell_parts.append(data)
+
+
+def parse_market_history_number(value: Any) -> Optional[float]:
+    if is_blank_value(value):
+        return None
+    text = str(value).strip().replace(",", "").replace("%", "")
+    if text in {"--", "-", "—"}:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def fetch_sohu_market_history_rows(year: str) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
+    detail: Dict[str, Any] = {
+        "source": MARKET_HISTORY_SOHU_SOURCE,
+        "url": SOHU_LIMIT_HISTORY_URL,
+        "available": False,
+        "fallback_reason": None,
+    }
+    if requests is None:
+        detail["fallback_reason"] = "requests is not installed"
+        return {}, detail
+
+    try:
+        response = requests.get(
+            SOHU_LIMIT_HISTORY_URL,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        detail["fallback_reason"] = f"sohu zdt history request failed: {exc}"
+        return {}, detail
+
+    text = response.content.decode("utf-8", errors="replace")
+    parser = SimpleTableParser()
+    parser.feed(text)
+
+    rows: Dict[str, Dict[str, Any]] = {}
+    for cells in parser.rows:
+        if len(cells) < 14 or "/" not in cells[0]:
+            continue
+
+        values = [parse_market_history_number(cell) for cell in cells]
+        amount_100m_yuan = values[4]
+        up_count = sum(v for v in [values[5], values[8], values[11]] if v is not None)
+        flat_count = sum(v for v in [values[6], values[9], values[12]] if v is not None)
+        down_count = sum(v for v in [values[7], values[10], values[13]] if v is not None)
+        trade_date = history_date_to_trade_date(f"{year}/{cells[0]}")
+        if not trade_date:
+            continue
+        rows[trade_date] = {
+            "日期": f"{year}/{cells[0]}",
+            "上涨": int(up_count),
+            "涨停": int(values[1]) if values[1] is not None else "",
+            "下跌": int(down_count),
+            "跌停": int(values[2]) if values[2] is not None else "",
+            "平盘": int(flat_count),
+            "成交额": round(float(amount_100m_yuan) * 100000, 3) if amount_100m_yuan is not None else "",
+        }
+
+    if rows:
+        detail["available"] = True
+        detail["row_count"] = len(rows)
+    else:
+        detail["fallback_reason"] = "sohu zdt history table has no usable rows"
+    return rows, detail
+
+
+def fetch_sohu_market_history_row(target_date: str) -> Tuple[Dict[str, Any], List[str], Dict[str, Any]]:
+    detail: Dict[str, Any] = {
+        "source": MARKET_HISTORY_SOHU_SOURCE,
+        "url": SOHU_LIMIT_HISTORY_URL,
+        "available": False,
+        "fallback_reason": None,
+    }
+    year = str(target_date)[:4]
+    if year not in SOHU_LIMIT_HISTORY_CACHE:
+        rows, detail = fetch_sohu_market_history_rows(year)
+        if not detail.get("available"):
+            return {}, [], detail
+        SOHU_LIMIT_HISTORY_CACHE[year] = rows
+
+    row = SOHU_LIMIT_HISTORY_CACHE[year].get(target_date, {})
+    if not row:
+        detail["fallback_reason"] = f"sohu zdt history missing target date {target_date}"
+        return {}, [], detail
+
+    detail["available"] = True
+    detail["matched_date"] = target_date
+    return row, list(row.keys()), detail
 
 
 def fetch_akshare_market_history_row(target_date: str) -> Tuple[Dict[str, Any], List[str], Dict[str, Any]]:
@@ -803,14 +1057,49 @@ def fetch_akshare_market_history_row(target_date: str) -> Tuple[Dict[str, Any], 
     return row, columns, detail
 
 
+def fill_missing_market_activity(
+    row: Dict[str, Any],
+    columns: List[str],
+    fallback_row: Dict[str, Any],
+    fallback_columns: List[str],
+) -> Tuple[Dict[str, Any], List[str], List[str]]:
+    filled: List[str] = []
+    if not fallback_row:
+        return row, columns, filled
+
+    if not row:
+        row = {"日期": fallback_row.get("日期")}
+        columns = ["日期"]
+
+    for key in MARKET_ACTIVITY_COLUMNS:
+        if key not in fallback_row:
+            continue
+        if key not in row or is_blank_value(row.get(key)):
+            row[key] = fallback_row[key]
+            filled.append(key)
+
+    columns = list(dict.fromkeys(columns + [col for col in fallback_columns if col in row]))
+    return row, columns, filled
+
+
 def update_market_history(
     target_date: str,
     daily: pd.DataFrame,
     daily_basic: Optional[pd.DataFrame] = None,
+    margin_net_buy: Optional[float] = None,
+    margin_net_buy_reason: Optional[str] = None,
     csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
 ) -> Dict[str, Any]:
     row, columns, detail = fetch_akshare_market_history_row(target_date)
-    total_amount, up_count, down_count, flat_count = fetch_tushare_market_snapshot_from_daily(daily, target_date)
+    needs_sohu = (not row) or any(is_blank_value(row.get(key)) for key in MARKET_ACTIVITY_COLUMNS)
+    sohu_row: Dict[str, Any] = {}
+    sohu_columns: List[str] = []
+    sohu_detail: Dict[str, Any] = {"available": False, "fallback_reason": "not needed"}
+    sohu_filled_fields: List[str] = []
+    if needs_sohu:
+        sohu_row, sohu_columns, sohu_detail = fetch_sohu_market_history_row(target_date)
+        row, columns, sohu_filled_fields = fill_missing_market_activity(row, columns, sohu_row, sohu_columns)
+
     market_turnover_rate, market_turnover_reason = calculate_market_turnover_rate(
         daily,
         daily_basic if daily_basic is not None else pd.DataFrame(),
@@ -822,29 +1111,15 @@ def update_market_history(
         row = {"日期": format_history_date(target_date)}
         columns = ["日期"]
 
-    row["成交额"] = total_amount if total_amount is not None else row.get("成交额", "")
-    if ("成交额" not in columns):
-        columns.append("成交额")
-
-    if ("上涨" not in row or is_blank_value(row.get("上涨"))) and up_count is not None:
-        row["上涨"] = up_count
-    if "上涨" not in columns:
-        columns.append("上涨")
-
-    if ("下跌" not in row or is_blank_value(row.get("下跌"))) and down_count is not None:
-        row["下跌"] = down_count
-    if "下跌" not in columns:
-        columns.append("下跌")
-
-    if ("平盘" not in row or is_blank_value(row.get("平盘"))) and flat_count is not None:
-        row["平盘"] = flat_count
-    if "平盘" not in columns:
-        columns.append("平盘")
-
     if market_turnover_rate is not None:
         row["全市场换手率"] = market_turnover_rate
     if "全市场换手率" not in columns:
         columns.append("全市场换手率")
+
+    if margin_net_buy is not None:
+        row["融资净买入"] = margin_net_buy
+    if "融资净买入" not in columns:
+        columns.append("融资净买入")
 
     confirmed_values = {
         key: value for key, value in row.items() if key != "日期" and not is_blank_value(value)
@@ -854,12 +1129,19 @@ def update_market_history(
         "trade_date": target_date,
         "path": str(csv_path),
         "primary_source": MARKET_HISTORY_PRIMARY_SOURCE,
+        "sohu_source": MARKET_HISTORY_SOHU_SOURCE,
         "supplement_source": MARKET_HISTORY_SUPPLEMENT_SOURCE,
         "primary_trade_date": detail.get("primary_trade_date"),
+        "sohu_available": bool(sohu_detail.get("available")),
+        "sohu_fallback_reason": sohu_detail.get("fallback_reason"),
+        "sohu_filled_fields": sohu_filled_fields,
         "fallback_reason": fallback_reason,
         "market_turnover_rate": market_turnover_rate,
         "market_turnover_rate_unit": "percent",
         "market_turnover_rate_reason": market_turnover_reason,
+        "margin_net_buy": margin_net_buy,
+        "margin_net_buy_unit": "yuan",
+        "margin_net_buy_reason": margin_net_buy_reason,
         "fields": sorted(confirmed_values.keys()),
     }
     if not confirmed_values:
@@ -901,8 +1183,8 @@ def compare_scalar(current: Any, previous: Any) -> Dict[str, Any]:
         if previous_float != 0:
             change_pct = round(change / previous_float * 100.0, 2)
     return {
-        "current": current,
-        "previous": previous,
+        "current": nullable_value(current),
+        "previous": nullable_value(previous),
         "change": change,
         "change_pct": change_pct,
     }
@@ -3244,16 +3526,30 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             cache_enabled=cache_enabled,
             refresh_cache=args.refresh_cache,
         )
+        margin_future = executor.submit(
+            fetch_margin_net_buy,
+            pro,
+            target_date,
+            cache_enabled,
+            args.refresh_cache,
+        )
 
         daily = daily_future.result()
         basic = basic_future.result()
         stock_basic = stock_basic_future.result()
         index_daily = index_daily_future.result()
+        margin_net_buy, margin_net_buy_reason = margin_future.result()
 
     if daily.empty:
         raise RuntimeError("daily returned no data for the requested window.")
 
-    market_history_update = update_market_history(target_date, daily, basic)
+    market_history_update = update_market_history(
+        target_date,
+        daily,
+        basic,
+        margin_net_buy=margin_net_buy,
+        margin_net_buy_reason=margin_net_buy_reason,
+    )
     market_trend = build_market_trend(
         pro,
         target_date,
@@ -3398,7 +3694,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             },
             "cache_enabled": cache_enabled,
             "cache_root": str(CACHE_ROOT),
-            "cached_endpoints": ["daily", "daily_basic", "stock_basic", "trade_cal", "index_daily"] if cache_enabled else [],
+            "cached_endpoints": ["daily", "daily_basic", "margin", "stock_basic", "trade_cal", "index_daily"] if cache_enabled else [],
             "fetch_workers": fetch_workers,
             "future_data_allowed": bool(args.allow_future),
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

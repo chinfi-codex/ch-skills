@@ -41,7 +41,7 @@ version: 2.0.1
 TUSHARE_TOKEN=your_token
 ```
 
-运行脚本会先更新 `reference/market_data.csv` 再生成情绪趋势：AKShare `stock_market_activity_legu()` 提供情绪明细，Tushare `daily` 补充成交额和必要的上涨/下跌 fallback，Tushare `daily_basic.circ_mv` 用于计算流通市值加权的全市场换手率；因此环境中还需安装 `akshare`。
+运行脚本会先更新 `reference/market_data.csv` 再生成情绪趋势：AKShare `stock_market_activity_legu()` 默认提供上涨、涨停、下跌、跌停、平盘、活跃度、成交额等盘面情绪字段；搜狐涨跌停历史页仅在 AKShare 不可用或字段缺失时作为 fallback；Tushare `margin` 汇总融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。因此环境中还需安装 `akshare`。
 
 基础命令：
 

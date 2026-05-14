@@ -15,6 +15,7 @@ id_ed25519
 
 __pycache__/
 *.py[cod]
+private-butler/
 health-butler/health.db
 health-butler/profile.json
 health-butler/daily-log.md

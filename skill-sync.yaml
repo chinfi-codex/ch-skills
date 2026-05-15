@@ -14,7 +14,6 @@ targets:
   kimi:    "~/.kimi/skills"
   claude:  "~/.claude/skills"
   codex:   "~/.codex/skills"
-  agents:  "~/.agents/skills"
   hermes:  "~/.hermes/skills"
   openclaw: "~/.openclaw/skills"
 

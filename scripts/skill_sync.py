@@ -16,6 +16,7 @@ Skill Sync Hub —— 跨 Agent 技能同步工具
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import re
@@ -34,6 +35,7 @@ except ImportError as exc:
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 MANAGED_HOOK_BEGIN = "# >>> Skill Sync Hub >>>"
 MANAGED_HOOK_END = "# <<< Skill Sync Hub <<<"
+MANIFEST_FILENAME = ".skill-sync-manifest.json"
 
 # ---------------------------------------------------------------------------
 # 配置加载
@@ -87,6 +89,103 @@ def validate_target_path(target_name: str, target_path: Path) -> None:
 
     if REPO_ROOT in resolved.parents:
         raise ValueError(f"目标路径不能位于当前仓库内: {target_name} -> {resolved}")
+
+
+def _is_safe_skill_name(skill_name: str) -> bool:
+    """仅允许删除 target/skill_name 这一层目录，避免 manifest 损坏导致越界删除。"""
+    if not skill_name or skill_name in {".", ".."}:
+        return False
+    if "/" in skill_name or "\\" in skill_name:
+        return False
+    return Path(skill_name).name == skill_name
+
+
+def _manifest_path(target_path: Path) -> Path:
+    return target_path / MANIFEST_FILENAME
+
+
+def load_manifest(target_path: Path) -> set[str]:
+    """读取上次同步记录；没有 manifest 时不做 stale skill 删除。"""
+    path = _manifest_path(target_path)
+    if not path.exists():
+        return set()
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"  [WARN] 无法读取 manifest，跳过 stale 删除: {path} ({exc})")
+        return set()
+
+    raw_skills = data.get("skills", []) if isinstance(data, dict) else data
+    if not isinstance(raw_skills, list):
+        print(f"  [WARN] manifest 格式异常，跳过 stale 删除: {path}")
+        return set()
+
+    return {name for name in raw_skills if isinstance(name, str) and _is_safe_skill_name(name)}
+
+
+def write_manifest(
+    target_name: str,
+    target_path: Path,
+    skill_names: set[str],
+    dry_run: bool = False,
+) -> None:
+    """记录本次同步管理的 skill 名称，供下一次安全删除 stale skill。"""
+    path = _manifest_path(target_path)
+    data = {
+        "version": 1,
+        "target": target_name,
+        "skills": sorted(skill_names),
+    }
+
+    if dry_run:
+        print(f"  [DRY-RUN] 将写入 manifest: {path}")
+        return
+
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def prune_stale_skills(
+    target_path: Path,
+    current_skill_names: set[str],
+    dry_run: bool = False,
+) -> None:
+    """删除上次由本脚本同步、但本次源仓库已不存在的 skill。"""
+    previous_skill_names = load_manifest(target_path)
+    stale_skill_names = sorted(previous_skill_names - current_skill_names)
+
+    if not stale_skill_names:
+        return
+
+    print("  删除已从源仓库移除的 skill:")
+    for skill_name in stale_skill_names:
+        if not _is_safe_skill_name(skill_name):
+            print(f"    [SKIP] 不安全的 skill 名称: {skill_name!r}")
+            continue
+
+        skill_dst = target_path / skill_name
+        resolved_target = target_path.resolve()
+        if skill_dst.parent.resolve() != resolved_target:
+            print(f"    [SKIP] 删除路径越界: {skill_dst}")
+            continue
+
+        if dry_run:
+            print(f"    [DRY-RUN] 将删除: {skill_dst}")
+            continue
+
+        is_junction = getattr(skill_dst, "is_junction", lambda: False)
+        if skill_dst.is_symlink() or is_junction():
+            skill_dst.unlink()
+            print(f"    [DELETE] {skill_dst}")
+        elif skill_dst.is_dir():
+            shutil.rmtree(skill_dst)
+            print(f"    [DELETE] {skill_dst}")
+        elif skill_dst.exists():
+            skill_dst.unlink()
+            print(f"    [DELETE] {skill_dst}")
 
 
 # ---------------------------------------------------------------------------
@@ -151,9 +250,9 @@ def _mirror_robocopy(
     exclude_files: list[str],
     dry_run: bool = False,
 ) -> None:
-    """Windows: 使用 robocopy 做增量覆盖同步（保留目标端原有文件）。"""
+    """Windows: 使用 robocopy 做镜像同步（删除目标端已移除文件）。"""
     if dry_run:
-        print(f"  [DRY-RUN] 将同步: {src.name} -> {dst}")
+        print(f"  [DRY-RUN] 将镜像同步: {src.name} -> {dst}")
         return
 
     dst.mkdir(parents=True, exist_ok=True)
@@ -161,7 +260,7 @@ def _mirror_robocopy(
         "robocopy",
         str(src),
         str(dst),
-        "/E",
+        "/MIR",
         "/NFL",
         "/NDL",
         "/NJH",
@@ -172,7 +271,9 @@ def _mirror_robocopy(
         cmd.extend(["/XD", d])
     for f in exclude_files:
         cmd.extend(["/XF", f])
-    subprocess.run(cmd, check=False)
+    result = subprocess.run(cmd, check=False)
+    if result.returncode >= 8:
+        raise subprocess.CalledProcessError(result.returncode, cmd)
 
 
 def _mirror_rsync(
@@ -182,13 +283,13 @@ def _mirror_rsync(
     exclude_files: list[str],
     dry_run: bool = False,
 ) -> None:
-    """Unix-like: 使用 rsync 做增量覆盖同步（保留目标端原有文件）。"""
+    """Unix-like: 使用 rsync 做镜像同步（删除目标端已移除文件）。"""
     if dry_run:
-        print(f"  [DRY-RUN] 将同步: {src.name} -> {dst}")
+        print(f"  [DRY-RUN] 将镜像同步: {src.name} -> {dst}")
         return
 
     dst.mkdir(parents=True, exist_ok=True)
-    cmd = ["rsync", "-av"]
+    cmd = ["rsync", "-av", "--delete"]
     for e in exclude_dirs + exclude_files:
         cmd.append(f"--exclude={e}")
     cmd.extend([str(src) + "/", str(dst) + "/"])
@@ -202,7 +303,7 @@ def mirror(
     exclude_files: list[str],
     dry_run: bool = False,
 ) -> None:
-    """跨平台增量覆盖同步（保留目标端原有文件）。"""
+    """跨平台镜像同步（删除目标端已移除文件）。"""
     if platform.system() == "Windows":
         _mirror_robocopy(src, dst, exclude_dirs, exclude_files, dry_run)
     else:
@@ -265,6 +366,7 @@ def run_sync(config: dict, mode: str = "copy", dry_run: bool = False) -> None:
     exclude_files = exclude.get("files", [])
 
     skills = discover_skills(REPO_ROOT, rename)
+    current_skill_names = set(skills)
 
     print(f"发现 {len(skills)} 个 skill:")
     for name in sorted(skills):
@@ -282,12 +384,16 @@ def run_sync(config: dict, mode: str = "copy", dry_run: bool = False) -> None:
         else:
             target_path.mkdir(parents=True, exist_ok=True)
 
+        prune_stale_skills(target_path, current_skill_names, dry_run)
+
         for skill_name, skill_src in sorted(skills.items()):
             skill_dst = target_path / skill_name
             if mode == "link":
                 link(skill_src, skill_dst, dry_run)
             else:
                 mirror(skill_src, skill_dst, exclude_dirs, exclude_files, dry_run)
+
+        write_manifest(target_name, target_path, current_skill_names, dry_run)
 
 
 # ---------------------------------------------------------------------------

@@ -20,16 +20,17 @@ description: A股股票基本面投研分析方法论。当用户要求按股票
 
 ## 二、数据获取
 
-必需环境变量：
+环境变量：
 
 ```bash
 TUSHARE_TOKEN=your_token
 ```
 
-一次只获取一个数据集：
+默认一次只获取一个数据集；需要完整单股分析时，使用 `pack` 生成完整 evidence、轻量 `analysis_context` 和模块级 JSON。
 
 ```bash
 python scripts/data_fetcher.py search 贵州茅台
+
 python scripts/data_fetcher.py fetch company 600519.SH
 python scripts/data_fetcher.py fetch financial 600519.SH --limit 8
 python scripts/data_fetcher.py fetch income 600519.SH --limit 8
@@ -43,9 +44,44 @@ python scripts/data_fetcher.py fetch rewards 600519.SH
 python scripts/data_fetcher.py fetch holder-number 600519.SH --limit 20
 python scripts/data_fetcher.py fetch holder-trade 600519.SH --limit 30
 python scripts/data_fetcher.py fetch share-float 600519.SH --limit 20
+python scripts/data_fetcher.py fetch block-trade 600519.SH --limit 30
+
+python scripts/data_fetcher.py fetch report-list 600519.SH --report-type all --limit 8
+python scripts/data_fetcher.py fetch report-text 600519.SH --report-type annual --report-index 1 --max-pages 80 --max-chars 60000
+
+python scripts/data_fetcher.py fetch announcements 600519.SH --date 2026-01-01~2026-05-16 --searchkey 回购 --limit 20
+python scripts/data_fetcher.py fetch announcement-text 600519.SH --date 2026-01-01~2026-05-16 --searchkey 监管函 --announcement-index 1
+python scripts/data_fetcher.py fetch institutional-research 600519.SH --start-date 20250101 --end-date 20260516 --limit 30
+
+python scripts/data_fetcher.py pack 600519.SH --date 2026-01-01~2026-05-16 --evidence-out reports/evidence_600519.json --context-out reports/context_600519.json --module-context-dir reports/module_context_600519
 ```
 
 默认使用 JSON 输出。只有在表格查看更方便时才使用 `--format csv`。
+
+### 2.1 数据维度说明
+
+| 维度 | dataset | 用途 |
+|---|---|---|
+| 股票识别 | `search` | 名称/代码解析，确认 `ts_code`、地区、行业、市场、上市日期和板块 |
+| 公司画像 | `company` | 公司简介、行业、注册地、主营概况 |
+| 财务指标 | `financial` | ROE、毛利率、净利率、成长、偿债、周转等财务指标 |
+| 三大报表 | `income`、`balance`、`cashflow` | 利润表、资产负债表、现金流量表，用于增长质量、利润质量和财务健康验证 |
+| 行情估值 | `daily`、`daily-basic` | 日线、换手率、PE/PB/PS、股息率、市值、股本结构 |
+| 主营结构 | `main-business-product`、`main-business-region` | 产品和地区收入/利润结构，判断业务驱动和集中风险 |
+| 股东治理 | `top10-holders`、`managers`、`rewards` | 十大股东、董监高、管理层薪酬和持股 |
+| 筹码变化 | `holder-number`、`holder-trade` | 股东户数、重要股东增减持 |
+| 交易与供给压力 | `share-float`、`block-trade` | 限售股解禁、大宗交易 |
+| 年报季报 | `report-list`、`report-raw`、`report-text` | 巨潮定期报告列表、PDF 下载、PDF 文本抽取 |
+| 个股公告 | `announcements`、`announcement-raw`、`announcement-text` | 仅按个股查询巨潮公告，按标题规则标记问询回复、监管函、回购、减持、股权激励、定增、重大合作、业绩快报等 |
+| 机构调研 | `institutional-research` | Tushare `stk_surv`，用于观察调研频率、参与机构、接待方式和调研内容关键词 |
+| 上下文包 | `pack` | 单股完整 evidence、轻量 `analysis_context` 和模块级 JSON，供 subagent 或低上下文顺序分析 |
+
+### 2.2 公告查询边界
+
+- `announcements` 只支持按个股查询。不要用本 skill 做全市场公告扫描。
+- 标题规则只负责定位事件类型，不负责判断影响大小。
+- `tabtype=fulltext` 用于公告全文列表；`tabtype=relation` 仅作为互动易/调研相关列表的辅助入口。
+- PDF 原文读取使用本 skill 内置下载与 `PyPDF2` 文本抽取，不跨 skill 引用。
 
 ---
 
@@ -55,8 +91,45 @@ python scripts/data_fetcher.py fetch share-float 600519.SH --limit 20
 
 - 只获取完成任务所需的最小数据集。
 - 财务趋势优先取最近 6-8 个报告期，覆盖至少 2 个完整财年。
+- 如果任务是完整单股研究，优先运行 `pack`，再按模块级 JSON 分析，避免一次加载完整 evidence。
 - 主线归属判断需要联网检索近期市场动态，不要依赖训练记忆。
 - 数据缺失时要明确说明缺口，并降低结论置信度，不要补造数据。
+
+### 原文升级规则
+
+默认先看公告/报告元数据。只有出现以下情况，才升级读取 PDF 原文：
+
+- 用户明确要求“看原文”“读公告”“解释公告”“公告具体说了什么”。
+- 标题命中监管函、问询回复、重大合作/投资、股权激励、定增、员工持股、回购、增持、减持、业绩快报。
+- 财务指标出现异常，需要查定期报告里的管理层解释、会计政策、业务拆分、风险提示。
+- 仅凭标题无法判断事件性质，例如“签署协议”需要确认金额、约束力、履约条件和收入确认节奏。
+
+需要原文时：
+
+1. 先用 `announcements` 或 `report-list` 定位候选。
+2. 按标题相关性、披露时间、是否全文公告选择 1-3 篇。
+3. 用 `announcement-text` 或 `report-text` 读取 PDF 文本。
+4. 输出时明确区分“原文事实”和“模型推断”，不得只凭标题判断影响。
+
+### Subagent 编排与上下文管理
+
+使用 `pack` 后，主 agent 得到三类产物：
+
+- 完整 `evidence`：归档证据，不直接整体塞进模型上下文。
+- 轻量 `analysis_context`：单会话分析时优先加载。
+- `module_contexts/`：供 subagent 分模块撰写。
+
+有 subagent 编排能力时，每个 subagent 只读取自己的模块 JSON 和本 `SKILL.md` 对应方法论：
+
+| 模块 | JSON | 任务 |
+|---|---|---|
+| 1 | `module1_growth_financial.json` | 成长性、财务质量、业务结构 |
+| 2 | `module2_valuation_market.json` | 估值快照、隐含预期、市场定价 |
+| 3 | `module3_governance.json` | 股东结构、管理层、筹码、解禁、大宗交易 |
+| 4 | `module4_announcements.json` | 公告事件筛查、原文升级候选、定期报告候选 |
+| 5 | `module5_research_mainline.json` | 机构调研、主线连接线索、市场关注度 |
+
+没有 subagent 能力时，按同样模块顺序逐段加载模块 JSON。聚合阶段只读取模块结论、`analysis_context`、必要的公告/报告原文摘录。
 
 ### 分析与判断
 
@@ -239,6 +312,8 @@ python scripts/data_fetcher.py fetch share-float 600519.SH --limit 20
 - 北向资金/公募基金持仓比例近期是否上升 → 主流资金是否在认可。
 - 卖方研报频率近期是否明显上升 → 市场共识是否在形成。
 - 个股近期涨跌幅是否显著跑赢/跑输行业指数 → 资金偏好的差异。
+- `institutional-research` 中调研频率、参与机构类型、问题关键词是否集中在当前主线 → 市场关注度和产业问题焦点。
+- `announcements` 中是否有主线相关订单、合作、扩产、定增、股权激励等公司级催化 → 主线连接是否有公司披露支撑。
 - 上述信号有助于校验你对主线归属的判断，避免凭主观印象误判。
 
 #### 5.4.2 主线归属对估值判断的修正规则
@@ -301,7 +376,7 @@ python scripts/data_fetcher.py fetch share-float 600519.SH --limit 20
 
 ## 六、股东与治理分析
 
-使用 `top10-holders`、`managers`、`rewards`、`holder-number`、`holder-trade`、`share-float`。
+使用 `top10-holders`、`managers`、`rewards`、`holder-number`、`holder-trade`、`share-float`、`block-trade`。
 
 ### 6.1 判断要素
 
@@ -310,6 +385,7 @@ python scripts/data_fetcher.py fetch share-float 600519.SH --limit 20
 - **股东户数变化**：连续下降 → 筹码集中，通常与价格上行共振；连续上升 → 筹码分散。
 - **重要股东增减持**：`holder-trade` 大额减持需关注原因；增持通常是信心信号（但也可能是护盘）。
 - **限售股解禁**：`share-float` 近期有大额解禁 → 供给压力。
+- **大宗交易**：`block-trade` 频繁出现且折价明显，需结合股东变动和公告判断是否存在减持压力。
 
 ### 6.2 注意事项
 
@@ -318,7 +394,33 @@ python scripts/data_fetcher.py fetch share-float 600519.SH --limit 20
 
 ---
 
-## 七、输出模板
+## 七、公告事件与机构调研分析
+
+### 7.1 公告事件验证
+
+使用 `announcements` 先定位事件，再决定是否读取 `announcement-text`。
+
+- **监管/问询**：监管函、关注函、问询回复通常需要读原文，确认问题指向、公司解释和整改承诺。
+- **资本运作**：定增、股权激励、员工持股要确认发行对象、价格、解锁条件、业绩考核和摊薄影响。
+- **回购/增减持**：确认规模、价格区间、资金来源、执行进度和主体身份，不要只凭“回购/增持”定性利好。
+- **重大合作/项目**：必须读原文确认协议约束力、金额、履约期限、收入确认条件、对手方和风险条款。
+- **业绩快报/预告**：重点比较收入、利润、扣非利润和现金流线索，必要时再读定期报告解释。
+
+公告标题只是索引。对公司基本面、估值或风险有影响的结论，必须来自公告原文、定期报告正文或其他可验证来源。
+
+### 7.2 机构调研使用方法
+
+使用 `institutional-research` 观察市场关注度和产业问题焦点。
+
+- **调研频率**：短期明显升温说明关注度上升，但不等同于基本面改善。
+- **机构类型**：公募、券商、险资、QFII、私募等参与结构可以辅助判断关注质量。
+- **调研方式**：现场、电话、线上会议等只说明沟通形式，不直接说明信息增量。
+- **调研内容关键词**：提取 AI/算力/出海/订单/价格/产能/客户/毛利率等关键词，验证公司是否被市场放入当前主线。
+- **风险边界**：机构调研记录是公开披露信息，不能当作业绩承诺或内幕信息。
+
+---
+
+## 八、输出模板
 
 ```markdown
 # [公司名称]（[股票代码]）基本面研究
@@ -364,7 +466,10 @@ python scripts/data_fetcher.py fetch share-float 600519.SH --limit 20
 ## 四、股东与治理
 [股权结构/管理层激励/股东户数/增减持/解禁]
 
-## 五、风险提示
+## 五、公告事件与机构调研
+[公告事件筛查/是否读取原文/原文事实/机构调研关注点/与主线连接]
+
+## 六、风险提示
 [针对这家公司的具体风险，包括主线轮换风险]
 
 ---
@@ -372,7 +477,7 @@ python scripts/data_fetcher.py fetch share-float 600519.SH --limit 20
 ```
 ---
 
-## 八、质量要求
+## 九、质量要求
 
 - 能给具体数字时优先给数字，数据有日期时写明报告期。
 - 不要堆原始表格，用关键数字支撑论点。
@@ -380,5 +485,7 @@ python scripts/data_fetcher.py fetch share-float 600519.SH --limit 20
 - 主线归属判断必须基于近期可验证的市场观察，不要凭训练记忆判断当前主线。
 - 避免单边结论，每个判断都要写出最强反方观点。
 - 区分"我从数据中看到了什么"和"我推断了什么"——前者是事实陈述，后者需标注为推断。
+- 公告标题只能用于定位事件；涉及重大影响时必须读取公告或报告原文。
+- 机构调研只能用于关注度和问题焦点验证，不得写成业绩改善证据。
 - 主线归属作为可被推翻的假设而非事实，必须标注置信度。
 - 最终回答要适合投资者阅读：简洁、有证据、清楚表达不确定性。

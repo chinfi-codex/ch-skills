@@ -41,7 +41,7 @@ version: 2.0.1
 TUSHARE_TOKEN=your_token
 ```
 
-运行脚本会先更新 `reference/market_data.csv` 再生成情绪趋势：AKShare `stock_market_activity_legu()` 默认提供上涨、涨停、下跌、跌停、平盘、活跃度、成交额等盘面情绪字段；搜狐涨跌停历史页仅在 AKShare 不可用或字段缺失时作为 fallback；Tushare `margin` 汇总融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。因此环境中还需安装 `akshare`。
+运行脚本会先更新 `reference/market_data.csv` 再生成情绪趋势：AKShare `stock_market_activity_legu()` 默认提供上涨、涨停、下跌、跌停、平盘、活跃度、情绪值、成交额等盘面情绪字段；搜狐涨跌停历史页仅在 AKShare 不可用或字段缺失时作为 fallback；Tushare `margin` 汇总 T-1 交易日融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。因此环境中还需安装 `akshare`。
 
 基础命令：
 
@@ -65,6 +65,9 @@ python scripts\run_daily_panel.py --asof 20260429 --lookback 120 --market-trend-
 | `--fetch-workers` | cache/API 获取线程数；排查限流时设为 1 | 6 |
 | `--money-pct-threshold` | 赚钱效应最低当日涨幅 | 7.0 |
 | `--money-amount-threshold` | 赚钱效应最低成交额，单位亿元 | 2.0 |
+| `--intraday-freq` | 赚钱效应候选股分钟增强频率；用于日内高点时间 | 1min |
+| `--skip-intraday` | 跳过分钟行情增强；无 Tushare 分钟权限或排查限流时使用 | false |
+| `--intraday-workers` | 分钟行情抓取线程数；保持小并发避免限流 | 2 |
 | `--decline-pct-max` | 爆量下跌最大当日涨幅 | -3.0 |
 | `--decline-volume-ratio` | 爆量下跌最低 20 日放量倍数 | 2.0 |
 | `--low-lookback-days` | 低位放量触发回看窗口 | 5 |

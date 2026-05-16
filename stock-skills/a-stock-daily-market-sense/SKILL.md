@@ -26,12 +26,13 @@ version: 2.0.1
    - 有 subagent 编排能力时，主 agent 将 6 个模块 JSON 分发给 6 个 subagent 并行撰写。
    - 没有 subagent 能力时，按同样模块顺序单会话执行，每次只加载当前模块的 JSON、方法论和模板段。
 4. 聚合成稿：主 agent 读取 6 段输出、`assembled_checks.json` 与 `reference/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。默认不做外部收评校验、不搜索第三方行情综述、不在报告中加入“外部校验参考”；只有用户明确要求时才补充外部来源。
-5. 清理临时产物：确认 `reports/report_YYYYMMDD.md` 已写入并可读后，删除同日期的临时证据与上下文文件，只保留最终报告。必须清理：
+5. 按需生成 HTML：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文。
+6. 清理临时产物：确认 `reports/report_YYYYMMDD.md` 已写入并可读后，删除同日期的临时证据与上下文文件，只保留最终报告。若已按需生成 HTML，则同时保留 `reports/report_YYYYMMDD.html`。必须清理：
    - `reports/evidence_YYYYMMDD_utf8.json`
    - `reports/evidence_YYYYMMDD_utf8.stderr.log`
    - `reports/report_context_YYYYMMDD.json`
    - `reports/module_context_YYYYMMDD/`
-   不要删除 `reports/report_YYYYMMDD.md`，不要跨日期批量清理，除非用户明确要求。
+   不要删除 `reports/report_YYYYMMDD.md` 和已生成的 `reports/report_YYYYMMDD.html`，不要跨日期批量清理，除非用户明确要求。
 
 ## 数据获取
 
@@ -41,7 +42,7 @@ version: 2.0.1
 TUSHARE_TOKEN=your_token
 ```
 
-运行脚本会先更新 `reference/market_data.csv` 再生成情绪趋势：AKShare `stock_market_activity_legu()` 默认提供上涨、涨停、下跌、跌停、平盘、活跃度、情绪值、成交额等盘面情绪字段；搜狐涨跌停历史页仅在 AKShare 不可用或字段缺失时作为 fallback；Tushare `margin` 汇总 T-1 交易日融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。因此环境中还需安装 `akshare`。
+运行脚本会先更新 `reference/market_data.csv`，并同步维护派生文件 `reference/market_data.json`，再生成情绪趋势：AKShare `stock_market_activity_legu()` 默认提供上涨、涨停、下跌、跌停、平盘、活跃度、情绪值、成交额等盘面情绪字段；搜狐涨跌停历史页仅在 AKShare 不可用或字段缺失时作为 fallback；Tushare `margin` 汇总 T-1 交易日融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。因此环境中还需安装 `akshare`。
 
 基础命令：
 
@@ -55,8 +56,17 @@ python scripts\run_daily_panel.py --asof 20260429 --lookback 120 --market-trend-
 - `reports/evidence_YYYYMMDD_utf8.json`：完整证据包。
 - `reports/report_context_YYYYMMDD.json`：兼容旧流程的轻量上下文。
 - `reports/module_context_YYYYMMDD/`：供 subagent 分工的模块级 JSON。
+- `reference/market_data.json`：`market_data.csv` 的全量派生 JSON，按交易日升序保留所有列、清洗数值并提供 `series` 给 HTML 趋势图使用。
 
-这些文件是研报撰写过程中的临时产物。最终报告生成并核对后，应按工作流程第 5 步删除，只保留 `reports/report_YYYYMMDD.md`。
+这些文件中，evidence、report_context 和 module_context 是研报撰写过程中的临时产物。最终报告生成并核对后，应按工作流程第 6 步删除，只保留 `reports/report_YYYYMMDD.md`、按需生成的 `reports/report_YYYYMMDD.html`，以及长期维护的 `reference/market_data.csv` / `reference/market_data.json`。
+
+HTML 输出命令：
+
+```powershell
+python scripts\render_report_html.py --input reports\report_20260429.md
+```
+
+默认输出 `reports/report_20260429.html`，并将 `reference/market_data.json` 内嵌到 HTML 中。本地浏览器可直接打开，图表不依赖外部 CDN。
 
 常用参数：
 
@@ -100,6 +110,8 @@ Python 不调用 Anthropic API、不调用任何 LLM、不硬编码模型名。C
 每个一级大章节（1-6）里已有的总结/定性段落必须使用 Markdown 高亮样式 `==...==` 包裹，例如“盘面定性”“拥挤度判断”“主线 vs 资金轮动结论”“风险传导提示”“特征分组一句话判断”“抗跌方向判断”。不要为了高亮额外新增“本节总结”段落；高亮的是原本就承担总结作用的段落。
 
 禁止输出买卖建议。可以写“风险传导”“持续性待验证”“主线确认度”，不要写“买入/卖出/止损/目标价”。
+
+HTML 输出只改变呈现方式：必须保留 Markdown 研报中的所有文字、表格、引用和免责声明。`==...==` 高亮段落在 HTML 中渲染为浅蓝提示块；正文前可以增加 `market_data.json` 驱动的趋势图区域，但不得新增与 Markdown 不一致的分析结论。
 
 ## 示例
 

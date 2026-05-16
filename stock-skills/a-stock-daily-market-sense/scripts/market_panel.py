@@ -53,6 +53,7 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 CACHE_ROOT = SKILL_ROOT / "data" / "cache"
 REFERENCE_ROOT = SKILL_ROOT / "reference"
 DEFAULT_MARKET_HISTORY_CSV = REFERENCE_ROOT / "market_data.csv"
+DEFAULT_MARKET_HISTORY_JSON = REFERENCE_ROOT / "market_data.json"
 MARKET_HISTORY_COLUMNS = [
     "日期",
     "上涨",
@@ -774,6 +775,113 @@ def sort_market_history_df(df: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+def market_history_json_path(csv_path: Path = DEFAULT_MARKET_HISTORY_CSV) -> Path:
+    if csv_path == DEFAULT_MARKET_HISTORY_CSV:
+        return DEFAULT_MARKET_HISTORY_JSON
+    return csv_path.with_suffix(".json")
+
+
+def skill_relative_path(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(SKILL_ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def clean_market_history_value(column: str, value: Any) -> Any:
+    if column == "日期":
+        return "" if is_blank_value(value) else str(value)
+    return parse_market_history_number(value)
+
+
+def write_market_history_json(
+    csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
+    json_path: Optional[Path] = None,
+) -> Path:
+    """Write a clean JSON derivative of reference/market_data.csv for HTML charts."""
+    if json_path is None:
+        json_path = market_history_json_path(csv_path)
+    raw = normalize_market_history_columns(pd.read_csv(csv_path, encoding="utf-8-sig"))
+    if raw is None or raw.empty or "日期" not in raw.columns:
+        payload = {
+            "metadata": {
+                "source_csv": skill_relative_path(csv_path),
+                "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "sort": "trade_date_ascending",
+            },
+            "columns": [],
+            "records": [],
+            "series": {},
+            "quality": {
+                "records_available": 0,
+                "has_120_records": False,
+                "missing_trade_date_rows": 0,
+            },
+        }
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return json_path
+
+    df = raw.copy()
+    df["_trade_date"] = df["日期"].apply(history_date_to_trade_date)
+    df = df.sort_values("_trade_date", ascending=True, na_position="last").reset_index(drop=True)
+    columns = [col for col in df.columns if col != "_trade_date"]
+
+    records: List[Dict[str, Any]] = []
+    numeric_columns: List[str] = []
+    for column in columns:
+        if column == "日期":
+            continue
+        cleaned_values = [clean_market_history_value(column, value) for value in df[column].tolist()]
+        if any(value is not None for value in cleaned_values):
+            numeric_columns.append(column)
+
+    for _, row in df.iterrows():
+        record: Dict[str, Any] = {
+            "日期": clean_market_history_value("日期", row.get("日期")),
+            "trade_date": row.get("_trade_date") or None,
+        }
+        for column in columns:
+            if column == "日期":
+                continue
+            record[column] = clean_market_history_value(column, row.get(column))
+        records.append(record)
+
+    series: Dict[str, List[Dict[str, Any]]] = {}
+    for column in numeric_columns:
+        points: List[Dict[str, Any]] = []
+        for record in records:
+            points.append({
+                "trade_date": record.get("trade_date"),
+                "date": record.get("日期"),
+                "value": record.get(column),
+            })
+        series[column] = points
+
+    valid_trade_dates = [record.get("trade_date") for record in records if record.get("trade_date")]
+    payload = {
+        "metadata": {
+            "source_csv": skill_relative_path(csv_path),
+            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "sort": "trade_date_ascending",
+            "window_start": valid_trade_dates[0] if valid_trade_dates else None,
+            "window_end": valid_trade_dates[-1] if valid_trade_dates else None,
+        },
+        "columns": columns,
+        "records": records,
+        "series": series,
+        "quality": {
+            "records_available": len(records),
+            "has_120_records": len(records) >= 120,
+            "missing_trade_date_rows": sum(1 for record in records if not record.get("trade_date")),
+            "numeric_columns": numeric_columns,
+        },
+    }
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return json_path
+
+
 def upsert_market_history_row(
     row: Dict[str, Any],
     columns: List[str],
@@ -833,6 +941,7 @@ def upsert_market_history_row(
                     df.at[idx, col] = new_value
             sort_market_history_df(df).to_csv(csv_path, index=False, encoding="utf-8-sig")
             verify_market_history_write(csv_path, target_date)
+            write_market_history_json(csv_path)
             return
 
         final_columns = order_market_history_columns(list(df.columns) + [col for col in ordered_columns if col not in df.columns])
@@ -840,10 +949,12 @@ def upsert_market_history_row(
         df = pd.concat([new_row, df.reindex(columns=final_columns)], ignore_index=True)
         sort_market_history_df(df).to_csv(csv_path, index=False, encoding="utf-8-sig")
         verify_market_history_write(csv_path, row.get("日期"))
+        write_market_history_json(csv_path)
         return
 
     sort_market_history_df(pd.DataFrame([row], columns=ordered_columns)).to_csv(csv_path, index=False, encoding="utf-8-sig")
     verify_market_history_write(csv_path, row.get("日期"))
+    write_market_history_json(csv_path)
 
 
 def should_fill_positive_numeric(existing_value: object, new_value: object) -> bool:
@@ -1153,6 +1264,7 @@ def update_market_history(
         "updated": False,
         "trade_date": target_date,
         "path": str(csv_path),
+        "json_path": str(market_history_json_path(csv_path)),
         "primary_source": MARKET_HISTORY_PRIMARY_SOURCE,
         "sohu_source": MARKET_HISTORY_SOHU_SOURCE,
         "supplement_source": MARKET_HISTORY_SUPPLEMENT_SOURCE,

@@ -473,7 +473,7 @@ def _upsert_git_hook(hook_path: Path, hook_name: str, script_path: Path, config_
         if not content.startswith("#!"):
             content = "#!/bin/sh\n" + content
 
-    hook_path.write_text(content, encoding="utf-8", newline="\n")
+    hook_path.write_text(content, encoding="utf-8")
     os.chmod(hook_path, 0o755)
 
 

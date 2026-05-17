@@ -75,6 +75,9 @@ class Jin10McpClient:
     def search_flash(self, keyword: str) -> dict[str, Any]:
         return self.call_tool("search_flash", {"keyword": keyword})
 
+    def get_quote(self, code: str) -> dict[str, Any]:
+        return self.call_tool("get_quote", {"code": code})
+
     def _notify(self, method: str, params: dict[str, Any]) -> None:
         payload = {"jsonrpc": "2.0", "method": method, "params": params}
         response = self._http.post(

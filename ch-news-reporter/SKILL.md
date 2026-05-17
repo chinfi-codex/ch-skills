@@ -1,13 +1,13 @@
 ---
 name: ch-news-reporter
-description: 当用户要求从金十、财联社、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、地缘冲突或伊朗动态新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出 AI 日报、财经研究简报、热门产品观察、市场信号复盘、伊朗/中东局势动态或风险资产影响分析时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“结合 PH/HN/GitHub Trending 写日报”“抓取新闻库做研究”“生成伊朗动态播报”“分析霍尔木兹/油价/黄金受局势影响”等多步骤任务；不用于单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
+description: 当用户要求从金十、财联社、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、宏观、地缘冲突或伊朗动态新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出 AI 日报、每日宏观日报、财经研究简报、热门产品观察、市场信号复盘、伊朗/中东局势动态或风险资产影响分析时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写日报”“抓取新闻库做研究”“生成伊朗动态播报”“分析霍尔木兹/油价/黄金受局势影响”等多步骤任务；不用于单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
 ---
 
 # CH News Reporter
 
 ## 目标
 
-从用户配置的财经、AI 与地缘风险信源采集当天信息，清洗为统一 SQLite 新闻库；在报告时间点按 profile 生成 evidence packet，并可对关键 GitHub 项目、Product Hunt 产品和外链做二次加工；最后由 Agent 基于方法论、模板和证据包输出中文报告。
+从用户配置的财经、AI、宏观与地缘风险信源采集当天信息，清洗为统一 SQLite 新闻库；在报告时间点按 profile 生成 evidence packet，并可对关键 GitHub 项目、Product Hunt 产品和外链做二次加工；最后由 Agent 基于方法论、模板和证据包输出中文报告。
 
 本 skill 不提供买卖建议，不把单一快讯当作结论，不在采集阶段过早过滤“财经/AI/地缘”边界。它面向需要日常跟踪市场、AI 产业、开源生态、政策、地缘冲突和风险资产传导的主动研究者。
 
@@ -19,6 +19,7 @@ description: 当用户要求从金十、财联社、GitHub Trending、Product Hu
 - 用户要把金十、财联社、GitHub Trending、RSS 汇总成统一数据表。
 - 用户要基于本地新闻库回答研究问题，如 AI Agent、算力、宏观风险、流动性、政策、产业链变化。
 - 用户要输出研究简报、日报素材、主题观察、市场信号复盘。
+- 用户要生成每日宏观日报，跟踪金十电报中的中国/美国经济数据、利率、汇率、大宗商品和风险资产价格信号。
 - 用户要输出伊朗/中东局势动态、停火窗口跟踪、霍尔木兹航运、油气价格和风险资产影响分析。
 
 不要使用本 skill 的场景：
@@ -65,9 +66,11 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --format j
 
 常用参数：
 
-- `--profile ai_daily|iran_dynamic`：报告画像；信源配置在 `config/report_profiles.yaml`。
+- `--profile ai_daily|iran_dynamic|macro_daily`：报告画像；信源配置在 `config/report_profiles.yaml`。
 - `--include-enrichments`：把 `enrichments` 表里的二次加工结果拼回证据包。
 - `--format json|markdown`：JSON 适合 Agent 继续处理，Markdown 适合人工核查。
+
+`macro_daily` 会先从当天金十、财联社和 RSS 中筛选宏观相关新闻；每日固定附加 Brent、黄金、天然气、美元人民币、美国10年期国债、BTC、纳指期货等价格 evidence。CPI、PPI、社融、PMI 等中国月度数据只在电报识别到当天发布/更新事件时触发 Tushare 细项补查，不做每日机械抓取。
 
 ### 3. 执行二次加工
 
@@ -125,11 +128,15 @@ python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 5
 
 - `references/reports/ai_daily/methodology.md`
 - `references/reports/ai_daily/enrichment.md`：AI 日报 enrichment 子方法，包含 target 选择契约和解读方法。
+- `references/reports/macro_daily/methodology.md`
 - `references/reports/iran_dynamic/methodology.md`
-- `references/reports/iran_dynamic/frame_ceasefire.md`
+- `references/reports/iran_dynamic/frame_postdeadline.md`（当前默认加载，停火窗口 4/21 到期后阶段）
+- `references/reports/iran_dynamic/frame_ceasefire.md`（仅作历史档案，停火期分析方法）
 - `references/reports/iran_dynamic/economic_impact_framework.md`
 
-根据问题选择财经、AI、产品观察、开源生态或地缘风险框架。`iran_dynamic` 必须优先读取 `methodology.md`，再按需要加载停火框架和经济影响框架。
+根据问题选择财经、AI、产品观察、开源生态或地缘风险框架。`iran_dynamic` 必须优先读取 `methodology.md`，按其阶段感知加载规则选择 `frame_postdeadline.md`（默认）或新建框架，再按需要加载经济影响框架。
+
+`macro_daily` 必须优先读取 `references/reports/macro_daily/methodology.md`，并以 `macro_data_events` 判断当天是否有中国 CPI/PPI/社融/PMI 月度数据更新；没有事件时不引用旧月度数据做“今日更新”。
 
 分析时必须区分：
 
@@ -139,16 +146,17 @@ python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 5
 
 `iran_dynamic` 还必须区分：
 
-- **停火合规事实**：直接军事行动、代理人行动、核活动、航运/扫雷进展。
-- **行为体压力变量**：美国、以色列、伊朗、代理人网络各自是否向打破僵局或续谈方向移动。
+- **合规层事实**：直接军事行动、代理人行动、核活动、航运/扫雷进展。
+- **行为体压力变量**：美国、以色列、伊朗、代理人网络各自向打破僵局或续谈方向移动（权重：以色列 > 伊朗内部 > 美国）。
 - **市场定价信号**：Brent、天然气、黄金、美元、航运保险、通胀预期等可观察反应。
-- **情景推演**：停火续期/恢复交战/僵尸化延续等概率变化，概率调整必须回到当日证据。
+- **路径判定与子分支**：当前处于 A 续期 / B 交战 / C 僵尸化 哪条路径，子分支为何，路径切换信号是否出现；路径与子分支概率调整必须回到当日证据。
 
 ### 6. 输出报告
 
 读取通用 `references/report_template.md`，或按报告 profile 读取：
 
 - `references/reports/ai_daily/template.md`
+- `references/reports/macro_daily/template.md`
 - `references/reports/iran_dynamic/template.md`
 
 默认输出中文研究简报。关键证据使用：
@@ -159,7 +167,9 @@ python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 5
 
 报告不应只罗列新闻，要把证据转化为观点：发生了什么、为何重要、影响哪些资产/产业/公司类型、后续观察什么。
 
-`iran_dynamic` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含停火阶段、战争烈度、核心事实变化、以色列独立意志监测、航运/能源变量、到期推演和今日结论。
+`macro_daily` 报告必须覆盖一句话结论、今日 3 个宏观信号、宏观新闻与经济数据事件、利率/美元/流动性、大宗商品价格信号、中国宏观与政策、美国宏观与政策、风险资产传导和后续观察。
+
+`iran_dynamic` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含路径判定（A 续期 / B 交战 / C 僵尸化）、当前子分支、战争烈度、今日边际变化、各方行动、能源与市场反应、下一关键节点倒计时、路径子分支概率今日变动和 24-72h 观察清单。
 
 ## 数据表说明
 
@@ -190,6 +200,13 @@ python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 5
 - `metadata_json` / `raw_json`：结构化详情与原始补充数据。
 
 二次加工层可以抓 README、官网 HTML、meta、标题和正文片段，可以做去重、排序、字段抽取和截断；不判断产品价值、不生成结论、不拼完整报告。
+
+`macro_daily` 的 evidence packet 会额外包含：
+
+- `macro_news_items`：按宏观关键词筛选后的金十、财联社、RSS 新闻。
+- `macro_data_events`：从新闻中识别的 CPI/PPI/PCE/PMI/社融/非农/库存等数据事件。
+- `macro_market_signals`：Brent、黄金、天然气、美元人民币、美国10年期国债、BTC、纳指期货等价格证据。
+- `conditional_data_fetches`：事件触发式补查结果；中国 CPI/PPI/社融/PMI 只有在当天电报出现发布/更新信号时才抓取。
 
 ## 输出规范
 
@@ -226,6 +243,35 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 - 哪些只是热度，哪些可能转化为产业趋势。
 - 未来 24-72 小时继续观察的关键词。
 
+### 每日宏观日报
+
+用户：
+
+```text
+生成今天的宏观日报，重点看美国10年期国债、Brent、黄金和中美经济数据。
+```
+
+执行：
+
+```bash
+python scripts/collect_news.py --date today --source all --db data/news_research.sqlite
+python scripts/prepare_report_data.py --profile macro_daily --date today --format markdown
+```
+
+加载：
+
+- `references/reports/macro_daily/methodology.md`
+- `references/reports/macro_daily/template.md`
+
+输出应包含：
+
+- 一句话结论和今日 3 个宏观信号。
+- 金十优先的宏观新闻与经济数据事件。
+- 美国10年期国债、美元人民币、Brent、黄金、天然气等价格证据。
+- 中国 CPI/PPI/社融/PMI 是否出现当天更新；没有事件时不补造月度结论。
+- 美国 CPI/PPI/PCE/非农/PMI/零售销售等是否出现电报事件。
+- 风险资产传导和后续观察。
+
 ### 伊朗动态播报
 
 用户：
@@ -241,18 +287,25 @@ python scripts/collect_news.py --date today --source all --db data/news_research
 python scripts/prepare_report_data.py --profile iran_dynamic --date today --format markdown
 ```
 
+宏观行情(Brent / 黄金 / 天然气 / USD-CNH / 美债 / BTC / 纳指期货)可通过本 skill 的 `macro_monitor.py` 取数,作为风险资产证据补充:
+
+```bash
+python scripts/macro_monitor.py market
+```
+
 加载：
 
 - `references/reports/iran_dynamic/methodology.md`
-- `references/reports/iran_dynamic/frame_ceasefire.md`
+- `references/reports/iran_dynamic/frame_postdeadline.md`（默认加载，停火窗口 4/21 到期后阶段）
+- `references/reports/iran_dynamic/frame_ceasefire.md`（仅历史档案）
 - `references/reports/iran_dynamic/economic_impact_framework.md`
 - `references/reports/iran_dynamic/template.md`
 
 输出应包含：
 
-- 停火第 N 天 / 剩余 X 天 / 当前阶段。
+- 当前阶段路径判定（A 续期 / B 交战 / C 僵尸化）与子分支。
 - 战争烈度级别与趋势箭头。
-- 违约/升级、合规/缓和、谈判动态三类核心事实变化。
-- 美国、以色列、伊朗、代理人网络与世界行动。
-- 霍尔木兹航运、油气与风险资产传导。
-- 情景 A/B/C 概率和今日结论。
+- 今日边际变化（1-3 条；按 frame_postdeadline.md 三条判定线筛选）。
+- 美国、以色列、伊朗的核心行动（emoji 内嵌升级/缓和性质，不再独立板块）。
+- 能源节点状态 + 价格变动 + 传导评估（统一为"能源与市场反应"）。
+- 路径子分支概率今日变动、下一关键节点倒计时、24-72h 观察清单。

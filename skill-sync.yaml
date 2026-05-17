@@ -19,8 +19,7 @@ targets:
 
 # 重命名映射：源目录名 → 目标 skill 名
 # 键为相对于仓库根的路径，值为目标目录名
-rename:
-  "iran-war-tracker - V2": "iran-war-tracker-v2"
+rename: {}
 
 # 排除规则（开发/评测产物，不同步到 Agent 安装目录）
 exclude:

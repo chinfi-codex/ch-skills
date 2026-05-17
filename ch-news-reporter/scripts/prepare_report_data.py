@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import io
 import json
 import sqlite3
@@ -25,6 +26,85 @@ SOURCE_ALIASES = {
     "ph": "product_hunt",
     "hn": "hacker_news",
 }
+MACRO_SOURCE_PRIORITY = {"jin10": 0, "cls": 1, "rss": 2}
+DEFAULT_MACRO_KEYWORDS = [
+    "宏观",
+    "经济数据",
+    "央行",
+    "美联储",
+    "人民银行",
+    "货币政策",
+    "财政",
+    "利率",
+    "收益率",
+    "国债",
+    "美债",
+    "通胀",
+    "CPI",
+    "PPI",
+    "PCE",
+    "PMI",
+    "社融",
+    "社会融资",
+    "非农",
+    "就业",
+    "初请",
+    "失业率",
+    "零售销售",
+    "GDP",
+    "汇率",
+    "人民币",
+    "美元",
+    "原油",
+    "布伦特",
+    "黄金",
+    "天然气",
+    "大宗商品",
+    "库存",
+    "OPEC",
+    "EIA",
+    "API",
+    "风险资产",
+]
+DEFAULT_DATA_EVENT_KEYWORDS = [
+    "公布",
+    "发布",
+    "出炉",
+    "录得",
+    "实际",
+    "预期",
+    "前值",
+    "初值",
+    "终值",
+    "修正",
+    "announce",
+    "released",
+    "actual",
+    "forecast",
+    "previous",
+]
+INDICATOR_KEYWORDS = {
+    "CPI": ["CPI", "消费者物价", "居民消费价格", "通胀"],
+    "PPI": ["PPI", "生产者物价", "工业生产者出厂价格"],
+    "PCE": ["PCE", "个人消费支出"],
+    "PMI": ["PMI", "采购经理"],
+    "SOCI": ["社融", "社会融资", "社会融资规模"],
+    "NFP": ["非农", "nonfarm", "non-farm"],
+    "JOBLESS": ["初请", "续请", "失业金", "jobless"],
+    "UNEMPLOYMENT": ["失业率", "unemployment"],
+    "RETAIL_SALES": ["零售销售", "retail sales"],
+    "GDP": ["GDP", "国内生产总值"],
+    "ISM": ["ISM"],
+    "JOLTS": ["JOLTS", "职位空缺"],
+    "EIA": ["EIA", "美国能源信息署"],
+    "API": ["API", "美国石油协会"],
+    "COMMODITY_INVENTORY": ["原油库存", "库存"],
+}
+CHINA_MONTHLY_INDICATORS = {"CPI", "PPI", "SOCI", "PMI"}
+CHINA_REGION_KEYWORDS = ["中国", "我国", "国家统计局", "央行", "人民银行", "财新"]
+US_REGION_KEYWORDS = ["美国", "美联储", "美国劳工部", "ISM", "ADP", "非农", "初请"]
+WEAK_MACRO_KEYWORDS = {"美元", "黄金", "就业"}
+FALSE_POSITIVE_PHRASES = ["黄金创业", "黄金窗口", "黄金时期"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -220,6 +300,192 @@ def select_source_items(
     return sorted(source_items, key=source_rank_key)[:max_items]
 
 
+def item_search_text(item: dict[str, Any]) -> str:
+    parts: list[str] = [
+        str(item.get("title") or ""),
+        str(item.get("content") or ""),
+        str(item.get("source_name") or ""),
+    ]
+    tags = item.get("tags") or []
+    if isinstance(tags, list):
+        parts.extend(str(tag) for tag in tags)
+    metadata = item.get("metadata") or {}
+    if isinstance(metadata, dict):
+        parts.extend(str(value) for value in metadata.values() if isinstance(value, str))
+    return " ".join(parts)
+
+
+def contains_any(text: str, keywords: list[str]) -> bool:
+    lowered = text.lower()
+    return any(keyword.lower() in lowered for keyword in keywords if keyword)
+
+
+def macro_keyword_hits(text: str, keywords: list[str]) -> list[str]:
+    lowered = text.lower()
+    return [keyword for keyword in keywords if keyword and keyword.lower() in lowered]
+
+
+def profile_macro_keywords(profile: dict[str, Any]) -> list[str]:
+    configured = profile.get("macro_keywords")
+    if isinstance(configured, list) and configured:
+        return [str(keyword) for keyword in configured if keyword]
+    return DEFAULT_MACRO_KEYWORDS
+
+
+def profile_data_event_keywords(profile: dict[str, Any]) -> list[str]:
+    configured = profile.get("data_event_keywords")
+    if isinstance(configured, list) and configured:
+        return [str(keyword) for keyword in configured if keyword]
+    return DEFAULT_DATA_EVENT_KEYWORDS
+
+
+def macro_rank_key(item: dict[str, Any]) -> tuple[Any, ...]:
+    source = str(item.get("source_type") or "")
+    time_label = item.get("published_at") or item.get("fetched_at") or ""
+    try:
+        dt = datetime.fromisoformat(str(time_label).replace("Z", "+00:00"))
+        time_rank = -dt.timestamp()
+    except ValueError:
+        time_rank = 0
+    return (MACRO_SOURCE_PRIORITY.get(source, 99), time_rank)
+
+
+def apply_profile_filters(
+    items: list[dict[str, Any]], profile: dict[str, Any]
+) -> list[dict[str, Any]]:
+    if not profile.get("macro_data"):
+        return items
+    keywords = profile_macro_keywords(profile)
+    filtered = []
+    for item in items:
+        text = item_search_text(item)
+        if any(phrase in text for phrase in FALSE_POSITIVE_PHRASES):
+            continue
+        hits = macro_keyword_hits(text, keywords)
+        if not hits:
+            continue
+        strong_hits = [hit for hit in hits if hit not in WEAK_MACRO_KEYWORDS]
+        if strong_hits or len(hits) >= 2:
+            filtered.append(item)
+    return sorted(filtered, key=macro_rank_key)
+
+
+def detected_indicators(text: str) -> list[str]:
+    return [
+        indicator
+        for indicator, keywords in INDICATOR_KEYWORDS.items()
+        if contains_any(text, keywords)
+    ]
+
+
+def detect_region(text: str, indicators: list[str]) -> str:
+    if contains_any(text, CHINA_REGION_KEYWORDS) or "SOCI" in indicators:
+        return "china"
+    if contains_any(text, US_REGION_KEYWORDS):
+        return "us"
+    return "global_or_unknown"
+
+
+def event_excerpt(text: str, max_len: int = 260) -> str:
+    clean = " ".join(text.split())
+    if len(clean) <= max_len:
+        return clean
+    return clean[: max_len - 1] + "..."
+
+
+def detect_macro_data_events(
+    items: list[dict[str, Any]], profile: dict[str, Any]
+) -> list[dict[str, Any]]:
+    release_keywords = profile_data_event_keywords(profile)
+    events: list[dict[str, Any]] = []
+    for item in items:
+        text = item_search_text(item)
+        indicators = detected_indicators(text)
+        if not indicators:
+            continue
+        if not contains_any(text, release_keywords):
+            continue
+        events.append(
+            {
+                "item_id": item.get("id"),
+                "source_type": item.get("source_type"),
+                "source_name": item.get("source_name"),
+                "published_at": item.get("published_at") or item.get("fetched_at"),
+                "title": item.get("title"),
+                "detected_indicators": indicators,
+                "region": detect_region(text, indicators),
+                "excerpt": event_excerpt(text),
+            }
+        )
+    return events
+
+
+def china_monthly_triggers(events: list[dict[str, Any]]) -> list[str]:
+    triggers: set[str] = set()
+    for event in events:
+        if event.get("region") != "china":
+            continue
+        indicators = set(event.get("detected_indicators") or [])
+        triggers.update(indicators & CHINA_MONTHLY_INDICATORS)
+    return sorted(triggers)
+
+
+def load_macro_monitor_module() -> Any:
+    try:
+        import macro_monitor
+
+        return macro_monitor
+    except ModuleNotFoundError:
+        module_path = Path(__file__).with_name("macro_monitor.py")
+        spec = importlib.util.spec_from_file_location("macro_monitor", module_path)
+        if spec is None or spec.loader is None:
+            raise
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+
+def fetch_macro_market_signals() -> dict[str, Any]:
+    try:
+        macro_monitor = load_macro_monitor_module()
+        return macro_monitor.fetch_dataset("market")
+    except Exception as exc:
+        return {
+            "sources": {"macro_monitor": "ERROR"},
+            "data": {},
+            "error": str(exc),
+        }
+
+
+def build_conditional_data_fetches(events: list[dict[str, Any]]) -> dict[str, Any]:
+    indicators = china_monthly_triggers(events)
+    if not indicators:
+        return {
+            "china_monthly": {
+                "triggered": False,
+                "indicators": [],
+                "reason": "No China CPI/PPI/SOCI/PMI release event detected in today's macro news.",
+                "sources": {},
+                "data": {},
+            }
+        }
+    try:
+        macro_monitor = load_macro_monitor_module()
+        payload = macro_monitor.fetch_dataset(
+            "china-monthly", china_indicators=indicators
+        )
+    except Exception as exc:
+        payload = {"sources": {"tushare": "ERROR"}, "data": {}, "error": str(exc)}
+    return {
+        "china_monthly": {
+            "triggered": True,
+            "indicators": indicators,
+            "reason": "China monthly macro release event detected in Jin10/CLS/RSS evidence.",
+            **payload,
+        }
+    }
+
+
 def build_enrichment_candidates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -269,7 +535,8 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     date_key = resolve_date_key(args.date)
     con = connect(Path(args.db))
     try:
-        items = query_items(con, profile, date_key, args.limit)
+        base_items = query_items(con, profile, date_key, args.limit)
+        items = apply_profile_filters(base_items, profile)
         enrichments = (
             query_enrichments(con, [str(item["id"]) for item in items])
             if args.include_enrichments
@@ -281,17 +548,27 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     for item in items:
         item["enrichments"] = enrichments.get(str(item["id"]), [])
 
-    return {
+    packet = {
         "profile": args.profile,
         "profile_title": profile.get("title") or args.profile,
         "date_key": date_key or "all",
         "generated_at": now_iso(),
         "sources": profile_sources(profile),
+        "base_items_count": len(base_items),
         "items_count": len(items),
         "items": items,
         "enrichment_candidates": build_enrichment_candidates(items),
         "include_enrichments": bool(args.include_enrichments),
     }
+    if profile.get("macro_data"):
+        macro_events = detect_macro_data_events(items, profile)
+        packet["macro_news_items"] = items
+        packet["macro_data_events"] = macro_events
+        packet["macro_market_signals"] = fetch_macro_market_signals()
+        packet["conditional_data_fetches"] = build_conditional_data_fetches(
+            macro_events
+        )
+    return packet
 
 
 def compact_text(text: str | None, max_len: int = 360) -> str:
@@ -355,8 +632,48 @@ def emit_markdown(packet: dict[str, Any]) -> None:
     print(f"# Evidence Packet: {packet['profile']} / {packet['date_key']}\n")
     print(f"- Generated: {packet['generated_at']}")
     print(f"- Sources: {', '.join(packet['sources'])}")
+    if "base_items_count" in packet:
+        print(f"- Base items before profile filters: {packet['base_items_count']}")
     print(f"- Items: {packet['items_count']}")
     print(f"- Enrichment candidates: {len(packet['enrichment_candidates'])}\n")
+
+    if packet.get("macro_market_signals"):
+        print("## Macro Market Signals\n")
+        print(
+            json.dumps(
+                packet["macro_market_signals"],
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        )
+        print()
+
+    if packet.get("macro_data_events"):
+        print("## Macro Data Events\n")
+        for event in packet["macro_data_events"]:
+            print(
+                "- "
+                f"{event.get('published_at') or 'unknown'} | "
+                f"{event.get('region')} | "
+                f"{', '.join(event.get('detected_indicators') or [])} | "
+                f"{event.get('title')} [{event.get('source_type')}]"
+            )
+            if event.get("excerpt"):
+                print(f"  Excerpt: {event['excerpt']}")
+        print()
+
+    if packet.get("conditional_data_fetches"):
+        print("## Conditional Data Fetches\n")
+        print(
+            json.dumps(
+                packet["conditional_data_fetches"],
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        )
+        print()
 
     if packet["enrichment_candidates"]:
         print("## Enrichment Candidates\n")

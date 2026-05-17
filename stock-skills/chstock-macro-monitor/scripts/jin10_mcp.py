@@ -61,7 +61,7 @@ class Jin10McpClient:
             {
                 "protocolVersion": self.protocol_version,
                 "capabilities": {},
-                "clientInfo": {"name": "iran-war-tracker-skill", "version": "1.2.0"},
+                "clientInfo": {"name": "chstock-macro-monitor-skill", "version": "1.0.0"},
             },
         )
         self._notify("notifications/initialized", {})

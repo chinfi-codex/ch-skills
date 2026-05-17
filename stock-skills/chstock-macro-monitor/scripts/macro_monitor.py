@@ -14,12 +14,32 @@ import os
 import sys
 import time
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import pandas as pd
 import requests
 
 logger = logging.getLogger(__name__)
+
+# 金十 MCP 客户端可选依赖。缺失时优雅降级到 AlphaVantage / Stooq。
+try:
+    from jin10_mcp import Jin10McpClient, Jin10McpError  # type: ignore
+    _JIN10_AVAILABLE = True
+    _JIN10_IMPORT_ERROR = ""
+except Exception as _jin10_import_exc:  # noqa: BLE001
+    Jin10McpClient = None  # type: ignore[assignment]
+    Jin10McpError = Exception  # type: ignore[assignment]
+    _JIN10_AVAILABLE = False
+    _JIN10_IMPORT_ERROR = str(_jin10_import_exc)
+
+# 金十 MCP 默认关注品种代码与内部命名映射
+JIN10_DEFAULT_CODES = ["UKOIL", "XAUUSD", "NGAS", "USDCNH"]
+JIN10_CODE_MAP = {
+    "UKOIL": "BRENT",
+    "XAUUSD": "GOLD",
+    "NGAS": "NATURAL_GAS",
+    "USDCNH": "USD_CNY",
+}
 
 ALPHAVANTAGE_API_KEY = os.environ.get("ALPHAVANTAGE_API_KEY")
 TUSHARE_TOKEN = os.environ.get("TUSHARE_TOKEN")
@@ -28,6 +48,7 @@ STOOQ_BACKUP_URLS = {
     "BTC": "https://stooq.com/q/l/?s=btcusd&i=d",
     "GOLD": "https://stooq.com/q/l/?s=xauusd&i=d",
     "WTI": "https://stooq.com/q/l/?s=cl.f&i=d",
+    "BRENT": "https://stooq.com/q/l/?s=bz.f&i=d",
     "NATURAL_GAS": "https://stooq.com/q/l/?s=ng.f&i=d",
     "NASDAQ_FUTURES": "https://stooq.com/q/l/?s=nq.f&i=d",
 }
@@ -328,6 +349,75 @@ class TushareMacroClient:
             return None
 
 
+class Jin10McpDataClient:
+    """基于金十 MCP 的行情客户端。"""
+
+    @staticmethod
+    def is_available() -> bool:
+        """探测金十 MCP 是否可用(依赖 + 鉴权)。"""
+        if not _JIN10_AVAILABLE or Jin10McpClient is None:
+            return False
+        if not os.environ.get("JIN10_AUTH_TOKEN"):
+            return False
+        try:
+            client = Jin10McpClient()
+        except Exception:
+            return False
+        try:
+            client.ensure_initialized()
+            return True
+        except Exception:
+            return False
+        finally:
+            client.close()
+
+    @staticmethod
+    def fetch_quotes(codes: Optional[list] = None) -> Dict[str, Dict[str, Any]]:
+        """
+        获取金十报价。每个 code 单独 try-except,失败时该品种返回 _error。
+
+        Returns:
+            {内部命名: {name, code, time, open, close, high, low, volume,
+                       ups_price, ups_percent, source}}
+        """
+        if not _JIN10_AVAILABLE or Jin10McpClient is None:
+            return {}
+        target_codes = codes or JIN10_DEFAULT_CODES
+        try:
+            client = Jin10McpClient()
+        except Exception as exc:
+            logger.warning("金十 MCP 初始化失败: %s", exc)
+            return {}
+        results: Dict[str, Dict[str, Any]] = {}
+        try:
+            for code in target_codes:
+                internal_name = JIN10_CODE_MAP.get(code, code)
+                try:
+                    payload = client.get_quote(code)
+                    data = payload.get("data") or {}
+                    results[internal_name] = {
+                        "name": data.get("name") or code,
+                        "code": data.get("code") or code,
+                        "time": data.get("time") or "",
+                        "open": data.get("open"),
+                        "close": data.get("close"),
+                        "high": data.get("high"),
+                        "low": data.get("low"),
+                        "volume": data.get("volume"),
+                        "ups_price": data.get("ups_price"),
+                        "ups_percent": data.get("ups_percent"),
+                        "source": "jin10_mcp",
+                    }
+                except Exception as exc:
+                    results[internal_name] = {
+                        "_error": str(exc),
+                        "source": "jin10_mcp",
+                    }
+        finally:
+            client.close()
+        return results
+
+
 class MacroDataMonitor:
     """宏观数据获取聚合器。"""
 
@@ -335,6 +425,7 @@ class MacroDataMonitor:
         self.av_client = AlphaVantageClient()
         self.stooq_client = StooqBackupClient()
         self.tushare_client = TushareMacroClient()
+        self.jin10_client = Jin10McpDataClient()
 
     def fetch_fx_data(self) -> Dict[str, Optional[float]]:
         """获取汇率数据。"""
@@ -352,6 +443,7 @@ class MacroDataMonitor:
         """获取能源商品数据。"""
         return {
             "WTI": self.av_client.get_commodity_price("WTI"),
+            "BRENT": self.av_client.get_commodity_price("BRENT"),
             "NATURAL_GAS": self.av_client.get_commodity_price("NATURAL_GAS"),
         }
 
@@ -371,6 +463,7 @@ class MacroDataMonitor:
             "BTC": stooq_data.get("BTC"),
             "GOLD": stooq_data.get("GOLD"),
             "WTI": stooq_data.get("WTI"),
+            "BRENT": stooq_data.get("BRENT"),
             "NATURAL_GAS": stooq_data.get("NATURAL_GAS"),
             "NASDAQ_FUTURES": stooq_data.get("NASDAQ_FUTURES"),
         }
@@ -400,26 +493,71 @@ class MacroDataMonitor:
         return {"PMI": data} if data else {}
 
     def fetch_market_data(self, use_backup: bool = False) -> Dict[str, Dict]:
-        """获取市场数据，并在需要时回退到备用源。"""
-        results = {"sources": {}, "data": {}}
+        """
+        获取市场数据,三层降级:
+        1. 金十 MCP 优先(Brent / Gold / Natural Gas / USD-CNY)
+        2. AlphaVantage 补充其他品种(BTC、美债等),或金十失败的品种
+        3. 上述两层都失败或 --use-backup 时,Stooq 兜底
 
-        if not use_backup:
-            if not self.av_client.is_configured():
-                results["sources"]["alpha_vantage"] = "MISSING_CONFIG"
-                use_backup = True
-            else:
-                alpha_data = self.fetch_alpha_vantage_market_data()
-                alpha_available = any(value is not None for value in alpha_data.values())
-                if alpha_available:
-                    results["sources"]["alpha_vantage"] = "OK"
-                    results["data"].update(alpha_data)
-                else:
-                    results["sources"]["alpha_vantage"] = "RATE_LIMITED"
-                    use_backup = True
+        返回结构保持 {"sources": {源名: 状态}, "data": {品种: 价格}}。
+        """
+        results: Dict[str, Dict] = {"sources": {}, "data": {}}
 
         if use_backup:
             results["sources"]["stooq_backup"] = "OK"
             results["data"].update(self.fetch_backup_market_data())
+            return results
+
+        # 1. 金十 MCP 优先
+        if self.jin10_client.is_available():
+            jin10_data = self.jin10_client.fetch_quotes()
+            jin10_filled = False
+            for key, payload in jin10_data.items():
+                if "_error" in payload:
+                    continue
+                close = payload.get("close")
+                if close is None:
+                    continue
+                try:
+                    results["data"][key] = float(close)
+                    jin10_filled = True
+                except (TypeError, ValueError):
+                    continue
+            results["sources"]["jin10_mcp"] = "OK" if jin10_filled else "ERROR"
+        else:
+            if not _JIN10_AVAILABLE:
+                results["sources"]["jin10_mcp"] = "MISSING_DEPENDENCY"
+            elif not os.environ.get("JIN10_AUTH_TOKEN"):
+                results["sources"]["jin10_mcp"] = "MISSING_CONFIG"
+            else:
+                results["sources"]["jin10_mcp"] = "ERROR"
+
+        # 2. AlphaVantage 补充
+        if not self.av_client.is_configured():
+            results["sources"]["alpha_vantage"] = "MISSING_CONFIG"
+        else:
+            alpha_data = self.fetch_alpha_vantage_market_data()
+            alpha_available = any(value is not None for value in alpha_data.values())
+            if alpha_available:
+                results["sources"]["alpha_vantage"] = "OK"
+                for key, value in alpha_data.items():
+                    if value is None or key in results["data"]:
+                        continue
+                    results["data"][key] = value
+            else:
+                results["sources"]["alpha_vantage"] = "RATE_LIMITED"
+
+        # 3. Stooq 兜底
+        primary_ok = (
+            results["sources"].get("jin10_mcp") == "OK"
+            or results["sources"].get("alpha_vantage") == "OK"
+        )
+        if not primary_ok:
+            results["sources"]["stooq_backup"] = "OK"
+            for key, value in self.fetch_backup_market_data().items():
+                if value is None or key in results["data"]:
+                    continue
+                results["data"][key] = value
 
         return results
 

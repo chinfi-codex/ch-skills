@@ -17,3 +17,66 @@ profiles:
       - jin10
       - cls
       - rss
+
+  macro_daily:
+    title: 每日宏观日报
+    timezone: Asia/Shanghai
+    sources:
+      - jin10
+      - cls
+      - rss
+    macro_data: true
+    macro_keywords:
+      - 宏观
+      - 经济数据
+      - 央行
+      - 美联储
+      - 人民银行
+      - 货币政策
+      - 财政
+      - 利率
+      - 收益率
+      - 国债
+      - 美债
+      - 通胀
+      - CPI
+      - PPI
+      - PCE
+      - PMI
+      - 社融
+      - 社会融资
+      - 非农
+      - 就业
+      - 初请
+      - 失业率
+      - 零售销售
+      - GDP
+      - 汇率
+      - 人民币
+      - 美元
+      - 原油
+      - 布伦特
+      - 黄金
+      - 天然气
+      - 大宗商品
+      - 库存
+      - OPEC
+      - EIA
+      - API
+      - 风险资产
+    data_event_keywords:
+      - 公布
+      - 发布
+      - 出炉
+      - 录得
+      - 实际
+      - 预期
+      - 前值
+      - 初值
+      - 终值
+      - 修正
+      - announce
+      - released
+      - actual
+      - forecast
+      - previous

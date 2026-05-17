@@ -3354,124 +3354,6 @@ def build_feature_group_analysis_samples(
     }
 
 
-def build_resilient_against_index_samples(
-    panel: pd.DataFrame,
-    index_summary: Dict[str, Optional[float]],
-    index_5d_max: float,
-    index_10d_max: float,
-    rel_ret_5d_min: float,
-    ret_5d_min: float,
-    amount_threshold_100m_yuan: float,
-    sample_limit: int,
-) -> Dict[str, Any]:
-    """
-    "该弱不弱就是强" — find resilient stocks that hold up while the index is weak.
-
-    Skips entirely when index environment is not weak: produces empty candidates
-    with a reason field. The model should not list bearish-divergence stocks.
-
-    Index weakness gate (either is enough):
-      - index_ret_5d  <= index_5d_max  (default -2.0)
-      - index_ret_10d <= index_10d_max (default -3.0)
-
-    Candidate filters (all must pass):
-      - rel_ret_5d >= rel_ret_5d_min  (default 5.0pct relative outperformance)
-      - ret_5d     >= ret_5d_min      (default 0.0, absolute return positive)
-      - amount     >= amount_threshold (default 1亿, ensures real participation)
-
-    Sort: rel_ret_5d desc, then ret_5d desc.
-    """
-    index_ret_5d = index_summary.get("index_ret_5d") if index_summary else None
-    index_ret_10d = index_summary.get("index_ret_10d") if index_summary else None
-
-    weak_environment = False
-    weakness_reasons: List[str] = []
-    if index_ret_5d is not None and index_ret_5d <= index_5d_max:
-        weak_environment = True
-        weakness_reasons.append(f"指数5日涨跌幅={index_ret_5d} <= {index_5d_max}")
-    if index_ret_10d is not None and index_ret_10d <= index_10d_max:
-        weak_environment = True
-        weakness_reasons.append(f"指数10日涨跌幅={index_ret_10d} <= {index_10d_max}")
-
-    base = {
-        "filter_criteria": {
-            "index_5d_max": index_5d_max,
-            "index_10d_max": index_10d_max,
-            "rel_ret_5d_min": rel_ret_5d_min,
-            "ret_5d_min": ret_5d_min,
-            "amount_threshold_100m_yuan": amount_threshold_100m_yuan,
-            "sample_limit": sample_limit,
-            "philosophy": "该弱不弱就是强：只列弱指数环境中的抗跌/逆势上涨候选，不列逆势下跌。",
-        },
-        "index_environment": {
-            "index_ret_5d": index_ret_5d,
-            "index_ret_10d": index_ret_10d,
-            "is_weak": weak_environment,
-            "weakness_reasons": weakness_reasons,
-        },
-    }
-
-    if not weak_environment:
-        return {
-            **base,
-            "available": True,
-            "candidates": [],
-            "summary": {
-                "candidate_count": 0,
-                "skipped_reason": "指数未达到当前弱势门槛，抗跌股筛选按规则跳过。",
-            },
-        }
-
-    if panel is None or panel.empty:
-        return {
-            **base,
-            "available": False,
-            "candidates": [],
-            "summary": {"candidate_count": 0},
-        }
-
-    amount_threshold_thousand_yuan = amount_threshold_100m_yuan * 100000
-    df = panel.copy()
-    for column in ("ret_5d", "rel_ret_5d", "amount", "pct_chg", "amount_ratio_20d", "drawdown_120_high"):
-        if column in df.columns:
-            df[column] = pd.to_numeric(df[column], errors="coerce")
-
-    qualified = df.loc[
-        (df["rel_ret_5d"].fillna(-999) >= rel_ret_5d_min)
-        & (df["ret_5d"].fillna(-999) >= ret_5d_min)
-        & (df["amount"].fillna(0) >= amount_threshold_thousand_yuan)
-    ].copy()
-
-    if qualified.empty:
-        return {
-            **base,
-            "available": True,
-            "candidates": [],
-            "summary": {"candidate_count": 0},
-        }
-
-    qualified = qualified.sort_values(
-        ["rel_ret_5d", "ret_5d", "amount"], ascending=[False, False, False]
-    ).head(sample_limit)
-
-    summary = {
-        "candidate_count": int(len(qualified)),
-        "median_rel_ret_5d": round(float(qualified["rel_ret_5d"].median()), 2),
-        "max_rel_ret_5d": round(float(qualified["rel_ret_5d"].max()), 2),
-        "median_ret_5d": round(float(qualified["ret_5d"].median()), 2),
-        "median_amount_ratio_20d": (
-            round(float(qualified["amount_ratio_20d"].median()), 2)
-            if "amount_ratio_20d" in qualified.columns
-            else None
-        ),
-    }
-
-    return {
-        **base,
-        "available": True,
-        "candidates": clean_candidates(qualified, sample_limit),
-        "summary": summary,
-    }
 
 
 def compact_record(record: Dict[str, Any], fields: List[str]) -> Dict[str, Any]:
@@ -3715,15 +3597,6 @@ def build_report_context(
             },
             "overlap_hits": compact_records(feature_groups.get("overlap_hits", []), overlap_fields, low_limit),
         },
-        "resilient_against_index": {
-            "index_environment": (evidence.get("resilient_against_index_samples") or {}).get("index_environment"),
-            "summary": (evidence.get("resilient_against_index_samples") or {}).get("summary"),
-            "candidates": compact_records(
-                (evidence.get("resilient_against_index_samples") or {}).get("candidates", []),
-                money_fields,
-                decline_limit,
-            ),
-        },
         "reporting_notes": [
             "本上下文是面向模型的轻量辅助包，不是完整证据归档。",
             "最终主线名称和评级仍由模型依据业务事实与 skill 规则判断。",
@@ -3742,11 +3615,10 @@ def collect_candidate_codes(
     """Collect the full-market coarse-screen universe before expensive features."""
     if panel is None or panel.empty:
         empty: Set[str] = set()
-        return {"m2": empty, "m3": empty, "m4": empty, "m5": empty, "m6": empty}
+        return {"m2": empty, "m3": empty, "m4": empty, "m5": empty}
 
     amount_money = args.money_amount_threshold * 100000
     amount_decline = args.decline_amount_threshold * 100000
-    amount_resilient = args.resilient_amount_threshold * 100000
 
     m2_codes = set(panel.nlargest(min(20, len(panel)), "amount")["ts_code"].dropna().astype(str))
     m3_codes = set(
@@ -3787,30 +3659,11 @@ def collect_candidate_codes(
     )
     m5_codes = m5_codes | star_codes
 
-    index_ret_5d = index_summary.get("index_ret_5d") if index_summary else None
-    index_ret_10d = index_summary.get("index_ret_10d") if index_summary else None
-    weak_environment = (
-        (index_ret_5d is not None and index_ret_5d <= args.resilient_index_5d_max)
-        or (index_ret_10d is not None and index_ret_10d <= args.resilient_index_10d_max)
-    )
-    if weak_environment:
-        m6_codes = set(
-            panel.loc[
-                (pd.to_numeric(panel["ret_5d"], errors="coerce").fillna(-999) >= args.resilient_abs_ret_min)
-                & (pd.to_numeric(panel["rel_ret_5d"], errors="coerce").fillna(-999) >= args.resilient_rel_ret_min)
-                & (pd.to_numeric(panel["amount"], errors="coerce").fillna(0) >= amount_resilient),
-                "ts_code",
-            ].dropna().astype(str)
-        )
-    else:
-        m6_codes = set()
-
     return {
         "m2": m2_codes,
         "m3": m3_codes,
         "m4": m4_codes,
         "m5": m5_codes,
-        "m6": m6_codes,
     }
 
 
@@ -3858,7 +3711,6 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
                 "module3_money_effect": ["module3_money_effect.json", "reference/methodology/module3_money_effect.md", "reference/template/section3.md", "赚钱效应与上涨主线"],
                 "module4_decline": ["module4_decline.json", "reference/methodology/module4_decline.md", "reference/template/section4.md", "爆量下跌风险"],
                 "module5_feature_groups": ["module5_feature_groups.json", "reference/methodology/module5_feature_groups.md", "reference/template/section5.md", "特征分组分析"],
-                "module6_resilient": ["module6_resilient.json", "reference/methodology/module6_resilient.md", "reference/template/section6.md", "抗跌股"],
             },
             "aggregation_inputs": ["assembled_checks.json", "reference/methodology/output_discipline.md"],
         },
@@ -3883,10 +3735,6 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
         "module5_feature_groups": {
             "metadata": metadata,
             "feature_group_analysis": context.get("feature_group_analysis"),
-        },
-        "module6_resilient": {
-            "metadata": metadata,
-            "resilient_against_index": context.get("resilient_against_index"),
         },
         "assembled_checks": build_assembled_checks(evidence),
     }
@@ -4090,17 +3938,6 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         target_date=target_date,
         sample_limit=args.low_sample_limit,
     )
-    resilient = build_resilient_against_index_samples(
-        candidate_panel,
-        index_summary=index_summary,
-        index_5d_max=args.resilient_index_5d_max,
-        index_10d_max=args.resilient_index_10d_max,
-        rel_ret_5d_min=args.resilient_rel_ret_min,
-        ret_5d_min=args.resilient_abs_ret_min,
-        amount_threshold_100m_yuan=args.resilient_amount_threshold,
-        sample_limit=args.resilient_sample_limit,
-    )
-
     return {
         "metadata": {
             "asof_input": asof,
@@ -4152,7 +3989,6 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         "volume_decline_samples": volume_decline,
         "low_position_volume_anomaly_samples": low_position_anomaly,
         "feature_group_analysis_samples": feature_group_analysis,
-        "resilient_against_index_samples": resilient,
         "notes": [
             "脚本有意不做主题归纳。",
             "不要把市场、行业或概念标签作为预设分组规则；主题应由模型基于证据和业务事实归纳。",
@@ -4165,7 +4001,6 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "volume_decline_samples 按涨跌幅、20日放量倍数和成交额阈值筛选，并按爆量下跌强度（20日放量倍数 * 跌幅绝对值）排序。",
             "low_position_volume_anomaly_samples 使用严格规则（3倍放量、涨幅7%以上、深回撤或底部区域），并分类为启动型、持续换手型、缩量企稳型和分歧型。",
             "feature_group_analysis_samples 是模块 5 的新证据包：低位异动、科创板120日新高且真实月K突破、10:30前涨停三组分别输出，并提供 overlap_hits 供模型做交叉命中上涨归因。",
-            "resilient_against_index_samples 只在弱指数环境输出（该弱不弱就是强），不输出逆势下跌股票。",
         ],
     }
 
@@ -4234,20 +4069,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
                        help="Quiet scenario: median of last 3 post-trigger days' amount must be <= quiet_ratio * trigger amount (default 0.5).")
     panel.add_argument("--low-sample-limit", type=int, default=60,
                        help="Low-position pool: max rows after sorting (default 60).")
-
-    # Resilient-against-index (该弱不弱就是强) — module 6.
-    panel.add_argument("--resilient-index-5d-max", type=float, default=-2.0,
-                       help="Resilient pool: index 5d return must be <= this to count as weak environment (default -2.0).")
-    panel.add_argument("--resilient-index-10d-max", type=float, default=-3.0,
-                       help="Resilient pool: index 10d return must be <= this to count as weak environment (default -3.0).")
-    panel.add_argument("--resilient-rel-ret-min", type=float, default=5.0,
-                       help="Resilient pool: minimum 5d relative outperformance vs index in pct (default 5.0).")
-    panel.add_argument("--resilient-abs-ret-min", type=float, default=0.0,
-                       help="Resilient pool: minimum 5d absolute return in pct (default 0.0).")
-    panel.add_argument("--resilient-amount-threshold", type=float, default=1.0,
-                       help="Resilient pool: minimum amount in 100m yuan (default 1.0 == 1亿).")
-    panel.add_argument("--resilient-sample-limit", type=int, default=40,
-                       help="Resilient pool: max rows after sorting (default 40).")
 
     return parser
 

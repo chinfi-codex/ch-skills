@@ -24,9 +24,10 @@ try:
 except ImportError:
     jieba = None
 
-# Import shared db_core (handles connection + dialect)
 _SCRIPT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_SCRIPT_DIR.parents[1] / "shared"))
+_BUNDLED_SHARED = _SCRIPT_DIR / "_shared"
+_DEV_SHARED = _SCRIPT_DIR.parents[1] / "shared"
+sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
 from db_core import (
     BACKEND,
     Backend,

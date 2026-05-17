@@ -41,7 +41,9 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     requests = None
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(SCRIPT_DIR.parents[2] / "shared"))
+_BUNDLED_SHARED = SCRIPT_DIR / "_shared"
+_DEV_SHARED = SCRIPT_DIR.parents[3] / "shared"
+sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
 from db_core import BACKEND, Backend
 from db_adapter import (
     read_frame,

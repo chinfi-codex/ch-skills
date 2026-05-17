@@ -21,11 +21,15 @@ try:
 except ImportError:  # pragma: no cover - reported at runtime for local envs
     pd = None
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+_BUNDLED_SHARED = SCRIPT_DIR / "_shared"
+_DEV_SHARED = SCRIPT_DIR.parents[3] / "shared"
+sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
+
 from db_adapter import ENDPOINT_TABLE, write_dataset, write_frame
 from db_core import get_connection
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_CACHE = SCRIPT_DIR.parent / "data" / "cache"
 DEFAULT_REFERENCE = SCRIPT_DIR.parent / "reference"
 MARKET_HISTORY_COLUMNS = [

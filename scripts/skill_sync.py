@@ -238,6 +238,75 @@ def discover_skills(repo_root: Path, rename_map: dict[str, str]) -> dict[str, Pa
     return skills
 
 
+def _is_relative_path(path_str: str) -> bool:
+    path = Path(path_str)
+    return not path.is_absolute() and ".." not in path.parts
+
+
+def _resolve_repo_relative_path(path_str: str) -> Path:
+    if not _is_relative_path(path_str):
+        raise ValueError(f"路径必须是仓库内相对路径，且不能包含 '..': {path_str}")
+
+    path = (REPO_ROOT / path_str).resolve()
+    if path != REPO_ROOT and REPO_ROOT not in path.parents:
+        raise ValueError(f"路径越界: {path_str}")
+    return path
+
+
+def _resolve_skill_relative_path(skill_dst: Path, path_str: str) -> Path:
+    if not _is_relative_path(path_str):
+        raise ValueError(f"bundle 目标路径必须是 skill 内相对路径，且不能包含 '..': {path_str}")
+
+    path = (skill_dst / path_str).resolve()
+    if path != skill_dst.resolve() and skill_dst.resolve() not in path.parents:
+        raise ValueError(f"bundle 目标路径越界: {path_str}")
+    return path
+
+
+def _skill_matches_bundle(skill_name: str, skill_src: Path, bundle: dict) -> bool:
+    raw_skills = bundle.get("skills", [])
+    if raw_skills == "*" or raw_skills == ["*"]:
+        return True
+    if isinstance(raw_skills, str):
+        raw_skills = [raw_skills]
+    if not isinstance(raw_skills, list):
+        raise ValueError("shared bundle 的 skills 必须是列表、字符串或 '*'")
+
+    rel_skill_src = str(skill_src.relative_to(REPO_ROOT)).replace("\\", "/")
+    return skill_name in raw_skills or rel_skill_src in raw_skills
+
+
+def bundle_shared_assets(
+    skill_name: str,
+    skill_src: Path,
+    skill_dst: Path,
+    bundles: list[dict],
+    exclude_dirs: list[str],
+    exclude_files: list[str],
+    mode: str = "copy",
+    dry_run: bool = False,
+) -> None:
+    """把仓库级共享运行时资产复制到单个 skill 包内部。"""
+    if mode == "link":
+        return
+
+    for bundle in bundles:
+        if not _skill_matches_bundle(skill_name, skill_src, bundle):
+            continue
+
+        source = bundle.get("source")
+        dest = bundle.get("dest")
+        if not source or not dest:
+            raise ValueError("shared bundle 必须同时配置 source 与 dest")
+
+        bundle_src = _resolve_repo_relative_path(source)
+        bundle_dst = _resolve_skill_relative_path(skill_dst, dest)
+        if not bundle_src.exists():
+            raise FileNotFoundError(f"shared bundle 源路径不存在: {bundle_src}")
+
+        mirror(bundle_src, bundle_dst, exclude_dirs, exclude_files, dry_run)
+
+
 # ---------------------------------------------------------------------------
 # 同步原语
 # ---------------------------------------------------------------------------
@@ -364,6 +433,7 @@ def run_sync(config: dict, mode: str = "copy", dry_run: bool = False) -> None:
     exclude = config.get("exclude", {})
     exclude_dirs = exclude.get("dirs", [])
     exclude_files = exclude.get("files", [])
+    shared_bundles = config.get("shared", {}).get("bundles", [])
 
     skills = discover_skills(REPO_ROOT, rename)
     current_skill_names = set(skills)
@@ -392,6 +462,16 @@ def run_sync(config: dict, mode: str = "copy", dry_run: bool = False) -> None:
                 link(skill_src, skill_dst, dry_run)
             else:
                 mirror(skill_src, skill_dst, exclude_dirs, exclude_files, dry_run)
+            bundle_shared_assets(
+                skill_name,
+                skill_src,
+                skill_dst,
+                shared_bundles,
+                exclude_dirs,
+                exclude_files,
+                mode,
+                dry_run,
+            )
 
         write_manifest(target_name, target_path, current_skill_names, dry_run)
 

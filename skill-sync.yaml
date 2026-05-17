@@ -21,6 +21,16 @@ targets:
 # 键为相对于仓库根的路径，值为目标目录名
 rename: {}
 
+# 仓库级共享运行时代码会被打包到指定 skill 内，保证同步/发布后的 skill 自包含。
+# skills 可写目标 skill 名，或源仓库相对路径；dest 必须是 skill 包内部相对路径。
+shared:
+  bundles:
+    - source: shared
+      dest: scripts/_shared
+      skills:
+        - ch-news-reporter
+        - a-stock-daily-market-sense
+
 # 排除规则（开发/评测产物，不同步到 Agent 安装目录）
 exclude:
   dirs:

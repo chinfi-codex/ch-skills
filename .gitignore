@@ -29,9 +29,12 @@ private-butler/health-butler/dashboard/data/
 private-butler/health-butler/dashboard/index.legacy.html
 private-butler/chief-butler/data/
 private-butler/chief-butler/dashboard/index.html
+.DS_Store
+.codex-task-*.md
+
 market-ai-news-research/data/
 ch-news-reporter/data/
-stock-skills/a-stock-daily-market-sense/data/cache/
-stock-skills/a-stock-daily-market-sense/reports/evidence_*
-stock-skills/a-stock-daily-market-sense/reports/report_context_*.json
-stock-skills/a-stock-daily-market-sense/reports/module_context_*/
+ch-stock-skills/a-stock-daily-market-sense/data/cache/
+ch-stock-skills/a-stock-daily-market-sense/reports/evidence_*
+ch-stock-skills/a-stock-daily-market-sense/reports/report_context_*.json
+ch-stock-skills/a-stock-daily-market-sense/reports/module_context_*/

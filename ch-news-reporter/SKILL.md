@@ -7,9 +7,28 @@ description: 当用户要求从金十、财联社、GitHub Trending、Product Hu
 
 ## 目标
 
-从用户配置的财经、AI、宏观与地缘风险信源采集当天信息，清洗为统一 SQLite 新闻库；在报告时间点按 profile 生成 evidence packet，并可对关键 GitHub 项目、Product Hunt 产品和外链做二次加工；最后由 Agent 基于方法论、模板和证据包输出中文报告。
+从用户配置的财经、AI、宏观与地缘风险信源采集当天信息，默认写入统一 PostgreSQL 新闻库；在报告时间点按 profile 生成 evidence packet，并可对关键 GitHub 项目、Product Hunt 产品和外链做二次加工；最后由 Agent 基于方法论、模板和证据包输出中文报告。
 
 本 skill 不提供买卖建议，不把单一快讯当作结论，不在采集阶段过早过滤“财经/AI/地缘”边界。它面向需要日常跟踪市场、AI 产业、开源生态、政策、地缘冲突和风险资产传导的主动研究者。
+
+## 环境变量设置
+
+默认使用共享 PostgreSQL 数据库。进入 skill 目录后，先在当前 shell 设置：
+
+```bash
+export ALPHA_DB_BACKEND=postgresql
+export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data"
+python scripts/collect_news.py --date today
+```
+
+只有在需要离线或本机临时 fallback 时才使用 SQLite：
+
+```bash
+export ALPHA_DB_BACKEND=sqlite
+python scripts/collect_news.py --date today --db data/news_research.sqlite
+```
+
+SQLite fallback 下的 `--db` 参数仅指定本地 SQLite 文件；PostgreSQL 模式下连接信息完全由 `ALPHA_PG_URL` 决定。
 
 ## 适用场景与边界
 
@@ -35,7 +54,7 @@ description: 当用户要求从金十、财联社、GitHub Trending、Product Hu
 进入 skill 目录后运行采集脚本。默认日期为 Asia/Shanghai 的当天。
 
 ```bash
-python scripts/collect_news.py --date today --db data/news_research.sqlite
+python scripts/collect_news.py --date today
 ```
 
 常用参数：
@@ -43,7 +62,7 @@ python scripts/collect_news.py --date today --db data/news_research.sqlite
 - `--date today` 或 `--date YYYY-MM-DD`：采集目标日期。
 - `--source all|cls|jin10|github|rss|product_hunt|hacker_news`：限制采集来源，默认 `all`。
 - `--config config/sources.yaml`：RSS 配置文件。
-- `--db data/news_research.sqlite`：SQLite 输出路径。
+- `--db data/news_research.sqlite`：仅 SQLite fallback 使用的本地文件路径；PostgreSQL 模式下忽略。
 - `--limit N`：每个来源最多写入 N 条，适合调试。
 - `--replace-date`：先删除目标日期内所选来源的旧数据，再重新写入；修正规则或重跑当天库时使用。
 
@@ -70,7 +89,14 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --format j
 - `--include-enrichments`：把 `enrichments` 表里的二次加工结果拼回证据包。
 - `--format json|markdown`：JSON 适合 Agent 继续处理，Markdown 适合人工核查。
 
-`macro_daily` 会先从当天金十、财联社和 RSS 中筛选宏观相关新闻；每日固定附加 Brent、黄金、天然气、美元人民币、美国10年期国债、BTC、纳指期货等价格 evidence。CPI、PPI、社融、PMI 等中国月度数据只在电报识别到当天发布/更新事件时触发 Tushare 细项补查，不做每日机械抓取。
+`macro_daily` 会先从当天金十、财联社和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
+
+- **基础行情**（金十/Stooq/AV）：Brent、WTI、黄金、天然气、USDCNH、纳指期货等。
+- **位置富数据**（Yahoo）：美国 10Y / 5Y 国债收益率、DXY、VIX、BTC，以及核心估值锚——纳斯达克综合（^IXIC）与上证指数（000001.SS）。每个标的额外计算 52 周高低、距 52 周高 %、YTD、20/60 日均线、`pct_vs_ma20`，作为"市场相对位置"判断依据。
+
+evidence packet 同时按 `groups` 字段把行情分组为 `liquidity_rates_fx` / `equity_position` / `risk_appetite` / `commodities`，对应方法论中的流动性三维度 + 商品维度。markdown 输出会先打印「Liquidity & Position Snapshot」表格，再附原始 JSON。
+
+CPI、PPI、社融、PMI 等中国月度数据只在电报识别到当天发布/更新事件时触发 Tushare 细项补查，不做每日机械抓取。
 
 ### 3. 执行二次加工
 
@@ -167,13 +193,22 @@ python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 5
 
 报告不应只罗列新闻，要把证据转化为观点：发生了什么、为何重要、影响哪些资产/产业/公司类型、后续观察什么。
 
-`macro_daily` 报告必须覆盖一句话结论、今日 3 个宏观信号、宏观新闻与经济数据事件、利率/美元/流动性、大宗商品价格信号、中国宏观与政策、美国宏观与政策、风险资产传导和后续观察。
+`macro_daily` 报告采用"流动性优先"范式：流动性 → 折现率/风险溢价 → 权益估值 → 市场相对位置 → 边际方向。报告必须覆盖：
+
+1. 一句话结论（必含"流动性边际方向 + 纳指/上证位置档位 + 对权益估值的影响方向"三要素）
+2. 流动性总图表（利率/美元/风险偏好/人民币/商品的当日值与边际变化）
+3. 市场相对位置表（纳指、上证、纳指期货的收盘、距 52 周高 %、YTD、20 日趋势、位置档位"高/中/低"）
+4. 今日 3 个关键边际信号（每条走"信号属性 → 市场定价校验 → 位置约束"三步法）
+5. 流动性传导推断（美元体系 / 人民币体系 / 跨市场验证）
+6. 宏观新闻与数据事件、中国政策与流动性、美国政策与流动性
+7. 反向场景与风险（流动性方向 vs 市场位置是否矛盾、何种证据会推翻判断）
+8. 后续观察（24-72h 关键数据/会议/价格位）
 
 `iran_dynamic` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含路径判定（A 续期 / B 交战 / C 僵尸化）、当前子分支、战争烈度、今日边际变化、各方行动、能源与市场反应、下一关键节点倒计时、路径子分支概率今日变动和 24-72h 观察清单。
 
 ## 数据表说明
 
-采集脚本写入 SQLite：
+采集脚本默认写入 PostgreSQL；显式设置 `ALPHA_DB_BACKEND=sqlite` 时写入本地 SQLite fallback：
 
 - `items`：统一新闻表。
 - `items_fts`：FTS5 全文索引。
@@ -205,7 +240,11 @@ python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 5
 
 - `macro_news_items`：按宏观关键词筛选后的金十、财联社、RSS 新闻。
 - `macro_data_events`：从新闻中识别的 CPI/PPI/PCE/PMI/社融/非农/库存等数据事件。
-- `macro_market_signals`：Brent、黄金、天然气、美元人民币、美国10年期国债、BTC、纳指期货等价格证据。
+- `macro_market_signals`：价格证据。`data` 平铺所有标的；`groups` 按方法论分组：
+  - `liquidity_rates_fx`：US10Y、US5Y、DXY、USDCNH
+  - `equity_position`：纳指、上证、纳指期货（含 52 周高低 / YTD / MA20 / pct_off_52w_high）
+  - `risk_appetite`：VIX、BTC、黄金
+  - `commodities`：Brent、WTI、天然气
 - `conditional_data_fetches`：事件触发式补查结果；中国 CPI/PPI/社融/PMI 只有在当天电报出现发布/更新信号时才抓取。
 
 ## 输出规范
@@ -228,7 +267,9 @@ python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 5
 执行：
 
 ```bash
-python scripts/collect_news.py --date today --db data/news_research.sqlite
+export ALPHA_DB_BACKEND=postgresql
+export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data"
+python scripts/collect_news.py --date today
 python scripts/prepare_report_data.py --profile ai_daily --date today --format json
 # Agent 读取 references/reports/ai_daily/enrichment.md 后，从 enrichment_candidates 中挑选 targets。
 python scripts/enrich_targets.py --targets-file selected_targets.json
@@ -254,7 +295,9 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 执行：
 
 ```bash
-python scripts/collect_news.py --date today --source all --db data/news_research.sqlite
+export ALPHA_DB_BACKEND=postgresql
+export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data"
+python scripts/collect_news.py --date today --source all
 python scripts/prepare_report_data.py --profile macro_daily --date today --format markdown
 ```
 
@@ -265,12 +308,13 @@ python scripts/prepare_report_data.py --profile macro_daily --date today --forma
 
 输出应包含：
 
-- 一句话结论和今日 3 个宏观信号。
-- 金十优先的宏观新闻与经济数据事件。
-- 美国10年期国债、美元人民币、Brent、黄金、天然气等价格证据。
-- 中国 CPI/PPI/社融/PMI 是否出现当天更新；没有事件时不补造月度结论。
-- 美国 CPI/PPI/PCE/非农/PMI/零售销售等是否出现电报事件。
-- 风险资产传导和后续观察。
+- 一句话结论（含流动性边际方向 + 纳指/上证位置档位 + 对权益估值的影响方向）。
+- 流动性总图表（US10Y/US5Y/DXY/VIX/USDCNH/Brent/黄金/BTC 的当日值与边际变化）。
+- 市场相对位置表（纳指、上证、纳指期货：收盘 / 距 52 周高 / YTD / 位置档位）。
+- 今日 3 个关键边际信号（每条三步法：信号属性 → 市场定价校验 → 位置约束）。
+- 流动性传导推断（美元体系 / 人民币体系 / 跨市场验证）。
+- 金十优先的宏观新闻与数据事件；中国 CPI/PPI/社融/PMI 无更新时明确写"无新增月度数据事件"。
+- 反向场景与 24-72h 后续观察清单。
 
 ### 伊朗动态播报
 
@@ -283,7 +327,9 @@ python scripts/prepare_report_data.py --profile macro_daily --date today --forma
 执行：
 
 ```bash
-python scripts/collect_news.py --date today --source all --db data/news_research.sqlite
+export ALPHA_DB_BACKEND=postgresql
+export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data"
+python scripts/collect_news.py --date today --source all
 python scripts/prepare_report_data.py --profile iran_dynamic --date today --format markdown
 ```
 

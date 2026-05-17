@@ -7,11 +7,12 @@ import argparse
 import csv
 import io
 import json
-import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from db_adapter import BACKEND, Backend, get_connection, query_items
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -57,14 +58,6 @@ def resolve_date_key(value: str) -> str | None:
         raise SystemExit("--date must be 'today', 'all', or YYYY-MM-DD") from exc
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
-    if not db_path.exists():
-        raise SystemExit(f"Database does not exist: {db_path}")
-    con = sqlite3.connect(db_path)
-    con.row_factory = sqlite3.Row
-    return con
-
-
 def escape_fts_query(query: str) -> str:
     terms = [term.strip() for term in query.replace('"', " ").split() if term.strip()]
     return " OR ".join(f'"{term}"' for term in terms)
@@ -72,47 +65,22 @@ def escape_fts_query(query: str) -> str:
 
 def query_rows(args: argparse.Namespace) -> list[dict[str, str]]:
     date_key = resolve_date_key(args.date)
-    params: list[object] = []
-    where: list[str] = []
-
-    if date_key:
-        where.append("items.date_key = ?")
-        params.append(date_key)
-    if args.source_type:
-        where.append("items.source_type = ?")
-        params.append(args.source_type)
-
-    if args.q.strip():
-        fts_query = escape_fts_query(args.q)
-        terms = [term.strip() for term in args.q.split() if term.strip()]
-        sql = "SELECT DISTINCT items.* FROM items"
-        like_clauses: list[str] = []
-        fts_clause = "items.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?)"
-        params.append(fts_query)
-        for term in terms:
-            like_clauses.append(
-                "(items.title LIKE ? OR items.content LIKE ? OR items.tags_json LIKE ?)"
-            )
-            like_term = f"%{term}%"
-            params.extend([like_term, like_term, like_term])
-        where.append("(" + " OR ".join([fts_clause, *like_clauses]) + ")")
-    else:
-        sql = "SELECT items.* FROM items"
-
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY COALESCE(items.published_at, items.fetched_at) DESC LIMIT ?"
-    params.append(args.limit)
-
-    con = connect(Path(args.db))
-    try:
-        return [dict(row) for row in con.execute(sql, params).fetchall()]
-    finally:
-        con.close()
+    keywords = args.q
+    if BACKEND == Backend.SQLITE and args.q.strip():
+        keywords = escape_fts_query(args.q)
+    with get_connection(str(Path(args.db))) as con:
+        return query_items(
+            con,
+            keywords=keywords,
+            date_key=date_key,
+            source_type=args.source_type,
+            limit=args.limit,
+            order_by="COALESCE(published_at, fetched_at) DESC",
+        )
 
 
 def emit_json(rows: list[dict[str, str]]) -> None:
-    print(json.dumps(rows, ensure_ascii=False, indent=2))
+    print(json.dumps(rows, ensure_ascii=False, indent=2, default=str))
 
 
 def emit_csv(rows: list[dict[str, str]]) -> None:

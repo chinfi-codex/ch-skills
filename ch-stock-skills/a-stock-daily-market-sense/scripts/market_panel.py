@@ -40,6 +40,18 @@ try:
 except ImportError:  # pragma: no cover - optional runtime dependency
     requests = None
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR.parents[2] / "shared"))
+from db_core import BACKEND, Backend
+from db_adapter import (
+    read_frame,
+    write_frame,
+    read_dataset,
+    write_dataset,
+    read_market_history,
+    write_market_history,
+)
+
 
 DEFAULT_DAILY_FIELDS = (
     "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
@@ -149,15 +161,23 @@ def split_fields(fields: str) -> List[str]:
 
 
 def cache_file(endpoint: str, trade_date: str) -> Path:
+    if BACKEND == Backend.POSTGRESQL:
+        return CACHE_ROOT / endpoint / f"{trade_date}.parquet"
     return CACHE_ROOT / endpoint / f"{trade_date}.parquet"
 
 
 def cache_dataset_file(endpoint: str, key: str) -> Path:
+    if BACKEND == Backend.POSTGRESQL:
+        safe_key = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(key))
+        return CACHE_ROOT / endpoint / f"{safe_key}.parquet"
     safe_key = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(key))
     return CACHE_ROOT / endpoint / f"{safe_key}.parquet"
 
 
 def read_cached_dataset(endpoint: str, key: str, fields: Optional[str] = None) -> Optional[pd.DataFrame]:
+    if BACKEND == Backend.POSTGRESQL:
+        return read_dataset(endpoint, key, fields)
+
     path = cache_dataset_file(endpoint, key)
     if not path.exists():
         return None
@@ -176,6 +196,10 @@ def read_cached_dataset(endpoint: str, key: str, fields: Optional[str] = None) -
 
 
 def write_cached_dataset(endpoint: str, key: str, df: pd.DataFrame) -> None:
+    if BACKEND == Backend.POSTGRESQL:
+        write_dataset(endpoint, key, df)
+        return
+
     path = cache_dataset_file(endpoint, key)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -208,6 +232,9 @@ def missing_edge_ranges(df: pd.DataFrame, column: str, start_date: str, end_date
 
 
 def read_cached_frame(endpoint: str, trade_date: str, fields: str) -> Optional[pd.DataFrame]:
+    if BACKEND == Backend.POSTGRESQL:
+        return read_frame(endpoint, trade_date, fields)
+
     path = cache_file(endpoint, trade_date)
     if not path.exists():
         return None
@@ -225,6 +252,10 @@ def read_cached_frame(endpoint: str, trade_date: str, fields: str) -> Optional[p
 
 
 def write_cached_frame(endpoint: str, trade_date: str, df: pd.DataFrame) -> None:
+    if BACKEND == Backend.POSTGRESQL:
+        write_frame(endpoint, trade_date, df)
+        return
+
     path = cache_file(endpoint, trade_date)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -757,6 +788,19 @@ def order_market_history_columns(columns: Iterable[str]) -> List[str]:
 
 
 def verify_market_history_write(csv_path: Path, target_date: Any) -> None:
+    if BACKEND == Backend.POSTGRESQL:
+        check = read_market_history()
+        if check is None or check.empty:
+            raise RuntimeError("market history write verification failed: market_history table is empty")
+        date_column = "date" if "date" in check.columns else "日期" if "日期" in check.columns else None
+        if date_column is None:
+            raise RuntimeError("market history write verification failed: date column missing in market_history table")
+        target_key = history_date_to_trade_date(target_date)
+        existing_dates = check[date_column].apply(history_date_to_trade_date)
+        if not target_key or not bool((existing_dates == target_key).any()):
+            raise RuntimeError(f"market history write verification failed: {target_date} not found in market_history table")
+        return
+
     check = pd.read_csv(csv_path, encoding="utf-8-sig")
     if "日期" not in check.columns:
         raise RuntimeError(f"market history write verification failed: 日期 column missing in {csv_path}")
@@ -801,6 +845,51 @@ def write_market_history_json(
     """Write a clean JSON derivative of reference/market_data.csv for HTML charts."""
     if json_path is None:
         json_path = market_history_json_path(csv_path)
+
+    if BACKEND == Backend.POSTGRESQL:
+        db_columns = {
+            "日期": "date",
+            "上涨": "rise",
+            "涨停": "limit_up",
+            "下跌": "fall",
+            "跌停": "limit_down",
+            "平盘": "flat",
+            "活跃度": "activity",
+            "情绪值": "sentiment",
+            "成交额": "amount",
+            "融资净买入": "margin_net_buy",
+            "全市场换手率": "turnover_rate",
+        }
+        if csv_path.exists():
+            raw = normalize_market_history_columns(pd.read_csv(csv_path, encoding="utf-8-sig"))
+        else:
+            raw = read_market_history()
+            if raw is not None and not raw.empty:
+                raw = raw.rename(columns={value: key for key, value in db_columns.items()})
+        if raw is None or raw.empty:
+            return json_path
+
+        df = normalize_market_history_columns(raw.copy())
+        out = pd.DataFrame()
+        for source_column, db_column in db_columns.items():
+            if source_column not in df.columns:
+                continue
+            if source_column == "日期":
+                out[db_column] = df[source_column].apply(
+                    lambda value: (
+                        datetime.strptime(history_date_to_trade_date(value), "%Y%m%d").strftime("%Y-%m-%d")
+                        if history_date_to_trade_date(value)
+                        else None
+                    )
+                )
+            else:
+                out[db_column] = df[source_column].apply(lambda value: clean_market_history_value(source_column, value))
+        if not out.empty and "date" in out.columns:
+            out = out.dropna(subset=["date"])
+            if not out.empty:
+                write_market_history(out)
+        return json_path
+
     raw = normalize_market_history_columns(pd.read_csv(csv_path, encoding="utf-8-sig"))
     if raw is None or raw.empty or "日期" not in raw.columns:
         payload = {
@@ -888,6 +977,105 @@ def upsert_market_history_row(
     csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
 ) -> None:
     """Write one market-history row while preserving existing non-empty values."""
+    if BACKEND == Backend.POSTGRESQL:
+        db_columns = {
+            "日期": "date",
+            "上涨": "rise",
+            "涨停": "limit_up",
+            "下跌": "fall",
+            "跌停": "limit_down",
+            "平盘": "flat",
+            "活跃度": "activity",
+            "情绪值": "sentiment",
+            "成交额": "amount",
+            "融资净买入": "margin_net_buy",
+            "全市场换手率": "turnover_rate",
+        }
+        ordered_columns = order_market_history_columns(list(dict.fromkeys(columns + list(row.keys()))))
+        existing = read_market_history()
+        if existing is not None and not existing.empty:
+            df = existing.rename(columns={value: key for key, value in db_columns.items()})
+            df = normalize_market_history_columns(df)
+            if "日期" in df.columns:
+                df["日期"] = df["日期"].apply(
+                    lambda value: format_history_date(history_date_to_trade_date(value))
+                    if history_date_to_trade_date(value)
+                    else value
+                )
+            current_columns = order_market_history_columns(
+                list(df.columns) + [col for col in ordered_columns if col in MARKET_HISTORY_COLUMNS]
+            )
+            row = {key: value for key, value in row.items() if key in current_columns}
+
+            for col in current_columns:
+                if col not in df.columns:
+                    df[col] = ""
+            df = df.reindex(columns=current_columns)
+
+            target_date = row.get("日期")
+            existing_dates = df["日期"].apply(history_date_to_trade_date)
+            target_key = history_date_to_trade_date(target_date)
+            matches = df.index[existing_dates == target_key] if target_key else df.index[df["日期"] == target_date]
+            if len(matches) > 0:
+                idx = matches[0]
+                for col, new_value in row.items():
+                    if col == "日期":
+                        continue
+                    current_value = df.at[idx, col]
+                    if col == "成交额":
+                        if should_fill_turnover(current_value, new_value):
+                            df.at[idx, col] = new_value
+                        continue
+                    if col == "全市场换手率":
+                        if should_fill_positive_numeric(current_value, new_value):
+                            df.at[idx, col] = new_value
+                        continue
+                    if col == "情绪值":
+                        if should_update_numeric(current_value, new_value):
+                            df.at[idx, col] = new_value
+                        continue
+                    if col in {"涨停", "跌停"}:
+                        if should_update_count(current_value, new_value):
+                            df.at[idx, col] = new_value
+                        continue
+                    if col in {"上涨", "下跌", "平盘"}:
+                        if should_update_count(current_value, new_value):
+                            df.at[idx, col] = new_value
+                        continue
+                    if col == "融资净买入":
+                        if should_update_numeric(current_value, new_value):
+                            df.at[idx, col] = new_value
+                        continue
+                    if is_blank_value(current_value) and not is_blank_value(new_value):
+                        df.at[idx, col] = new_value
+                final_df = sort_market_history_df(df)
+            else:
+                final_columns = order_market_history_columns(list(df.columns) + [col for col in ordered_columns if col not in df.columns])
+                new_row = pd.DataFrame([row], columns=final_columns)
+                final_df = sort_market_history_df(pd.concat([new_row, df.reindex(columns=final_columns)], ignore_index=True))
+        else:
+            final_df = sort_market_history_df(pd.DataFrame([row], columns=ordered_columns))
+
+        db_df = pd.DataFrame()
+        for source_column, db_column in db_columns.items():
+            if source_column not in final_df.columns:
+                continue
+            if source_column == "日期":
+                db_df[db_column] = final_df[source_column].apply(
+                    lambda value: (
+                        datetime.strptime(history_date_to_trade_date(value), "%Y%m%d").strftime("%Y-%m-%d")
+                        if history_date_to_trade_date(value)
+                        else None
+                    )
+                )
+            else:
+                db_df[db_column] = final_df[source_column].apply(lambda value: clean_market_history_value(source_column, value))
+        if not db_df.empty and "date" in db_df.columns:
+            db_df = db_df.dropna(subset=["date"])
+            write_market_history(db_df)
+            verify_market_history_write(csv_path, row.get("日期"))
+        return
+
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     ordered_columns = order_market_history_columns(list(dict.fromkeys(columns + list(row.keys()))))
 
@@ -1791,27 +1979,52 @@ def classify_breadth_temperature(up_ratio: Any) -> Optional[str]:
 
 def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
     csv_path = DEFAULT_MARKET_HISTORY_CSV
-    if not csv_path.exists():
-        return {
-            "available": False,
-            "source": str(csv_path),
-            "reason": "reference/market_data.csv not found",
-        }
+    source = "market_history" if BACKEND == Backend.POSTGRESQL else str(csv_path)
+    if BACKEND == Backend.POSTGRESQL:
+        try:
+            raw = read_market_history()
+        except Exception as exc:
+            return {
+                "available": False,
+                "source": source,
+                "reason": f"failed to read market_history table: {exc}",
+            }
+        if raw is not None and not raw.empty:
+            raw = raw.rename(columns={
+                "date": "日期",
+                "rise": "上涨",
+                "limit_up": "涨停",
+                "fall": "下跌",
+                "limit_down": "跌停",
+                "flat": "平盘",
+                "activity": "活跃度",
+                "sentiment": "情绪值",
+                "amount": "成交额",
+                "margin_net_buy": "融资净买入",
+                "turnover_rate": "全市场换手率",
+            })
+    else:
+        if not csv_path.exists():
+            return {
+                "available": False,
+                "source": source,
+                "reason": "reference/market_data.csv not found",
+            }
 
-    try:
-        raw = pd.read_csv(csv_path, encoding="utf-8-sig")
-    except Exception as exc:
-        return {
-            "available": False,
-            "source": str(csv_path),
-            "reason": f"failed to read market_data.csv: {exc}",
-        }
+        try:
+            raw = pd.read_csv(csv_path, encoding="utf-8-sig")
+        except Exception as exc:
+            return {
+                "available": False,
+                "source": source,
+                "reason": f"failed to read market_data.csv: {exc}",
+            }
 
     if raw is None or raw.empty or "日期" not in raw.columns:
         return {
             "available": False,
-            "source": str(csv_path),
-            "reason": "market_data.csv is empty or missing 日期 column",
+            "source": source,
+            "reason": "market_history is empty or missing 日期 column",
         }
 
     df = raw.copy()
@@ -1822,7 +2035,7 @@ def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
     if df.empty:
         return {
             "available": False,
-            "source": str(csv_path),
+            "source": source,
             "reason": "no sentiment rows on or before target date",
         }
 
@@ -1883,7 +2096,7 @@ def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
 
     return {
         "available": True,
-        "source": str(csv_path),
+        "source": source,
         "trade_date": str(latest.get("trade_date")),
         "matches_target_date": str(latest.get("trade_date")) == target_date,
         "window_start": str(df["trade_date"].iloc[0]),

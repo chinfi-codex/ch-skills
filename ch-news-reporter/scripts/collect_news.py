@@ -9,14 +9,14 @@ import io
 import json
 import os
 import re
-import sqlite3
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from zoneinfo import ZoneInfo
 
 import feedparser
@@ -24,6 +24,13 @@ import requests
 import yaml
 from bs4 import BeautifulSoup
 
+from db_adapter import (
+    adapt_sql,
+    get_connection,
+    init_news_schema,
+    placeholder,
+    write_items as db_write_items,
+)
 from jin10_mcp import Jin10McpClient
 
 
@@ -55,7 +62,11 @@ def parse_args() -> argparse.Namespace:
         description="Collect Jin10, CLS, GitHub Trending, and RSS into SQLite."
     )
     parser.add_argument("--date", default="today", help="today or YYYY-MM-DD.")
-    parser.add_argument("--db", default=str(DEFAULT_DB), help="SQLite database path.")
+    parser.add_argument(
+        "--db",
+        default=str(DEFAULT_DB),
+        help="SQLite database path. Ignored when ALPHA_DB_BACKEND=postgresql.",
+    )
     parser.add_argument(
         "--config", default=str(DEFAULT_CONFIG), help="RSS sources YAML config."
     )
@@ -197,96 +208,36 @@ def get_session() -> requests.Session:
     return session
 
 
-def init_db(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(db_path)
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute(
-        """
-        CREATE TABLE IF NOT EXISTS items (
-            id TEXT PRIMARY KEY,
-            date_key TEXT NOT NULL,
-            source_type TEXT NOT NULL,
-            source_name TEXT NOT NULL,
-            published_at TEXT,
-            fetched_at TEXT NOT NULL,
-            title TEXT NOT NULL,
-            content TEXT,
-            url TEXT,
-            author TEXT,
-            tags_json TEXT,
-            metadata_json TEXT,
-            raw_json TEXT
-        )
-        """
-    )
-    con.execute("CREATE INDEX IF NOT EXISTS idx_items_date ON items(date_key)")
-    con.execute(
-        "CREATE INDEX IF NOT EXISTS idx_items_source ON items(source_type, source_name)"
-    )
-    con.execute(
-        """
-        CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
-            title,
-            content,
-            tags_json,
-            content='items',
-            content_rowid='rowid'
-        )
-        """
-    )
-    return con
+@contextmanager
+def init_db(db_path: Path) -> Iterator[Any]:
+    with get_connection(str(db_path)) as con:
+        init_news_schema(con)
+        yield con
 
 
-def rebuild_fts(con: sqlite3.Connection) -> None:
-    con.execute("INSERT INTO items_fts(items_fts) VALUES ('rebuild')")
-
-
-def write_items(con: sqlite3.Connection, items: list[NewsItem], date_key: str) -> int:
+def write_items(con: Any, items: list[NewsItem], date_key: str) -> int:
     fetched_at = now_shanghai().isoformat(timespec="seconds")
-    inserted_or_updated = 0
+    rows: list[dict[str, Any]] = []
     for item in items:
         row_date = item_date_key(item, date_key)
         if row_date != date_key:
             continue
-        row_id = stable_id(item, row_date)
-        con.execute(
-            """
-            INSERT INTO items (
-                id, date_key, source_type, source_name, published_at, fetched_at,
-                title, content, url, author, tags_json, metadata_json, raw_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                fetched_at=excluded.fetched_at,
-                title=excluded.title,
-                content=excluded.content,
-                url=excluded.url,
-                author=excluded.author,
-                tags_json=excluded.tags_json,
-                metadata_json=excluded.metadata_json,
-                raw_json=excluded.raw_json
-            """,
-            (
-                row_id,
-                row_date,
-                item.source_type,
-                item.source_name,
-                item.published_at,
-                fetched_at,
-                item.title.strip() or "(untitled)",
-                item.content.strip(),
-                item.url,
-                item.author,
-                json.dumps(item.tags or [], ensure_ascii=False, default=str),
-                json.dumps(item.metadata or {}, ensure_ascii=False, default=str),
-                json.dumps(item.raw or {}, ensure_ascii=False, default=str),
-            ),
+        rows.append(
+            {
+                "id": stable_id(item, row_date),
+                "source_type": item.source_type,
+                "source_name": item.source_name,
+                "published_at": item.published_at,
+                "title": item.title,
+                "content": item.content,
+                "url": item.url,
+                "author": item.author,
+                "tags": item.tags or [],
+                "metadata": item.metadata or {},
+                "raw": item.raw or {},
+            }
         )
-        inserted_or_updated += 1
-    rebuild_fts(con)
-    con.commit()
-    return inserted_or_updated
+    return db_write_items(con, rows, date_key, fetched_at)
 
 
 def selected_source_types(source: str) -> list[str]:
@@ -309,16 +260,16 @@ def selected_source_types(source: str) -> list[str]:
     return mapping[source]
 
 
-def delete_date_rows(
-    con: sqlite3.Connection, date_key: str, source_types: list[str]
-) -> int:
-    placeholders = ",".join("?" for _ in source_types)
-    cur = con.execute(
-        f"DELETE FROM items WHERE date_key = ? AND source_type IN ({placeholders})",
-        [date_key, *source_types],
-    )
-    rebuild_fts(con)
-    con.commit()
+def delete_date_rows(con: Any, date_key: str, source_types: list[str]) -> int:
+    ph = placeholder()
+    placeholders = ",".join(ph for _ in source_types)
+    sql = f"DELETE FROM items WHERE date_key = {ph} AND source_type IN ({placeholders})"
+    params = [date_key, *source_types]
+    if hasattr(con, "execute"):
+        cur = con.execute(sql, params)
+    else:
+        cur = con.cursor()
+        cur.execute(adapt_sql(sql), params)
     return cur.rowcount
 
 
@@ -1144,8 +1095,7 @@ def main() -> int:
     written: dict[str, int] = {}
 
     if not args.dry_run:
-        con = init_db(Path(args.db))
-        try:
+        with init_db(Path(args.db)) as con:
             if args.replace_date:
                 deleted = delete_date_rows(
                     con, date_key, selected_source_types(args.source)
@@ -1159,8 +1109,6 @@ def main() -> int:
                 )
             for name, items in results.items():
                 written[name] = write_items(con, items, date_key)
-        finally:
-            con.close()
 
     print_summary(results, written)
     return 0

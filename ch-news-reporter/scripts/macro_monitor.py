@@ -41,6 +41,20 @@ STOOQ_BACKUP_URLS = {
     "NATURAL_GAS": "https://stooq.com/q/l/?s=ng.f&i=d",
     "NASDAQ_FUTURES": "https://stooq.com/q/l/?s=nq.f&i=d",
 }
+YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+
+# Symbols fetched with 1y daily history so we can compute 52w high/low,
+# YTD performance, and 20/60 day moving averages. These are the "market
+# position" anchors required by the macro daily methodology.
+YAHOO_POSITION_SYMBOLS: dict[str, str] = {
+    "US_TREASURY_10Y": "^TNX",
+    "US_TREASURY_5Y": "^FVX",
+    "NASDAQ_COMPOSITE": "^IXIC",
+    "SHANGHAI_COMPOSITE": "000001.SS",
+    "VIX": "^VIX",
+    "DXY": "DX-Y.NYB",
+    "BTC": "BTC-USD",
+}
 
 
 def now_iso() -> str:
@@ -165,6 +179,135 @@ def fetch_alpha_vantage_market() -> dict[str, Any]:
     return {"sources": {"alpha_vantage": status}, "data": data}
 
 
+def fetch_yahoo_chart(
+    symbol: str, range_label: str = "1y", interval: str = "1d"
+) -> dict[str, Any]:
+    """Fetch a Yahoo Finance daily series and derive position metrics.
+
+    Returns close, previous_close, change_pct, 52w high/low, % off 52w high,
+    % above 52w low, YTD %, MA20, MA60. Errors are returned as ``_error``.
+    """
+
+    url = YAHOO_CHART_URL.format(symbol=symbol)
+    try:
+        response = requests.get(
+            url,
+            params={"range": range_label, "interval": interval},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=25,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:
+        return {
+            "_error": str(exc),
+            "symbol": symbol,
+            "source": "yahoo_finance",
+        }
+
+    result = ((payload.get("chart") or {}).get("result") or [None])[0]
+    if not isinstance(result, dict):
+        return {"_error": "EMPTY", "symbol": symbol, "source": "yahoo_finance"}
+
+    meta = result.get("meta") or {}
+    timestamps = result.get("timestamp") or []
+    quote_list = (result.get("indicators") or {}).get("quote") or [{}]
+    quote = quote_list[0] if quote_list else {}
+    closes_raw = quote.get("close") or []
+
+    pairs = [
+        (int(ts), float(close))
+        for ts, close in zip(timestamps, closes_raw)
+        if ts is not None and close is not None and not math.isnan(float(close))
+    ]
+    if not pairs:
+        return {"_error": "NO_DATA", "symbol": symbol, "source": "yahoo_finance"}
+
+    closes = [close for _, close in pairs]
+    last_ts, last_close = pairs[-1]
+    prev_close = (
+        pairs[-2][1] if len(pairs) >= 2 else meta.get("chartPreviousClose")
+    )
+
+    change_pct = None
+    if prev_close:
+        try:
+            change_pct = (last_close - float(prev_close)) / float(prev_close) * 100
+        except (TypeError, ValueError, ZeroDivisionError):
+            change_pct = None
+
+    high_52w = max(closes)
+    low_52w = min(closes)
+    pct_off_high = (
+        (last_close - high_52w) / high_52w * 100 if high_52w else None
+    )
+    pct_above_low = (
+        (last_close - low_52w) / low_52w * 100 if low_52w else None
+    )
+
+    current_year = datetime.fromtimestamp(last_ts, SHANGHAI).year
+    ytd_pairs = [
+        (ts, close)
+        for ts, close in pairs
+        if datetime.fromtimestamp(ts, SHANGHAI).year == current_year
+    ]
+    ytd_pct = None
+    if ytd_pairs:
+        first_close = ytd_pairs[0][1]
+        if first_close:
+            ytd_pct = (last_close - first_close) / first_close * 100
+
+    ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else None
+    ma60 = sum(closes[-60:]) / 60 if len(closes) >= 60 else None
+
+    trend_vs_ma20 = None
+    if ma20:
+        trend_vs_ma20 = (last_close - ma20) / ma20 * 100
+
+    return {
+        "symbol": symbol,
+        "close": round(last_close, 4),
+        # `value` alias keeps existing consumers (iran_dynamic, downstream
+        # report templates) reading US_TREASURY_10Y.value unchanged.
+        "value": round(last_close, 4),
+        "previous_close": round(float(prev_close), 4) if prev_close else None,
+        "change_pct": round(change_pct, 3) if change_pct is not None else None,
+        "time": datetime.fromtimestamp(last_ts, SHANGHAI).isoformat(
+            timespec="seconds"
+        ),
+        "range_52w_high": round(high_52w, 4),
+        "range_52w_low": round(low_52w, 4),
+        "pct_off_52w_high": round(pct_off_high, 2)
+        if pct_off_high is not None
+        else None,
+        "pct_above_52w_low": round(pct_above_low, 2)
+        if pct_above_low is not None
+        else None,
+        "ytd_pct": round(ytd_pct, 2) if ytd_pct is not None else None,
+        "ma20": round(ma20, 4) if ma20 is not None else None,
+        "ma60": round(ma60, 4) if ma60 is not None else None,
+        "pct_vs_ma20": round(trend_vs_ma20, 2)
+        if trend_vs_ma20 is not None
+        else None,
+        "history_points": len(closes),
+        "source": "yahoo_finance",
+    }
+
+
+def fetch_yahoo_position_quotes() -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    any_ok = False
+    for key, symbol in YAHOO_POSITION_SYMBOLS.items():
+        quote = fetch_yahoo_chart(symbol)
+        data[key] = quote
+        if "_error" not in quote and quote.get("close") is not None:
+            any_ok = True
+    return {
+        "sources": {"yahoo_finance": "OK" if any_ok else "ERROR"},
+        "data": data,
+    }
+
+
 def fetch_stooq_price(symbol_key: str) -> dict[str, Any] | None:
     url = STOOQ_BACKUP_URLS.get(symbol_key)
     if not url:
@@ -211,12 +354,45 @@ def merge_missing_quotes(base: dict[str, Any], supplement: dict[str, Any]) -> No
             base[key] = value
 
 
+LIQUIDITY_GROUP = (
+    "US_TREASURY_10Y",
+    "US_TREASURY_5Y",
+    "DXY",
+    "USD_CNY",
+)
+EQUITY_POSITION_GROUP = (
+    "NASDAQ_COMPOSITE",
+    "SHANGHAI_COMPOSITE",
+    "NASDAQ_FUTURES",
+)
+RISK_APPETITE_GROUP = ("VIX", "BTC", "GOLD")
+COMMODITY_GROUP = ("BRENT", "WTI", "NATURAL_GAS")
+
+
+def build_signal_groups(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Group market data by analysis lens for the macro daily template."""
+
+    def pick(keys: tuple[str, ...]) -> dict[str, Any]:
+        return {key: data[key] for key in keys if key in data}
+
+    return {
+        "liquidity_rates_fx": pick(LIQUIDITY_GROUP),
+        "equity_position": pick(EQUITY_POSITION_GROUP),
+        "risk_appetite": pick(RISK_APPETITE_GROUP),
+        "commodities": pick(COMMODITY_GROUP),
+    }
+
+
 def fetch_market_signals(use_backup: bool = False) -> dict[str, Any]:
     results = {"timestamp": now_iso(), "sources": {}, "data": {}}
 
     jin10 = fetch_jin10_quotes()
     results["sources"].update(jin10["sources"])
     results["data"].update(jin10["data"])
+
+    yahoo = fetch_yahoo_position_quotes()
+    results["sources"].update(yahoo["sources"])
+    merge_missing_quotes(results["data"], yahoo["data"])
 
     alpha = fetch_alpha_vantage_market()
     results["sources"].update(alpha["sources"])
@@ -231,6 +407,7 @@ def fetch_market_signals(use_backup: bool = False) -> dict[str, Any]:
         results["sources"].update(backup["sources"])
         merge_missing_quotes(results["data"], backup["data"])
 
+    results["groups"] = build_signal_groups(results["data"])
     return results
 
 

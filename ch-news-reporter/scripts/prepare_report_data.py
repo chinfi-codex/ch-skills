@@ -7,7 +7,6 @@ import argparse
 import importlib.util
 import io
 import json
-import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +15,13 @@ from urllib.parse import urlparse, urlunparse
 from zoneinfo import ZoneInfo
 
 import yaml
+
+from db_adapter import (
+    get_connection,
+    get_enrichments_by_items as db_get_enrichments_by_items,
+    query_items as db_query_items,
+    table_exists,
+)
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -84,7 +90,7 @@ DEFAULT_DATA_EVENT_KEYWORDS = [
     "previous",
 ]
 INDICATOR_KEYWORDS = {
-    "CPI": ["CPI", "消费者物价", "居民消费价格", "通胀"],
+    "CPI": ["CPI", "消费者物价", "居民消费价格"],
     "PPI": ["PPI", "生产者物价", "工业生产者出厂价格"],
     "PCE": ["PCE", "个人消费支出"],
     "PMI": ["PMI", "采购经理"],
@@ -159,14 +165,6 @@ def load_profile(config_path: Path, profile_name: str) -> dict[str, Any]:
     return profile
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
-    if not db_path.exists():
-        raise SystemExit(f"Database does not exist: {db_path}")
-    con = sqlite3.connect(db_path)
-    con.row_factory = sqlite3.Row
-    return con
-
-
 def normalize_source(source: str) -> str:
     return SOURCE_ALIASES.get(source, source)
 
@@ -186,30 +184,39 @@ def json_loads(value: str | None, fallback: Any) -> Any:
 
 
 def query_items(
-    con: sqlite3.Connection,
+    con: Any,
     profile: dict[str, Any],
     date_key: str | None,
     limit: int,
 ) -> list[dict[str, Any]]:
     sources = profile_sources(profile)
-    params: list[Any] = []
-    where: list[str] = []
-    if date_key:
-        where.append("date_key = ?")
-        params.append(date_key)
+    order_by = "COALESCE(published_at, fetched_at) DESC"
     if sources:
-        placeholders = ",".join("?" for _ in sources)
-        where.append(f"source_type IN ({placeholders})")
-        params.extend(sources)
-    sql = "SELECT * FROM items"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY COALESCE(published_at, fetched_at) DESC LIMIT ?"
-    params.append(limit)
-
+        raw_rows: list[dict[str, Any]] = []
+        for source_type in sources:
+            raw_rows.extend(
+                db_query_items(
+                    con,
+                    date_key=date_key,
+                    source_type=source_type,
+                    limit=limit,
+                    order_by=order_by,
+                )
+            )
+        raw_rows = sorted(
+            raw_rows,
+            key=lambda item: str(item.get("published_at") or item.get("fetched_at") or ""),
+            reverse=True,
+        )[:limit]
+    else:
+        raw_rows = db_query_items(
+            con,
+            date_key=date_key,
+            limit=limit,
+            order_by=order_by,
+        )
     rows: list[dict[str, Any]] = []
-    for row in con.execute(sql, params).fetchall():
-        item = dict(row)
+    for item in raw_rows:
         item["tags"] = json_loads(item.pop("tags_json", None), [])
         item["metadata"] = json_loads(item.pop("metadata_json", None), {})
         item["raw"] = json_loads(item.pop("raw_json", None), {})
@@ -217,31 +224,43 @@ def query_items(
     return rows
 
 
-def table_exists(con: sqlite3.Connection, table_name: str) -> bool:
-    row = con.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (table_name,),
-    ).fetchone()
-    return row is not None
-
+def normalize_enrichment_row(row: dict[str, Any]) -> dict[str, Any]:
+    if row.get("result_json"):
+        payload = json_loads(str(row.get("result_json")), {})
+        if isinstance(payload, dict):
+            enrichment = dict(payload)
+            enrichment.setdefault("id", row.get("id"))
+            enrichment.setdefault("item_id", row.get("item_id"))
+            enrichment.setdefault("target_type", row.get("enrichment_type"))
+            enrichment.setdefault("target_url", row.get("source"))
+            enrichment.setdefault("fetched_at", row.get("created_at"))
+            enrichment.setdefault("status", "ok")
+            enrichment.setdefault("metadata", {})
+            enrichment.setdefault("raw", {})
+            return enrichment
+    enrichment = dict(row)
+    enrichment["metadata"] = json_loads(enrichment.pop("metadata_json", None), {})
+    enrichment["raw"] = json_loads(enrichment.pop("raw_json", None), {})
+    return enrichment
 
 def query_enrichments(
-    con: sqlite3.Connection, item_ids: list[str]
+    con: Any, item_ids: list[str]
 ) -> dict[str, list[dict[str, Any]]]:
     if not item_ids or not table_exists(con, "enrichments"):
         return {}
-    placeholders = ",".join("?" for _ in item_ids)
-    sql = (
-        "SELECT * FROM enrichments "
-        f"WHERE item_id IN ({placeholders}) "
-        "ORDER BY target_type, fetched_at DESC"
-    )
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for row in con.execute(sql, item_ids).fetchall():
-        enrichment = dict(row)
-        enrichment["metadata"] = json_loads(enrichment.pop("metadata_json", None), {})
-        enrichment["raw"] = json_loads(enrichment.pop("raw_json", None), {})
+    rows = db_get_enrichments_by_items(con, item_ids)
+    for row in rows:
+        enrichment = normalize_enrichment_row(row)
         grouped.setdefault(str(enrichment["item_id"]), []).append(enrichment)
+    for values in grouped.values():
+        values.sort(
+            key=lambda enrichment: str(
+                enrichment.get("fetched_at") or enrichment.get("created_at") or ""
+            ),
+            reverse=True,
+        )
+        values.sort(key=lambda enrichment: str(enrichment.get("target_type") or ""))
     return grouped
 
 
@@ -533,8 +552,7 @@ def build_enrichment_candidates(items: list[dict[str, Any]]) -> list[dict[str, A
 def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     profile = load_profile(Path(args.config), args.profile)
     date_key = resolve_date_key(args.date)
-    con = connect(Path(args.db))
-    try:
+    with get_connection(str(Path(args.db))) as con:
         base_items = query_items(con, profile, date_key, args.limit)
         items = apply_profile_filters(base_items, profile)
         enrichments = (
@@ -542,8 +560,6 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
             if args.include_enrichments
             else {}
         )
-    finally:
-        con.close()
 
     for item in items:
         item["enrichments"] = enrichments.get(str(item["id"]), [])
@@ -628,6 +644,57 @@ def metadata_highlights(item: dict[str, Any]) -> list[str]:
     return []
 
 
+SIGNAL_GROUP_LABELS = {
+    "liquidity_rates_fx": "Liquidity / Rates / FX",
+    "equity_position": "Equity Market Position",
+    "risk_appetite": "Risk Appetite",
+    "commodities": "Commodities",
+}
+SIGNAL_FIELD_ORDER = (
+    ("close", "Close"),
+    ("change_pct", "ChgPct"),
+    ("ups_percent", "JinChg%"),
+    ("ytd_pct", "YTD%"),
+    ("pct_off_52w_high", "Off52H%"),
+    ("pct_above_52w_low", "Abv52L%"),
+    ("ma20", "MA20"),
+    ("pct_vs_ma20", "vsMA20%"),
+    ("time", "Time"),
+    ("source", "Src"),
+)
+
+
+def _format_signal_value(value: Any) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, float):
+        return f"{value:g}"
+    return str(value)
+
+
+def emit_macro_signal_groups(signals: dict[str, Any]) -> None:
+    groups = signals.get("groups") or {}
+    if not groups:
+        return
+    print("## Liquidity & Position Snapshot\n")
+    for group_key, label in SIGNAL_GROUP_LABELS.items():
+        rows = groups.get(group_key) or {}
+        if not rows:
+            continue
+        print(f"### {label}\n")
+        headers = ["Key"] + [label for _, label in SIGNAL_FIELD_ORDER]
+        print("| " + " | ".join(headers) + " |")
+        print("|" + "|".join(["---"] * len(headers)) + "|")
+        for key, row in rows.items():
+            if not isinstance(row, dict):
+                continue
+            cells = [key]
+            for field, _ in SIGNAL_FIELD_ORDER:
+                cells.append(_format_signal_value(row.get(field)))
+            print("| " + " | ".join(cells) + " |")
+        print()
+
+
 def emit_markdown(packet: dict[str, Any]) -> None:
     print(f"# Evidence Packet: {packet['profile']} / {packet['date_key']}\n")
     print(f"- Generated: {packet['generated_at']}")
@@ -638,10 +705,12 @@ def emit_markdown(packet: dict[str, Any]) -> None:
     print(f"- Enrichment candidates: {len(packet['enrichment_candidates'])}\n")
 
     if packet.get("macro_market_signals"):
-        print("## Macro Market Signals\n")
+        signals = packet["macro_market_signals"]
+        emit_macro_signal_groups(signals)
+        print("## Macro Market Signals (raw)\n")
         print(
             json.dumps(
-                packet["macro_market_signals"],
+                signals,
                 ensure_ascii=False,
                 indent=2,
                 default=str,

@@ -9,7 +9,6 @@ import io
 import json
 import os
 import re
-import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -20,9 +19,13 @@ from zoneinfo import ZoneInfo
 import requests
 from bs4 import BeautifulSoup
 
+from db_adapter import (
+    ensure_enrichments_table as db_ensure_enrichments_table,
+    get_connection,
+    write_enrichment,
+)
 from prepare_report_data import (
     DEFAULT_DB,
-    connect,
     normalize_url,
 )
 
@@ -95,31 +98,8 @@ def get_session() -> requests.Session:
     return session
 
 
-def ensure_enrichments_table(con: sqlite3.Connection) -> None:
-    con.execute(
-        """
-        CREATE TABLE IF NOT EXISTS enrichments (
-            id TEXT PRIMARY KEY,
-            item_id TEXT NOT NULL,
-            target_type TEXT NOT NULL,
-            target_url TEXT NOT NULL,
-            fetched_at TEXT NOT NULL,
-            status TEXT NOT NULL,
-            title TEXT,
-            text_excerpt TEXT,
-            metadata_json TEXT,
-            raw_json TEXT,
-            UNIQUE(item_id, target_type, target_url)
-        )
-        """
-    )
-    con.execute(
-        "CREATE INDEX IF NOT EXISTS idx_enrichments_item_id ON enrichments(item_id)"
-    )
-    con.execute(
-        "CREATE INDEX IF NOT EXISTS idx_enrichments_target ON enrichments(target_type, target_url)"
-    )
-    con.commit()
+def ensure_enrichments_table(con: Any) -> None:
+    db_ensure_enrichments_table(con)
 
 
 def load_json_targets_from_text(text: str, label: str) -> list[dict[str, Any]]:
@@ -179,7 +159,7 @@ def stable_enrichment_id(item_id: str, target_type: str, target_url: str) -> str
 
 
 def upsert_enrichment(
-    con: sqlite3.Connection,
+    con: Any,
     target: dict[str, Any],
     result: dict[str, Any],
 ) -> None:
@@ -187,33 +167,29 @@ def upsert_enrichment(
     target_type = str(target["target_type"])
     target_url = str(target["target_url"])
     row_id = stable_enrichment_id(item_id, target_type, target_url)
-    con.execute(
-        """
-        INSERT INTO enrichments (
-            id, item_id, target_type, target_url, fetched_at, status, title,
-            text_excerpt, metadata_json, raw_json
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(item_id, target_type, target_url) DO UPDATE SET
-            fetched_at=excluded.fetched_at,
-            status=excluded.status,
-            title=excluded.title,
-            text_excerpt=excluded.text_excerpt,
-            metadata_json=excluded.metadata_json,
-            raw_json=excluded.raw_json
-        """,
-        (
-            row_id,
-            item_id,
-            target_type,
-            target_url,
-            now_iso(),
-            result.get("status") or "ok",
-            result.get("title"),
-            result.get("text_excerpt"),
-            json.dumps(result.get("metadata") or {}, ensure_ascii=False, default=str),
-            json.dumps(result.get("raw") or {}, ensure_ascii=False, default=str),
-        ),
+    fetched_at = now_iso()
+    payload = {
+        "id": row_id,
+        "item_id": item_id,
+        "target_type": target_type,
+        "target_url": target_url,
+        "fetched_at": fetched_at,
+        "status": result.get("status") or "ok",
+        "title": result.get("title"),
+        "text_excerpt": result.get("text_excerpt"),
+        "metadata": result.get("metadata") or {},
+        "raw": result.get("raw") or {},
+    }
+    write_enrichment(
+        con,
+        enrichment_id=row_id,
+        item_id=item_id,
+        enrichment_type=target_type,
+        source=target_url,
+        model=None,
+        prompt_hash=None,
+        result_json=json.dumps(payload, ensure_ascii=False, default=str),
+        created_at=fetched_at,
     )
 
 
@@ -547,8 +523,7 @@ def main() -> int:
         print(json.dumps({"targets": targets}, ensure_ascii=False, indent=2))
         return 0
 
-    con = connect(Path(args.db))
-    try:
+    with get_connection(str(Path(args.db))) as con:
         ensure_enrichments_table(con)
         session = get_session()
         results: list[dict[str, Any]] = []
@@ -575,8 +550,6 @@ def main() -> int:
                     "title": result.get("title"),
                 }
             )
-    finally:
-        con.close()
 
     print(
         json.dumps(

@@ -9,6 +9,42 @@ profiles:
       - rss
       - jin10
       - cls
+    # 重点公司归类字典:Agent 读取 evidence packet 后用这个字典把当日新闻按公司归类
+    # 到"模型发布 / 产品更新 / API & 定价 / 融资 & 政策"四类动作矩阵中。
+    # 字典只供 Agent 阅读,不由 prepare_report_data.py 预先归类。
+    company_groups:
+      international:
+        OpenAI:
+          keywords: [OpenAI, ChatGPT, GPT, GPT-4, GPT-5, Sora, Codex, Whisper, DALL-E, Sam Altman]
+        Anthropic:
+          keywords: [Anthropic, Claude, Claude Code, Claude.ai, Claude Sonnet, Claude Opus, Claude Haiku, Dario Amodei]
+        Google:
+          keywords: [Google AI, Gemini, DeepMind, Google DeepMind, Bard, Veo, Imagen, Gemma, Sundar Pichai, Demis Hassabis]
+        Meta:
+          keywords: [Meta AI, Llama, LLaMA, FAIR, Mark Zuckerberg, Yann LeCun]
+        Mistral:
+          keywords: [Mistral, Mistral Large, Mixtral, Codestral, Arthur Mensch]
+        NVIDIA:
+          keywords: [NVIDIA, Jensen Huang, CUDA, H100, H200, B100, B200, Blackwell, Grace Hopper]
+        HuggingFace:
+          keywords: [HuggingFace, Hugging Face, Transformers, "HF Hub"]
+      china:
+        Kimi:
+          keywords: [Kimi, Moonshot, 月之暗面, K2]
+        智谱:
+          keywords: [智谱, 智谱AI, ChatGLM, GLM, GLM-4, Zhipu]
+        Minimax:
+          keywords: [Minimax, MiniMax, 海螺, 海螺AI, abab, Hailuo]
+        腾讯:
+          keywords: [腾讯混元, 混元, Hunyuan, 腾讯元宝, 元宝]
+        阿里:
+          keywords: [通义, 通义千问, Qwen, Qwen2, Qwen3, 通义灵码, 阿里云AI, 阿里AI]
+        字节:
+          keywords: [豆包, Doubao, 字节豆包, 字节AI, Seed, 火山引擎, 火山方舟]
+        DeepSeek:
+          keywords: [DeepSeek, DeepSeek-V3, DeepSeek-R1, 深度求索]
+        百度:
+          keywords: [文心, 文心一言, ERNIE, Wenxin, 百度AI]
 
   iran_dynamic:
     title: 美以伊动态播报

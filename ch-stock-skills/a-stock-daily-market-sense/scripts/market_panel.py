@@ -88,6 +88,7 @@ MARKET_TREND_INDEXES = {
     "shanghai": {"name": "上证指数", "ts_code": "000001.SH"},
     "chinext": {"name": "创业板指数", "ts_code": "399006.SZ"},
 }
+DEFAULT_INDEX_KLINE_DAYS = 120
 MARKET_HISTORY_PRIMARY_SOURCE = "akshare.stock_market_activity_legu"
 MARKET_HISTORY_SUPPLEMENT_SOURCE = "tushare.daily,daily_basic,margin(T-1)"
 MARKET_HISTORY_SOHU_SOURCE = "sohu.zdt_history"
@@ -138,7 +139,7 @@ def normalize_date(value: Optional[str]) -> str:
     if not value:
         return datetime.now().strftime("%Y%m%d")
     raw = str(value).strip()
-    for fmt in ("%Y%m%d", "%Y-%m-%d"):
+    for fmt in ("%Y%m%d", "%Y-%m-%d", "%Y/%m/%d"):
         try:
             return datetime.strptime(raw, fmt).strftime("%Y%m%d")
         except ValueError:
@@ -147,7 +148,7 @@ def normalize_date(value: Optional[str]) -> str:
 
 
 def ymd_to_dt(value: str) -> datetime:
-    return datetime.strptime(value, "%Y%m%d")
+    return datetime.strptime(normalize_date(value), "%Y%m%d")
 
 
 def dataframe_to_records(df: Optional[pd.DataFrame]) -> List[Dict[str, Any]]:
@@ -214,15 +215,19 @@ def date_range_filter(df: pd.DataFrame, column: str, start_date: str, end_date: 
     if df is None or df.empty or column not in df.columns:
         return pd.DataFrame()
     out = df.copy()
-    out[column] = out[column].astype(str)
-    return out.loc[(out[column] >= start_date) & (out[column] <= end_date)].copy()
+    normalized_dates = out[column].apply(lambda value: normalize_date(value) if not pd.isna(value) else "")
+    out[column] = normalized_dates
+    return out.loc[(normalized_dates >= start_date) & (normalized_dates <= end_date)].copy()
 
 
 def missing_edge_ranges(df: pd.DataFrame, column: str, start_date: str, end_date: str) -> List[Tuple[str, str]]:
     if df is None or df.empty or column not in df.columns:
         return [(start_date, end_date)]
 
-    dates = df[column].astype(str)
+    dates = df[column].apply(lambda value: normalize_date(value) if not pd.isna(value) else "")
+    dates = dates.loc[dates != ""]
+    if dates.empty:
+        return [(start_date, end_date)]
     cached_min = dates.min()
     cached_max = dates.max()
     ranges: List[Tuple[str, str]] = []
@@ -714,7 +719,10 @@ def fetch_margin_net_buy(
 
 
 def format_history_date(trade_date: str) -> str:
-    return datetime.strptime(str(trade_date), "%Y%m%d").strftime("%Y/%m/%d")
+    normalized = history_date_to_trade_date(trade_date)
+    if not normalized:
+        return str(trade_date)
+    return datetime.strptime(normalized, "%Y%m%d").strftime("%Y/%m/%d")
 
 
 def history_date_to_trade_date(value: Any) -> Optional[str]:
@@ -1722,7 +1730,14 @@ def build_level(label: str, value: Any) -> Dict[str, Any]:
     return {"label": label, "value": round_optional(value, 2)}
 
 
-def build_index_trend_summary(index_daily: pd.DataFrame, index_name: str, ts_code: str, target_date: str, trend_days: int) -> Dict[str, Any]:
+def build_index_trend_summary(
+    index_daily: pd.DataFrame,
+    index_name: str,
+    ts_code: str,
+    target_date: str,
+    trend_days: int,
+    kline_days: int = DEFAULT_INDEX_KLINE_DAYS,
+) -> Dict[str, Any]:
     if index_daily is None or index_daily.empty:
         return {
             "available": False,
@@ -1747,7 +1762,9 @@ def build_index_trend_summary(index_daily: pd.DataFrame, index_name: str, ts_cod
             "reason": "no rows on or before target date",
         }
 
-    df = df.tail(max(int(trend_days), 60))
+    safe_trend_days = max(20, int(trend_days))
+    safe_kline_days = max(20, int(kline_days))
+    df = df.tail(max(safe_trend_days, safe_kline_days, 60))
     for period in (1, 5, 20, 60):
         df[f"ret_{period}d"] = pct_return(df["close"], period)
     for period in (5, 20, 60):
@@ -1780,7 +1797,7 @@ def build_index_trend_summary(index_daily: pd.DataFrame, index_name: str, ts_cod
         for col in ["trade_date", "open", "high", "low", "close", "pct_chg", "vol", "amount"]
         if col in df.columns
     ]
-    kline_records = df[kline_cols].tail(int(trend_days)).copy()
+    kline_records = df[kline_cols].tail(safe_kline_days).copy()
     for column in kline_cols:
         if column != "trade_date":
             kline_records[column] = pd.to_numeric(kline_records[column], errors="coerce").round(4)
@@ -1793,7 +1810,9 @@ def build_index_trend_summary(index_daily: pd.DataFrame, index_name: str, ts_cod
         "window_start": str(df["trade_date"].iloc[0]),
         "window_end": str(df["trade_date"].iloc[-1]),
         "records_loaded": int(len(df)),
-        "kline_days": int(min(int(trend_days), len(kline_records))),
+        "trend_days": int(min(safe_trend_days, len(df))),
+        "kline_days": int(min(safe_kline_days, len(kline_records))),
+        "kline_days_requested": int(safe_kline_days),
         "latest": {
             "close": round_optional(close, 2),
             "pct_chg": round_optional(ret_1d, 2),
@@ -1846,6 +1865,141 @@ def build_index_trend_summary(index_daily: pd.DataFrame, index_name: str, ts_cod
             ],
         },
         "kline_records": kline_records.astype(object).where(pd.notnull(kline_records), None).to_dict(orient="records"),
+    }
+
+
+def collect_stock_kline_targets(*payloads: Dict[str, Any]) -> List[Dict[str, Any]]:
+    targets: List[Dict[str, Any]] = []
+    by_code: Dict[str, Dict[str, Any]] = {}
+
+    def add_record(record: Dict[str, Any]) -> None:
+        ts_code = str(record.get("ts_code") or "").strip()
+        if not ts_code:
+            return
+        name = str(record.get("name") or "").strip()
+        if ts_code in by_code:
+            if name:
+                aliases = by_code[ts_code].setdefault("aliases", [])
+                if name not in aliases:
+                    aliases.append(name)
+            return
+        target = {
+            "ts_code": ts_code,
+            "name": name or None,
+            "aliases": [name] if name else [],
+        }
+        by_code[ts_code] = target
+        targets.append(target)
+
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        records = payload.get("candidates")
+        if isinstance(records, list):
+            for record in records:
+                if isinstance(record, dict):
+                    add_record(record)
+        groups = payload.get("groups")
+        if isinstance(groups, dict):
+            for group in groups.values():
+                group_records = group.get("candidates") if isinstance(group, dict) else None
+                if isinstance(group_records, list):
+                    for record in group_records:
+                        if isinstance(record, dict):
+                            add_record(record)
+    return targets
+
+
+def build_stock_kline_records(
+    daily: pd.DataFrame,
+    stock_basic: pd.DataFrame,
+    targets: List[Dict[str, Any]],
+    target_date: str,
+    kline_days: int = DEFAULT_INDEX_KLINE_DAYS,
+) -> Dict[str, Any]:
+    safe_kline_days = max(20, int(kline_days))
+    empty_payload = {
+        "metadata": {
+            "target_date": target_date,
+            "kline_days_requested": safe_kline_days,
+            "stock_count": 0,
+        },
+        "by_ts_code": {},
+        "name_to_ts_code": {},
+    }
+    if daily is None or daily.empty or not targets:
+        return empty_payload
+
+    name_lookup: Dict[str, str] = {}
+    if stock_basic is not None and not stock_basic.empty and {"ts_code", "name"}.issubset(stock_basic.columns):
+        name_lookup = {
+            str(row["ts_code"]): str(row["name"])
+            for _, row in stock_basic[["ts_code", "name"]].dropna().iterrows()
+            if str(row.get("ts_code") or "").strip()
+        }
+
+    requested_names: Dict[str, str] = {}
+    name_to_ts_code: Dict[str, str] = {}
+    selected_codes: List[str] = []
+    seen: Set[str] = set()
+    for target in targets:
+        ts_code = str(target.get("ts_code") or "").strip()
+        if not ts_code or ts_code in seen:
+            continue
+        seen.add(ts_code)
+        selected_codes.append(ts_code)
+        name = str(target.get("name") or name_lookup.get(ts_code) or "").strip()
+        if name:
+            requested_names[ts_code] = name
+        for alias in target.get("aliases") or []:
+            alias_text = str(alias or "").strip()
+            if alias_text:
+                name_to_ts_code[alias_text] = ts_code
+    if not selected_codes:
+        return empty_payload
+
+    df = daily.loc[daily["ts_code"].astype(str).isin(selected_codes)].copy()
+    if df.empty:
+        return empty_payload
+
+    df["trade_date"] = df["trade_date"].apply(lambda value: normalize_date(value) if not pd.isna(value) else "")
+    df = df.loc[(df["trade_date"] != "") & (df["trade_date"] <= target_date)].copy()
+    numeric_cols = ["open", "high", "low", "close", "pct_chg", "vol", "amount"]
+    for column in numeric_cols:
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    by_ts_code: Dict[str, Any] = {}
+    kline_cols = [col for col in ["trade_date", "open", "high", "low", "close", "pct_chg", "vol", "amount"] if col in df.columns]
+    for ts_code in selected_codes:
+        sub = df.loc[df["ts_code"].astype(str) == ts_code].sort_values("trade_date").dropna(subset=["close"])
+        if sub.empty:
+            continue
+        kline_records = sub[kline_cols].tail(safe_kline_days).copy()
+        for column in kline_cols:
+            if column != "trade_date":
+                kline_records[column] = pd.to_numeric(kline_records[column], errors="coerce").round(4)
+        name = requested_names.get(ts_code) or name_lookup.get(ts_code) or ts_code
+        by_ts_code[ts_code] = {
+            "available": True,
+            "name": name,
+            "ts_code": ts_code,
+            "trade_date": str(sub["trade_date"].iloc[-1]),
+            "kline_days": int(len(kline_records)),
+            "kline_days_requested": int(safe_kline_days),
+            "records": kline_records.astype(object).where(pd.notnull(kline_records), None).to_dict(orient="records"),
+        }
+        if name:
+            name_to_ts_code[name] = ts_code
+
+    return {
+        "metadata": {
+            "target_date": target_date,
+            "kline_days_requested": safe_kline_days,
+            "stock_count": int(len(by_ts_code)),
+        },
+        "by_ts_code": by_ts_code,
+        "name_to_ts_code": name_to_ts_code,
     }
 
 
@@ -2175,11 +2329,17 @@ def build_market_trend(
     target_date: str,
     trade_dates: List[str],
     trend_days: int,
+    index_kline_days: int = DEFAULT_INDEX_KLINE_DAYS,
     cache_enabled: bool = True,
     refresh_cache: bool = False,
 ) -> Dict[str, Any]:
     safe_trend_days = max(20, int(trend_days))
-    start_date = trade_dates[0] if trade_dates else target_date
+    safe_index_kline_days = max(20, int(index_kline_days))
+    trend_start_date = trade_dates[0] if trade_dates else target_date
+    kline_start_date = (
+        ymd_to_dt(target_date) - timedelta(days=max(safe_index_kline_days * 3, 260))
+    ).strftime("%Y%m%d")
+    start_date = min(trend_start_date, kline_start_date)
     indices: Dict[str, Any] = {}
     for key, config in MARKET_TREND_INDEXES.items():
         index_daily = fetch_index_daily(
@@ -2196,11 +2356,13 @@ def build_market_trend(
             ts_code=config["ts_code"],
             target_date=target_date,
             trend_days=safe_trend_days,
+            kline_days=safe_index_kline_days,
         )
 
     return {
         "metadata": {
             "trend_days_requested": safe_trend_days,
+            "index_kline_days_requested": safe_index_kline_days,
             "index_start_date": start_date,
             "index_end_date": target_date,
             "sentiment_source": str(DEFAULT_MARKET_HISTORY_CSV),
@@ -4040,6 +4202,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         target_date,
         trade_dates,
         args.market_trend_days,
+        args.index_kline_days,
         cache_enabled,
         args.refresh_cache,
     )
@@ -4153,6 +4316,13 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         target_date=target_date,
         sample_limit=args.low_sample_limit,
     )
+    stock_kline_records = build_stock_kline_records(
+        daily=daily,
+        stock_basic=stock_basic,
+        targets=collect_stock_kline_targets(money_effect, feature_group_analysis),
+        target_date=target_date,
+        kline_days=args.index_kline_days,
+    )
     return {
         "metadata": {
             "asof_input": asof,
@@ -4161,6 +4331,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "offset": args.offset,
             "lookback_trade_days_requested": args.lookback,
             "lookback_trade_days_loaded": len(trade_dates),
+            "index_kline_days": int(args.index_kline_days),
             "window_start": trade_dates[0] if trade_dates else None,
             "window_end": target_date,
             "index": args.index,
@@ -4204,6 +4375,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         "volume_decline_samples": volume_decline,
         "low_position_volume_anomaly_samples": low_position_anomaly,
         "feature_group_analysis_samples": feature_group_analysis,
+        "stock_kline_records": stock_kline_records,
         "notes": [
             "脚本有意不做主题归纳。",
             "不要把市场、行业或概念标签作为预设分组规则；主题应由模型基于证据和业务事实归纳。",
@@ -4233,6 +4405,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     panel.add_argument("--sample-limit", type=int, default=40, help="Max rows in each candidate sample.")
     panel.add_argument("--market-trend-days", type=int, default=90,
                        help="Module 1 market-trend window in trading/history rows (default 90).")
+    panel.add_argument("--index-kline-days", type=int, default=DEFAULT_INDEX_KLINE_DAYS,
+                       help="Trading-day window for Shanghai/ChiNext HTML candlestick data (default 120).")
     panel.add_argument("--sleep", type=float, default=0.12, help="Sleep seconds between API calls.")
     panel.add_argument("--fetch-workers", type=int, default=6,
                        help="Max worker threads for cache/API fetching. Use 1 for serial debugging.")

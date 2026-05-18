@@ -11,12 +11,13 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPT_ROOT.parent
 DEFAULT_MARKET_DATA = SKILL_ROOT / "reference" / "market_data.json"
+INDEX_KLINE_DISPLAY_DAYS = 120
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", "-i", required=True, help="Markdown report path, e.g. reports/report_YYYYMMDD.md.")
     parser.add_argument("--output", "-o", default=None, help="HTML output path. Defaults to input path with .html suffix.")
     parser.add_argument("--market-data", default=str(DEFAULT_MARKET_DATA), help="Derived market_data.json path.")
+    parser.add_argument("--evidence", default=None, help="Evidence JSON path. Defaults to sibling evidence_YYYYMMDD_utf8.json when input is report_YYYYMMDD.md.")
     parser.add_argument("--title", default=None, help="HTML document title.")
     parser.add_argument("--no-validate", action="store_true", help="Skip Markdown text preservation validation.")
     return parser
@@ -289,17 +291,111 @@ def load_market_data(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def render_html(markdown_text: str, market_data: dict, title: str, source_path: Path) -> str:
-    report_body = render_markdown(markdown_text)
-    market_json = json.dumps(market_data, ensure_ascii=False)
-    safe_market_json = (
-        market_json
+def default_evidence_path(input_path: Path) -> Optional[Path]:
+    match = re.match(r"^report_(\d{8})$", input_path.stem)
+    if not match:
+        return None
+    return input_path.with_name(f"evidence_{match.group(1)}_utf8.json")
+
+
+def load_evidence(path: Optional[Path]) -> dict:
+    if path is None or not path.exists():
+        return {
+            "metadata": {
+                "missing": True,
+                "source": str(path) if path is not None else "",
+            },
+            "market_trend": {"indices": {}},
+        }
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def safe_json_for_script(payload: Any) -> str:
+    return (
+        json.dumps(payload, ensure_ascii=False)
         .replace("&", "\\u0026")
         .replace("<", "\\u003c")
         .replace(">", "\\u003e")
         .replace(" ", "\\u2028")
         .replace(" ", "\\u2029")
     )
+
+
+def extract_index_kline_payload(evidence: dict, source_path: Optional[Path]) -> Dict[str, Any]:
+    indices = ((evidence.get("market_trend") or {}).get("indices") or {})
+    payload: Dict[str, Any] = {
+        "metadata": {
+            "source": str(source_path) if source_path is not None else "",
+            "missing": bool((evidence.get("metadata") or {}).get("missing")),
+        },
+        "indices": {},
+    }
+    for key in ("shanghai", "chinext"):
+        item = indices.get(key) or {}
+        records = item.get("kline_records") if isinstance(item, dict) else []
+        if isinstance(records, list):
+            records = records[-INDEX_KLINE_DISPLAY_DAYS:]
+        else:
+            records = []
+        payload["indices"][key] = {
+            "available": bool(item.get("available")) and bool(records),
+            "name": item.get("name"),
+            "ts_code": item.get("ts_code"),
+            "trade_date": item.get("trade_date"),
+            "kline_days": item.get("kline_days"),
+            "kline_days_requested": item.get("kline_days_requested"),
+            "records": records,
+        }
+    return payload
+
+
+def extract_stock_kline_payload(evidence: dict, source_path: Optional[Path]) -> Dict[str, Any]:
+    raw = evidence.get("stock_kline_records") or {}
+    by_ts_code = raw.get("by_ts_code") if isinstance(raw, dict) else {}
+    name_to_ts_code = raw.get("name_to_ts_code") if isinstance(raw, dict) else {}
+    payload: Dict[str, Any] = {
+        "metadata": {
+            "source": str(source_path) if source_path is not None else "",
+            "missing": bool((evidence.get("metadata") or {}).get("missing")),
+            "kline_days_requested": (raw.get("metadata") or {}).get("kline_days_requested") if isinstance(raw, dict) else None,
+        },
+        "by_ts_code": {},
+        "name_to_ts_code": name_to_ts_code if isinstance(name_to_ts_code, dict) else {},
+    }
+    if not isinstance(by_ts_code, dict):
+        return payload
+    for ts_code, item in by_ts_code.items():
+        if not isinstance(item, dict):
+            continue
+        records = item.get("records")
+        if isinstance(records, list):
+            records = records[-INDEX_KLINE_DISPLAY_DAYS:]
+        else:
+            records = []
+        payload["by_ts_code"][str(ts_code)] = {
+            "available": bool(item.get("available")) and bool(records),
+            "name": item.get("name"),
+            "ts_code": item.get("ts_code") or ts_code,
+            "trade_date": item.get("trade_date"),
+            "kline_days": item.get("kline_days"),
+            "kline_days_requested": item.get("kline_days_requested"),
+            "records": records,
+        }
+    return payload
+
+
+def render_html(
+    markdown_text: str,
+    market_data: dict,
+    index_kline_data: dict,
+    stock_kline_data: dict,
+    title: str,
+    source_path: Path,
+) -> str:
+    report_body = render_markdown(markdown_text)
+    safe_market_json = safe_json_for_script(market_data)
+    safe_index_json = safe_json_for_script(index_kline_data)
+    safe_stock_json = safe_json_for_script(stock_kline_data)
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     source_label = html.escape(str(source_path))
     escaped_title = html.escape(title)
@@ -617,13 +713,13 @@ def render_html(markdown_text: str, market_data: dict, title: str, source_path: 
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 16px;
-      margin-top: 20px;
+      margin-top: 14px;
       margin-bottom: 8px;
     }}
     .chart-card {{
       background: var(--surface);
       border-radius: var(--r-md);
-      padding: 18px 18px 14px;
+      padding: 14px 16px 12px;
       border: 1px solid var(--line-1);
       box-shadow: none;
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -644,15 +740,61 @@ def render_html(markdown_text: str, market_data: dict, title: str, source_path: 
     .chart-subtitle {{
       color: var(--ink-4);
       font-size: 11.5px;
-      min-height: 16px;
-      margin-bottom: 10px;
+      min-height: 0;
+      margin-bottom: 6px;
       font-family: "JetBrains Mono", ui-monospace, monospace;
     }}
     .chart-card svg {{
       display: block;
       width: 100%;
-      height: 190px;
+      height: auto;
       overflow: visible;
+    }}
+    .kline-card {{
+      background: var(--surface);
+      border: 1px solid var(--line-1);
+      border-radius: var(--r-md);
+      padding: 14px 16px 12px;
+      margin: 10px 0 16px;
+      overflow: hidden;
+    }}
+    .kline-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin: 10px 0 16px;
+    }}
+    .stock-kline-grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin: 12px 0 28px;
+    }}
+    .kline-grid .kline-card {{
+      margin: 0;
+      min-width: 0;
+    }}
+    .stock-kline-grid .kline-card {{
+      margin: 0;
+      min-width: 0;
+      padding: 14px 12px 12px;
+    }}
+    .kline-card svg {{
+      display: block;
+      width: 100%;
+      height: auto;
+      overflow: visible;
+    }}
+    .kline-candle-up {{ fill: var(--neg); stroke: var(--neg); }}
+    .kline-candle-down {{ fill: var(--pos); stroke: var(--pos); }}
+    .amount-bar-up {{ fill: rgba(220, 38, 38, 0.42); }}
+    .amount-bar-down {{ fill: rgba(5, 150, 105, 0.42); }}
+    .kline-wick {{ stroke-width: 1; }}
+    .ma-line {{
+      fill: none;
+      stroke-width: 1.4;
+      stroke-linejoin: round;
+      stroke-linecap: round;
     }}
     .axis, .grid-line {{
       stroke: var(--line-2);
@@ -667,11 +809,11 @@ def render_html(markdown_text: str, market_data: dict, title: str, source_path: 
     .legend {{
       display: flex;
       flex-wrap: wrap;
-      gap: 14px;
+      gap: 6px 12px;
       color: var(--ink-3);
       font-size: 11.5px;
-      margin-top: 12px;
-      padding-top: 10px;
+      margin-top: 6px;
+      padding-top: 6px;
       border-top: 1px solid var(--line-2);
     }}
     .legend span {{
@@ -767,7 +909,9 @@ def render_html(markdown_text: str, market_data: dict, title: str, source_path: 
     @media (max-width: 900px) {{
       .page {{ width: calc(100vw - 24px); padding-top: 20px; margin-bottom: 64px; }}
       .chart-grid {{ grid-template-columns: 1fr; gap: 14px; }}
-      .chart-card svg {{ height: 170px; }}
+      .kline-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }}
+      .stock-kline-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }}
+      .kline-card {{ padding: 12px 10px 10px; }}
       .report h2 {{ font-size: 19px; margin-top: 40px; }}
       .report h3 {{ font-size: 14.5px; }}
       table {{ min-width: 600px; }}
@@ -782,6 +926,8 @@ def render_html(markdown_text: str, market_data: dict, title: str, source_path: 
     <div id="chart-quality" style="display:none">{html.escape(hint) if hint else "已加载 Market Data 派生数据。"}</div>
   </main>
   <script id="market-data" type="application/json">{safe_market_json}</script>
+  <script id="index-kline-data" type="application/json">{safe_index_json}</script>
+  <script id="stock-kline-data" type="application/json">{safe_stock_json}</script>
   <script>
   (function () {{
     /* ===== UI post-processing — decorates existing markup; never edits text content ===== */
@@ -912,6 +1058,345 @@ def render_html(markdown_text: str, market_data: dict, title: str, source_path: 
   </script>
   <script>
   (function () {{
+    const payload = JSON.parse(document.getElementById("index-kline-data").textContent || "{{}}");
+    const stockPayload = JSON.parse(document.getElementById("stock-kline-data").textContent || "{{}}");
+    const klineDisplayDays = {INDEX_KLINE_DISPLAY_DAYS};
+    const indices = payload.indices || {{}};
+    const stockByCode = stockPayload.by_ts_code || {{}};
+    const stockNameIndex = stockPayload.name_to_ts_code || {{}};
+    const reportBody = document.getElementById("report-body");
+    if (!reportBody) return;
+
+    const indexConfigs = [
+      {{ key: "shanghai", anchorTexts: ["上证指数趋势判断", "上证指数趋势"], fallbackTitle: "上证指数" }},
+      {{ key: "chinext", anchorTexts: ["创业板趋势判断", "创业板指数趋势判断", "创业板指数趋势"], fallbackTitle: "创业板指数" }}
+    ];
+    const stockSectionConfigs = [
+      {{ headingText: "3.3", gridLabel: "module3-leaders" }},
+      {{ headingText: "5.2", gridLabel: "module5-star-breakout" }},
+      {{ headingText: "5.3", gridLabel: "module5-early-limit" }}
+    ];
+
+    insertIndexKlines();
+    insertStockTableKlines();
+
+    function insertIndexKlines() {{
+      const prepared = indexConfigs.map(config => {{
+        const indexData = indices[config.key] || {{}};
+        const rows = normalizeRows(indexData.records).slice(-klineDisplayDays);
+        return rows.length ? {{ ...config, indexData, rows }} : null;
+      }}).filter(Boolean);
+      if (!prepared.length) return;
+
+      const anchor = findInsertionAnchor(indexConfigs[0].anchorTexts) || findInsertionAnchor(indexConfigs.flatMap(config => config.anchorTexts));
+      if (!anchor) return;
+
+      const grid = document.createElement("div");
+      grid.className = "kline-grid";
+      prepared.forEach(item => {{
+        grid.appendChild(buildKlineCard(item.rows, item.indexData, item.fallbackTitle));
+      }});
+      if (anchor.insert === "after") {{
+        anchor.element.after(grid);
+      }} else {{
+        anchor.element.before(grid);
+      }}
+    }}
+
+    function insertStockTableKlines() {{
+      stockSectionConfigs.forEach(config => {{
+        const heading = findHeading(config.headingText);
+        if (!heading) return;
+        const tableWrap = findNextTableWrap(heading);
+        if (!tableWrap || tableWrap.dataset.stockKlinesInserted === "1") return;
+
+        const names = extractStockNames(tableWrap);
+        const prepared = names.map(name => {{
+          const stockData = findStockData(name);
+          if (!stockData) return null;
+          const rows = normalizeRows(stockData.records).slice(-klineDisplayDays);
+          return rows.length ? {{ rows, stockData: {{ ...stockData, name }}, fallbackTitle: name }} : null;
+        }}).filter(Boolean);
+        if (!prepared.length) return;
+
+        const grid = document.createElement("div");
+        grid.className = `stock-kline-grid stock-kline-grid-${{config.gridLabel}}`;
+        prepared.forEach(item => {{
+          grid.appendChild(buildKlineCard(item.rows, item.stockData, item.fallbackTitle));
+        }});
+        tableWrap.after(grid);
+        tableWrap.dataset.stockKlinesInserted = "1";
+      }});
+    }}
+
+    function findInsertionAnchor(texts) {{
+      const anchors = reportBody.querySelectorAll("p, h3, h4");
+      for (const text of texts) {{
+        for (const element of anchors) {{
+          if (!element.textContent.includes(text)) continue;
+          const tag = element.tagName.toLowerCase();
+          return {{ element, insert: tag === "h3" || tag === "h4" ? "after" : "before" }};
+        }}
+      }}
+      return null;
+    }}
+
+    function findHeading(text) {{
+      return Array.from(reportBody.querySelectorAll("h3, h4")).find(element => element.textContent.includes(text));
+    }}
+
+    function findNextTableWrap(heading) {{
+      let current = heading.nextElementSibling;
+      while (current) {{
+        if (current.classList && current.classList.contains("table-wrap")) return current;
+        if (/^H[234]$/.test(current.tagName || "")) return null;
+        current = current.nextElementSibling;
+      }}
+      return null;
+    }}
+
+    function extractStockNames(tableWrap) {{
+      const headers = Array.from(tableWrap.querySelectorAll("thead th")).map(cell => normalizeStockName(cell.textContent));
+      const stockIndex = headers.indexOf("股票");
+      if (stockIndex < 0) return [];
+      return Array.from(tableWrap.querySelectorAll("tbody tr"))
+        .map(row => row.children[stockIndex] ? normalizeStockName(row.children[stockIndex].textContent) : "")
+        .filter(Boolean);
+    }}
+
+    function findStockData(name) {{
+      const normalized = normalizeStockName(name);
+      const tsCode = stockNameIndex[name] || stockNameIndex[normalized];
+      if (!tsCode) return null;
+      return stockByCode[tsCode] || null;
+    }}
+
+    function normalizeStockName(value) {{
+      return String(value || "").replace(/\\s+/g, "").trim();
+    }}
+
+    function normalizeRows(records) {{
+      return (Array.isArray(records) ? records : [])
+        .map(row => ({{
+          trade_date: String(row.trade_date || ""),
+          open: toNumber(row.open),
+          high: toNumber(row.high),
+          low: toNumber(row.low),
+          close: toNumber(row.close),
+          pct_chg: toNumber(row.pct_chg),
+          amount: toNumber(row.amount),
+          vol: toNumber(row.vol)
+        }}))
+        .filter(row => row.trade_date && [row.open, row.high, row.low, row.close].every(Number.isFinite))
+        .sort((a, b) => a.trade_date.localeCompare(b.trade_date));
+    }}
+
+    function buildKlineCard(rows, indexData, fallbackTitle) {{
+      const card = document.createElement("article");
+      card.className = "kline-card";
+      card.style.position = "relative";
+
+      const title = document.createElement("div");
+      title.className = "chart-title";
+      title.textContent = `${{indexData.name || fallbackTitle}} ${{klineDisplayDays}}日K线`;
+      const subtitle = document.createElement("div");
+      subtitle.className = "chart-subtitle";
+      const first = rows[0];
+      const last = rows[rows.length - 1];
+      const requested = Number(indexData.kline_days_requested) || klineDisplayDays;
+      subtitle.textContent = `${{formatDate(first.trade_date)}} 至 ${{formatDate(last.trade_date)}} · ${{rows.length}}/${{requested}} 个交易日`;
+      card.appendChild(title);
+      card.appendChild(subtitle);
+      card.appendChild(drawKline(rows, card));
+
+      const legend = document.createElement("div");
+      legend.className = "legend";
+      [
+        ["K线", "var(--neg)"],
+        ["MA20", "var(--blue)"],
+        ["MA60", "var(--orange)"],
+        ["成交金额", "rgba(100,116,139,0.55)"]
+      ].forEach(([label, color]) => {{
+        const span = document.createElement("span");
+        span.style.setProperty("--legend-color", color);
+        span.textContent = label;
+        legend.appendChild(span);
+      }});
+      card.appendChild(legend);
+      return card;
+    }}
+
+    function drawKline(rows, card) {{
+      const enriched = rows.map((row, idx) => ({{
+        ...row,
+        idx,
+        ma20: rollingAverage(rows, idx, 20),
+        ma60: rollingAverage(rows, idx, 60)
+      }}));
+      const width = 560;
+      const height = 340;
+      const pad = {{ left: 48, right: 14, top: 12, bottom: 24 }};
+      const usableW = width - pad.left - pad.right;
+      const amountPanelH = 64;
+      const panelGap = 16;
+      const priceH = height - pad.top - pad.bottom - amountPanelH - panelGap;
+      const amountTop = pad.top + priceH + panelGap;
+      const amountBottom = amountTop + amountPanelH;
+      const svg = svgEl("svg", {{ viewBox: `0 0 ${{width}} ${{height}}`, role: "img" }});
+
+      const allPrices = enriched.flatMap(row => [row.high, row.low, row.ma20, row.ma60]).filter(Number.isFinite);
+      let min = Math.min(...allPrices);
+      let max = Math.max(...allPrices);
+      if (min === max) {{
+        min -= 1;
+        max += 1;
+      }}
+      const span = max - min;
+      min -= span * 0.05;
+      max += span * 0.05;
+
+      const x = idx => pad.left + (enriched.length <= 1 ? usableW / 2 : idx / (enriched.length - 1) * usableW);
+      const y = price => pad.top + (max - price) / (max - min) * priceH;
+      const candleWidth = Math.max(2, Math.min(8, usableW / Math.max(enriched.length, 1) * 0.62));
+      const amounts = enriched.map(row => row.amount).filter(value => Number.isFinite(value) && value > 0);
+      const maxAmount = amounts.length ? Math.max(...amounts) : 1;
+      const amountY = value => amountBottom - (value / maxAmount) * amountPanelH;
+
+      for (let i = 0; i <= 4; i += 1) {{
+        const gy = pad.top + priceH * i / 4;
+        svg.appendChild(svgEl("line", {{ x1: pad.left, x2: width - pad.right, y1: gy, y2: gy, class: "grid-line" }}));
+      }}
+      svg.appendChild(svgEl("line", {{ x1: pad.left, x2: width - pad.right, y1: pad.top + priceH, y2: pad.top + priceH, class: "axis" }}));
+      svg.appendChild(svgEl("line", {{ x1: pad.left, x2: width - pad.right, y1: amountBottom, y2: amountBottom, class: "axis" }}));
+      svg.appendChild(svgEl("line", {{ x1: pad.left, x2: width - pad.right, y1: amountTop, y2: amountTop, class: "grid-line", opacity: 0.55 }}));
+
+      const tooltip = document.createElement("div");
+      tooltip.style.cssText = "position:absolute;background:rgba(15,23,42,0.92);color:#f1f5f9;padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.5;pointer-events:none;opacity:0;transition:opacity 0.15s ease;z-index:100;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.2);";
+      card.appendChild(tooltip);
+
+      enriched.forEach(row => {{
+        const px = x(row.idx);
+        const up = row.close >= row.open;
+        const cls = up ? "kline-candle-up" : "kline-candle-down";
+        if (Number.isFinite(row.amount) && row.amount > 0) {{
+          const barTop = amountY(row.amount);
+          const amountCls = up ? "amount-bar-up" : "amount-bar-down";
+          svg.appendChild(svgEl("rect", {{
+            x: (px - candleWidth / 2).toFixed(2),
+            y: barTop.toFixed(2),
+            width: candleWidth.toFixed(2),
+            height: Math.max(1, amountBottom - barTop).toFixed(2),
+            class: `amount-bar ${{amountCls}}`,
+            rx: 1
+          }}));
+        }}
+        const bodyTop = y(Math.max(row.open, row.close));
+        const bodyBottom = y(Math.min(row.open, row.close));
+        const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+        svg.appendChild(svgEl("line", {{
+          x1: px.toFixed(2),
+          x2: px.toFixed(2),
+          y1: y(row.high).toFixed(2),
+          y2: y(row.low).toFixed(2),
+          class: `kline-wick ${{cls}}`
+        }}));
+        svg.appendChild(svgEl("rect", {{
+          x: (px - candleWidth / 2).toFixed(2),
+          y: bodyTop.toFixed(2),
+          width: candleWidth.toFixed(2),
+          height: bodyHeight.toFixed(2),
+          class: cls,
+          rx: 1,
+          opacity: 0.88
+        }}));
+        const hit = svgEl("rect", {{
+          x: (px - Math.max(candleWidth, 4) / 2).toFixed(2),
+          y: pad.top,
+          width: Math.max(candleWidth, 4).toFixed(2),
+          height: amountBottom - pad.top,
+          fill: "transparent",
+          stroke: "none",
+          style: "cursor:pointer"
+        }});
+        hit.addEventListener("mouseenter", () => {{
+          tooltip.innerHTML = [
+            `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${{formatDate(row.trade_date)}}</div>`,
+            `<div>开: ${{formatNumber(row.open)}} 高: ${{formatNumber(row.high)}}</div>`,
+            `<div>低: ${{formatNumber(row.low)}} 收: ${{formatNumber(row.close)}}</div>`,
+            `<div>涨跌幅: ${{formatPercent(row.pct_chg)}} · 成交额: ${{formatAmount(row.amount)}}</div>`
+          ].join("");
+          tooltip.style.opacity = "1";
+        }});
+        hit.addEventListener("mousemove", event => {{
+          const r = card.getBoundingClientRect();
+          tooltip.style.left = `${{Math.min(event.clientX - r.left + 12, r.width - tooltip.offsetWidth - 8)}}px`;
+          tooltip.style.top = `${{Math.max(8, event.clientY - r.top - tooltip.offsetHeight - 12)}}px`;
+        }});
+        hit.addEventListener("mouseleave", () => {{
+          tooltip.style.opacity = "0";
+        }});
+        svg.appendChild(hit);
+      }});
+
+      drawMaLine(enriched, "ma20", "var(--blue)");
+      drawMaLine(enriched, "ma60", "var(--orange)");
+
+      svg.appendChild(svgText(4, pad.top + 4, formatNumber(max), "start", "var(--text-tertiary)"));
+      svg.appendChild(svgText(4, pad.top + priceH, formatNumber(min), "start", "var(--text-tertiary)"));
+      svg.appendChild(svgText(4, amountTop + 12, "成交金额", "start", "var(--text-tertiary)"));
+      svg.appendChild(svgText(4, amountTop + 28, formatAmount(maxAmount), "start", "var(--text-tertiary)"));
+      return svg;
+
+      function drawMaLine(items, key, color) {{
+        const points = items.filter(row => Number.isFinite(row[key]));
+        if (!points.length) return;
+        const d = points.map((row, idx) => `${{idx === 0 ? "M" : "L"}} ${{x(row.idx).toFixed(2)}} ${{y(row[key]).toFixed(2)}}`).join(" ");
+        svg.appendChild(svgEl("path", {{ d, class: "ma-line", style: `stroke: ${{color}}` }}));
+      }}
+    }}
+
+    function rollingAverage(rows, idx, windowSize) {{
+      if (idx + 1 < windowSize) return null;
+      const slice = rows.slice(idx - windowSize + 1, idx + 1).map(row => row.close).filter(Number.isFinite);
+      if (slice.length !== windowSize) return null;
+      return slice.reduce((sum, value) => sum + value, 0) / windowSize;
+    }}
+    function toNumber(value) {{
+      const num = Number(value);
+      return Number.isFinite(num) ? num : null;
+    }}
+    function svgEl(name, attrs) {{
+      const el = document.createElementNS("http://www.w3.org/2000/svg", name);
+      Object.entries(attrs || {{}}).forEach(([key, value]) => el.setAttribute(key, value));
+      return el;
+    }}
+    function svgText(x, y, text, anchor, color) {{
+      const el = svgEl("text", {{ x, y, "text-anchor": anchor, fill: color, "font-size": "11" }});
+      el.textContent = text;
+      return el;
+    }}
+    function formatDate(value) {{
+      return String(value || "").replace(/^(\\d{{4}})(\\d{{2}})(\\d{{2}})$/, "$1-$2-$3");
+    }}
+    function formatNumber(value) {{
+      if (!Number.isFinite(value)) return "—";
+      const abs = Math.abs(value);
+      const digits = abs >= 1000 ? 1 : abs >= 100 ? 2 : 3;
+      return value.toFixed(digits);
+    }}
+    function formatPercent(value) {{
+      if (!Number.isFinite(value)) return "—";
+      const sign = value > 0 ? "+" : "";
+      return `${{sign}}${{value.toFixed(2)}}%`;
+    }}
+    function formatAmount(value) {{
+      if (!Number.isFinite(value)) return "—";
+      return `${{(value / 100000).toFixed(2)}}亿`;
+    }}
+  }})();
+  </script>
+  <script>
+  (function () {{
     const data = JSON.parse(document.getElementById("market-data").textContent || "{{}}");
     const records = Array.isArray(data.records) ? data.records.filter(r => r && r.trade_date).slice(-90) : [];
     if (!records.length) return;
@@ -928,7 +1413,7 @@ def render_html(markdown_text: str, market_data: dict, title: str, source_path: 
 
     const chartSection = document.createElement("div");
     chartSection.className = "chart-grid";
-    chartSection.style.marginTop = "28px";
+    chartSection.style.marginTop = "18px";
 
     const charts = [
       {{ title: "成交额趋势", fields: [{{ key: "成交额", color: "var(--blue)", scale: 1e9, unit: "万亿" }}] }},
@@ -1140,10 +1625,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     input_path = Path(args.input)
     output_path = Path(args.output) if args.output else input_path.with_suffix(".html")
     market_data_path = Path(args.market_data)
+    evidence_path = Path(args.evidence) if args.evidence else default_evidence_path(input_path)
     markdown_text = input_path.read_text(encoding="utf-8")
     title = args.title or input_path.stem
     market_data = load_market_data(market_data_path)
-    html_text = render_html(markdown_text, market_data, title, input_path)
+    evidence = load_evidence(evidence_path)
+    index_kline_data = extract_index_kline_payload(evidence, evidence_path)
+    stock_kline_data = extract_stock_kline_payload(evidence, evidence_path)
+    html_text = render_html(markdown_text, market_data, index_kline_data, stock_kline_data, title, input_path)
     if not args.no_validate:
         validate_text_preserved(markdown_text, html_text)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1152,6 +1641,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         "input": str(input_path),
         "output": str(output_path),
         "market_data": str(market_data_path),
+        "evidence": str(evidence_path) if evidence_path is not None else None,
+        "index_kline_records": {
+            key: len((value or {}).get("records") or [])
+            for key, value in (index_kline_data.get("indices") or {}).items()
+        },
+        "stock_kline_records": len(stock_kline_data.get("by_ts_code") or {}),
         "records_available": (market_data.get("quality") or {}).get("records_available", 0),
     }, ensure_ascii=False, indent=2))
     return 0

@@ -57,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--index", default="000300.SH", help="Benchmark index ts_code.")
     parser.add_argument("--sample-limit", type=int, default=40, help="Generic candidate sample limit.")
     parser.add_argument("--market-trend-days", type=int, default=90, help="Market-trend window.")
+    parser.add_argument("--index-kline-days", type=int, default=market_panel.DEFAULT_INDEX_KLINE_DAYS, help="Index candlestick window for HTML output.")
     parser.add_argument("--sleep", type=float, default=0.12, help="Sleep seconds between uncached API calls.")
     parser.add_argument("--fetch-workers", type=int, default=6, help="Max worker threads for cache/API fetching.")
     parser.add_argument("--no-cache", action="store_true", help="Disable cache in market_panel.py.")
@@ -86,6 +87,8 @@ def build_panel_argv(args: argparse.Namespace, extra_args: List[str]) -> List[st
         str(args.sample_limit),
         "--market-trend-days",
         str(args.market_trend_days),
+        "--index-kline-days",
+        str(args.index_kline_days),
         "--sleep",
         str(args.sleep),
         "--fetch-workers",

@@ -8,13 +8,24 @@ Agent 先阅读基础 evidence packet，再用本文件判断哪些对象值得�
 
 ## 什么时候需要 enrichment
 
-优先 enrich 这些对象：
+按双引擎结构优先 enrich 这两类对象：
+
+**引擎 A 优先（新项目发现）：**
 
 - GitHub Trending 中与 AI Agent、模型调用、开发者工具、推理基础设施、数据/评测/部署链路直接相关的项目。
 - Product Hunt 中 tagline 或 topic 显示为 AI 原生产品，且 votes、comments、daily rank 或 maker 背景显示有足够关注度的产品。
-- Hacker News 中 score/comments 较高，且外链不是纯观点短文，而是项目、产品、论文、技术文档或重要公司公告的条目。
-- RSS 中来自 AI/技术信源、标题指向模型、算力、Agent、企业采用、政策监管、融资并购、开源生态变化的条目。
-- 同一个对象跨 GitHub/Product Hunt/HN/RSS 多源出现，或与金十/财联社的产业快讯互相印证。
+- Hacker News（尤其是 Show HN）中 score/comments 较高，且外链是项目、产品、论文、技术文档或重要公司公告而非纯观点短文。
+
+**引擎 B 优先（重点公司动作）：**
+
+- 重点公司官方 RSS（OpenAI / Anthropic / Google AI / DeepMind / Meta AI / Mistral / HuggingFace / NVIDIA / Microsoft AI 等）中含模型版本号、产品功能名、API 端点、定价数值、融资金额或合作主体的条目。
+- 第三方媒体 RSS（The Decoder、Juya AI Daily、AI Hot 等）中转述重点公司动态的条目，enrich 以核对外链与原始公告。
+- 金十 / 财联社快讯中提到 OpenAI / Anthropic / Google / Meta / Kimi / 智谱 / Minimax / 腾讯 / 阿里 / 字节 / DeepSeek / 百度 等重点厂商的条目 —— 这是中国厂商动态主要的可观察入口，enrich 外链页面以拿到原始信息。
+
+**跨引擎交叉验证优先：**
+
+- 同一对象 / 主题跨 GitHub / Product Hunt / HN / RSS / 快讯多源出现 → 提权。
+- 某重点公司（引擎 B）的策略动作和当日开源 / Show HN（引擎 A）涌现的同方向项目互相印证 → 提权。
 
 可以跳过这些对象：
 
@@ -65,6 +76,15 @@ HN/RSS 外链重点看：
 - 外链到底是项目、产品、论文、教程、公司公告还是观点文章。
 - 讨论热度代表关注度，不等于采用度。
 - 若外链指向 GitHub repo，应按 GitHub 项目解读。
+
+重点公司 RSS / 官方公告外链重点看（引擎 B 解读契约）：
+
+- 模型发布：是否有版本号、参数规模、上下文长度、许可证类型（闭源 API / 开源权重 / 受限商用）、benchmark 数据。
+- 产品更新：面向哪类用户（C 端 / 开发者 / 企业 / 政府）、功能是新增还是替换、是否有可访问的产品入口。
+- API & 定价：旧价 vs 新价、起始日期、是否仅限特定地区或客户层级。
+- 融资 & 政策：金额、轮次、领投方、关联估值、政策类型与生效时间。
+- 第三方媒体转述 vs 厂商官方公告：标注证据等级。仅有第三方报道、未见官方页面时，必须降级表述（"据 The Decoder / 金十 报道，待官方公告确认"）。
+- 中国厂商：如果原文是社交平台 / 媒体转述、缺乏官方页面，明确写"无可核实更新"，不要补脑。
 
 ## 使用原则
 

@@ -33,6 +33,8 @@ from db_core import (
     placeholder,
 )
 
+DATE_COLUMNS = {"trade_date", "cal_date", "list_date", "date"}
+
 
 # ---------------------------------------------------------------------------
 # Table mapping: endpoint name → DB table name
@@ -72,12 +74,13 @@ def read_frame(
         return None
 
     import psycopg2
-    from db_core import PG_URL
-    conn = psycopg2.connect(PG_URL)
+    from db_core import PG_CONNECT_TIMEOUT, PG_URL
+    conn = psycopg2.connect(PG_URL, connect_timeout=PG_CONNECT_TIMEOUT)
     try:
         df = pd.read_sql(sql, conn, params=(trade_date,))
         if df.empty:
             return None
+        df = _normalize_date_columns(df)
         # Validate field presence
         if fields:
             missing = [f for f in _split_fields(fields) if f not in df.columns]
@@ -108,9 +111,9 @@ def write_frame(
 
     import psycopg2
     from psycopg2.extras import execute_values
-    from db_core import PG_URL
+    from db_core import PG_CONNECT_TIMEOUT, PG_URL
 
-    conn = psycopg2.connect(PG_URL)
+    conn = psycopg2.connect(PG_URL, connect_timeout=PG_CONNECT_TIMEOUT)
     try:
         cur = conn.cursor()
 
@@ -171,12 +174,13 @@ def read_dataset(
         return None
 
     import psycopg2
-    from db_core import PG_URL
-    conn = psycopg2.connect(PG_URL)
+    from db_core import PG_CONNECT_TIMEOUT, PG_URL
+    conn = psycopg2.connect(PG_URL, connect_timeout=PG_CONNECT_TIMEOUT)
     try:
         df = pd.read_sql(sql, conn, params=params)
         if df.empty:
             return None
+        df = _normalize_date_columns(df)
         if fields:
             missing = [f for f in _split_fields(fields) if f not in df.columns]
             if missing:
@@ -205,9 +209,9 @@ def write_dataset(
 
     import psycopg2
     from psycopg2.extras import execute_values
-    from db_core import PG_URL
+    from db_core import PG_CONNECT_TIMEOUT, PG_URL
 
-    conn = psycopg2.connect(PG_URL)
+    conn = psycopg2.connect(PG_URL, connect_timeout=PG_CONNECT_TIMEOUT)
     try:
         cur = conn.cursor()
         if endpoint == "index_daily" and key:
@@ -243,10 +247,10 @@ def read_market_history() -> Optional["pd.DataFrame"]:
         return None
 
     import psycopg2
-    from db_core import PG_URL
-    conn = psycopg2.connect(PG_URL)
+    from db_core import PG_CONNECT_TIMEOUT, PG_URL
+    conn = psycopg2.connect(PG_URL, connect_timeout=PG_CONNECT_TIMEOUT)
     try:
-        return pd.read_sql("SELECT * FROM market_history ORDER BY date", conn)
+        return _normalize_date_columns(pd.read_sql("SELECT * FROM market_history ORDER BY date", conn))
     finally:
         conn.close()
 
@@ -261,9 +265,9 @@ def write_market_history(df: "pd.DataFrame") -> None:
 
     import psycopg2
     from psycopg2.extras import execute_values
-    from db_core import PG_URL
+    from db_core import PG_CONNECT_TIMEOUT, PG_URL
 
-    conn = psycopg2.connect(PG_URL)
+    conn = psycopg2.connect(PG_URL, connect_timeout=PG_CONNECT_TIMEOUT)
     try:
         cur = conn.cursor()
         cur.execute("TRUNCATE TABLE market_history")
@@ -295,8 +299,8 @@ def get_date_range(
         return None, None
 
     import psycopg2
-    from db_core import PG_URL
-    conn = psycopg2.connect(PG_URL)
+    from db_core import PG_CONNECT_TIMEOUT, PG_URL
+    conn = psycopg2.connect(PG_URL, connect_timeout=PG_CONNECT_TIMEOUT)
     try:
         cur = conn.cursor()
         cur.execute(f"SELECT MIN({date_column}), MAX({date_column}) FROM {table}")
@@ -311,3 +315,31 @@ def get_date_range(
 # ---------------------------------------------------------------------------
 def _split_fields(fields: str) -> list[str]:
     return [f.strip() for f in fields.split(",") if f.strip()]
+
+
+def _normalize_db_date(value: Any) -> Any:
+    if value is None:
+        return value
+    try:
+        if pd.isna(value):
+            return value
+    except (TypeError, ValueError):
+        pass
+    raw = str(value).strip()
+    if not raw:
+        return raw
+    if len(raw) == 8 and raw.isdigit():
+        return raw
+    parsed = pd.to_datetime(raw, errors="coerce")
+    if pd.isna(parsed):
+        return raw
+    return parsed.strftime("%Y%m%d")
+
+
+def _normalize_date_columns(df: "pd.DataFrame") -> "pd.DataFrame":
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    for column in DATE_COLUMNS.intersection(out.columns):
+        out[column] = out[column].apply(_normalize_db_date)
+    return out

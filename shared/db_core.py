@@ -27,8 +27,9 @@ class Backend(Enum):
 # Configuration from environment
 # ---------------------------------------------------------------------------
 BACKEND = Backend(os.getenv("ALPHA_DB_BACKEND", "postgresql"))
-PG_URL = os.getenv("ALPHA_PG_URL", "postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data")
+PG_URL = os.getenv("ALPHA_PG_URL", "postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp")
 SQLITE_DIR = os.path.expanduser(os.getenv("ALPHA_SQLITE_DIR", "."))
+PG_CONNECT_TIMEOUT = int(os.getenv("ALPHA_PG_CONNECT_TIMEOUT", "5"))
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +58,7 @@ def get_connection(db_path: str | None = None) -> Generator[Any, None, None]:
         import psycopg2
         from psycopg2.extras import RealDictCursor
 
-        conn = psycopg2.connect(PG_URL, cursor_factory=RealDictCursor)
+        conn = psycopg2.connect(PG_URL, cursor_factory=RealDictCursor, connect_timeout=PG_CONNECT_TIMEOUT)
         try:
             yield conn
             conn.commit()

@@ -35,6 +35,9 @@ private-butler/chief-butler/dashboard/index.html
 market-ai-news-research/data/
 ch-news-reporter/data/
 ch-stock-skills/a-stock-daily-market-sense/data/cache/
+ch-stock-skills/a-stock-daily-market-sense/reports/*.html
+ch-stock-skills/a-stock-daily-market-sense/reports/*.md
 ch-stock-skills/a-stock-daily-market-sense/reports/evidence_*
 ch-stock-skills/a-stock-daily-market-sense/reports/report_context_*.json
 ch-stock-skills/a-stock-daily-market-sense/reports/module_context_*/
+ch-news-reporter/reports/

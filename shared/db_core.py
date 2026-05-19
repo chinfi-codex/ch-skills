@@ -13,9 +13,20 @@ Or fallback to SQLite:
 from __future__ import annotations
 
 import os
+import threading
 from contextlib import contextmanager
 from enum import Enum
 from typing import Any, Generator
+
+# ---------------------------------------------------------------------------
+# Lazy imports (avoid import-time side effects)
+# ---------------------------------------------------------------------------
+try:
+    from psycopg2 import pool as _pg_pool_mod
+    from psycopg2.extras import RealDictCursor as _RealDictCursor
+except ImportError:  # pragma: no cover
+    _pg_pool_mod = None
+    _RealDictCursor = None
 
 
 class Backend(Enum):
@@ -30,6 +41,46 @@ BACKEND = Backend(os.getenv("ALPHA_DB_BACKEND", "postgresql"))
 PG_URL = os.getenv("ALPHA_PG_URL", "postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp")
 SQLITE_DIR = os.path.expanduser(os.getenv("ALPHA_SQLITE_DIR", "."))
 PG_CONNECT_TIMEOUT = int(os.getenv("ALPHA_PG_CONNECT_TIMEOUT", "5"))
+PG_POOL_MAX = int(os.getenv("ALPHA_PG_POOL_MAX", "8"))
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL connection pool (module-level singleton)
+# ---------------------------------------------------------------------------
+_pg_pool = None
+_pool_lock = threading.Lock()
+
+
+def _get_pool() -> Any:
+    """Return (creating lazily) the module-level ThreadedConnectionPool."""
+    global _pg_pool
+    if _pg_pool is not None:
+        return _pg_pool
+    with _pool_lock:
+        if _pg_pool is not None:
+            return _pg_pool
+        if _pg_pool_mod is None:
+            raise RuntimeError("psycopg2 is required for PostgreSQL backend")
+        _pg_pool = _pg_pool_mod.ThreadedConnectionPool(
+            minconn=1,
+            maxconn=PG_POOL_MAX,
+            dsn=PG_URL,
+            connect_timeout=PG_CONNECT_TIMEOUT,
+        )
+        return _pg_pool
+
+
+def close_pool() -> None:
+    """Close all connections in the pool and reset the singleton.
+
+    Call this at script shutdown or between test cases to release
+    PostgreSQL connections immediately.
+    """
+    global _pg_pool
+    with _pool_lock:
+        if _pg_pool is not None:
+            _pg_pool.closeall()
+            _pg_pool = None
 
 
 # ---------------------------------------------------------------------------
@@ -55,15 +106,15 @@ def get_connection(db_path: str | None = None) -> Generator[Any, None, None]:
         finally:
             conn.close()
     else:
-        import psycopg2
-        from psycopg2.extras import RealDictCursor
-
-        conn = psycopg2.connect(PG_URL, cursor_factory=RealDictCursor, connect_timeout=PG_CONNECT_TIMEOUT)
+        conn = _get_pool().getconn()
         try:
             yield conn
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
-            conn.close()
+            _get_pool().putconn(conn)
 
 
 # ---------------------------------------------------------------------------

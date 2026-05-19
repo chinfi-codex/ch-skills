@@ -39,6 +39,11 @@ from db_core import (
     table_exists,
 )
 
+try:
+    from psycopg2.extras import RealDictCursor
+except ImportError:  # pragma: no cover
+    RealDictCursor = None
+
 DEFAULT_DB_PATH = _SCRIPT_DIR.parent / "data" / "news_research.sqlite"
 
 
@@ -300,7 +305,7 @@ def query_items(
     if BACKEND == Backend.SQLITE:
         cur = conn.execute(sql, params)
     else:
-        cur = conn.cursor()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(adapt_sql(sql), params)
 
     return rows_to_dicts(cur.fetchall())
@@ -365,7 +370,7 @@ def get_enrichments_by_items(
     if BACKEND == Backend.SQLITE:
         cur = conn.execute(sql, item_ids)
     else:
-        cur = conn.cursor()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(adapt_sql(sql), item_ids)
 
     return rows_to_dicts(cur.fetchall())

@@ -734,6 +734,82 @@ class StockDataFetcher:
         df = self._sort_by_date(df, "trade_date", ascending=False)
         return df.head(limit) if not df.empty else df
 
+    def get_valuation_band(self, ts_code: str, years: int = 5) -> Dict[str, Any]:
+        """Compute historical valuation percentile bands from daily_basic history.
+
+        Tushare exposes no dedicated valuation-percentile / PE-band endpoint for
+        individual stocks (only index_dailybasic covers indices). This derives the
+        bands deterministically from daily_basic history. It only computes ranges
+        and percentiles; interpreting them (cheap vs. expensive, which metric to
+        trust per company type) is the model's job.
+        """
+        code = normalize_ts_code(ts_code)
+        end = datetime.now()
+        start = end - timedelta(days=int(years * 365.25) + 5)
+        df = self.pro.daily_basic(
+            ts_code=code,
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+            fields="ts_code,trade_date,close,pe_ttm,pb,ps_ttm,dv_ttm",
+        )
+        if df is None or df.empty:
+            return {"ts_code": code, "error": "no daily_basic history returned"}
+
+        df = df.sort_values("trade_date")
+        latest_date = str(df["trade_date"].iloc[-1])
+        # Metrics whose meaningful samples must be positive (a negative PE is a
+        # loss, not a "cheap" reading); dividend yield keeps zeros.
+        metrics = {"pe_ttm": True, "pb": True, "ps_ttm": True, "dv_ttm": False}
+        windows = [w for w in (1, 3, 5) if w <= years] or [years]
+
+        def _window_stats(series: "pd.Series", current: Optional[float]) -> Dict[str, Any]:
+            s = pd.to_numeric(series, errors="coerce").dropna()
+            if s.empty:
+                return {"sample_size": 0}
+            stats = {
+                "sample_size": int(s.size),
+                "min": round(float(s.min()), 4),
+                "p25": round(float(s.quantile(0.25)), 4),
+                "median": round(float(s.median()), 4),
+                "mean": round(float(s.mean()), 4),
+                "p75": round(float(s.quantile(0.75)), 4),
+                "max": round(float(s.max()), 4),
+            }
+            if current is not None:
+                stats["current_percentile"] = round(float((s <= current).mean()) * 100, 1)
+            return stats
+
+        bands: Dict[str, Any] = {}
+        for metric, positive_only in metrics.items():
+            col = pd.to_numeric(df[metric], errors="coerce")
+            valid = col[col > 0] if positive_only else col.dropna()
+            current = round(float(valid.iloc[-1]), 4) if not valid.empty else None
+            per_window: Dict[str, Any] = {}
+            for w in windows:
+                cutoff = (end - timedelta(days=int(w * 365.25))).strftime("%Y%m%d")
+                window_df = df[df["trade_date"] >= cutoff]
+                window_col = pd.to_numeric(window_df[metric], errors="coerce")
+                window_series = window_col[window_col > 0] if positive_only else window_col
+                per_window[f"{w}y"] = _window_stats(window_series, current)
+            bands[metric] = {
+                "current": current,
+                "positive_only": positive_only,
+                "windows": per_window,
+            }
+
+        return {
+            "ts_code": code,
+            "latest_trade_date": latest_date,
+            "requested_years": years,
+            "history_start": str(df["trade_date"].iloc[0]),
+            "total_trade_days": int(df.shape[0]),
+            "bands": bands,
+            "model_responsibility": (
+                "脚本只给区间和分位。贵贱判断、用哪个指标（成熟龙头看 PE/PB 分位、红利股看 dv_ttm 分位、"
+                "成长股 PE 分位仅作下行参考）、是否因增速降档而历史中枢失效，全部由模型按公司类型判断。"
+            ),
+        }
+
     def get_cninfo_orgid(self, stock_code: str, timeout: int = DEFAULT_CNINFO_TIMEOUT) -> Optional[str]:
         """Resolve a stock code to CNInfo orgId."""
         http = require_requests()
@@ -1233,6 +1309,7 @@ def build_analysis_context(evidence: Dict[str, Any]) -> Dict[str, Any]:
         "valuation_market": {
             "daily_basic_latest": latest_records(datasets.get("daily-basic", {}), 5),
             "daily_latest": latest_records(datasets.get("daily", {}), 5),
+            "valuation_band": (datasets.get("valuation-band") or {}).get("data"),
         },
         "business_structure": {
             "product": latest_records(datasets.get("main-business-product", {}), 20),
@@ -1309,8 +1386,8 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
         "meta": {
             "metadata": metadata,
             "subagent_contract": {
-                "module1_growth_financial": ["module1_growth_financial.json", "SKILL.md 第四节 + 第五节 5.6", "成长与财务质量"],
-                "module2_valuation_market": ["module2_valuation_market.json", "SKILL.md 第五节", "估值与市场定价"],
+                "module1_growth_financial": ["module1_growth_financial.json", "SKILL.md 第四节 + 第五节 5.7", "成长与财务质量"],
+                "module2_valuation_market": ["module2_valuation_market.json", "SKILL.md 第五节（先 5.1 分型，再 5.2 估值快照/分位带）", "估值与市场定价"],
                 "module3_governance": ["module3_governance.json", "SKILL.md 第六节", "股东与治理"],
                 "module4_announcements": ["module4_announcements.json", "SKILL.md 公告与原文升级规则", "公告事件验证"],
                 "module5_research_mainline": ["module5_research_mainline.json", "SKILL.md 主线归属 + 机构调研方法", "机构调研与主线验证"],
@@ -1361,6 +1438,7 @@ def build_evidence_pack(fetcher: StockDataFetcher, args: argparse.Namespace) -> 
         "cashflow": fetch_or_error("cashflow", lambda: fetcher.get_cashflow(ts_code, args.financial_limit)),
         "daily": fetch_or_error("daily", lambda: fetcher.get_daily(ts_code, args.market_limit)),
         "daily-basic": fetch_or_error("daily-basic", lambda: fetcher.get_daily_basic(ts_code, args.market_limit)),
+        "valuation-band": fetch_or_error("valuation-band", lambda: fetcher.get_valuation_band(ts_code, years=args.band_years)),
         "main-business-product": fetch_or_error("main-business-product", lambda: fetcher.get_main_business(ts_code, "P", args.business_limit)),
         "main-business-region": fetch_or_error("main-business-region", lambda: fetcher.get_main_business(ts_code, "D", args.business_limit)),
         "top10-holders": fetch_or_error("top10-holders", lambda: fetcher.get_top10_holders(ts_code, args.holder_periods)),
@@ -1469,6 +1547,7 @@ def _dataset_handlers() -> Dict[str, DatasetHandler]:
         "cashflow": lambda fetcher, args: fetcher.get_cashflow(args.query, args.limit),
         "daily": lambda fetcher, args: fetcher.get_daily(args.query, args.limit),
         "daily-basic": lambda fetcher, args: fetcher.get_daily_basic(args.query, args.limit),
+        "valuation-band": lambda fetcher, args: fetcher.get_valuation_band(args.query, years=args.years),
         "main-business-product": lambda fetcher, args: fetcher.get_main_business(args.query, "P", args.limit),
         "main-business-region": lambda fetcher, args: fetcher.get_main_business(args.query, "D", args.limit),
         "top10-holders": lambda fetcher, args: fetcher.get_top10_holders(args.query, args.limit),
@@ -1621,6 +1700,7 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--download-dir")
     fetch.add_argument("--max-pages", type=int, default=120)
     fetch.add_argument("--max-chars", type=int, default=60000)
+    fetch.add_argument("--years", type=int, default=5, help="Years of history for valuation-band.")
     fetch.add_argument("--timeout", type=int, default=DEFAULT_CNINFO_TIMEOUT)
 
     pack = subparsers.add_parser("pack", help="Build full evidence, compact context, and module contexts for one stock.")
@@ -1628,6 +1708,7 @@ def build_parser() -> argparse.ArgumentParser:
     pack.add_argument("--format", choices=["json"], default="json")
     pack.add_argument("--financial-limit", type=int, default=8)
     pack.add_argument("--market-limit", type=int, default=60)
+    pack.add_argument("--band-years", type=int, default=5, help="Years of history for valuation-band.")
     pack.add_argument("--business-limit", type=int, default=30)
     pack.add_argument("--holder-periods", type=int, default=4)
     pack.add_argument("--holder-limit", type=int, default=30)

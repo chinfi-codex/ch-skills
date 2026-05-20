@@ -3,7 +3,7 @@ Unified database connection layer for all CH Skills.
 
 Switch backend via ALPHA_DB_BACKEND env var:
     export ALPHA_DB_BACKEND=postgresql
-    export ALPHA_PG_URL="postgresql://alpha_user:password@localhost:5432/alpha_data"
+    export ALPHA_PG_URL="postgresql://alpha_user:***@localhost:5432/alpha_data"
 
 Or fallback to SQLite:
     export ALPHA_DB_BACKEND=sqlite

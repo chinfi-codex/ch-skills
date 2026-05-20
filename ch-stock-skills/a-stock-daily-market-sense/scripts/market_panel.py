@@ -84,6 +84,19 @@ MARKET_HISTORY_COLUMNS = [
 ]
 MARKET_ACTIVITY_COLUMNS = ["上涨", "涨停", "下跌", "跌停", "平盘", "活跃度", "情绪值", "成交额"]
 CORRUPTED_MARKET_TURNOVER_COLUMNS = {"?????", "??????"}
+MARKET_HISTORY_DB_COLUMNS = {
+    "日期": "date",
+    "上涨": "rise",
+    "涨停": "limit_up",
+    "下跌": "fall",
+    "跌停": "limit_down",
+    "平盘": "flat",
+    "活跃度": "activity",
+    "情绪值": "sentiment",
+    "成交额": "amount",
+    "融资净买入": "margin_net_buy",
+    "全市场换手率": "turnover_rate",
+}
 
 MARKET_TREND_INDEXES = {
     "shanghai": {"name": "上证指数", "ts_code": "000001.SH"},
@@ -934,7 +947,7 @@ def calc_market_sentiment(
         return 50.0
 
     sentiment = weighted_up / denom * 100
-    return float(np.clip(sentiment, 0, 100))
+    return float(max(0.0, min(100.0, sentiment)))
 
 
 def compute_market_activity_from_daily(
@@ -1043,29 +1056,6 @@ def order_market_history_columns(columns: Iterable[str]) -> List[str]:
             ordered.append(col)
             seen.add(col)
     return ordered
-
-
-def verify_market_history_write(csv_path: Path, target_date: Any) -> None:
-    if BACKEND == Backend.POSTGRESQL:
-        check = read_market_history()
-        if check is None or check.empty:
-            raise RuntimeError("market history write verification failed: market_history table is empty")
-        date_column = "date" if "date" in check.columns else "日期" if "日期" in check.columns else None
-        if date_column is None:
-            raise RuntimeError("market history write verification failed: date column missing in market_history table")
-        target_key = history_date_to_trade_date(target_date)
-        existing_dates = check[date_column].apply(history_date_to_trade_date)
-        if not target_key or not bool((existing_dates == target_key).any()):
-            raise RuntimeError(f"market history write verification failed: {target_date} not found in market_history table")
-        return
-
-    check = pd.read_csv(csv_path, encoding="utf-8-sig")
-    if "日期" not in check.columns:
-        raise RuntimeError(f"market history write verification failed: 日期 column missing in {csv_path}")
-    target_key = history_date_to_trade_date(target_date)
-    existing_dates = check["日期"].apply(history_date_to_trade_date)
-    if not target_key or not bool((existing_dates == target_key).any()):
-        raise RuntimeError(f"market history write verification failed: {target_date} not found in {csv_path}")
 
 
 def sort_market_history_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -1209,93 +1199,108 @@ def write_market_history_json(
     return json_path
 
 
-def upsert_market_history_row(
-    row: Dict[str, Any],
-    columns: List[str],
-    csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
-) -> None:
-    """Write one market-history row while preserving existing non-empty values."""
+def read_market_history_trade_dates(csv_path: Path = DEFAULT_MARKET_HISTORY_CSV) -> Set[str]:
+    """Return normalized trade dates already present in market history."""
+    raw = load_market_history_df(csv_path)
+    if raw is None or raw.empty or "日期" not in raw.columns:
+        return set()
+
+    return {
+        trade_date
+        for trade_date in raw["日期"].apply(history_date_to_trade_date).tolist()
+        if trade_date
+    }
+
+
+def load_market_history_df(csv_path: Path = DEFAULT_MARKET_HISTORY_CSV) -> pd.DataFrame:
+    """Load market history in skill-column shape from DB or CSV."""
     if BACKEND == Backend.POSTGRESQL:
-        db_columns = {
-            "日期": "date",
-            "上涨": "rise",
-            "涨停": "limit_up",
-            "下跌": "fall",
-            "跌停": "limit_down",
-            "平盘": "flat",
-            "活跃度": "activity",
-            "情绪值": "sentiment",
-            "成交额": "amount",
-            "融资净买入": "margin_net_buy",
-            "全市场换手率": "turnover_rate",
-        }
-        ordered_columns = order_market_history_columns(list(dict.fromkeys(columns + list(row.keys()))))
-        existing = read_market_history()
-        if existing is not None and not existing.empty:
-            df = existing.rename(columns={value: key for key, value in db_columns.items()})
-            df = normalize_market_history_columns(df)
-            if "日期" in df.columns:
-                df["日期"] = df["日期"].apply(
-                    lambda value: format_history_date(history_date_to_trade_date(value))
-                    if history_date_to_trade_date(value)
-                    else value
-                )
-            current_columns = order_market_history_columns(
-                list(df.columns) + [col for col in ordered_columns if col in MARKET_HISTORY_COLUMNS]
-            )
-            row = {key: value for key, value in row.items() if key in current_columns}
+        raw = read_market_history()
+        if raw is not None and not raw.empty:
+            raw = raw.rename(columns={value: key for key, value in MARKET_HISTORY_DB_COLUMNS.items()})
+    elif csv_path.exists():
+        raw = pd.read_csv(csv_path, encoding="utf-8-sig")
+    else:
+        raw = pd.DataFrame()
 
-            for col in current_columns:
-                if col not in df.columns:
-                    df[col] = ""
-            df = df.reindex(columns=current_columns)
+    raw = normalize_market_history_columns(raw)
+    if raw is None or raw.empty:
+        return pd.DataFrame()
 
-            target_date = row.get("日期")
-            existing_dates = df["日期"].apply(history_date_to_trade_date)
-            target_key = history_date_to_trade_date(target_date)
-            matches = df.index[existing_dates == target_key] if target_key else df.index[df["日期"] == target_date]
-            if len(matches) > 0:
-                idx = matches[0]
-                for col, new_value in row.items():
-                    if col == "日期":
-                        continue
-                    current_value = df.at[idx, col]
-                    if col == "成交额":
-                        if should_fill_turnover(current_value, new_value):
-                            df.at[idx, col] = new_value
-                        continue
-                    if col == "全市场换手率":
-                        if should_fill_positive_numeric(current_value, new_value):
-                            df.at[idx, col] = new_value
-                        continue
-                    if col == "情绪值":
-                        if should_update_numeric(current_value, new_value):
-                            df.at[idx, col] = new_value
-                        continue
-                    if col in {"涨停", "跌停"}:
-                        if should_update_count(current_value, new_value):
-                            df.at[idx, col] = new_value
-                        continue
-                    if col in {"上涨", "下跌", "平盘"}:
-                        if should_update_count(current_value, new_value):
-                            df.at[idx, col] = new_value
-                        continue
-                    if col == "融资净买入":
-                        if should_update_numeric(current_value, new_value):
-                            df.at[idx, col] = new_value
-                        continue
-                    if is_blank_value(current_value) and not is_blank_value(new_value):
-                        df.at[idx, col] = new_value
-                final_df = sort_market_history_df(df)
-            else:
-                final_columns = order_market_history_columns(list(df.columns) + [col for col in ordered_columns if col not in df.columns])
-                new_row = pd.DataFrame([row], columns=final_columns)
-                final_df = sort_market_history_df(pd.concat([new_row, df.reindex(columns=final_columns)], ignore_index=True))
-        else:
-            final_df = sort_market_history_df(pd.DataFrame([row], columns=ordered_columns))
+    if "日期" in raw.columns:
+        raw["日期"] = raw["日期"].apply(
+            lambda value: format_history_date(history_date_to_trade_date(value))
+            if history_date_to_trade_date(value)
+            else value
+        )
+    return raw
 
+
+def should_update_market_history_field(column: str, current_value: object, new_value: object) -> bool:
+    if column == "成交额":
+        return should_fill_turnover(current_value, new_value)
+    if column == "全市场换手率":
+        return should_fill_positive_numeric(current_value, new_value)
+    if column in {"情绪值", "融资净买入"}:
+        return should_update_numeric(current_value, new_value)
+    if column in {"涨停", "跌停", "上涨", "下跌", "平盘"}:
+        return should_update_count(current_value, new_value)
+    return is_blank_value(current_value) and not is_blank_value(new_value)
+
+
+def merge_market_history_row(df: pd.DataFrame, row: Dict[str, Any], columns: List[str]) -> pd.DataFrame:
+    """Merge one market-history row into an already-loaded history frame."""
+    ordered_columns = order_market_history_columns(list(dict.fromkeys(columns + list(row.keys()))))
+    if df is None or df.empty:
+        return sort_market_history_df(pd.DataFrame([row], columns=ordered_columns))
+
+    current_columns = order_market_history_columns(
+        list(df.columns) + [col for col in ordered_columns if col in MARKET_HISTORY_COLUMNS]
+    )
+    row = {key: value for key, value in row.items() if key in current_columns}
+
+    for col in current_columns:
+        if col not in df.columns:
+            df[col] = ""
+    df = df.reindex(columns=current_columns).copy()
+
+    target_date = row.get("日期")
+    existing_dates = df["日期"].apply(history_date_to_trade_date)
+    target_key = history_date_to_trade_date(target_date)
+    matches = df.index[existing_dates == target_key] if target_key else df.index[df["日期"] == target_date]
+    if len(matches) > 0:
+        idx = matches[0]
+        for col, new_value in row.items():
+            if col == "日期":
+                continue
+            if should_update_market_history_field(col, df.at[idx, col], new_value):
+                df.at[idx, col] = new_value
+        return sort_market_history_df(df)
+
+    final_columns = order_market_history_columns(list(df.columns) + [col for col in ordered_columns if col not in df.columns])
+    new_row = pd.DataFrame([row], columns=final_columns)
+    return sort_market_history_df(pd.concat([new_row, df.reindex(columns=final_columns)], ignore_index=True))
+
+
+def verify_market_history_dates_in_frame(df: pd.DataFrame, target_dates: Iterable[Any]) -> None:
+    if df is None or df.empty or "日期" not in df.columns:
+        raise RuntimeError("market history write verification failed: 日期 column missing")
+    existing_dates = set(df["日期"].apply(history_date_to_trade_date).dropna().tolist())
+    missing = [
+        str(target_date)
+        for target_date in target_dates
+        if history_date_to_trade_date(target_date) not in existing_dates
+    ]
+    if missing:
+        raise RuntimeError(f"market history write verification failed: missing dates {','.join(missing)}")
+
+
+def write_market_history_df(df: pd.DataFrame, csv_path: Path = DEFAULT_MARKET_HISTORY_CSV) -> None:
+    """Persist a full market-history frame once, then refresh derived JSON once."""
+    final_df = sort_market_history_df(df)
+    if BACKEND == Backend.POSTGRESQL:
         db_df = pd.DataFrame()
-        for source_column, db_column in db_columns.items():
+        for source_column, db_column in MARKET_HISTORY_DB_COLUMNS.items():
             if source_column not in final_df.columns:
                 continue
             if source_column == "日期":
@@ -1311,77 +1316,37 @@ def upsert_market_history_row(
         if not db_df.empty and "date" in db_df.columns:
             db_df = db_df.dropna(subset=["date"])
             write_market_history(db_df)
-            verify_market_history_write(csv_path, row.get("日期"))
             write_market_history_json(csv_path)
         return
 
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    ordered_columns = order_market_history_columns(list(dict.fromkeys(columns + list(row.keys()))))
-
-    if csv_path.exists():
-        df = normalize_market_history_columns(pd.read_csv(csv_path, encoding="utf-8-sig"))
-        current_columns = order_market_history_columns(
-            list(df.columns) + [col for col in ordered_columns if col in MARKET_HISTORY_COLUMNS]
-        )
-        row = {key: value for key, value in row.items() if key in current_columns}
-
-        for col in current_columns:
-            if col not in df.columns:
-                df[col] = ""
-        df = df.reindex(columns=current_columns)
-
-        target_date = row.get("日期")
-        existing_dates = df["日期"].apply(history_date_to_trade_date)
-        target_key = history_date_to_trade_date(target_date)
-        matches = df.index[existing_dates == target_key] if target_key else df.index[df["日期"] == target_date]
-        if len(matches) > 0:
-            idx = matches[0]
-            for col, new_value in row.items():
-                if col == "日期":
-                    continue
-                current_value = df.at[idx, col]
-                if col == "成交额":
-                    if should_fill_turnover(current_value, new_value):
-                        df.at[idx, col] = new_value
-                    continue
-                if col == "全市场换手率":
-                    if should_fill_positive_numeric(current_value, new_value):
-                        df.at[idx, col] = new_value
-                    continue
-                if col == "情绪值":
-                    if should_update_numeric(current_value, new_value):
-                        df.at[idx, col] = new_value
-                    continue
-                if col in {"涨停", "跌停"}:
-                    if should_update_count(current_value, new_value):
-                        df.at[idx, col] = new_value
-                    continue
-                if col in {"上涨", "下跌", "平盘"}:
-                    if should_update_count(current_value, new_value):
-                        df.at[idx, col] = new_value
-                    continue
-                if col == "融资净买入":
-                    if should_update_numeric(current_value, new_value):
-                        df.at[idx, col] = new_value
-                    continue
-                if is_blank_value(current_value) and not is_blank_value(new_value):
-                    df.at[idx, col] = new_value
-            sort_market_history_df(df).to_csv(csv_path, index=False, encoding="utf-8-sig")
-            verify_market_history_write(csv_path, target_date)
-            write_market_history_json(csv_path)
-            return
-
-        final_columns = order_market_history_columns(list(df.columns) + [col for col in ordered_columns if col not in df.columns])
-        new_row = pd.DataFrame([row], columns=final_columns)
-        df = pd.concat([new_row, df.reindex(columns=final_columns)], ignore_index=True)
-        sort_market_history_df(df).to_csv(csv_path, index=False, encoding="utf-8-sig")
-        verify_market_history_write(csv_path, row.get("日期"))
-        write_market_history_json(csv_path)
-        return
-
-    sort_market_history_df(pd.DataFrame([row], columns=ordered_columns)).to_csv(csv_path, index=False, encoding="utf-8-sig")
-    verify_market_history_write(csv_path, row.get("日期"))
+    final_df.to_csv(csv_path, index=False, encoding="utf-8-sig")
     write_market_history_json(csv_path)
+
+
+def upsert_market_history_rows(
+    rows: List[Tuple[Dict[str, Any], List[str]]],
+    csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
+) -> None:
+    """Write multiple market-history rows with one load/save/JSON refresh."""
+    if not rows:
+        return
+    df = load_market_history_df(csv_path)
+    target_dates: List[Any] = []
+    for row, columns in rows:
+        target_dates.append(row.get("日期"))
+        df = merge_market_history_row(df, row, columns)
+    verify_market_history_dates_in_frame(df, target_dates)
+    write_market_history_df(df, csv_path)
+
+
+def upsert_market_history_row(
+    row: Dict[str, Any],
+    columns: List[str],
+    csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
+) -> None:
+    """Write one market-history row while preserving existing non-empty values."""
+    upsert_market_history_rows([(row, columns)], csv_path=csv_path)
 
 
 def should_fill_positive_numeric(existing_value: object, new_value: object) -> bool:
@@ -1587,6 +1552,7 @@ def update_market_history(
     margin_net_buy_reason: Optional[str] = None,
     margin_net_buy_trade_date: Optional[str] = None,
     csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
+    defer_write: bool = False,
 ) -> Dict[str, Any]:
     # Primary: compute from Tushare daily data (no external web scraping)
     row, columns, detail = compute_market_activity_from_daily(daily, target_date)
@@ -1668,6 +1634,12 @@ def update_market_history(
         result["fallback_reason"] = fallback_reason or "no confirmed market history fields from tushare.daily or sohu"
         return result
 
+    if defer_write:
+        result["updated"] = True
+        result["_market_history_row"] = row
+        result["_market_history_columns"] = columns
+        return result
+
     try:
         upsert_market_history_row(row, columns, csv_path=csv_path)
     except Exception as exc:
@@ -1676,6 +1648,124 @@ def update_market_history(
 
     result["updated"] = True
     return result
+
+
+def market_history_backfill_dates(
+    target_date: str,
+    trade_dates: Iterable[str],
+    existing_dates: Set[str],
+) -> List[str]:
+    """Find missing market-history rows between the previous stored date and target."""
+    ordered_dates = sorted({str(date) for date in trade_dates if str(date) <= target_date})
+    if not ordered_dates:
+        return [target_date]
+
+    previous_existing = max((date for date in existing_dates if date < target_date), default=None)
+    if previous_existing:
+        candidates = [date for date in ordered_dates if previous_existing < date <= target_date]
+    else:
+        candidates = [target_date]
+
+    dates = [date for date in candidates if date not in existing_dates or date == target_date]
+    if target_date not in dates:
+        dates.append(target_date)
+    return sorted(set(dates))
+
+
+def update_market_history_window(
+    target_date: str,
+    trade_dates: Iterable[str],
+    daily: pd.DataFrame,
+    daily_basic: Optional[pd.DataFrame] = None,
+    pro: Any = None,
+    cache_enabled: bool = True,
+    refresh_cache: bool = False,
+    margin_net_buy: Optional[float] = None,
+    margin_net_buy_reason: Optional[str] = None,
+    margin_net_buy_trade_date: Optional[str] = None,
+    csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
+) -> Dict[str, Any]:
+    """Update target day and fill recent market-history gaps visible in charts."""
+    ordered_trade_dates = sorted({str(date) for date in trade_dates if str(date) <= target_date})
+    previous_by_date = {
+        date: ordered_trade_dates[idx - 1] if idx > 0 else None
+        for idx, date in enumerate(ordered_trade_dates)
+    }
+
+    try:
+        existing_dates = read_market_history_trade_dates(csv_path)
+        dates_to_update = market_history_backfill_dates(target_date, ordered_trade_dates, existing_dates)
+    except Exception as exc:
+        dates_to_update = [target_date]
+        backfill_error = f"failed to inspect existing market history: {exc}"
+    else:
+        backfill_error = None
+
+    target_result: Optional[Dict[str, Any]] = None
+    backfill_updates: List[Dict[str, Any]] = []
+    pending_rows: List[Tuple[Dict[str, Any], List[str]]] = []
+    for trade_date in dates_to_update:
+        if trade_date == target_date:
+            row_margin = margin_net_buy
+            row_margin_reason = margin_net_buy_reason
+            row_margin_trade_date = margin_net_buy_trade_date
+        else:
+            row_margin = None
+            row_margin_reason = "not requested for backfill"
+            row_margin_trade_date = previous_by_date.get(trade_date)
+            if pro is not None and row_margin_trade_date:
+                row_margin, row_margin_reason = fetch_margin_net_buy(
+                    pro,
+                    row_margin_trade_date,
+                    cache_enabled=cache_enabled,
+                    refresh_cache=refresh_cache,
+                )
+
+        result = update_market_history(
+            trade_date,
+            daily,
+            daily_basic,
+            margin_net_buy=row_margin,
+            margin_net_buy_reason=row_margin_reason,
+            margin_net_buy_trade_date=row_margin_trade_date,
+            csv_path=csv_path,
+            defer_write=True,
+        )
+        pending_row = result.pop("_market_history_row", None)
+        pending_columns = result.pop("_market_history_columns", None)
+        if pending_row is not None and pending_columns is not None:
+            pending_rows.append((pending_row, pending_columns))
+        if trade_date == target_date:
+            target_result = result
+        else:
+            backfill_updates.append(result)
+
+    try:
+        upsert_market_history_rows(pending_rows, csv_path=csv_path)
+    except Exception as exc:
+        message = f"failed to update market history csv: {exc}"
+        if target_result is not None:
+            target_result["updated"] = False
+            target_result["fallback_reason"] = message
+        for item in backfill_updates:
+            if item.get("updated"):
+                item["updated"] = False
+                item["fallback_reason"] = message
+
+    if target_result is None:
+        target_result = {
+            "updated": False,
+            "trade_date": target_date,
+            "path": str(csv_path),
+            "json_path": str(market_history_json_path(csv_path)),
+            "fallback_reason": "target date was not updated",
+        }
+
+    target_result["backfill_trade_dates"] = [item.get("trade_date") for item in backfill_updates]
+    target_result["backfill_updates"] = backfill_updates
+    if backfill_error:
+        target_result["backfill_reason"] = backfill_error
+    return target_result
 
 
 def build_limit_stats(limit_df: pd.DataFrame) -> Dict[str, Any]:
@@ -4387,10 +4477,14 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         raise RuntimeError("daily returned no data for the requested window.")
     daily, price_adjustment = apply_qfq_adjustment(daily, adj_factors, target_date)
 
-    market_history_update = update_market_history(
+    market_history_update = update_market_history_window(
         target_date,
+        trade_dates,
         daily,
         basic,
+        pro=pro,
+        cache_enabled=cache_enabled,
+        refresh_cache=args.refresh_cache,
         margin_net_buy=margin_net_buy,
         margin_net_buy_reason=margin_net_buy_reason,
         margin_net_buy_trade_date=margin_trade_date,

@@ -3,10 +3,10 @@
     "type": "stock_ai_analyzer_evidence_pack",
     "ts_code": "688213.SH",
     "query": "688213.SH",
-    "generated_at": "2026-05-20 14:48:48",
-    "announcement_date": "2025-01-01~2026-05-20",
+    "generated_at": "2026-05-20 21:30:06",
+    "announcement_date": "2026-01-01~2026-05-20",
     "source": "data_fetcher.build_analysis_context",
-    "context_generated_at": "2026-05-20 14:48:51"
+    "context_generated_at": "2026-05-20 21:30:09"
   },
   "company": {
     "ts_code": "688213.SH",
@@ -3639,7 +3639,7 @@
     ]
   },
   "business_structure": {
-    "product": [
+    "product_raw": [
       {
         "ts_code": "688213.SH",
         "end_date": "20251231",
@@ -3841,7 +3841,371 @@
         "curr_type": "CNY"
       }
     ],
-    "region": [
+    "product_analysis": {
+      "ok": true,
+      "periods": [
+        {
+          "period": "20251231",
+          "total_sales": 9031240394.26,
+          "total_profit": 2136694273.63,
+          "total_margin_pct": 23.66,
+          "product_count": 2,
+          "products": [
+            {
+              "product": "服务收入",
+              "sales": 42729157.32,
+              "share_pct": 0.47,
+              "margin_pct": 39.11
+            },
+            {
+              "product": "芯片销售",
+              "sales": 8988511236.94,
+              "share_pct": 99.53,
+              "margin_pct": 23.59
+            }
+          ]
+        },
+        {
+          "period": "20241231",
+          "total_sales": 6018478910.31,
+          "total_profit": 1281362250.38,
+          "total_margin_pct": 21.29,
+          "product_count": 2,
+          "products": [
+            {
+              "product": "服务收入",
+              "sales": 100661952.46,
+              "share_pct": 1.67,
+              "margin_pct": 45.36
+            },
+            {
+              "product": "芯片销售",
+              "sales": 5917816957.85,
+              "share_pct": 98.33,
+              "margin_pct": 20.88
+            }
+          ]
+        },
+        {
+          "period": "20231231",
+          "total_sales": 2939102111.45,
+          "total_profit": 618528871.75,
+          "total_margin_pct": 21.04,
+          "product_count": 2,
+          "products": [
+            {
+              "product": "服务收入",
+              "sales": 163517720.76,
+              "share_pct": 5.56,
+              "margin_pct": 58.83
+            },
+            {
+              "product": "芯片销售",
+              "sales": 2775584390.69,
+              "share_pct": 94.44,
+              "margin_pct": 18.82
+            }
+          ]
+        },
+        {
+          "period": "20221231",
+          "total_sales": 5036991118.82,
+          "total_profit": 549853600.0,
+          "total_margin_pct": 10.92,
+          "product_count": 3,
+          "products": [
+            {
+              "product": "CMOS图像传感器",
+              "sales": 2482987300.0,
+              "share_pct": 49.3,
+              "margin_pct": 22.14
+            },
+            {
+              "product": "服务收入",
+              "sales": 142033019.2,
+              "share_pct": 2.82,
+              "margin_pct": 0.0
+            },
+            {
+              "product": "芯片销售",
+              "sales": 2411970799.62,
+              "share_pct": 47.89,
+              "margin_pct": 0.0
+            }
+          ]
+        },
+        {
+          "period": "20211231",
+          "total_sales": 2689327871.83,
+          "total_profit": null,
+          "total_margin_pct": 0.0,
+          "product_count": 3,
+          "products": [
+            {
+              "product": "BSI-RS",
+              "sales": 1077063869.17,
+              "share_pct": 40.05,
+              "margin_pct": 0.0
+            },
+            {
+              "product": "FSI-RS",
+              "sales": 1161693207.31,
+              "share_pct": 43.2,
+              "margin_pct": 0.0
+            },
+            {
+              "product": "GS",
+              "sales": 450570795.35,
+              "share_pct": 16.75,
+              "margin_pct": 0.0
+            }
+          ]
+        },
+        {
+          "period": "20201231",
+          "total_sales": 472901100.0,
+          "total_profit": 164457500.0,
+          "total_margin_pct": 34.78,
+          "product_count": 1,
+          "products": [
+            {
+              "product": "BSI-RS",
+              "sales": 472901100.0,
+              "share_pct": 100.0,
+              "margin_pct": 34.78
+            }
+          ]
+        }
+      ],
+      "product_trends": [
+        {
+          "product": "服务收入",
+          "latest_period": "20251231",
+          "previous_period": "20241231",
+          "sales_growth_yoy_pct": -57.55,
+          "share_change_pct_points": -1.2,
+          "margin_change_pct_points": -6.25,
+          "latest_share_pct": 0.47,
+          "latest_margin_pct": 39.11
+        },
+        {
+          "product": "芯片销售",
+          "latest_period": "20251231",
+          "previous_period": "20241231",
+          "sales_growth_yoy_pct": 51.89,
+          "share_change_pct_points": 1.2,
+          "margin_change_pct_points": 2.71,
+          "latest_share_pct": 99.53,
+          "latest_margin_pct": 23.59
+        },
+        {
+          "product": "BSI-RS",
+          "latest_period": "20211231",
+          "previous_period": "20201231",
+          "sales_growth_yoy_pct": 127.76,
+          "share_change_pct_points": -59.95,
+          "margin_change_pct_points": -34.78,
+          "latest_share_pct": 40.05,
+          "latest_margin_pct": 0.0
+        }
+      ],
+      "rankings": {
+        "fastest_growth": [
+          {
+            "product": "BSI-RS",
+            "latest_period": "20211231",
+            "previous_period": "20201231",
+            "sales_growth_yoy_pct": 127.76,
+            "share_change_pct_points": -59.95,
+            "margin_change_pct_points": -34.78,
+            "latest_share_pct": 40.05,
+            "latest_margin_pct": 0.0
+          },
+          {
+            "product": "芯片销售",
+            "latest_period": "20251231",
+            "previous_period": "20241231",
+            "sales_growth_yoy_pct": 51.89,
+            "share_change_pct_points": 1.2,
+            "margin_change_pct_points": 2.71,
+            "latest_share_pct": 99.53,
+            "latest_margin_pct": 23.59
+          },
+          {
+            "product": "服务收入",
+            "latest_period": "20251231",
+            "previous_period": "20241231",
+            "sales_growth_yoy_pct": -57.55,
+            "share_change_pct_points": -1.2,
+            "margin_change_pct_points": -6.25,
+            "latest_share_pct": 0.47,
+            "latest_margin_pct": 39.11
+          }
+        ],
+        "slowest_growth": [
+          {
+            "product": "服务收入",
+            "latest_period": "20251231",
+            "previous_period": "20241231",
+            "sales_growth_yoy_pct": -57.55,
+            "share_change_pct_points": -1.2,
+            "margin_change_pct_points": -6.25,
+            "latest_share_pct": 0.47,
+            "latest_margin_pct": 39.11
+          },
+          {
+            "product": "芯片销售",
+            "latest_period": "20251231",
+            "previous_period": "20241231",
+            "sales_growth_yoy_pct": 51.89,
+            "share_change_pct_points": 1.2,
+            "margin_change_pct_points": 2.71,
+            "latest_share_pct": 99.53,
+            "latest_margin_pct": 23.59
+          },
+          {
+            "product": "BSI-RS",
+            "latest_period": "20211231",
+            "previous_period": "20201231",
+            "sales_growth_yoy_pct": 127.76,
+            "share_change_pct_points": -59.95,
+            "margin_change_pct_points": -34.78,
+            "latest_share_pct": 40.05,
+            "latest_margin_pct": 0.0
+          }
+        ],
+        "share_expanding": [
+          {
+            "product": "芯片销售",
+            "latest_period": "20251231",
+            "previous_period": "20241231",
+            "sales_growth_yoy_pct": 51.89,
+            "share_change_pct_points": 1.2,
+            "margin_change_pct_points": 2.71,
+            "latest_share_pct": 99.53,
+            "latest_margin_pct": 23.59
+          },
+          {
+            "product": "服务收入",
+            "latest_period": "20251231",
+            "previous_period": "20241231",
+            "sales_growth_yoy_pct": -57.55,
+            "share_change_pct_points": -1.2,
+            "margin_change_pct_points": -6.25,
+            "latest_share_pct": 0.47,
+            "latest_margin_pct": 39.11
+          },
+          {
+            "product": "BSI-RS",
+            "latest_period": "20211231",
+            "previous_period": "20201231",
+            "sales_growth_yoy_pct": 127.76,
+            "share_change_pct_points": -59.95,
+            "margin_change_pct_points": -34.78,
+            "latest_share_pct": 40.05,
+            "latest_margin_pct": 0.0
+          }
+        ],
+        "share_shrinking": [
+          {
+            "product": "BSI-RS",
+            "latest_period": "20211231",
+            "previous_period": "20201231",
+            "sales_growth_yoy_pct": 127.76,
+            "share_change_pct_points": -59.95,
+            "margin_change_pct_points": -34.78,
+            "latest_share_pct": 40.05,
+            "latest_margin_pct": 0.0
+          },
+          {
+            "product": "服务收入",
+            "latest_period": "20251231",
+            "previous_period": "20241231",
+            "sales_growth_yoy_pct": -57.55,
+            "share_change_pct_points": -1.2,
+            "margin_change_pct_points": -6.25,
+            "latest_share_pct": 0.47,
+            "latest_margin_pct": 39.11
+          },
+          {
+            "product": "芯片销售",
+            "latest_period": "20251231",
+            "previous_period": "20241231",
+            "sales_growth_yoy_pct": 51.89,
+            "share_change_pct_points": 1.2,
+            "margin_change_pct_points": 2.71,
+            "latest_share_pct": 99.53,
+            "latest_margin_pct": 23.59
+          }
+        ],
+        "margin_improving": [
+          {
+            "product": "芯片销售",
+            "latest_period": "20251231",
+            "previous_period": "20241231",
+            "sales_growth_yoy_pct": 51.89,
+            "share_change_pct_points": 1.2,
+            "margin_change_pct_points": 2.71,
+            "latest_share_pct": 99.53,
+            "latest_margin_pct": 23.59
+          },
+          {
+            "product": "服务收入",
+            "latest_period": "20251231",
+            "previous_period": "20241231",
+            "sales_growth_yoy_pct": -57.55,
+            "share_change_pct_points": -1.2,
+            "margin_change_pct_points": -6.25,
+            "latest_share_pct": 0.47,
+            "latest_margin_pct": 39.11
+          },
+          {
+            "product": "BSI-RS",
+            "latest_period": "20211231",
+            "previous_period": "20201231",
+            "sales_growth_yoy_pct": 127.76,
+            "share_change_pct_points": -59.95,
+            "margin_change_pct_points": -34.78,
+            "latest_share_pct": 40.05,
+            "latest_margin_pct": 0.0
+          }
+        ],
+        "margin_deteriorating": [
+          {
+            "product": "BSI-RS",
+            "latest_period": "20211231",
+            "previous_period": "20201231",
+            "sales_growth_yoy_pct": 127.76,
+            "share_change_pct_points": -59.95,
+            "margin_change_pct_points": -34.78,
+            "latest_share_pct": 40.05,
+            "latest_margin_pct": 0.0
+          },
+          {
+            "product": "服务收入",
+            "latest_period": "20251231",
+            "previous_period": "20241231",
+            "sales_growth_yoy_pct": -57.55,
+            "share_change_pct_points": -1.2,
+            "margin_change_pct_points": -6.25,
+            "latest_share_pct": 0.47,
+            "latest_margin_pct": 39.11
+          },
+          {
+            "product": "芯片销售",
+            "latest_period": "20251231",
+            "previous_period": "20241231",
+            "sales_growth_yoy_pct": 51.89,
+            "share_change_pct_points": 1.2,
+            "margin_change_pct_points": 2.71,
+            "latest_share_pct": 99.53,
+            "latest_margin_pct": 23.59
+          }
+        ]
+      },
+      "model_responsibility": "以上均为确定性计算：收入增速、占比变化、毛利率变化。判断'主力产品线是否切换'、'毛利率改善是否来自结构升级'等结论由模型完成。"
+    },
+    "region_raw": [
       {
         "ts_code": "688213.SH",
         "end_date": "20251231",
@@ -4042,6 +4406,279 @@
         "bz_cost": NaN,
         "curr_type": "CNY"
       }
-    ]
+    ],
+    "region_analysis": {
+      "ok": true,
+      "periods": [
+        {
+          "period": "20251231",
+          "total_sales": 9031240394.26,
+          "total_margin_pct": 23.66,
+          "domestic": {
+            "sales": 5172901305.67,
+            "share_pct": 57.28,
+            "margin_pct": 23.16
+          },
+          "overseas": {
+            "sales": 3858339088.59,
+            "share_pct": 42.72,
+            "margin_pct": 24.33
+          },
+          "other_sales": null,
+          "regions": [
+            {
+              "region": "国内",
+              "sales": 5172901305.67,
+              "share_pct": 57.28,
+              "margin_pct": 23.16
+            },
+            {
+              "region": "海外",
+              "sales": 3858339088.59,
+              "share_pct": 42.72,
+              "margin_pct": 24.33
+            }
+          ]
+        },
+        {
+          "period": "20241231",
+          "total_sales": 5968147934.08,
+          "total_margin_pct": 21.09,
+          "domestic": {
+            "sales": 4007965994.6,
+            "share_pct": 67.16,
+            "margin_pct": 20.9
+          },
+          "overseas": {
+            "sales": 1960181939.48,
+            "share_pct": 32.84,
+            "margin_pct": 21.47
+          },
+          "other_sales": null,
+          "regions": [
+            {
+              "region": "国内",
+              "sales": 4007965994.6,
+              "share_pct": 67.16,
+              "margin_pct": 20.9
+            },
+            {
+              "region": "海外",
+              "sales": 1960181939.48,
+              "share_pct": 32.84,
+              "margin_pct": 21.47
+            }
+          ]
+        },
+        {
+          "period": "20231231",
+          "total_sales": 2857343251.07,
+          "total_margin_pct": 19.96,
+          "domestic": {
+            "sales": 1616322946.02,
+            "share_pct": 56.57,
+            "margin_pct": 22.5
+          },
+          "overseas": {
+            "sales": 1241020305.05,
+            "share_pct": 43.43,
+            "margin_pct": 16.67
+          },
+          "other_sales": -0.0,
+          "regions": [
+            {
+              "region": "国内",
+              "sales": 1616322946.02,
+              "share_pct": 56.57,
+              "margin_pct": 22.5
+            },
+            {
+              "region": "海外",
+              "sales": 1241020305.05,
+              "share_pct": 43.43,
+              "margin_pct": 16.67
+            }
+          ]
+        },
+        {
+          "period": "20221231",
+          "total_sales": 2482987300.0,
+          "total_margin_pct": 22.14,
+          "domestic": {
+            "sales": 1173229900.0,
+            "share_pct": 47.25,
+            "margin_pct": 28.0
+          },
+          "overseas": {
+            "sales": 1309757400.0,
+            "share_pct": 52.75,
+            "margin_pct": 16.9
+          },
+          "other_sales": null,
+          "regions": [
+            {
+              "region": "国内",
+              "sales": 1173229900.0,
+              "share_pct": 47.25,
+              "margin_pct": 28.0
+            },
+            {
+              "region": "海外",
+              "sales": 1309757400.0,
+              "share_pct": 52.75,
+              "margin_pct": 16.9
+            }
+          ]
+        },
+        {
+          "period": "20211231",
+          "total_sales": 2689327871.83,
+          "total_margin_pct": 0.0,
+          "domestic": {
+            "sales": 1045440297.87,
+            "share_pct": 38.87,
+            "margin_pct": 0.0
+          },
+          "overseas": {
+            "sales": 1643887573.96,
+            "share_pct": 61.13,
+            "margin_pct": 0.0
+          },
+          "other_sales": null,
+          "regions": [
+            {
+              "region": "国内",
+              "sales": 1045440297.87,
+              "share_pct": 38.87,
+              "margin_pct": 0.0
+            },
+            {
+              "region": "海外",
+              "sales": 1643887573.96,
+              "share_pct": 61.13,
+              "margin_pct": 0.0
+            }
+          ]
+        },
+        {
+          "period": "20201231",
+          "total_sales": 1527181504.99,
+          "total_margin_pct": 0.0,
+          "domestic": {
+            "sales": 672086401.61,
+            "share_pct": 44.01,
+            "margin_pct": 0.0
+          },
+          "overseas": {
+            "sales": 855095103.38,
+            "share_pct": 55.99,
+            "margin_pct": 0.0
+          },
+          "other_sales": null,
+          "regions": [
+            {
+              "region": "国内",
+              "sales": 672086401.61,
+              "share_pct": 44.01,
+              "margin_pct": 0.0
+            },
+            {
+              "region": "海外",
+              "sales": 855095103.38,
+              "share_pct": 55.99,
+              "margin_pct": 0.0
+            }
+          ]
+        },
+        {
+          "period": "20191231",
+          "total_sales": 679154976.08,
+          "total_margin_pct": 0.0,
+          "domestic": {
+            "sales": 267515354.42,
+            "share_pct": 39.39,
+            "margin_pct": 0.0
+          },
+          "overseas": {
+            "sales": 411639621.66,
+            "share_pct": 60.61,
+            "margin_pct": 0.0
+          },
+          "other_sales": 0.0,
+          "regions": [
+            {
+              "region": "国内",
+              "sales": 267515354.42,
+              "share_pct": 39.39,
+              "margin_pct": 0.0
+            },
+            {
+              "region": "海外",
+              "sales": 411639621.66,
+              "share_pct": 60.61,
+              "margin_pct": 0.0
+            }
+          ]
+        },
+        {
+          "period": "20181231",
+          "total_sales": 324631155.09,
+          "total_margin_pct": 0.0,
+          "domestic": {
+            "sales": 9992500.8,
+            "share_pct": 3.08,
+            "margin_pct": 0.0
+          },
+          "overseas": {
+            "sales": 314638654.29,
+            "share_pct": 96.92,
+            "margin_pct": 0.0
+          },
+          "other_sales": null,
+          "regions": [
+            {
+              "region": "国内",
+              "sales": 9992500.8,
+              "share_pct": 3.08,
+              "margin_pct": 0.0
+            },
+            {
+              "region": "海外",
+              "sales": 314638654.29,
+              "share_pct": 96.92,
+              "margin_pct": 0.0
+            }
+          ]
+        }
+      ],
+      "region_trends": [
+        {
+          "region": "国内",
+          "latest_period": "20251231",
+          "previous_period": "20241231",
+          "sales_growth_yoy_pct": 29.07,
+          "share_change_pct_points": -9.88,
+          "margin_change_pct_points": 2.26,
+          "latest_share_pct": 57.28,
+          "latest_margin_pct": 23.16
+        },
+        {
+          "region": "海外",
+          "latest_period": "20251231",
+          "previous_period": "20241231",
+          "sales_growth_yoy_pct": 96.84,
+          "share_change_pct_points": 9.88,
+          "margin_change_pct_points": 2.86,
+          "latest_share_pct": 42.72,
+          "latest_margin_pct": 24.33
+        }
+      ],
+      "globalization_summary": {
+        "overseas_share_trend": 9.88,
+        "overseas_growth_vs_domestic": 67.77,
+        "overseas_margin_vs_domestic": 1.17
+      },
+      "model_responsibility": "以上均为确定性计算：地区收入占比、海外vs国内增速差、毛利率差。判断'出海逻辑是否成立'、'汇率风险敞口'等结论由模型完成。"
+    }
   }
 }

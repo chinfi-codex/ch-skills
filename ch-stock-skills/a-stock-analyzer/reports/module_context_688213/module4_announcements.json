@@ -3,10 +3,10 @@
     "type": "stock_ai_analyzer_evidence_pack",
     "ts_code": "688213.SH",
     "query": "688213.SH",
-    "generated_at": "2026-05-20 14:48:48",
-    "announcement_date": "2025-01-01~2026-05-20",
+    "generated_at": "2026-05-20 21:30:06",
+    "announcement_date": "2026-01-01~2026-05-20",
     "source": "data_fetcher.build_analysis_context",
-    "context_generated_at": "2026-05-20 14:48:51"
+    "context_generated_at": "2026-05-20 21:30:09"
   },
   "announcements": {
     "summary": {

@@ -232,10 +232,12 @@ python scripts/render_report_html.py -i reports/report_600519.md --evidence repo
 - 注意：对于重资产行业（基建、制造）和高速扩张期企业，短期自由现金流为负不一定是负面信号，需要结合 ROIC 和资本开支去向判断。
 
 **维度四：业务结构与竞争壁垒**
-- 数据来源：`company`（行业、简介）、`main-business-product`（产品结构）、联网检索（行业格局）。
+- 数据来源：`company`（行业、简介）、`main-business-product`（产品结构）、`main-business-region`（地区结构）、联网检索（行业格局）。
+- **脚本已做确定性计算**：`pack` 产出的 `business_structure.product_analysis` 和 `business_structure.region_analysis` 包含跨期对比——产品/地区的收入增速、占比变化、毛利率变化。模型直接引用这些计算结果做判断，不用自己算。
 - 判断要素：
-  - **收入集中度**：单一产品/客户占比 > 50% 是集中风险，但也可能是细分领域龙头的表现。
-  - **业务多元性**：多产品线且新产品贡献上升 → 第二增长曲线正在形成。
+  - **收入集中度**：单一产品/客户占比 > 50% 是集中风险，但也可能是细分领域龙头的表现。`product_analysis.rankings.share_expanding/shrinking` 直接显示结构变化方向。
+  - **业务多元性**：多产品线且新产品贡献上升 → 第二增长曲线正在形成。看 `product_analysis.product_trends` 中哪些产品增速远高于整体、占比在提升。
+  - **出海/全球化**：`region_analysis.globalization_summary` 给出海外收入占比变化趋势、海外 vs 国内增速差、毛利率差。海外增速显著高于国内 + 海外毛利率不低于国内 = 出海逻辑成立；反之需警惕汇率侵蚀或低价竞争。
   - **竞争壁垒类型**：规模效应、品牌溢价、技术专利、客户切换成本、网络效应、牌照/准入。
   - **行业位置**：在行业中处于领导者/挑战者/跟随者的哪个位置？
 - 注意：竞争壁垒和行业地位等外部判断，如果无法仅从财务数据得出，必须联网检索并引用来源。不要编造。

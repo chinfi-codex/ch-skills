@@ -1444,6 +1444,343 @@ def latest_records(dataset: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
     return []
 
 
+def _normalize_product_name(name: str) -> str:
+    """Normalize product names to handle slight variations across periods."""
+    if not name:
+        return "其他"
+    name = str(name).strip()
+    # Merge common synonyms
+    if name in ("服务费收入", "服务收入"):
+        return "服务收入"
+    return name
+
+
+def _normalize_region_name(name: str) -> str:
+    """Normalize region names and classify as domestic/overseas."""
+    if not name:
+        return "其他"
+    name = str(name).strip()
+    if name in ("国外", "海外", "港澳台地区及海外地区", "境外", "海外地区"):
+        return "海外"
+    if "大陆" in name or "境内" in name or "国内" in name:
+        return "国内"
+    return name
+
+
+def _to_float(value: Any) -> Optional[float]:
+    try:
+        f = float(value)
+        if pd.isna(f):
+            return None
+        return f
+    except (TypeError, ValueError):
+        return None
+
+
+def _clean_nan(obj: Any) -> Any:
+    """Recursively replace NaN/inf/numpy types with native Python types for valid JSON."""
+    # Handle numpy types first
+    if hasattr(obj, "item"):  # numpy scalar
+        obj = obj.item()
+    if isinstance(obj, float):
+        if pd.isna(obj) or obj != obj:  # NaN check
+            return None
+        if obj == float("inf") or obj == float("-inf"):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _clean_nan(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_clean_nan(v) for v in obj]
+    return obj
+
+
+def analyze_business_product(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Analyze product structure changes: growth, share shift, margin trends.
+
+    Returns a deterministic summary with no model judgement — just computed
+    metrics that the model interprets according to SKILL.md.
+    """
+    if not rows:
+        return {"ok": False, "error": "no_data", "periods": [], "products": []}
+
+    # Build DataFrame
+    df = pd.DataFrame(rows)
+    required = {"end_date", "bz_item", "bz_sales", "bz_profit"}
+    if not required.issubset(df.columns):
+        return {"ok": False, "error": "missing_columns", "periods": [], "products": []}
+
+    df["product"] = df["bz_item"].apply(_normalize_product_name)
+    df["sales"] = df["bz_sales"].apply(_to_float)
+    df["profit"] = df["bz_profit"].apply(_to_float)
+    df["cost"] = df["bz_cost"].apply(_to_float) if "bz_cost" in df.columns else None
+
+    # Deduplicate: aggregate sales/profit/cost by (period, normalized_product)
+    agg_cols = {"sales": "sum", "profit": "sum"}
+    if "cost" in df.columns and df["cost"].notna().any():
+        agg_cols["cost"] = "sum"
+    df = df.groupby(["end_date", "product"], as_index=False).agg(agg_cols)
+
+    df["margin"] = df.apply(
+        lambda r: round(r["profit"] / r["sales"] * 100, 2)
+        if r["profit"] is not None and r["sales"] and r["sales"] > 0
+        else None,
+        axis=1,
+    )
+
+    # Group by period
+    periods = sorted(df["end_date"].dropna().unique(), reverse=True)
+    # Prefer annual (1231) for YoY, but keep all periods
+    annual_periods = [p for p in periods if str(p).endswith("1231")]
+    analysis_periods = annual_periods if len(annual_periods) >= 2 else periods
+
+    # Per-period aggregates
+    period_summary: List[Dict[str, Any]] = []
+    product_periods: Dict[str, List[Dict[str, Any]]] = {}
+
+    for period in analysis_periods:
+        sub = df[df["end_date"] == period]
+        total_sales = sub["sales"].sum()
+        total_profit = sub["profit"].sum()
+        total_margin = round(total_profit / total_sales * 100, 2) if total_sales and total_sales > 0 else None
+
+        p_data = {
+            "period": period,
+            "total_sales": round(total_sales, 2) if total_sales else None,
+            "total_profit": round(total_profit, 2) if total_profit else None,
+            "total_margin_pct": total_margin,
+            "product_count": sub["product"].nunique(),
+            "products": [],
+        }
+
+        for _, row in sub.iterrows():
+            prod = row["product"]
+            sales = row["sales"]
+            margin = row["margin"]
+            share = round(sales / total_sales * 100, 2) if sales and total_sales and total_sales > 0 else None
+            prod_entry = {
+                "product": prod,
+                "sales": round(sales, 2) if sales else None,
+                "share_pct": share,
+                "margin_pct": margin,
+            }
+            p_data["products"].append(prod_entry)
+            product_periods.setdefault(prod, []).append({"period": period, "sales": sales, "share_pct": share, "margin_pct": margin})
+
+        period_summary.append(p_data)
+
+    # Cross-period analysis ( YoY growth, share shift, margin change )
+    product_trends: List[Dict[str, Any]] = []
+    for prod, history in product_periods.items():
+        history = sorted(history, key=lambda x: x["period"], reverse=True)
+        if len(history) < 2:
+            continue
+        latest = history[0]
+        previous = history[1]
+        sales_growth = None
+        if latest["sales"] and previous["sales"] and previous["sales"] > 0:
+            sales_growth = round((latest["sales"] - previous["sales"]) / previous["sales"] * 100, 2)
+        share_change = None
+        if latest["share_pct"] is not None and previous["share_pct"] is not None:
+            share_change = round(latest["share_pct"] - previous["share_pct"], 2)
+        margin_change = None
+        if latest["margin_pct"] is not None and previous["margin_pct"] is not None:
+            margin_change = round(latest["margin_pct"] - previous["margin_pct"], 2)
+
+        product_trends.append({
+            "product": prod,
+            "latest_period": latest["period"],
+            "previous_period": previous["period"],
+            "sales_growth_yoy_pct": sales_growth,
+            "share_change_pct_points": share_change,
+            "margin_change_pct_points": margin_change,
+            "latest_share_pct": latest["share_pct"],
+            "latest_margin_pct": latest["margin_pct"],
+        })
+
+    # Rankings (deterministic only)
+    def safe_sort(items, key, reverse=True):
+        return sorted([i for i in items if i.get(key) is not None], key=lambda x: x[key], reverse=reverse)
+
+    result = {
+        "ok": True,
+        "periods": period_summary,
+        "product_trends": product_trends,
+        "rankings": {
+            "fastest_growth": safe_sort(product_trends, "sales_growth_yoy_pct")[:3],
+            "slowest_growth": safe_sort(product_trends, "sales_growth_yoy_pct", reverse=False)[:3],
+            "share_expanding": safe_sort(product_trends, "share_change_pct_points")[:3],
+            "share_shrinking": safe_sort(product_trends, "share_change_pct_points", reverse=False)[:3],
+            "margin_improving": safe_sort(product_trends, "margin_change_pct_points")[:3],
+            "margin_deteriorating": safe_sort(product_trends, "margin_change_pct_points", reverse=False)[:3],
+        },
+        "model_responsibility": (
+            "以上均为确定性计算：收入增速、占比变化、毛利率变化。"
+            "判断'主力产品线是否切换'、'毛利率改善是否来自结构升级'等结论由模型完成。"
+        ),
+    }
+    return _clean_nan(result)
+
+
+def analyze_business_region(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Analyze regional structure: domestic/overseas split, globalization trend.
+
+    Returns deterministic metrics for model interpretation.
+    """
+    if not rows:
+        return {"ok": False, "error": "no_data", "periods": [], "regions": []}
+
+    df = pd.DataFrame(rows)
+    required = {"end_date", "bz_item", "bz_sales", "bz_profit"}
+    if not required.issubset(df.columns):
+        return {"ok": False, "error": "missing_columns", "periods": [], "regions": []}
+
+    df["region"] = df["bz_item"].apply(_normalize_region_name)
+    df["sales"] = df["bz_sales"].apply(_to_float)
+    df["profit"] = df["bz_profit"].apply(_to_float)
+
+    # Deduplicate: aggregate by (period, normalized_region)
+    df = df.groupby(["end_date", "region"], as_index=False).agg({"sales": "sum", "profit": "sum"})
+
+    df["margin"] = df.apply(
+        lambda r: round(r["profit"] / r["sales"] * 100, 2)
+        if r["profit"] is not None and r["sales"] and r["sales"] > 0
+        else None,
+        axis=1,
+    )
+
+    periods = sorted(df["end_date"].dropna().unique(), reverse=True)
+    annual_periods = [p for p in periods if str(p).endswith("1231")]
+    analysis_periods = annual_periods if len(annual_periods) >= 2 else periods
+
+    period_summary: List[Dict[str, Any]] = []
+    region_periods: Dict[str, List[Dict[str, Any]]] = {}
+
+    for period in analysis_periods:
+        sub = df[df["end_date"] == period]
+        total_sales = sub["sales"].sum()
+        total_profit = sub["profit"].sum()
+        total_margin = round(total_profit / total_sales * 100, 2) if total_sales and total_sales > 0 else None
+
+        # Domestic vs overseas split
+        domestic_sales = sub[sub["region"] == "国内"]["sales"].sum()
+        overseas_sales = sub[sub["region"] == "海外"]["sales"].sum()
+        other_sales = total_sales - domestic_sales - overseas_sales if total_sales else 0
+
+        domestic_margin = None
+        overseas_margin = None
+        domestic_sub = sub[sub["region"] == "国内"]
+        overseas_sub = sub[sub["region"] == "海外"]
+        if not domestic_sub.empty:
+            ds = domestic_sub["sales"].sum()
+            dp = domestic_sub["profit"].sum()
+            domestic_margin = round(dp / ds * 100, 2) if ds and ds > 0 else None
+        if not overseas_sub.empty:
+            os_ = overseas_sub["sales"].sum()
+            op = overseas_sub["profit"].sum()
+            overseas_margin = round(op / os_ * 100, 2) if os_ and os_ > 0 else None
+
+        p_data = {
+            "period": period,
+            "total_sales": round(total_sales, 2) if total_sales else None,
+            "total_margin_pct": total_margin,
+            "domestic": {
+                "sales": round(domestic_sales, 2) if domestic_sales else None,
+                "share_pct": round(domestic_sales / total_sales * 100, 2) if domestic_sales and total_sales and total_sales > 0 else None,
+                "margin_pct": domestic_margin,
+            },
+            "overseas": {
+                "sales": round(overseas_sales, 2) if overseas_sales else None,
+                "share_pct": round(overseas_sales / total_sales * 100, 2) if overseas_sales and total_sales and total_sales > 0 else None,
+                "margin_pct": overseas_margin,
+            },
+            "other_sales": round(other_sales, 2) if other_sales else None,
+            "regions": [],
+        }
+
+        for _, row in sub.iterrows():
+            region = row["region"]
+            sales = row["sales"]
+            share = round(sales / total_sales * 100, 2) if sales and total_sales and total_sales > 0 else None
+            p_data["regions"].append({
+                "region": region,
+                "sales": round(sales, 2) if sales else None,
+                "share_pct": share,
+                "margin_pct": row["margin"],
+            })
+            region_periods.setdefault(region, []).append({
+                "period": period, "sales": sales, "share_pct": share, "margin_pct": row["margin"],
+            })
+
+        period_summary.append(p_data)
+
+    # Cross-period trends
+    region_trends: List[Dict[str, Any]] = []
+    for region, history in region_periods.items():
+        history = sorted(history, key=lambda x: x["period"], reverse=True)
+        if len(history) < 2:
+            continue
+        latest = history[0]
+        previous = history[1]
+        sales_growth = None
+        if latest["sales"] and previous["sales"] and previous["sales"] > 0:
+            sales_growth = round((latest["sales"] - previous["sales"]) / previous["sales"] * 100, 2)
+        share_change = None
+        if latest["share_pct"] is not None and previous["share_pct"] is not None:
+            share_change = round(latest["share_pct"] - previous["share_pct"], 2)
+        margin_change = None
+        if latest["margin_pct"] is not None and previous["margin_pct"] is not None:
+            margin_change = round(latest["margin_pct"] - previous["margin_pct"], 2)
+
+        region_trends.append({
+            "region": region,
+            "latest_period": latest["period"],
+            "previous_period": previous["period"],
+            "sales_growth_yoy_pct": sales_growth,
+            "share_change_pct_points": share_change,
+            "margin_change_pct_points": margin_change,
+            "latest_share_pct": latest["share_pct"],
+            "latest_margin_pct": latest["margin_pct"],
+        })
+
+    # Overseas trend summary
+    overseas_trend = None
+    domestic_trend = None
+    for t in region_trends:
+        if t["region"] == "海外":
+            overseas_trend = t
+        if t["region"] == "国内":
+            domestic_trend = t
+
+    result = {
+        "ok": True,
+        "periods": period_summary,
+        "region_trends": region_trends,
+        "globalization_summary": {
+            "overseas_share_trend": overseas_trend["share_change_pct_points"] if overseas_trend else None,
+            "overseas_growth_vs_domestic": (
+                round(overseas_trend["sales_growth_yoy_pct"] - domestic_trend["sales_growth_yoy_pct"], 2)
+                if overseas_trend and domestic_trend
+                and overseas_trend.get("sales_growth_yoy_pct") is not None
+                and domestic_trend.get("sales_growth_yoy_pct") is not None
+                else None
+            ),
+            "overseas_margin_vs_domestic": (
+                round(overseas_trend["latest_margin_pct"] - domestic_trend["latest_margin_pct"], 2)
+                if overseas_trend and domestic_trend
+                and overseas_trend.get("latest_margin_pct") is not None
+                and domestic_trend.get("latest_margin_pct") is not None
+                else None
+            ),
+        },
+        "model_responsibility": (
+            "以上均为确定性计算：地区收入占比、海外vs国内增速差、毛利率差。"
+            "判断'出海逻辑是否成立'、'汇率风险敞口'等结论由模型完成。"
+        ),
+    }
+    return _clean_nan(result)
+
+
 def build_analysis_context(evidence: Dict[str, Any]) -> Dict[str, Any]:
     """Build compact model context from the full evidence pack."""
     datasets = evidence.get("datasets", {})
@@ -1495,8 +1832,10 @@ def build_analysis_context(evidence: Dict[str, Any]) -> Dict[str, Any]:
             "valuation_band": (datasets.get("valuation-band") or {}).get("data"),
         },
         "business_structure": {
-            "product": latest_records(datasets.get("main-business-product", {}), 20),
-            "region": latest_records(datasets.get("main-business-region", {}), 20),
+            "product_raw": latest_records(datasets.get("main-business-product", {}), 20),
+            "product_analysis": analyze_business_product(latest_records(datasets.get("main-business-product", {}), 40)),
+            "region_raw": latest_records(datasets.get("main-business-region", {}), 20),
+            "region_analysis": analyze_business_region(latest_records(datasets.get("main-business-region", {}), 40)),
         },
         "governance": {
             "top10_holders": latest_records(datasets.get("top10-holders", {}), 40),

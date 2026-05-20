@@ -1,0 +1,171 @@
+{
+  "ts_code": "688213.SH",
+  "as_of": "20260519",
+  "growth": {
+    "annual_periods": [
+      "20241231",
+      "20251231"
+    ],
+    "revenue_cagr_pct": 51.32,
+    "netprofit_cagr_pct": 154.94,
+    "years_span": 1,
+    "revenue_yoy_series": [
+      108.8705,
+      51.324
+    ],
+    "all_positive_yoy": true,
+    "yoy_volatility": 57.55
+  },
+  "valuation": {
+    "pe_ttm": 42.6356,
+    "pe_pct": 7.4,
+    "pe_window": "5y",
+    "pb": 8.1726,
+    "pb_pct": 80.7,
+    "ps_ttm": 4.7503,
+    "ps_pct": 12.2
+  },
+  "thesis_candidates": [
+    {
+      "archetype": "预期差",
+      "subtype": "A1 高估值消化",
+      "rationale": "CAGR≈154.94%，PE_ttm=42.6356 仍偏高但已 de-rate 到5y分位7.4%（盈利追赶估值）",
+      "confidence_hint": "估值消化型",
+      "probes": [
+        {
+          "why": "判断消化是否到位、增速能否延续",
+          "cmd": "fetch report-text 688213.SH --report-type annual --section mda"
+        }
+      ]
+    },
+    {
+      "archetype": "预期差",
+      "subtype": "B 未定价期权",
+      "rationale": "需读年报/季报确认是否存在未被定价的新业务/远期技术期权（机器人/AI 等）",
+      "confidence_hint": "必须靠方向二年报挖掘确认",
+      "probes": [
+        {
+          "why": "捞公司自述的新布局/在研/募投，判断材料性与主线连接",
+          "cmd": "fetch report-text 688213.SH --report-type q1 --section AI",
+          "and": "fetch report-text 688213.SH --report-type annual --section mda + 联网检索当前主线"
+        }
+      ]
+    }
+  ],
+  "anomaly_flags": [
+    {
+      "category": "业绩异常",
+      "period": "20241231",
+      "metric": "营收YoY",
+      "value": 108.87,
+      "threshold": 50.0,
+      "direction": "暴增",
+      "severity": "high",
+      "probe": {
+        "why": "增速极端，需查驱动/可持续性/基数",
+        "cmd": "fetch report-text 688213.SH --report-type annual --section mda",
+        "and": "联网检索行业景气与新闻"
+      }
+    },
+    {
+      "category": "业绩异常",
+      "period": "20241231",
+      "metric": "归母YoY",
+      "value": 2662.76,
+      "threshold": 50.0,
+      "direction": "暴增",
+      "severity": "high",
+      "probe": {
+        "why": "增速极端，需查驱动/可持续性/基数",
+        "cmd": "fetch report-text 688213.SH --report-type annual --section mda",
+        "and": "联网检索行业景气与新闻"
+      }
+    },
+    {
+      "category": "业绩异常",
+      "period": "20251231",
+      "metric": "营收YoY",
+      "value": 51.32,
+      "threshold": 50.0,
+      "direction": "暴增",
+      "severity": "high",
+      "probe": {
+        "why": "增速极端，需查驱动/可持续性/基数",
+        "cmd": "fetch report-text 688213.SH --report-type annual --section mda",
+        "and": "联网检索行业景气与新闻"
+      }
+    },
+    {
+      "category": "业绩异常",
+      "period": "20251231",
+      "metric": "归母YoY",
+      "value": 154.94,
+      "threshold": 50.0,
+      "direction": "暴增",
+      "severity": "high",
+      "probe": {
+        "why": "增速极端，需查驱动/可持续性/基数",
+        "cmd": "fetch report-text 688213.SH --report-type annual --section mda",
+        "and": "联网检索行业景气与新闻"
+      }
+    },
+    {
+      "category": "利润质量",
+      "period": "20251231",
+      "metric": "净利率",
+      "value": 4.51,
+      "threshold": 3.0,
+      "direction": "上行",
+      "severity": "low",
+      "probe": {
+        "why": "利润率拐点",
+        "cmd": "fetch report-text 688213.SH --report-type annual --section mda"
+      }
+    },
+    {
+      "category": "利润质量",
+      "period": "20251231",
+      "metric": "经营现金流/净利",
+      "value": 0.11,
+      "threshold": 0.5,
+      "direction": "利润未转现金",
+      "severity": "high",
+      "probe": {
+        "why": "利润含金量弱，查营运资本占用",
+        "cmd": "fetch report-text 688213.SH --report-type annual --section 财务报告",
+        "and": "看应收/存货附注与信用政策"
+      }
+    },
+    {
+      "category": "营运资本",
+      "period": "20251231",
+      "metric": "应收增速-营收增速",
+      "value": 184.3,
+      "threshold": 15.0,
+      "direction": "应收扩张快于收入",
+      "severity": "med",
+      "probe": {
+        "why": "可能放宽信用确认收入",
+        "cmd": "fetch report-text 688213.SH --report-type annual --section 财务报告"
+      }
+    },
+    {
+      "category": "营运资本",
+      "period": "20251231",
+      "metric": "存货/营收",
+      "value": 44.9,
+      "threshold": 35.0,
+      "direction": "存货占营收高",
+      "severity": "low",
+      "probe": {
+        "why": "备货高，关注周转与跌价",
+        "cmd": "fetch balance 688213.SH --limit 8"
+      }
+    }
+  ],
+  "notes": [
+    "年度样本仅 2 期：CAGR/稳定性代表性弱，建议 income/financial 提高 --limit。",
+    "月线横盘需长周期日线确认（pack 默认 daily 仅 60 日）。"
+  ],
+  "model_responsibility": "脚本只做阈值 surfacing：命题原型与异常旗标都是线索，不是结论。命题证实/证伪、归因、贵贱与买卖判断、措辞，全部由模型按 references/deep_mode.md 完成。"
+}

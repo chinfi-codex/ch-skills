@@ -1,6 +1,6 @@
 ---
 name: stock-ai-analyzer
-description: A股股票基本面投研分析方法论。当用户要求按股票名称或代码分析中国A股、判断公司成长性与核心亮点、评估估值阶段与隐含预期、分析财务质量与业务结构、判断股票是否处于当前市场主线内、做竞争格局分析或风险排查，或基于Tushare/公开市场数据生成股票基本面分析时使用。用户提问形式包括"帮我分析XX股票""XX的基本面怎么样""XX成长性如何""XX估值贵不贵""XX为什么值得买""XX是不是当前主线""XX所在行业景气度如何"等。该技能要求分析流程、判断框架、内容输出全部写在SKILL.md中；脚本只允许做原子数据获取。
+description: A股股票基本面投研分析方法论。当用户要求按股票名称或代码分析中国A股、判断公司成长性与核心亮点、评估估值阶段与隐含预期、分析财务质量与业务结构、判断股票是否处于当前市场主线内、做竞争格局分析或风险排查，或基于Tushare/公开市场数据生成股票基本面分析时使用。用户提问形式包括"帮我分析XX股票""XX的基本面怎么样""XX成长性如何""XX估值贵不贵""XX为什么值得买""XX是不是当前主线""XX所在行业景气度如何"等。当用户要求"深度分析""深挖""把异常/业绩变化查清楚""读年报找线索""挖未被定价的看点"时，进入 Deep 模式（见 references/deep_mode.md）做命题先行的主动调研。该技能要求分析流程、判断框架、内容输出全部写在SKILL.md中；脚本只允许做原子数据获取与确定性扫描。
 ---
 
 # A股基本面投研分析助手
@@ -101,6 +101,14 @@ python scripts/render_report_html.py -i reports/report_600519.md --evidence repo
 - 文本保全校验默认**只告警不中断**（`--no-validate` 完全跳过，`--strict` 才在不一致时报错），正文内容怎么改都不会导致 HTML 生成失败。
 - 沿用模板（第八节）里的小标题命名能让图表落到最合适的位置；即使大改结构，最坏情况也只是少几张图，正文与样式不受影响。
 
+### 2.4 Deep 模式工具（确定性 surfacing + 原文定位）
+
+仅 Deep 模式用，方法论见 `references/deep_mode.md`：
+
+- `python scripts/thesis_scan.py --evidence reports/evidence_<code>.json`：对 evidence pack 做**确定性**扫描，输出命题原型（含预期差 A1/A2/B）、异常旗标（业绩/利润质量/营运资本/减值/资本结构）和每条的 probe 建议。只 surfacing，不下结论。
+- `fetch report-text … --section <章节/关键词> [--to-markdown]`：把"盲读前 6 万字"升级为**定向读章节**。年报标准章节别名 `mda`/`财务报告`/`重要事项`/`公司治理`/`股东`；不命中（如季报、或"研发"/"AI"等子主题）自动降级为关键词窗口。引擎优先级 pymupdf4llm → PyMuPDF → PyPDF2，缺高级库自动回退。
+- `fetch daily <code> --limit 0`：取全量日线，供"月线横盘/价格 vs 盈利"等长周期判断（pack 默认仅 60 日）。
+
 ---
 
 ## 三、工作流程
@@ -162,6 +170,19 @@ python scripts/render_report_html.py -i reports/report_600519.md --evidence repo
 - 显式说明关键假设（包括主线归属假设）。
 - 避免单边结论，写出最强反方观点。
 - 结尾写清风险和非投资建议声明。
+
+### Deep 模式（可选，用户显式要求时）
+
+骨架流程产出"骨头架子"。当用户要求**深度分析 / 深挖 / 把异常或业绩变化查清楚 / 读年报找线索 / 挖未被定价的看点**时，进入 Deep 模式，按 `references/deep_mode.md` 做**命题先行的主动调研**：
+
+1. 先跑确定性扫描定命题与疑点：`python scripts/thesis_scan.py --evidence reports/evidence_<code>.json` → 得到命题原型（含预期差 A1/A2/B）、异常旗标、每条的 probe 建议。
+2. 按主循环 **THESIS → INVESTIGATE → CATALYST GAP → INTEGRATE** 调研：
+   - **方向一（异常归因）**：对 high/med 旗标定向读原文——`fetch report-text <code> --report-type annual --section mda|财务报告`、`fetch announcement-text ... --searchkey 减值`——定位业绩暴增/暴跌、商誉计提、OCF 背离、应收/存货异常的成因。
+   - **方向二（主线线索挖掘）**：先联网定当前主线关键词，再 `fetch report-text <code> --section <主线词>` 从年报/季报捞出公司自述、与主线相关但骨架漏掉的线索（尤其 B 型"未被定价的期权"）。
+3. 用 subagent 隔离读 PDF 的上下文，设调研预算（读 ≤3–5 篇原文、联网 ≤5 次），原文拿不到降置信度不编造。
+4. 发现以"深度调研发现"小块嵌进下文报告模板对应章节（成长/财务诊断、核心看点、主线归属修正、风险），严格区分原文事实 vs 推断。
+
+完整 playbook、命题原型表、`--section` 用法、停止条件见 `references/deep_mode.md`。
 
 ---
 

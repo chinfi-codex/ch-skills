@@ -1,0 +1,365 @@
+{
+  "metadata": {
+    "type": "stock_ai_analyzer_evidence_pack",
+    "ts_code": "002881.SZ",
+    "query": "002881.SZ",
+    "generated_at": "2026-05-20 14:16:11",
+    "announcement_date": "2025-11-20~2026-05-20",
+    "source": "data_fetcher.build_analysis_context",
+    "context_generated_at": "2026-05-20 14:16:14"
+  },
+  "announcements": {
+    "summary": {
+      "count": 30,
+      "original_text_candidate_count": 1
+    },
+    "recent": [
+      {
+        "announcement_time": "2026-05-08",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "关于举行2025年度及2026年第一季度网上业绩说明会的公告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-08/1225281189.PDF"
+      },
+      {
+        "announcement_time": "2026-05-07",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "H股公告—截至2026年4月30日止月份之股份发行人的证券变动月报表",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-07/1225279250.PDF"
+      },
+      {
+        "announcement_time": "2026-04-30",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2025年度可持续发展暨环境、社会及管治报告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-30/1225257982.PDF"
+      },
+      {
+        "announcement_time": "2026-04-30",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "关于公司全资子公司完成工商变更登记的公告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-30/1225257981.PDF"
+      },
+      {
+        "announcement_time": "2026-04-30",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "第四届董事会第十七次会议决议公告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-30/1225257980.PDF"
+      },
+      {
+        "announcement_time": "2026-04-30",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2026年一季度报告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-30/1225257978.PDF"
+      },
+      {
+        "announcement_time": "2026-04-25",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "关于公司控股股东部分A股股份质押及解除质押的公告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-25/1225177392.PDF"
+      },
+      {
+        "announcement_time": "2026-04-18",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "H股公告—董事会会议召开日期",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-18/1225116024.PDF"
+      },
+      {
+        "announcement_time": "2026-04-16",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "东莞证券股份有限公司关于美格智能技术股份有限公司使用A股部分闲置募集资金暂时补充流动资金的核查意见",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-16/1225108055.PDF"
+      },
+      {
+        "announcement_time": "2026-04-16",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "关于使用A股部分闲置募集资金暂时补充流动资金的公告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-16/1225108054.PDF"
+      },
+      {
+        "announcement_time": "2026-04-16",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "第四届董事会第十六次会议决议公告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-16/1225108053.PDF"
+      },
+      {
+        "announcement_time": "2026-04-16",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "关于签署投资项目合作协议的公告",
+        "subcategory": "重大合作/投资项目",
+        "tags": [
+          "合作",
+          "投资项目"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-16/1225108052.PDF"
+      },
+      {
+        "announcement_time": "2026-04-14",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "关于归还A股暂时补充流动资金的闲置募集资金的公告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-14/1225097456.PDF"
+      },
+      {
+        "announcement_time": "2026-04-02",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "H股公告—截至2026年3月31日止月份之股份发行人的证券变动月报表",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-02/1225072700.PDF"
+      },
+      {
+        "announcement_time": "2026-03-31",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2025年度董事会工作报告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-31/1225059508.PDF"
+      },
+      {
+        "announcement_time": "2026-03-31",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2025年度财务决算报告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-31/1225059507.PDF"
+      },
+      {
+        "announcement_time": "2026-03-31",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2025年度独立董事述职报告（杨政）",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-31/1225059506.PDF"
+      },
+      {
+        "announcement_time": "2026-03-31",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2025年度独立董事述职报告（马利军）",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-31/1225059505.PDF"
+      },
+      {
+        "announcement_time": "2026-03-31",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2025年度内部控制审计报告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-31/1225059504.PDF"
+      },
+      {
+        "announcement_time": "2026-03-31",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2025年度内部控制自我评价报告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-31/1225059503.PDF"
+      }
+    ],
+    "original_text_candidates": [
+      {
+        "announcement_time": "2026-04-16",
+        "title": "关于签署投资项目合作协议的公告",
+        "subcategory": "重大合作/投资项目",
+        "tags": [
+          "合作",
+          "投资项目"
+        ],
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-16/1225108052.PDF",
+        "reason": "标题命中高信息密度事件，默认应进一步读取 PDF 原文。"
+      }
+    ]
+  },
+  "reports": {
+    "recent": [
+      {
+        "announcement_time": "2026-04-30",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2026年一季度报告",
+        "report_type": "q1",
+        "report_type_label": "一季度报告",
+        "report_year": 2026,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-30/1225257978.PDF"
+      },
+      {
+        "announcement_time": "2026-03-31",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2025年年度报告",
+        "report_type": "annual",
+        "report_type_label": "年度报告",
+        "report_year": 2025,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-31/1225059486.PDF"
+      },
+      {
+        "announcement_time": "2025-08-28",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2025年半年度报告",
+        "report_type": "half",
+        "report_type_label": "半年度报告",
+        "report_year": 2025,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2025-08-28/1224591369.PDF"
+      },
+      {
+        "announcement_time": "2025-10-28",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2025年三季度报告",
+        "report_type": "q3",
+        "report_type_label": "三季度报告",
+        "report_year": 2025,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2025-10-28/1224742852.PDF"
+      },
+      {
+        "announcement_time": "2025-04-28",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2025年一季度报告",
+        "report_type": "q1",
+        "report_type_label": "一季度报告",
+        "report_year": 2025,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2025-04-28/1223323414.PDF"
+      },
+      {
+        "announcement_time": "2025-04-28",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2024年年度报告",
+        "report_type": "annual",
+        "report_type_label": "年度报告",
+        "report_year": 2024,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2025-04-28/1223323479.PDF"
+      },
+      {
+        "announcement_time": "2024-08-29",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2024年半年度报告",
+        "report_type": "half",
+        "report_type_label": "半年度报告",
+        "report_year": 2024,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2024-08-29/1221026527.PDF"
+      },
+      {
+        "announcement_time": "2024-10-29",
+        "sec_name": "美格智能",
+        "sec_code": "002881",
+        "title": "2024年三季度报告",
+        "report_type": "q3",
+        "report_type_label": "三季度报告",
+        "report_year": 2024,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2024-10-29/1221539069.PDF"
+      }
+    ]
+  }
+}

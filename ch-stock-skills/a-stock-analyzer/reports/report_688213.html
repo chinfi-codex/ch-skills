@@ -1,0 +1,674 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>report_688213</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --surface: #ffffff;
+      --card: #ffffff;
+      --ink-1: #1f2329;
+      --ink-2: #4b5563;
+      --ink-3: #7a8290;
+      --ink-4: #a8b0bb;
+      --line-1: #e6e9ef;
+      --line-2: #eef1f5;
+      --tint: #f3f6fb;
+      --accent: #1a73e8;
+      --accent-ink: #0b57d0;
+      --accent-soft: #e8f0fe;
+      --accent-hair: #c2d7f7;
+      --pos: #137333;
+      --pos-soft: #e6f4ea;
+      --neg: #c5221f;
+      --neg-soft: #fce8e6;
+      --warn: #b06000;
+      --warn-soft: #feefc3;
+      --violet: #6f4ee0;
+      --orange: #e8710a;
+      --blue: var(--accent);
+      --green: var(--pos);
+      --red: var(--neg);
+      --purple: var(--violet);
+      --yellow: var(--warn);
+      --cyan: #0aa5b8;
+      --r-xs: 4px;
+      --r-sm: 6px;
+      --r-md: 8px;
+      --r-lg: 12px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { background: var(--bg); }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink-1);
+      font-family: "Inter", "Helvetica Neue", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 14.5px;
+      line-height: 1.75;
+      font-feature-settings: "cv02", "cv03", "cv04", "cv11", "tnum" 0;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    td, th, code, pre { font-feature-settings: "tnum"; }
+
+    .page {
+      width: min(1180px, calc(100vw - 48px));
+      margin: 0 auto 96px;
+      padding-top: 28px;
+    }
+    .report { max-width: 1180px; margin: 0 auto; }
+
+    /* doc header */
+    .doc-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      padding-bottom: 18px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid var(--line-1);
+    }
+    .doc-head .dh-title { font-size: 13px; font-weight: 600; color: var(--ink-2); letter-spacing: 0.04em; }
+    .doc-head .dh-meta {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 11.5px; color: var(--ink-4); letter-spacing: 0.02em;
+    }
+
+    .report h1 { font-size: 26px; font-weight: 700; margin: 12px 0 6px; letter-spacing: -0.02em; }
+    .report h2 {
+      font-size: 22px; font-weight: 600; margin: 56px 0 18px; line-height: 1.3;
+      color: var(--ink-1); letter-spacing: -0.01em; padding-bottom: 12px;
+      border-bottom: 1px solid var(--line-1); position: relative;
+    }
+    .report h2::before {
+      content: ""; position: absolute; left: 0; bottom: -1px;
+      width: 32px; height: 2px; background: var(--accent); border-radius: 2px;
+    }
+    .report h2[data-idx="0"]::before { background: var(--accent); }
+    .report h2[data-idx="1"]::before { background: var(--violet); }
+    .report h2[data-idx="2"]::before { background: var(--orange); }
+    .report h2[data-idx="3"]::before { background: var(--neg); }
+    .report h2[data-idx="4"]::before { background: var(--pos); }
+    .report h2[data-idx="5"]::before { background: var(--cyan); }
+    .report > h1:first-child, .report > h2:first-child { margin-top: 0; }
+
+    .report h3 { font-size: 15.5px; font-weight: 600; margin: 32px 0 12px; line-height: 1.4; color: var(--ink-1); letter-spacing: -0.005em; }
+    .report h4 { font-size: 14px; font-weight: 600; margin: 20px 0 10px; line-height: 1.4; color: var(--ink-2); }
+    .report p { margin: 12px 0; color: var(--ink-2); font-size: 14px; line-height: 1.85; text-wrap: pretty; }
+    .report ul { margin: 12px 0 12px 4px; padding-left: 20px; color: var(--ink-2); }
+    .report li { margin: 5px 0; font-size: 14px; line-height: 1.8; }
+
+    .report blockquote {
+      margin: 18px 0; padding: 12px 18px; border-left: 2px solid var(--accent);
+      background: transparent; color: var(--ink-2); font-size: 13.5px; font-weight: 500;
+    }
+
+    .callout {
+      position: relative; color: #3d2c00;
+      background: linear-gradient(180deg, #fff8d8 0%, #fff4c2 100%);
+      border: 1px solid #f7d774; border-left: 4px solid #f9ab00; border-radius: var(--r-md);
+      padding: 14px 18px 14px 44px; margin: 20px 0; font-weight: 500; font-size: 13.5px; line-height: 1.8;
+    }
+    .callout::before {
+      content: ""; position: absolute; left: 16px; top: 17px; width: 16px; height: 16px;
+      border-radius: 50%; background: #f9ab00; box-shadow: 0 0 0 4px rgba(249, 171, 0, 0.18);
+    }
+
+    .table-wrap {
+      overflow-x: auto; margin: 14px 0 28px; border-radius: var(--r-md);
+      background: var(--surface); border: 1px solid var(--line-1);
+    }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 640px; background: var(--surface); font-size: 12.5px; }
+    th, td { padding: 7px 12px; border-bottom: 1px solid var(--line-2); vertical-align: middle; word-break: keep-all; color: var(--ink-1); line-height: 1.55; }
+    th {
+      padding: 9px 12px; background: var(--tint); font-weight: 500; color: var(--ink-3);
+      font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase;
+      position: sticky; top: 0; z-index: 1; text-align: left; border-bottom: 1px solid var(--line-1); white-space: nowrap;
+    }
+    th.align-right, td.align-right { text-align: right; }
+    th.align-center, td.align-center { text-align: center; }
+    td.align-right { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: var(--ink-1); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+    td .num-pos { color: var(--neg); font-weight: 500; }
+    td .num-neg { color: var(--pos); font-weight: 500; }
+    td .pill {
+      display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 500;
+      line-height: 1.7; background: var(--accent-soft); color: var(--accent-ink); border: 1px solid var(--accent-hair);
+    }
+    td .pill.pos { background: var(--pos-soft); color: var(--pos); border-color: #b7dfc4; }
+    td .pill.neg { background: var(--neg-soft); color: var(--neg); border-color: #f5c2c0; }
+    td .pill.warn { background: var(--warn-soft); color: var(--warn); border-color: #f7d774; }
+    td .pill.violet { background: #ece4fb; color: var(--violet); border-color: #d4c2f5; }
+    tbody td { color: var(--ink-2); }
+    tbody td:first-child { color: var(--ink-1); font-weight: 500; }
+    tbody tr:nth-child(even) td { background: #fafbfd; }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: #eef4fe; }
+
+    code { background: var(--tint); border-radius: var(--r-xs); padding: 1px 6px; color: var(--accent-ink); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; font-weight: 500; border: 1px solid var(--line-1); }
+    pre { overflow-x: auto; background: #1f2329; color: #e6e9ef; border-radius: var(--r-md); padding: 18px 20px; margin: 16px 0; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; line-height: 1.65; border: 1px solid #2a2f37; }
+
+    /* chart cards */
+    .chart-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 14px 0 8px; }
+    .chart-card { background: var(--surface); border-radius: var(--r-md); padding: 14px 16px 12px; border: 1px solid var(--line-1); transition: border-color 0.15s ease; }
+    .chart-card:hover { border-color: var(--accent-hair); }
+    .chart-title { font-size: 12px; font-weight: 600; margin: 0 0 4px; color: var(--ink-3); letter-spacing: 0.05em; text-transform: uppercase; }
+    .chart-subtitle { color: var(--ink-4); font-size: 11.5px; margin-bottom: 6px; font-family: "JetBrains Mono", ui-monospace, monospace; }
+    .chart-card svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .kline-card { background: var(--surface); border: 1px solid var(--line-1); border-radius: var(--r-md); padding: 14px 16px 12px; margin: 12px 0 20px; overflow: hidden; position: relative; }
+    .kline-card svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .kline-candle-up { fill: var(--neg); stroke: var(--neg); }
+    .kline-candle-down { fill: var(--pos); stroke: var(--pos); }
+    .amount-bar-up { fill: rgba(220, 38, 38, 0.42); }
+    .amount-bar-down { fill: rgba(5, 150, 105, 0.42); }
+    .kline-wick { stroke-width: 1; }
+    .ma-line { fill: none; stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+    .axis, .grid-line { stroke: var(--line-2); stroke-width: 1; }
+    .series-line { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+    .legend { display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--ink-3); font-size: 11.5px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line-2); }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; font-family: "JetBrains Mono", ui-monospace, monospace; }
+    .legend span::before { content: ""; display: inline-block; width: 8px; height: 2px; border-radius: 1px; background: var(--legend-color); }
+
+    /* valuation band */
+    .band-row-label { fill: var(--ink-3); font-size: 11px; font-family: "JetBrains Mono", ui-monospace, monospace; }
+    .band-track { stroke: var(--line-1); stroke-width: 2; stroke-linecap: round; }
+    .band-box { fill: var(--accent-soft); }
+    .band-median { stroke: var(--ink-3); stroke-width: 1.5; }
+    .band-current { fill: var(--orange); stroke: #fff; stroke-width: 1.5; }
+    .band-pct { font-size: 10.5px; font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+    /* hero summary card (核心判断) */
+    .summary-card {
+      position: relative;
+      background:
+        radial-gradient(120% 140% at 100% 0%, rgba(111, 78, 224, 0.10) 0%, transparent 55%),
+        radial-gradient(110% 130% at 0% 100%, rgba(26, 115, 232, 0.10) 0%, transparent 55%),
+        linear-gradient(180deg, #f4f7fc 0%, #eaf0f8 100%);
+      color: var(--ink-1); border: 1px solid #d8e2f0; border-radius: var(--r-lg);
+      padding: 24px 28px 22px; margin: 4px 0 36px; overflow: hidden;
+      box-shadow: 0 1px 2px rgba(15, 23, 32, 0.04), 0 8px 24px rgba(26, 115, 232, 0.06);
+    }
+    .summary-card::before {
+      content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, var(--accent) 0%, var(--violet) 38%, var(--orange) 72%, var(--neg) 100%);
+    }
+    .summary-card .summary-label {
+      font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent-ink);
+      font-weight: 600; margin: 0 0 14px; display: inline-flex; align-items: center; gap: 10px;
+      font-family: "JetBrains Mono", "Inter", ui-monospace, monospace;
+    }
+    .summary-card .summary-label::before {
+      content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+      box-shadow: 0 0 0 4px rgba(26, 115, 232, 0.18);
+    }
+    .summary-card .summary-body { font-size: 15px; line-height: 1.9; color: var(--ink-1); margin: 0 0 8px; text-wrap: pretty; }
+    .summary-card .summary-body:last-child { margin-bottom: 0; }
+    .summary-card .summary-body .num-pos { color: var(--neg); font-weight: 600; }
+    .summary-card .summary-body .num-neg { color: var(--pos); font-weight: 600; }
+    .summary-card .summary-body .kw {
+      color: var(--ink-1); font-weight: 600;
+      background: linear-gradient(180deg, transparent 62%, rgba(249, 171, 0, 0.28) 62%, rgba(249, 171, 0, 0.28) 92%, transparent 92%);
+      padding: 0 1px;
+    }
+
+    @media (max-width: 1024px) { .chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 900px) {
+      .page { width: calc(100vw - 24px); padding-top: 20px; margin-bottom: 64px; }
+      .chart-grid { grid-template-columns: 1fr; gap: 14px; }
+      .report h2 { font-size: 19px; margin-top: 40px; }
+      table { min-width: 520px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="doc-head">
+      <span class="dh-title">report_688213</span>
+      <span class="dh-meta">思特威(上海)电子科技股份有限公司 · 688213.SH · 20260519</span>
+    </div>
+    <section class="section report" id="report-body">
+      <h2>思特威-W（688213.SH）基本面深度研究</h2>
+<h3>核心判断</h3>
+<p>思特威是国产 CMOS 图像传感器（CIS）龙头，<strong>最贴切的命题是&quot;预期差&quot;，且是两层叠加</strong>：</p>
+<ul>
+<li><strong>A1 估值消化型</strong>：2022 年亏损 0.83 亿 → 2025 年归母 10.01 亿，3 年营收 CAGR≈54%，盈利增速远超股价涨幅（同期股价约 55→116 元、约 2 倍），把 PE-TTM 从上市初的三位数压到 42.6 倍、PS 落到上市以来 5 年 12% 分位。<strong>这是&quot;业绩追着估值跑&quot;的消化，不是便宜</strong>。</li>
+<li><strong>B 未被定价的&quot;期权&quot;型</strong>：公司已明确构建&quot;视觉 AI–AI 互连–端侧 AI ASIC&quot;全链路生态，其中 <strong>AI 互连环节落地为 Micro LED CPO 光互连</strong>（直连 CPO/光互连/算力互连主线）；并把 32 亿定增中的 7.4 亿直接投向视觉 AI + 端侧 AI ASIC、7.53 亿投向智能驾驶 CIS；布局延伸到人形机器人 / XR / 无人机（无人机 CIS 全球第一）。<strong>这块远期期权当前基本未被定价</strong>——也是骨架版漏掉、本次深挖补回的核心增量。</li>
+</ul>
+<p>最关键的两个变量：① <strong>增速降档</strong>（营收同比 109%→51%→Q1&#x27;26 +20.7%），高基数下手机能否延续高端化决定 A1 消化能否走完；② <strong>利润含金量</strong>——FY25 经营性现金流仅 1.08 亿、同比 <strong>−71%</strong>，与 10 亿净利严重背离，靠 11.48 亿筹资（借款）+ 在途定增支撑 40 亿存货与应收，这是成长质量的命门。</p>
+<p><strong>总体置信度：中</strong>（业绩、分部、AI 布局、现金流均有年报原文支撑；增速拐点、定增摊薄、期权兑现节奏待观察）。</p>
+<blockquote>本报告为 Deep 模式产出：命题先行（thesis_scan）→ 读 FY2025 年报「管理层讨论与分析」+ Q1&#x27;26 季报原文做归因与线索挖掘 → 联网核对主线与催化。文中标注【原文】= 定期报告/公告事实，【推断】= 模型判断。</blockquote>
+<p>---</p>
+<h3>第一部分 · 定性：这是一家什么公司，好在哪</h3>
+<h4>1. 公司速览</h4>
+<p>思特威（上海）电子科技，2017 年成立、2022 年 5 月科创板上市（带「-W」表决权差异安排），Fabless 模式，主营<strong>高性能 CMOS 图像传感器芯片</strong>。坚持&quot;3+AI&quot;战略——智慧安防、智能手机、汽车电子三大基本盘 + AI 智视生态。董事长兼总经理为创始人徐辰。2026-05-19 收盘 110.91 元（05-20 收 115.7、+4.3%），市值约 446 亿元。</p>
+<h4>2. 公司分型</h4>
+<p><strong>成长股</strong>（置信度高）。2025 年共四大业务全部高增、不分红、利润全部留存再投，处于半导体国产替代 + AI 视觉风口。<strong>但增速已降档</strong>（Q1&#x27;26 营收 +20.7% vs 一年前 +109%），处&quot;高速成长期 → 稳健成长期&quot;切换观察窗口；估值上因此适用&quot;成长股 + 估值带仅作下行参考&quot;，并叠加预期差命题（见第二部分）。</p>
+<h4>3. 行业地位与竞争格局</h4>
+<p>全球 CIS 市场约 211 亿美元（2026E，CAGR ~9%），索尼/三星/豪威三强主导，国产加速追赶。思特威分部地位（【原文】TSR 数据，2024 口径）：</p>
+<div class="table-wrap"><table><thead><tr><th class="align-left">业务</th><th class="align-right">FY25 收入</th><th class="align-right">同比</th><th class="align-right">占主营</th><th class="align-left">全球地位</th></tr></thead><tbody><tr><td class="align-left">智能手机</td><td class="align-right">46.75 亿</td><td class="align-right">+43.03%</td><td class="align-right">51.77%</td><td class="align-left">全球第 5，出货 +103%</td></tr><tr><td class="align-left">智慧安防及 AIoT</td><td class="align-right">24.88 亿</td><td class="align-right">+52.38%</td><td class="align-right">27.55%</td><td class="align-left">出货量全球第一</td></tr><tr><td class="align-left">汽车电子</td><td class="align-right">11.22 亿</td><td class="align-right">+113.02%</td><td class="align-right">12.43%</td><td class="align-left">全球第 4 / 国内第 2</td></tr><tr><td class="align-left">AI 智视生态</td><td class="align-right">7.45 亿</td><td class="align-right">+38.12%</td><td class="align-right">8.25%</td><td class="align-left">无人机 CIS 全球第一(46.2%)、XR 第 3</td></tr></tbody></table></div>
+<p>【原文】2025 年 12 月单月 CIS 出货量达 2 亿颗，创历史新高。护城河：高端 CIS 设计（LOFIC HDR、片上 ISP、车规功能安全）、手机模组/前装车厂认证壁垒、国产供应链战略地位（国家大基金二期持股）。<strong>【推断】手机已成第一大业务（半壁江山），既是增长主引擎也是高基数风险所在；车载、AI 生态是斜率更陡的第二、第三曲线。</strong></p>
+<h4>4. 成长性与财务质量诊断</h4>
+<div class="table-wrap"><table><thead><tr><th class="align-left">维度</th><th class="align-left">判断</th><th class="align-left">关键证据</th></tr></thead><tbody><tr><td class="align-left">一·收入增长质量</td><td class="align-left">强转中</td><td class="align-left">营收 2022→2025：24.83→28.57→59.68→90.31 亿（3 年 CAGR≈54%），从 2022 亏损周期底部强复苏；增速降档 109%→51%→Q1&#x27;26 +20.7%，靠<strong>量</strong>（高端导入+车载放量）非提价</td></tr><tr><td class="align-left">二·利润含金量</td><td class="align-left">强</td><td class="align-left">FY25 归母 +155% ≫ 营收 +51%，经营杠杆释放；毛利率 21.1%→23.7%→25.7% 连升、净利率 6.6%→11.1%；扣非≈归母，利润干净</td></tr><tr><td class="align-left">三·现金流验证</td><td class="align-left"><strong>弱（核心风险）</strong></td><td class="align-left">【原文】FY25 经营现金流净额 1.08 亿、<strong>同比 −71.19%</strong>，OCF/净利≈0.11；筹资现金流 +11.48 亿（+79%，借款）支撑；2025 年中累计 OCF 一度 −17 亿</td></tr><tr><td class="align-left">四·业务结构与壁垒</td><td class="align-left">强</td><td class="align-left">四轮驱动且新场景占比上升；无商誉、无外延减值风险</td></tr><tr><td class="align-left">五·再投资与 ROE</td><td class="align-left">中偏强</td><td class="align-left">FY25 ROE 约 21.3%、Q1&#x27;26 年化 17.7%，由<strong>净利率驱动</strong>（最健康路径）；资产负债率 51.74%（同比 +5.2pct），有息负债 35.86 亿</td></tr></tbody></table></div>
+<div class="callout">深度调研发现（方向一·现金流归因）：FY25 净利暴增 155%，但经营现金流不升反降 71% 至 1.08 亿。审核问询函回复【原文】解释：应收账款增长是&quot;为更好地服务核心客户、深化长期战略合作关系&quot;形成的正常经营性资金占用；存货增长&quot;主要系原材料增长，随着多个产品系列大规模量产，公司为了应对销售需求，增加了相关原材料的储备&quot;。结合资产端 40 亿存货 + 17–20 亿应收，可判断【推断】：利润大量沉淀在营运资本，用 35.86 亿有息负债（短期借款 26.18 亿 + 长期借款 7.81 亿 + 一年内到期长期借款 1.87 亿）+ 在途定增补流支撑——这是&quot;高增长靠资产负债表扩张换来&quot;的典型，现金转化是成长质量命门。资产负债率已从 2023 年 39.13% 升至 2025 年 51.74%，速动比率 0.84，财务杠杆在加速。</div>
+<p><strong>成长阶段：高速成长期，正向稳健成长期切换</strong>，与成长股分型自洽。</p>
+<h4>5. 核心看点</h4>
+<p>1. <strong>手机高端化（利润弹性）</strong>：LOFIC HDR 2.0 旗舰主摄放量，手机收入 +43%、结构改善推毛利率连升。<strong>反方</strong>：高基数下手机增速已回落，与索尼/三星正面竞争，份额与价格承压。 2. <strong>车载是确定性第二曲线</strong>：FY25 +113% 至 11.22 亿，全球第 4；L2 渗透率已达 64%，单车搭载量提升。<strong>反方</strong>：占比仍 12%，车规导入慢。 3. ==<strong>【深度调研·方向二】AI 视觉 + 端侧 AI ASIC = 未被定价的期权（B 型预期差）</strong>：年报【原文】明确构建&quot;视觉 AI–AI 互连–端侧 AI ASIC&quot;全链路生态，其中 AI 互连落地为 Micro LED CPO 光互连；定增 7.4 亿直投视觉 AI+端侧 ASIC。审核问询函回复【原文】披露端侧 AI ASIC 已于 FY2025 实现收入 28.84 万元（2024/2023 年为 0），现有产品采用 22nm 制程，募投升级至 12nm + 先进封装，NPU 算力由 0.8 TOPS 升级至 3.5~100 TOPS@INT8，集成存算一体架构、2/4 核 A76 CPU，Sensor 输入由 2 路扩至 8 路。AI 智视生态收入 7.45 亿(+38%)，无人机 CIS 全球第一、XR 第 3；视觉 AI CIS 延伸至医疗（支气管镜/泌尿镜/胃肠镜等超细内窥镜）与工业机器视觉（200 万至 1.5 亿像素全局快门）。<strong>【推断】市场当前主要按 CIS 给估值，端侧 AI ASIC 与机器人/医疗视觉这块远期期权基本未计入</strong>——这是骨架版漏掉、最值得跟踪的看点。<strong>反方</strong>：ASIC 收入尚处极早期，募投产品仍处于研发立项阶段，期权兑现节奏高度不确定。== 4. <strong>国产替代 + 大基金背书</strong>：大基金二期持股 6.99%。<strong>反方</strong>：大基金二期已于 2025-06 小幅减持（7.35%→6.99%），光环边际减弱。</p>
+<h4>6. 近期动态：公告事件与机构调研</h4>
+<ul>
+<li>【原文】<strong>32 亿定增进行中</strong>：14.45 亿高性能影像 CIS、7.53 亿智能驾驶 CIS、7.4 亿视觉 AI+端侧 AI ASIC 及补流；已获上交所受理并完成问询回复。</li>
+<li>【原文】实控人、董监高自愿承诺不减持（信心信号）；同时存在股东减持计划、<strong>大基金二期减持至 6.99%</strong>（供给侧对冲）。</li>
+<li>【原文】<strong>审核问询函回复已提交</strong>（2026-05-07）：披露端侧 AI ASIC FY2025 已产生收入 28.84 万元，详细说明了 22nm→12nm 制程升级、NPU 0.8→100 TOPS 算力跃迁、存算一体架构及&quot;AI ASIC+Sensor&quot;系统级集成策略；智驾 CIS 客户覆盖比亚迪/吉利/上汽/广汽/奇瑞/零跑/东风日产/韩国双龙；医疗 CIS 瞄准支气管镜/泌尿镜/胃肠镜等超细内窥镜市场。</li>
+<li>【原文】<strong>定增获上交所审核通过通知</strong>（2026-05-20）：向特定对象发行股票申请收到上交所审核意见通知，推进至注册阶段。</li>
+<li>【原文】Q1&#x27;26：营收 21.12 亿(+20.68%)、归母 2.37 亿(+23.66%)——增速降档至 ~20%。</li>
+</ul>
+<p>---</p>
+<h3>第二部分 · 定量：贵不贵，当前价格合不合理</h3>
+<h4>1. 估值模式</h4>
+<p>成长股 + <strong>预期差命题</strong>：以隐含预期 + 三情景为主，PE/PB/PS 历史分位带作下行与相对参考（上市仅 3 年、盈利两年暴增使历史中枢失真）。</p>
+<h4>2. 估值快照与历史分位</h4>
+<p>快照（2026-05-19）：</p>
+<div class="table-wrap"><table><thead><tr><th class="align-left">指标</th><th class="align-right">当前</th><th class="align-right">1年分位</th><th class="align-right">3年分位</th><th class="align-right">5年分位</th><th class="align-left">读法</th></tr></thead><tbody><tr><td class="align-left">PE-TTM</td><td class="align-right">42.6</td><td class="align-right">22%</td><td class="align-right">10%</td><td class="align-right">7%</td><td class="align-left">绝对不低，但因 EPS 暴增压到历史极低分位（A1 消化）</td></tr><tr><td class="align-left">PS-TTM</td><td class="align-right">4.75</td><td class="align-right">39%</td><td class="align-right">16%</td><td class="align-right">12%</td><td class="align-left">同样落历史低位</td></tr><tr><td class="align-left">PB</td><td class="align-right">8.17</td><td class="align-right">52%</td><td class="align-right">74%</td><td class="align-right">81%</td><td class="align-left"><strong>高位</strong>——净资产增长慢、ROE 抬升所致</td></tr><tr><td class="align-left">股息率</td><td class="align-right">0.25%</td><td class="align-right">—</td><td class="align-right">62%</td><td class="align-right">62%</td><td class="align-left">极低，符合成长股</td></tr><tr><td class="align-left">总市值</td><td class="align-right">446 亿</td><td class="align-right">—</td><td class="align-right">—</td><td class="align-right">—</td><td class="align-left">中盘成长</td></tr></tbody></table></div>
+<p><strong>关键解读【推断】</strong>：PE/PS 低分位 ≠ 便宜，是&quot;盈利跑得比股价快&quot;的消化结果（A1）；PB 高分位才贴近市场对其 ROE 持续性的乐观定价。所以这不是 A2（低估值+成长），而是 A1（高估值消化中）——便宜与否取决于增速能否撑住 42 倍 PE，而非分位低。</p>
+<h4>3. 隐含预期分析</h4>
+<ul>
+<li><strong>盈利基线</strong>：TTM 归母 ≈ 10.5 亿（Q1&#x27;26 2.37 + FY25 10.01 − Q1&#x27;25 1.91），与 PE-TTM 42.6 自洽。</li>
+<li><strong>隐含增速</strong>：PE 42.6 处&quot;高增长预期&quot;区间；以 PEG 思维，若未来 2 年净利复合增速 ~30%，PEG≈1.4——对国产半导体上行期龙头可接受、不算泡沫，但中高速增长已被 price-in。</li>
+<li><strong>与实际能力对比【推断】</strong>：实际增速正从 155% 高位回落、Q1&#x27;26 +23.7%。<strong>隐含预期 ≈ 实际能力</strong>，定价大体合理；上行靠手机高端 + 车载 + AI 期权超预期，下行风险来自增速进一步降档与现金流。</li>
+<li><em>（增速为基于历史的假设，非市场一致预期。）</em></li>
+</ul>
+<h4>4. 主线归属修正（A股关键调节项）</h4>
+<ul>
+<li><strong>当前主线</strong>：半导体国产替代、AI 视觉/端侧 AI、智能驾驶、机器人——均为 2026 年活跃方向。</li>
+<li><strong>连接强度：强连接（核心标的）</strong>——安防全球第一 + 国产 CIS 稀缺龙头 + 大基金持股 + 定增直投端侧 AI ASIC/智驾。</li>
+<li><strong>验证信号</strong>：定增投向（公司级催化）、AI 智视生态收入已 7.45 亿、无人机 CIS 全球第一；科创 50/芯片 ETF 在前十大股东。<em>北向/研报需联网且季度滞后。</em></li>
+<li><strong>置信度：中高</strong>。</li>
+<li><strong>对估值的修正</strong>：强连接 → 当前 42.6 倍 PE 在主线内属可接受的预期溢价，不宜直接判贵；但溢价绑定主线热度与 AI 期权兑现，主线退潮或增速证伪会同步杀估值。</li>
+</ul>
+<h4>5. 三情景推演</h4>
+<p>基线 TTM 归母 10.5 亿，均为情景假设：</p>
+<div class="table-wrap"><table><thead><tr><th class="align-left">情景</th><th class="align-left">核心假设</th><th class="align-right">2027E 归母</th><th class="align-right">合理 PE</th><th class="align-right">隐含市值</th><th class="align-right">对当前(446亿)</th></tr></thead><tbody><tr><td class="align-left">基准</td><td class="align-left">增速降档企稳，2 年复合 +25%</td><td class="align-right">~16.4 亿</td><td class="align-right">33</td><td class="align-right">~540 亿</td><td class="align-right">+21%</td></tr><tr><td class="align-left">乐观</td><td class="align-left">手机高端+车载放量+AI 期权初兑现，2 年复合 +40%</td><td class="align-right">~20.6 亿</td><td class="align-right">40</td><td class="align-right">~824 亿</td><td class="align-right">+85%</td></tr><tr><td class="align-left">压力</td><td class="align-left">手机份额/价格承压 + 存货跌价，增速回落至 ~8%</td><td class="align-right">~12.3 亿</td><td class="align-right">24</td><td class="align-right">~295 亿</td><td class="align-right">−34%</td></tr></tbody></table></div>
+<p>情景跨度大，反映成长股对增速、主线与现金流的高敏感性。</p>
+<h4>6. 估值结论</h4>
+<p><strong>合理定价（偏成长溢价）+ 一层未被定价的期权</strong>：绝对 PE 不低、PB 历史高位，但在强连接主线内属可接受溢价，谈不上便宜也未到透支泡沫（A1 消化进行中）；<strong>额外地，端侧 AI ASIC / 机器人视觉的远期期权（B）当前基本未计入估值</strong>，是潜在的向上重估来源。</p>
+<p><strong>催化剂缺口【推断】</strong>：向上重估需要——手机高端份额继续提升、车载放量、<strong>AI ASIC 收入从 28.84 万迈向千万级/亿级</strong> + 定增落地缓解现金流；向下证伪触发——增速跌破 10%、存货跌价计提、手机价格战、主线退潮。</p>
+<p><strong>置信度下调项</strong>：OCF/净利 0.11、存货 40 亿、定增摊薄未落地——故估值结论置信度定为<strong>中</strong>。</p>
+<p>---</p>
+<h3>第三部分 · 背景与风险</h3>
+<h4>1. 股东与治理</h4>
+<ul>
+<li>创始人徐辰持股 13.67%、经「-W」表决权差异安排掌握控制权；<strong>国家大基金二期 6.99%</strong>（2025-06 由 7.35% 小幅减持）。</li>
+<li>股东户数从 7794（2024Q3）升至 29193（2026Q1），<strong>筹码明显分散</strong>、散户化。</li>
+<li>实控人/董监高自愿不减持 vs 股东减持计划 + 大基金减持，方向对冲。</li>
+</ul>
+<h4>2. 风险提示（含年报原文）</h4>
+<ul>
+<li>【原文】<strong>存货跌价风险</strong>：存货随规模逐年上升，需求转弱将致积压跌价。</li>
+<li>【原文】<strong>应收回收风险</strong>：或放宽信用政策致余额增加、回收变慢。</li>
+<li>【原文】<strong>汇率风险</strong>：美元报价结算，人民币大幅波动影响业绩。</li>
+<li>【原文】<strong>毛利率波动风险</strong>。</li>
+<li><strong>增速降档</strong>：营收同比已回落至 +20.7%，手机高基数下持续性是核心不确定性。</li>
+<li><strong>定增摊薄</strong>：≤32 亿定增落地摊薄 EPS。</li>
+<li><strong>B 型期权不兑现</strong>：端侧 AI ASIC 收入尚处极早期（28.84 万），募投产品仍处于研发立项阶段，机器人/医疗视觉拓展不及预期则期权可能落空。</li>
+<li><strong>主线轮换</strong>：强连接标的，主线退潮时估值回撤可能大于业绩波动。</li>
+</ul>
+<p>--- 以上基于公开数据和当前可得信息，不构成投资建议。份额与竞争格局为外部公开信息（非财报口径），主线与期权判断带有主观性，结论可能因新信息改变。</p>
+<p><strong>信息来源</strong>：FY2025 年报「管理层讨论与分析」及风险因素（巨潮原文，经 <code>report-text --section</code> 抽取）、Q1&#x27;26 季报原文、<strong>2026-05-07 审核问询函回复（巨潮原文，经 <code>announcement-text</code> 抽取）</strong>；外部：</p>
+<ul>
+<li><a href="https://www.esmchina.com/info/52599.html">国际电子商情：科创板归母增幅最高的国产 CIS</a></li>
+<li><a href="https://finance.sina.com.cn/stock/relnews/cn/2026-03-06/doc-inhpzvnr2552968.shtml">新浪财经：思特威车载 CIS 杀进全球前三</a></li>
+<li><a href="https://stockmc.xueqiu.com/202603/688213_20260328_AUI8.pdf">雪球：思特威 2026 年度向特定对象发行 A 股股票预案</a></li>
+<li><a href="https://www.stcn.com/article/detail/3871342.html">证券时报网：国家大基金二期减持至 6.99%</a></li>
+</ul>
+    </section>
+  </main>
+  <script id="chart-data" type="application/json">{"metadata": {"source": "reports/evidence_688213.json", "missing": false, "ts_code": "688213.SH", "name": "思特威(上海)电子科技股份有限公司", "latest_trade_date": "20260519"}, "valuation_bands": {"pe_ttm": {"current": 42.6356, "positive_only": true, "windows": {"1y": {"sample_size": 242, "min": 30.5659, "p25": 44.6611, "median": 49.7445, "mean": 54.0303, "p75": 67.7989, "max": 76.3108, "current_percentile": 22.3}, "3y": {"sample_size": 539, "min": 30.5659, "p25": 61.9154, "median": 77.5362, "mean": 221.4538, "p75": 114.6934, "max": 1573.7811, "current_percentile": 10.0}, "5y": {"sample_size": 728, "min": 30.5659, "p25": 62.9456, "median": 78.1709, "mean": 228.1855, "p75": 355.5007, "max": 1573.7811, "current_percentile": 7.4}}}, "pb": {"current": 8.1726, "positive_only": true, "windows": {"1y": {"sample_size": 242, "min": 6.101, "p25": 7.5434, "median": 8.1201, "mean": 8.1988, "p75": 8.881, "max": 10.5761, "current_percentile": 51.7}, "3y": {"sample_size": 724, "min": 3.8194, "p25": 5.3845, "median": 6.9396, "mean": 6.8809, "p75": 8.2326, "max": 11.1421, "current_percentile": 74.2}, "5y": {"sample_size": 968, "min": 3.6634, "p25": 5.069, "median": 5.8713, "mean": 6.4426, "p75": 7.7633, "max": 11.1421, "current_percentile": 80.7}}}, "ps_ttm": {"current": 4.7503, "positive_only": true, "windows": {"1y": {"sample_size": 242, "min": 3.3891, "p25": 4.5405, "median": 5.0433, "mean": 5.0394, "p75": 5.6735, "max": 6.6903, "current_percentile": 39.3}, "3y": {"sample_size": 724, "min": 3.3891, "p25": 5.377, "median": 6.0168, "mean": 6.1782, "p75": 7.0622, "max": 9.7944, "current_percentile": 16.3}, "5y": {"sample_size": 968, "min": 3.3891, "p25": 5.5758, "median": 6.5011, "mean": 6.6238, "p75": 7.7651, "max": 11.9214, "current_percentile": 12.2}}}, "dv_ttm": {"current": 0.2473, "positive_only": false, "windows": {"1y": {"sample_size": 242, "min": 0.1233, "p25": 0.1495, "median": 0.1773, "mean": 0.2177, "p75": 0.2918, "max": 0.3606, "current_percentile": 55.8}, "3y": {"sample_size": 447, "min": 0.1233, "p25": 0.161, "median": 0.216, "mean": 0.2262, "p75": 0.2919, "max": 0.3931, "current_percentile": 62.2}, "5y": {"sample_size": 447, "min": 0.1233, "p25": 0.161, "median": 0.216, "mean": 0.2262, "p75": 0.2919, "max": 0.3931, "current_percentile": 62.2}}}}, "valuation_series": [{"trade_date": "20220520", "pe_ttm": 65.9208, "pb": 5.9349, "ps_ttm": 8.7621}, {"trade_date": "20220525", "pe_ttm": 53.9838, "pb": 4.8602, "ps_ttm": 7.1754}, {"trade_date": "20220530", "pe_ttm": 50.0048, "pb": 4.5019, "ps_ttm": 6.6466}, {"trade_date": "20220602", "pe_ttm": 58.1141, "pb": 5.232, "ps_ttm": 7.7244}, {"trade_date": "20220608", "pe_ttm": 56.9157, "pb": 5.1241, "ps_ttm": 7.5651}, {"trade_date": "20220613", "pe_ttm": 58.2188, "pb": 5.2414, "ps_ttm": 7.7383}, {"trade_date": "20220616", "pe_ttm": 55.9151, "pb": 5.0341, "ps_ttm": 7.4321}, {"trade_date": "20220621", "pe_ttm": 53.0065, "pb": 4.7722, "ps_ttm": 7.0455}, {"trade_date": "20220624", "pe_ttm": 61.7789, "pb": 5.562, "ps_ttm": 8.2116}, {"trade_date": "20220629", "pe_ttm": 65.0947, "pb": 5.8605, "ps_ttm": 8.6523}, {"trade_date": "20220704", "pe_ttm": 67.887, "pb": 6.1119, "ps_ttm": 9.0234}, {"trade_date": "20220707", "pe_ttm": 66.9097, "pb": 6.0239, "ps_ttm": 8.8935}, {"trade_date": "20220712", "pe_ttm": 59.9756, "pb": 5.3996, "ps_ttm": 7.9719}, {"trade_date": "20220715", "pe_ttm": 61.872, "pb": 5.5703, "ps_ttm": 8.2239}, {"trade_date": "20220720", "pe_ttm": 59.2542, "pb": 5.3347, "ps_ttm": 7.876}, {"trade_date": "20220725", "pe_ttm": 55.3218, "pb": 4.9806, "ps_ttm": 7.3533}, {"trade_date": "20220728", "pe_ttm": 69.3646, "pb": 6.2449, "ps_ttm": 9.2198}, {"trade_date": "20220802", "pe_ttm": 66.2931, "pb": 5.9684, "ps_ttm": 8.8116}, {"trade_date": "20220805", "pe_ttm": 75.7984, "pb": 6.8241, "ps_ttm": 10.075}, {"trade_date": "20220810", "pe_ttm": 70.6793, "pb": 6.3633, "ps_ttm": 9.3946}, {"trade_date": "20220815", "pe_ttm": 69.1551, "pb": 6.2261, "ps_ttm": 9.192}, {"trade_date": "20220818", "pe_ttm": 68.4454, "pb": 6.1622, "ps_ttm": 9.0977}, {"trade_date": "20220823", "pe_ttm": 64.4548, "pb": 5.8029, "ps_ttm": 8.5672}, {"trade_date": "20220826", "pe_ttm": 60.1268, "pb": 5.4132, "ps_ttm": 7.992}, {"trade_date": "20220831", "pe_ttm": 87.2146, "pb": 5.0851, "ps_ttm": 7.9536}, {"trade_date": "20220905", "pe_ttm": 84.1911, "pb": 4.9088, "ps_ttm": 7.6779}, {"trade_date": "20220908", "pe_ttm": 89.9875, "pb": 5.2468, "ps_ttm": 8.2065}, {"trade_date": "20220914", "pe_ttm": 92.4385, "pb": 5.3897, "ps_ttm": 8.43}, {"trade_date": "20220919", "pe_ttm": 82.6526, "pb": 4.8191, "ps_ttm": 7.5376}, {"trade_date": "20220922", "pe_ttm": 81.4003, "pb": 4.7461, "ps_ttm": 7.4234}, {"trade_date": "20220927", "pe_ttm": 77.3213, "pb": 4.5083, "ps_ttm": 7.0514}, {"trade_date": "20220930", "pe_ttm": 71.5607, "pb": 4.1724, "ps_ttm": 6.526}, {"trade_date": "20221012", "pe_ttm": 65.5317, "pb": 3.8209, "ps_ttm": 5.9762}, {"trade_date": "20221017", "pe_ttm": 70.8272, "pb": 4.1296, "ps_ttm": 6.4591}, {"trade_date": "20221020", "pe_ttm": 68.6804, "pb": 4.0045, "ps_ttm": 6.2634}, {"trade_date": "20221025", "pe_ttm": 66.1757, "pb": 3.8584, "ps_ttm": 6.035}, {"trade_date": "20221028", "pe_ttm": 64.4404, "pb": 3.7572, "ps_ttm": 5.8767}, {"trade_date": "20221102", "pe_ttm": 414.8339, "pb": 3.9675, "ps_ttm": 6.5291}, {"trade_date": "20221107", "pe_ttm": 496.895, "pb": 4.7524, "ps_ttm": 7.8206}, {"trade_date": "20221110", "pe_ttm": 449.072, "pb": 4.295, "ps_ttm": 7.068}, {"trade_date": "20221115", "pe_ttm": 492.5876, "pb": 4.7112, "ps_ttm": 7.7528}, {"trade_date": "20221118", "pe_ttm": 500.7606, "pb": 4.7894, "ps_ttm": 7.8815}, {"trade_date": "20221123", "pe_ttm": 495.4592, "pb": 4.7387, "ps_ttm": 7.798}, {"trade_date": "20221128", "pe_ttm": 463.5404, "pb": 4.4334, "ps_ttm": 7.2957}, {"trade_date": "20221201", "pe_ttm": 487.6175, "pb": 4.6637, "ps_ttm": 7.6746}, {"trade_date": "20221206", "pe_ttm": 509.3753, "pb": 4.8718, "ps_ttm": 8.0171}, {"trade_date": "20221209", "pe_ttm": 513.6827, "pb": 4.913, "ps_ttm": 8.0849}, {"trade_date": "20221214", "pe_ttm": 518.5423, "pb": 4.9594, "ps_ttm": 8.1613}, {"trade_date": "20221219", "pe_ttm": 488.722, "pb": 4.6742, "ps_ttm": 7.692}, {"trade_date": "20221222", "pe_ttm": 458.0181, "pb": 4.3806, "ps_ttm": 7.2088}, {"trade_date": "20221227", "pe_ttm": 469.9462, "pb": 4.4947, "ps_ttm": 7.3965}, {"trade_date": "20221230", "pe_ttm": 428.5291, "pb": 4.0985, "ps_ttm": 6.7446}, {"trade_date": "20230105", "pe_ttm": 446.5318, "pb": 4.2707, "ps_ttm": 7.028}, {"trade_date": "20230110", "pe_ttm": 487.1758, "pb": 4.6594, "ps_ttm": 7.6677}, {"trade_date": "20230113", "pe_ttm": 467.1851, "pb": 4.4682, "ps_ttm": 7.353}, {"trade_date": "20230118", "pe_ttm": 546.4851, "pb": 5.2267, "ps_ttm": 8.6011}, {"trade_date": "20230130", "pe_ttm": 552.2283, "pb": 5.2816, "ps_ttm": 8.6915}, {"trade_date": "20230202", "pe_ttm": 537.7599, "pb": 5.1432, "ps_ttm": 8.4638}, {"trade_date": "20230207", "pe_ttm": 521.3035, "pb": 4.9858, "ps_ttm": 8.2048}, {"trade_date": "20230210", "pe_ttm": 523.7333, "pb": 5.0091, "ps_ttm": 8.243}, {"trade_date": "20230215", "pe_ttm": 521.4139, "pb": 4.9869, "ps_ttm": 8.2065}, {"trade_date": "20230220", "pe_ttm": 533.2316, "pb": 5.0999, "ps_ttm": 8.3925}, {"trade_date": "20230223", "pe_ttm": 515.1185, "pb": 4.9267, "ps_ttm": 8.1075}, {"trade_date": "20230228", "pe_ttm": null, "pb": 4.8302, "ps_ttm": 7.2688}, {"trade_date": "20230303", "pe_ttm": null, "pb": 4.8398, "ps_ttm": 7.2833}, {"trade_date": "20230308", "pe_ttm": null, "pb": 4.5315, "ps_ttm": 6.8194}, {"trade_date": "20230313", "pe_ttm": null, "pb": 4.7488, "ps_ttm": 7.1464}, {"trade_date": "20230316", "pe_ttm": null, "pb": 4.7842, "ps_ttm": 7.1996}, {"trade_date": "20230321", "pe_ttm": null, "pb": 4.948, "ps_ttm": 7.4461}, {"trade_date": "20230324", "pe_ttm": null, "pb": 5.4597, "ps_ttm": 8.2161}, {"trade_date": "20230329", "pe_ttm": null, "pb": 5.0711, "ps_ttm": 7.6313}, {"trade_date": "20230403", "pe_ttm": null, "pb": 5.7594, "ps_ttm": 8.6672}, {"trade_date": "20230407", "pe_ttm": null, "pb": 6.0238, "ps_ttm": 9.0651}, {"trade_date": "20230412", "pe_ttm": null, "pb": 7.2582, "ps_ttm": 10.9226}, {"trade_date": "20230417", "pe_ttm": null, "pb": 6.9477, "ps_ttm": 10.4554}, {"trade_date": "20230420", "pe_ttm": null, "pb": 6.7604, "ps_ttm": 10.1735}, {"trade_date": "20230425", "pe_ttm": null, "pb": 5.6203, "ps_ttm": 8.4578}, {"trade_date": "20230428", "pe_ttm": null, "pb": 5.4393, "ps_ttm": 8.1855}, {"trade_date": "20230508", "pe_ttm": null, "pb": 5.8692, "ps_ttm": 8.6982}, {"trade_date": "20230511", "pe_ttm": null, "pb": 6.3022, "ps_ttm": 9.3399}, {"trade_date": "20230516", "pe_ttm": null, "pb": 6.4578, "ps_ttm": 9.5704}, {"trade_date": "20230519", "pe_ttm": null, "pb": 6.6187, "ps_ttm": 9.8088}, {"trade_date": "20230524", "pe_ttm": null, "pb": 6.2493, "ps_ttm": 9.2615}, {"trade_date": "20230529", "pe_ttm": null, "pb": 6.2817, "ps_ttm": 9.3095}, {"trade_date": "20230601", "pe_ttm": null, "pb": 6.4794, "ps_ttm": 9.6024}, {"trade_date": "20230606", "pe_ttm": null, "pb": 6.0258, "ps_ttm": 8.9302}, {"trade_date": "20230609", "pe_ttm": null, "pb": 6.0323, "ps_ttm": 8.9398}, {"trade_date": "20230614", "pe_ttm": null, "pb": 6.34, "ps_ttm": 9.3959}, {"trade_date": "20230619", "pe_ttm": null, "pb": 6.0247, "ps_ttm": 8.9286}, {"trade_date": "20230626", "pe_ttm": null, "pb": 5.5787, "ps_ttm": 8.2676}, {"trade_date": "20230629", "pe_ttm": null, "pb": 5.5398, "ps_ttm": 8.21}, {"trade_date": "20230704", "pe_ttm": null, "pb": 5.5409, "ps_ttm": 8.2116}, {"trade_date": "20230707", "pe_ttm": null, "pb": 5.5496, "ps_ttm": 8.2244}, {"trade_date": "20230712", "pe_ttm": null, "pb": 5.6284, "ps_ttm": 8.3413}, {"trade_date": "20230717", "pe_ttm": null, "pb": 5.5982, "ps_ttm": 8.2965}, {"trade_date": "20230720", "pe_ttm": null, "pb": 5.1921, "ps_ttm": 7.6947}, {"trade_date": "20230725", "pe_ttm": null, "pb": 5.2504, "ps_ttm": 7.7811}, {"trade_date": "20230728", "pe_ttm": null, "pb": 4.9265, "ps_ttm": 7.301}, {"trade_date": "20230802", "pe_ttm": null, "pb": 5.3725, "ps_ttm": 7.962}, {"trade_date": "20230807", "pe_ttm": null, "pb": 5.1835, "ps_ttm": 7.6819}, {"trade_date": "20230810", "pe_ttm": null, "pb": 5.1003, "ps_ttm": 7.5587}, {"trade_date": "20230815", "pe_ttm": null, "pb": 4.8584, "ps_ttm": 7.2002}, {"trade_date": "20230818", "pe_ttm": null, "pb": 4.8574, "ps_ttm": 7.1986}, {"trade_date": "20230823", "pe_ttm": null, "pb": 4.6738, "ps_ttm": 6.9265}, {"trade_date": "20230828", "pe_ttm": null, "pb": 4.4686, "ps_ttm": 6.4729}, {"trade_date": "20230831", "pe_ttm": null, "pb": 5.0857, "ps_ttm": 7.3668}, {"trade_date": "20230905", "pe_ttm": null, "pb": 5.1118, "ps_ttm": 7.4045}, {"trade_date": "20230908", "pe_ttm": null, "pb": 5.0022, "ps_ttm": 7.2458}, {"trade_date": "20230913", "pe_ttm": null, "pb": 5.3666, "ps_ttm": 7.7737}, {"trade_date": "20230918", "pe_ttm": null, "pb": 5.8265, "ps_ttm": 8.4399}, {"trade_date": "20230921", "pe_ttm": null, "pb": 5.345, "ps_ttm": 7.7423}, {"trade_date": "20230926", "pe_ttm": null, "pb": 4.8948, "ps_ttm": 7.0903}, {"trade_date": "20231009", "pe_ttm": null, "pb": 4.679, "ps_ttm": 6.7777}, {"trade_date": "20231012", "pe_ttm": null, "pb": 5.3374, "ps_ttm": 7.7313}, {"trade_date": "20231017", "pe_ttm": null, "pb": 5.089, "ps_ttm": 7.3715}, {"trade_date": "20231020", "pe_ttm": null, "pb": 4.8016, "ps_ttm": 6.9552}, {"trade_date": "20231025", "pe_ttm": null, "pb": 4.5337, "ps_ttm": 6.5671}, {"trade_date": "20231030", "pe_ttm": null, "pb": 5.3558, "ps_ttm": 7.59}, {"trade_date": "20231102", "pe_ttm": null, "pb": 5.333, "ps_ttm": 7.5577}, {"trade_date": "20231107", "pe_ttm": null, "pb": 5.9569, "ps_ttm": 8.4419}, {"trade_date": "20231110", "pe_ttm": null, "pb": 5.5674, "ps_ttm": 7.8899}, {"trade_date": "20231115", "pe_ttm": null, "pb": 5.7345, "ps_ttm": 8.1267}, {"trade_date": "20231120", "pe_ttm": null, "pb": 5.6618, "ps_ttm": 8.0236}, {"trade_date": "20231123", "pe_ttm": null, "pb": 5.741, "ps_ttm": 8.1359}, {"trade_date": "20231128", "pe_ttm": null, "pb": 5.6206, "ps_ttm": 7.9652}, {"trade_date": "20231201", "pe_ttm": null, "pb": 5.5859, "ps_ttm": 7.916}, {"trade_date": "20231206", "pe_ttm": null, "pb": 5.7139, "ps_ttm": 8.0975}, {"trade_date": "20231211", "pe_ttm": null, "pb": 6.1761, "ps_ttm": 8.7525}, {"trade_date": "20231214", "pe_ttm": null, "pb": 6.3118, "ps_ttm": 8.9447}, {"trade_date": "20231219", "pe_ttm": null, "pb": 6.047, "ps_ttm": 8.5695}, {"trade_date": "20231222", "pe_ttm": null, "pb": 5.8918, "ps_ttm": 8.3496}, {"trade_date": "20231227", "pe_ttm": null, "pb": 5.8734, "ps_ttm": 8.3235}, {"trade_date": "20240102", "pe_ttm": null, "pb": 6.0242, "ps_ttm": 8.5372}, {"trade_date": "20240105", "pe_ttm": null, "pb": 5.792, "ps_ttm": 8.2082}, {"trade_date": "20240110", "pe_ttm": null, "pb": 5.5088, "ps_ttm": 7.8068}, {"trade_date": "20240115", "pe_ttm": null, "pb": 5.7291, "ps_ttm": 8.119}, {"trade_date": "20240118", "pe_ttm": null, "pb": 5.6878, "ps_ttm": 8.0606}, {"trade_date": "20240123", "pe_ttm": null, "pb": 5.4752, "ps_ttm": 7.7592}, {"trade_date": "20240126", "pe_ttm": null, "pb": 5.0607, "ps_ttm": 7.1718}, {"trade_date": "20240131", "pe_ttm": null, "pb": 4.1992, "ps_ttm": 5.9508}, {"trade_date": "20240205", "pe_ttm": null, "pb": 3.8194, "ps_ttm": 5.4127}, {"trade_date": "20240208", "pe_ttm": null, "pb": 4.4379, "ps_ttm": 6.2891}, {"trade_date": "20240221", "pe_ttm": null, "pb": 4.4324, "ps_ttm": 6.2815}, {"trade_date": "20240226", "pe_ttm": 1301.2725, "pb": 4.7696, "ps_ttm": 6.2437}, {"trade_date": "20240229", "pe_ttm": 1399.3056, "pb": 5.1289, "ps_ttm": 6.7141}, {"trade_date": "20240305", "pe_ttm": 1470.4963, "pb": 5.3899, "ps_ttm": 7.0557}, {"trade_date": "20240308", "pe_ttm": 1454.1574, "pb": 5.33, "ps_ttm": 6.9773}, {"trade_date": "20240313", "pe_ttm": 1491.2116, "pb": 5.4658, "ps_ttm": 7.1551}, {"trade_date": "20240318", "pe_ttm": 1534.9764, "pb": 5.6262, "ps_ttm": 7.3651}, {"trade_date": "20240321", "pe_ttm": 1536.4352, "pb": 5.6316, "ps_ttm": 7.3721}, {"trade_date": "20240326", "pe_ttm": 1469.621, "pb": 5.3867, "ps_ttm": 7.0515}, {"trade_date": "20240329", "pe_ttm": 1455.3245, "pb": 5.3343, "ps_ttm": 6.9829}, {"trade_date": "20240403", "pe_ttm": 1450.3645, "pb": 5.3161, "ps_ttm": 6.9591}, {"trade_date": "20240410", "pe_ttm": 1354.082, "pb": 4.9632, "ps_ttm": 6.4971}, {"trade_date": "20240415", "pe_ttm": 1318.7784, "pb": 4.8338, "ps_ttm": 6.3277}, {"trade_date": "20240418", "pe_ttm": 1361.0844, "pb": 4.9888, "ps_ttm": 6.5307}, {"trade_date": "20240423", "pe_ttm": 1313.2349, "pb": 4.8134, "ps_ttm": 6.3011}, {"trade_date": "20240426", "pe_ttm": 1380.3409, "pb": 5.0594, "ps_ttm": 6.6231}, {"trade_date": "20240506", "pe_ttm": 368.6124, "pb": 5.2475, "ps_ttm": 6.134}, {"trade_date": "20240509", "pe_ttm": 356.224, "pb": 5.0712, "ps_ttm": 5.9278}, {"trade_date": "20240514", "pe_ttm": 328.183, "pb": 4.672, "ps_ttm": 5.4612}, {"trade_date": "20240517", "pe_ttm": 351.1054, "pb": 4.9983, "ps_ttm": 5.8426}, {"trade_date": "20240522", "pe_ttm": 336.1205, "pb": 4.785, "ps_ttm": 5.5933}, {"trade_date": "20240527", "pe_ttm": 339.7555, "pb": 4.8367, "ps_ttm": 5.6538}, {"trade_date": "20240530", "pe_ttm": 330.186, "pb": 4.7005, "ps_ttm": 5.4945}, {"trade_date": "20240604", "pe_ttm": 357.9302, "pb": 5.0955, "ps_ttm": 5.9562}, {"trade_date": "20240607", "pe_ttm": 358.4495, "pb": 5.1029, "ps_ttm": 5.9648}, {"trade_date": "20240613", "pe_ttm": 382.9297, "pb": 5.4514, "ps_ttm": 6.3722}, {"trade_date": "20240618", "pe_ttm": 364.4582, "pb": 5.1884, "ps_ttm": 6.0648}, {"trade_date": "20240621", "pe_ttm": 370.6154, "pb": 5.2761, "ps_ttm": 6.1673}, {"trade_date": "20240626", "pe_ttm": 355.7789, "pb": 5.0648, "ps_ttm": 5.9204}, {"trade_date": "20240701", "pe_ttm": 363.1229, "pb": 5.1694, "ps_ttm": 6.0426}, {"trade_date": "20240704", "pe_ttm": 346.7286, "pb": 4.936, "ps_ttm": 5.7698}, {"trade_date": "20240709", "pe_ttm": 379.7398, "pb": 5.4059, "ps_ttm": 6.3191}, {"trade_date": "20240712", "pe_ttm": 399.6949, "pb": 5.7908, "ps_ttm": 6.6512}, {"trade_date": "20240717", "pe_ttm": 415.9408, "pb": 6.0262, "ps_ttm": 6.9215}, {"trade_date": "20240722", "pe_ttm": 422.9882, "pb": 6.1283, "ps_ttm": 7.0388}, {"trade_date": "20240725", "pe_ttm": 395.3181, "pb": 5.7274, "ps_ttm": 6.5784}, {"trade_date": "20240730", "pe_ttm": 375.363, "pb": 5.4383, "ps_ttm": 6.2463}, {"trade_date": "20240802", "pe_ttm": 383.078, "pb": 5.55, "ps_ttm": 6.3747}, {"trade_date": "20240807", "pe_ttm": 378.4045, "pb": 5.4823, "ps_ttm": 6.2969}, {"trade_date": "20240812", "pe_ttm": 377.8852, "pb": 5.4748, "ps_ttm": 6.2883}, {"trade_date": "20240815", "pe_ttm": 375.363, "pb": 5.4383, "ps_ttm": 6.2463}, {"trade_date": "20240820", "pe_ttm": 367.203, "pb": 5.32, "ps_ttm": 6.1105}, {"trade_date": "20240823", "pe_ttm": 365.4226, "pb": 5.2943, "ps_ttm": 6.0809}, {"trade_date": "20240828", "pe_ttm": 80.8336, "pb": 4.7861, "ps_ttm": 4.39}, {"trade_date": "20240902", "pe_ttm": 82.3964, "pb": 4.8786, "ps_ttm": 4.4749}, {"trade_date": "20240905", "pe_ttm": 80.9204, "pb": 4.7912, "ps_ttm": 4.3948}, {"trade_date": "20240910", "pe_ttm": 78.7325, "pb": 4.6617, "ps_ttm": 4.2759}, {"trade_date": "20240913", "pe_ttm": 76.3708, "pb": 4.5218, "ps_ttm": 4.1477}, {"trade_date": "20240920", "pe_ttm": 72.9499, "pb": 4.3193, "ps_ttm": 3.9619}, {"trade_date": "20240925", "pe_ttm": 75.5894, "pb": 4.4756, "ps_ttm": 4.1052}, {"trade_date": "20240930", "pe_ttm": 100.2128, "pb": 5.9335, "ps_ttm": 5.4425}, {"trade_date": "20241010", "pe_ttm": 118.7759, "pb": 7.0326, "ps_ttm": 6.4507}, {"trade_date": "20241015", "pe_ttm": 111.7779, "pb": 6.6182, "ps_ttm": 6.0706}, {"trade_date": "20241018", "pe_ttm": 131.5912, "pb": 7.7914, "ps_ttm": 7.1467}, {"trade_date": "20241023", "pe_ttm": 119.3837, "pb": 7.0686, "ps_ttm": 6.4837}, {"trade_date": "20241028", "pe_ttm": 78.1596, "pb": 6.8253, "ps_ttm": 5.2125}, {"trade_date": "20241031", "pe_ttm": 78.5336, "pb": 6.858, "ps_ttm": 5.2374}, {"trade_date": "20241105", "pe_ttm": 83.3732, "pb": 7.2806, "ps_ttm": 5.5602}, {"trade_date": "20241108", "pe_ttm": 86.4788, "pb": 7.5518, "ps_ttm": 5.7673}, {"trade_date": "20241113", "pe_ttm": 89.7316, "pb": 7.8359, "ps_ttm": 5.9842}, {"trade_date": "20241118", "pe_ttm": 80.0524, "pb": 6.9906, "ps_ttm": 5.3387}, {"trade_date": "20241121", "pe_ttm": 82.6819, "pb": 7.2203, "ps_ttm": 5.5141}, {"trade_date": "20241126", "pe_ttm": 80.9101, "pb": 7.1007, "ps_ttm": 5.3959}, {"trade_date": "20241129", "pe_ttm": 80.661, "pb": 7.0789, "ps_ttm": 5.3793}, {"trade_date": "20241204", "pe_ttm": 80.7403, "pb": 7.0858, "ps_ttm": 5.3846}, {"trade_date": "20241209", "pe_ttm": 80.5024, "pb": 7.065, "ps_ttm": 5.3687}, {"trade_date": "20241212", "pe_ttm": 85.497, "pb": 7.5033, "ps_ttm": 5.7018}, {"trade_date": "20241217", "pe_ttm": 83.3678, "pb": 7.3164, "ps_ttm": 5.5598}, {"trade_date": "20241220", "pe_ttm": 94.5688, "pb": 8.2994, "ps_ttm": 6.3068}, {"trade_date": "20241225", "pe_ttm": 92.7001, "pb": 8.1354, "ps_ttm": 6.1822}, {"trade_date": "20241230", "pe_ttm": 94.1271, "pb": 8.2607, "ps_ttm": 6.2774}, {"trade_date": "20250103", "pe_ttm": 84.0134, "pb": 7.3731, "ps_ttm": 5.6029}, {"trade_date": "20250108", "pe_ttm": 85.1782, "pb": 7.3699, "ps_ttm": 5.6806}, {"trade_date": "20250113", "pe_ttm": 82.8441, "pb": 7.168, "ps_ttm": 5.5249}, {"trade_date": "20250116", "pe_ttm": 82.5481, "pb": 7.1424, "ps_ttm": 5.5052}, {"trade_date": "20250121", "pe_ttm": 86.0777, "pb": 7.4478, "ps_ttm": 5.7406}, {"trade_date": "20250124", "pe_ttm": 91.5202, "pb": 7.9187, "ps_ttm": 6.1035}, {"trade_date": "20250206", "pe_ttm": 94.2073, "pb": 8.1512, "ps_ttm": 6.2827}, {"trade_date": "20250211", "pe_ttm": 98.3404, "pb": 8.5088, "ps_ttm": 6.5584}, {"trade_date": "20250214", "pe_ttm": 104.2269, "pb": 9.0181, "ps_ttm": 6.9509}, {"trade_date": "20250219", "pe_ttm": 112.8005, "pb": 9.7599, "ps_ttm": 7.5227}, {"trade_date": "20250224", "pe_ttm": 109.305, "pb": 9.4575, "ps_ttm": 7.2896}, {"trade_date": "20250227", "pe_ttm": 111.7233, "pb": 10.7145, "ps_ttm": 7.3215}, {"trade_date": "20250304", "pe_ttm": 112.4835, "pb": 10.7874, "ps_ttm": 7.3713}, {"trade_date": "20250307", "pe_ttm": 109.0422, "pb": 10.4574, "ps_ttm": 7.1458}, {"trade_date": "20250312", "pe_ttm": 107.4397, "pb": 10.3037, "ps_ttm": 7.0408}, {"trade_date": "20250317", "pe_ttm": 101.3687, "pb": 9.7215, "ps_ttm": 6.643}, {"trade_date": "20250320", "pe_ttm": 105.8167, "pb": 10.1481, "ps_ttm": 6.9344}, {"trade_date": "20250325", "pe_ttm": 99.1087, "pb": 9.5048, "ps_ttm": 6.4949}, {"trade_date": "20250328", "pe_ttm": 101.8104, "pb": 9.7639, "ps_ttm": 6.6719}, {"trade_date": "20250402", "pe_ttm": 99.9305, "pb": 9.5836, "ps_ttm": 6.5487}, {"trade_date": "20250408", "pe_ttm": 87.1619, "pb": 8.359, "ps_ttm": 5.7119}, {"trade_date": "20250411", "pe_ttm": 97.7322, "pb": 9.3727, "ps_ttm": 6.4046}, {"trade_date": "20250416", "pe_ttm": 94.3423, "pb": 9.0476, "ps_ttm": 6.1825}, {"trade_date": "20250421", "pe_ttm": 69.442, "pb": 8.8875, "ps_ttm": 5.7546}, {"trade_date": "20250424", "pe_ttm": 67.5743, "pb": 8.6485, "ps_ttm": 5.5998}, {"trade_date": "20250429", "pe_ttm": 67.4898, "pb": 8.6376, "ps_ttm": 5.5928}, {"trade_date": "20250507", "pe_ttm": 69.7733, "pb": 8.9299, "ps_ttm": 5.782}, {"trade_date": "20250512", "pe_ttm": 65.6291, "pb": 8.3995, "ps_ttm": 5.4386}, {"trade_date": "20250515", "pe_ttm": 64.6495, "pb": 8.2741, "ps_ttm": 5.3574}, {"trade_date": "20250520", "pe_ttm": 64.8116, "pb": 8.2949, "ps_ttm": 5.3708}, {"trade_date": "20250523", "pe_ttm": 63.4302, "pb": 8.1181, "ps_ttm": 5.2564}, {"trade_date": "20250528", "pe_ttm": 61.7388, "pb": 7.9016, "ps_ttm": 5.1162}, {"trade_date": "20250603", "pe_ttm": 62.366, "pb": 7.9819, "ps_ttm": 5.1682}, {"trade_date": "20250606", "pe_ttm": 68.6456, "pb": 8.7856, "ps_ttm": 5.6886}, {"trade_date": "20250611", "pe_ttm": 65.5516, "pb": 8.3896, "ps_ttm": 5.4322}, {"trade_date": "20250616", "pe_ttm": 65.4952, "pb": 8.3824, "ps_ttm": 5.4275}, {"trade_date": "20250619", "pe_ttm": 67.1938, "pb": 8.5998, "ps_ttm": 5.5682}, {"trade_date": "20250624", "pe_ttm": 68.4976, "pb": 8.7666, "ps_ttm": 5.6763}, {"trade_date": "20250627", "pe_ttm": 67.8774, "pb": 8.6873, "ps_ttm": 5.6249}, {"trade_date": "20250702", "pe_ttm": 71.8101, "pb": 9.3165, "ps_ttm": 5.9508}, {"trade_date": "20250707", "pe_ttm": 73.4663, "pb": 9.5313, "ps_ttm": 6.088}, {"trade_date": "20250710", "pe_ttm": 74.0019, "pb": 9.6008, "ps_ttm": 6.1324}, {"trade_date": "20250715", "pe_ttm": 72.0849, "pb": 9.3521, "ps_ttm": 5.9736}, {"trade_date": "20250718", "pe_ttm": 69.0755, "pb": 8.9617, "ps_ttm": 5.7242}, {"trade_date": "20250723", "pe_ttm": 69.3151, "pb": 8.9928, "ps_ttm": 5.744}, {"trade_date": "20250728", "pe_ttm": 69.1249, "pb": 8.9681, "ps_ttm": 5.7283}, {"trade_date": "20250731", "pe_ttm": 66.9541, "pb": 8.6865, "ps_ttm": 5.5484}, {"trade_date": "20250805", "pe_ttm": 70.6401, "pb": 9.1647, "ps_ttm": 5.8538}, {"trade_date": "20250808", "pe_ttm": 69.9424, "pb": 9.0742, "ps_ttm": 5.796}, {"trade_date": "20250813", "pe_ttm": 68.6033, "pb": 8.9004, "ps_ttm": 5.6851}, {"trade_date": "20250818", "pe_ttm": 71.9158, "pb": 9.3302, "ps_ttm": 5.9595}, {"trade_date": "20250821", "pe_ttm": 71.0137, "pb": 9.2131, "ps_ttm": 5.8848}, {"trade_date": "20250826", "pe_ttm": 66.2428, "pb": 9.1808, "ps_ttm": 5.8076}, {"trade_date": "20250829", "pe_ttm": 69.2324, "pb": 9.5951, "ps_ttm": 6.0698}, {"trade_date": "20250903", "pe_ttm": 63.1213, "pb": 8.7482, "ps_ttm": 5.534}, {"trade_date": "20250908", "pe_ttm": 62.9203, "pb": 8.7203, "ps_ttm": 5.5164}, {"trade_date": "20250911", "pe_ttm": 64.0885, "pb": 8.8822, "ps_ttm": 5.6188}, {"trade_date": "20250916", "pe_ttm": 62.8826, "pb": 8.7151, "ps_ttm": 5.5131}, {"trade_date": "20250919", "pe_ttm": 64.6161, "pb": 8.9553, "ps_ttm": 5.665}, {"trade_date": "20250924", "pe_ttm": 67.5241, "pb": 9.3584, "ps_ttm": 5.92}, {"trade_date": "20250929", "pe_ttm": 70.5325, "pb": 9.7753, "ps_ttm": 6.1837}, {"trade_date": "20251010", "pe_ttm": 71.9143, "pb": 9.9668, "ps_ttm": 6.3049}, {"trade_date": "20251015", "pe_ttm": 68.0768, "pb": 9.435, "ps_ttm": 5.9684}, {"trade_date": "20251020", "pe_ttm": 67.8193, "pb": 9.3993, "ps_ttm": 5.9459}, {"trade_date": "20251023", "pe_ttm": 67.1975, "pb": 9.3131, "ps_ttm": 5.8913}, {"trade_date": "20251028", "pe_ttm": 70.4948, "pb": 9.7701, "ps_ttm": 6.1804}, {"trade_date": "20251031", "pe_ttm": 52.2125, "pb": 8.6679, "ps_ttm": 5.2935}, {"trade_date": "20251105", "pe_ttm": 49.9505, "pb": 8.2924, "ps_ttm": 5.0642}, {"trade_date": "20251110", "pe_ttm": 48.7091, "pb": 8.0863, "ps_ttm": 4.9384}, {"trade_date": "20251113", "pe_ttm": 47.6395, "pb": 7.9087, "ps_ttm": 4.8299}, {"trade_date": "20251118", "pe_ttm": 45.6817, "pb": 7.5837, "ps_ttm": 4.6314}, {"trade_date": "20251121", "pe_ttm": 43.9496, "pb": 7.2962, "ps_ttm": 4.4558}, {"trade_date": "20251126", "pe_ttm": 45.6326, "pb": 7.5756, "ps_ttm": 4.6264}, {"trade_date": "20251201", "pe_ttm": 46.5109, "pb": 7.7214, "ps_ttm": 4.7155}, {"trade_date": "20251204", "pe_ttm": 44.7739, "pb": 7.5094, "ps_ttm": 4.5394}, {"trade_date": "20251209", "pe_ttm": 44.8279, "pb": 7.5184, "ps_ttm": 4.5449}, {"trade_date": "20251212", "pe_ttm": 45.3431, "pb": 7.6048, "ps_ttm": 4.5971}, {"trade_date": "20251217", "pe_ttm": 44.5924, "pb": 7.4789, "ps_ttm": 4.521}, {"trade_date": "20251222", "pe_ttm": 44.8019, "pb": 7.5141, "ps_ttm": 4.5422}, {"trade_date": "20251225", "pe_ttm": 46.1575, "pb": 7.7252, "ps_ttm": 4.6797}, {"trade_date": "20251230", "pe_ttm": 47.0956, "pb": 7.8822, "ps_ttm": 4.7748}, {"trade_date": "20260106", "pe_ttm": 48.4069, "pb": 8.1017, "ps_ttm": 4.9077}, {"trade_date": "20260109", "pe_ttm": 47.6407, "pb": 7.9735, "ps_ttm": 4.83}, {"trade_date": "20260114", "pe_ttm": 46.9528, "pb": 7.8583, "ps_ttm": 4.7603}, {"trade_date": "20260119", "pe_ttm": 47.6307, "pb": 7.9682, "ps_ttm": 4.829}, {"trade_date": "20260122", "pe_ttm": 50.0526, "pb": 8.3734, "ps_ttm": 5.0746}, {"trade_date": "20260127", "pe_ttm": 50.0624, "pb": 8.375, "ps_ttm": 5.0756}, {"trade_date": "20260130", "pe_ttm": 47.4293, "pb": 7.9345, "ps_ttm": 4.8086}, {"trade_date": "20260204", "pe_ttm": 45.6117, "pb": 7.6305, "ps_ttm": 4.6243}, {"trade_date": "20260209", "pe_ttm": 46.2405, "pb": 7.7357, "ps_ttm": 4.6881}, {"trade_date": "20260212", "pe_ttm": 48.4118, "pb": 8.0989, "ps_ttm": 4.9082}, {"trade_date": "20260225", "pe_ttm": 46.6335, "pb": 7.8014, "ps_ttm": 4.7279}, {"trade_date": "20260302", "pe_ttm": 38.8019, "pb": 7.937, "ps_ttm": 4.3023}, {"trade_date": "20260305", "pe_ttm": 36.0298, "pb": 7.37, "ps_ttm": 3.9949}, {"trade_date": "20260310", "pe_ttm": 35.3187, "pb": 7.2245, "ps_ttm": 3.916}, {"trade_date": "20260313", "pe_ttm": 34.0531, "pb": 6.9656, "ps_ttm": 3.7757}, {"trade_date": "20260318", "pe_ttm": 33.9808, "pb": 6.9508, "ps_ttm": 3.7677}, {"trade_date": "20260323", "pe_ttm": 30.5659, "pb": 6.2523, "ps_ttm": 3.3891}, {"trade_date": "20260326", "pe_ttm": 30.9757, "pb": 6.3361, "ps_ttm": 3.4345}, {"trade_date": "20260331", "pe_ttm": 33.1892, "pb": 6.3605, "ps_ttm": 3.6795}, {"trade_date": "20260403", "pe_ttm": 36.271, "pb": 6.9511, "ps_ttm": 4.0212}, {"trade_date": "20260409", "pe_ttm": 37.6693, "pb": 7.2191, "ps_ttm": 4.1762}, {"trade_date": "20260414", "pe_ttm": 37.2273, "pb": 7.1344, "ps_ttm": 4.1272}, {"trade_date": "20260417", "pe_ttm": 38.3001, "pb": 7.34, "ps_ttm": 4.2461}, {"trade_date": "20260422", "pe_ttm": 37.3559, "pb": 7.159, "ps_ttm": 4.1415}, {"trade_date": "20260427", "pe_ttm": 38.9511, "pb": 7.4647, "ps_ttm": 4.3183}, {"trade_date": "20260430", "pe_ttm": 33.794, "pb": 6.4778, "ps_ttm": 3.7652}, {"trade_date": "20260508", "pe_ttm": 34.4129, "pb": 6.5964, "ps_ttm": 3.8341}, {"trade_date": "20260513", "pe_ttm": 38.6338, "pb": 7.4055, "ps_ttm": 4.3044}, {"trade_date": "20260518", "pe_ttm": 42.2396, "pb": 8.0967, "ps_ttm": 4.7062}, {"trade_date": "20260519", "pe_ttm": 42.6356, "pb": 8.1726, "ps_ttm": 4.7503}], "financial_trends": [{"end_date": "20241231", "revenue": 5968147934.08, "n_income": 392738925.26, "tr_yoy": 108.8705, "netprofit_yoy": 2662.7589, "roe": 9.9054, "grossprofit_margin": 21.0875, "netprofit_margin": 6.5806}, {"end_date": "20250331", "revenue": 1749619552.82, "n_income": 191452874.73, "tr_yoy": 108.9358, "netprofit_yoy": 1264.9737, "roe": 4.4298, "grossprofit_margin": 22.7925, "netprofit_margin": 10.9425}, {"end_date": "20250630", "revenue": 3786399097.63, "n_income": 396863571.69, "tr_yoy": 54.1135, "netprofit_yoy": 164.9269, "roe": 9.0142, "grossprofit_margin": 23.162, "netprofit_margin": 10.4813}, {"end_date": "20250930", "revenue": 6317151337.98, "n_income": 699458608.72, "tr_yoy": 50.1385, "netprofit_yoy": 155.989, "roe": 15.3357, "grossprofit_margin": 23.4753, "netprofit_margin": 11.0724}, {"end_date": "20251231", "revenue": 9031240394.26, "n_income": 1001246790.35, "tr_yoy": 51.324, "netprofit_yoy": 154.9395, "roe": 21.2778, "grossprofit_margin": 23.6589, "netprofit_margin": 11.0865}, {"end_date": "20260331", "revenue": 2111500539.86, "n_income": 236746699.09, "tr_yoy": 20.6834, "netprofit_yoy": 23.6579, "roe": 4.4326, "grossprofit_margin": 25.737, "netprofit_margin": 11.2122}]}</script>
+  <script>
+  (function () {
+    /* ===== UI decoration — never edits text content ===== */
+    const root = document.getElementById("report-body");
+    if (!root) return;
+
+    /* hide standalone "---" separators */
+    root.querySelectorAll("p").forEach(p => {
+      const txt = p.textContent.trim();
+      if (/^-{3,}$/.test(txt)) { p.style.display = "none"; p.setAttribute("aria-hidden", "true"); }
+    });
+
+    /* promote the leading "核心判断" section into a hero card */
+    const summaryH = Array.from(root.querySelectorAll("h2, h3")).find(h => h.textContent.trim().startsWith("核心判断"));
+    if (summaryH) {
+      const card = document.createElement("aside");
+      card.className = "summary-card";
+      const label = document.createElement("div");
+      label.className = "summary-label";
+      label.textContent = summaryH.textContent.trim();
+      card.appendChild(label);
+      const stopTags = summaryH.tagName === "H2" ? /^H[12]$/ : /^H[123]$/;
+      const collected = [];
+      let cur = summaryH.nextElementSibling;
+      while (cur && !stopTags.test(cur.tagName)) {
+        const next = cur.nextElementSibling;
+        const txt = cur.textContent.trim();
+        if ((cur.tagName === "P" || cur.tagName === "UL") && txt && !/^-{3,}$/.test(txt)) {
+          cur.classList.add("summary-body");
+          collected.push(cur);
+        } else {
+          cur.remove();
+        }
+        cur = next;
+      }
+      collected.forEach(node => card.appendChild(node));
+      summaryH.replaceWith(card);
+      collected.forEach(p => {
+        p.innerHTML = p.innerHTML.replace(/([+\-])(\d+(?:\.\d+)?)(%|pct|倍|x|分位)/g,
+          (_, sign, num, unit) => `<span class="${sign === "+" ? "num-pos" : "num-neg"}">${sign}${num}${unit}</span>`);
+      });
+    }
+
+    /* rotate h2 accent hue */
+    let h2Idx = 0;
+    root.querySelectorAll("h2").forEach(h => { h.setAttribute("data-idx", String(h2Idx % 6)); h2Idx += 1; });
+
+    /* colorize numeric / labelled table cells */
+    const pillRules = [
+      { re: /^(成长股|成熟龙头|红利价值)$/, cls: "pill" },
+      { re: /^(强连接|核心标的)$/, cls: "pill neg" },
+      { re: /^(弱连接|边缘受益)$/, cls: "pill warn" },
+      { re: /^(无连接|脱离主线)$/, cls: "pill" },
+      { re: /^(深度低估|合理偏低)$/, cls: "pill pos" },
+      { re: /^(偏高|透支|极度乐观)$/, cls: "pill neg" },
+      { re: /^(合理|合理定价)$/, cls: "pill" },
+      { re: /^(强|高)$/, cls: "pill neg" },
+      { re: /^(中)$/, cls: "pill warn" },
+      { re: /^(弱|低)$/, cls: "pill pos" },
+      { re: /^(基准|乐观|压力|Bull|Bear|Base)$/, cls: "pill violet" }
+    ];
+    root.querySelectorAll("td").forEach(td => {
+      const trimmed = td.textContent.trim();
+      if (!trimmed || td.children.length > 0) return;
+      const signed = trimmed.match(/^([+\-])(\d[\d,]*\.?\d*)\s*(%|pct|x|倍|亿|万亿|分位)?$/);
+      if (signed) { td.innerHTML = `<span class="${signed[1] === "+" ? "num-pos" : "num-neg"}">${trimmed}</span>`; return; }
+      for (const rule of pillRules) { if (rule.re.test(trimmed)) { td.innerHTML = `<span class="${rule.cls}">${trimmed}</span>`; return; } }
+      if (/[+\-]\d/.test(trimmed)) {
+        td.innerHTML = td.innerHTML.replace(/([+\-])(\d+(?:[\.,]\d+)?)(%|pct|倍|x)?/g,
+          (_, sign, num, unit) => `<span class="${sign === "+" ? "num-pos" : "num-neg"}">${sign}${num}${unit || ""}</span>`);
+      }
+    });
+  })();
+  </script>
+  <script>
+  (function () {
+    const charts = JSON.parse(document.getElementById("chart-data").textContent || "{}");
+    const root = document.getElementById("report-body");
+    if (!root) return;
+    const NS = "http://www.w3.org/2000/svg";
+
+    /* ---------- shared helpers ---------- */
+    const svgEl = (name, attrs) => {
+      const el = document.createElementNS(NS, name);
+      Object.entries(attrs || {}).forEach(([k, v]) => el.setAttribute(k, v));
+      return el;
+    };
+    const svgText = (x, y, text, anchor, color, size) => {
+      const el = svgEl("text", { x, y, "text-anchor": anchor || "start", fill: color || "var(--ink-4)", "font-size": size || 11 });
+      el.textContent = text;
+      return el;
+    };
+    const fmtDate = v => String(v || "").replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+    const fmtNum = (v, d) => Number.isFinite(v) ? v.toFixed(d == null ? (Math.abs(v) >= 100 ? 1 : Math.abs(v) >= 10 ? 2 : 2) : d) : "—";
+    const fmtAmt = v => Number.isFinite(v) ? (v / 100000).toFixed(2) + "亿" : "—";  // daily.amount 单位千元 → 亿元
+    const fmtYi = v => Number.isFinite(v) ? (v / 1e8).toFixed(2) + "亿" : "—";       // 元 → 亿元
+    const findHeading = (texts) => {
+      const list = Array.from(root.querySelectorAll("h2, h3, h4"));
+      for (const t of texts) { const h = list.find(e => e.textContent.includes(t)); if (h) return h; }
+      return null;
+    };
+    const insertAfterBlock = (heading, node) => {
+      // place node right after heading (charts read best directly under the section title)
+      heading.after(node);
+    };
+    const mkCard = (cls, title, subtitle) => {
+      const card = document.createElement("article");
+      card.className = cls;
+      if (title) { const t = document.createElement("div"); t.className = "chart-title"; t.textContent = title; card.appendChild(t); }
+      if (subtitle) { const s = document.createElement("div"); s.className = "chart-subtitle"; s.textContent = subtitle; card.appendChild(s); }
+      return card;
+    };
+    const mkLegend = (items) => {
+      const legend = document.createElement("div");
+      legend.className = "legend";
+      items.forEach(([label, color]) => {
+        const span = document.createElement("span");
+        span.style.setProperty("--legend-color", color);
+        span.textContent = label;
+        legend.appendChild(span);
+      });
+      return legend;
+    };
+    const mkTooltip = (card) => {
+      const tip = document.createElement("div");
+      tip.style.cssText = "position:absolute;background:rgba(15,23,42,0.92);color:#f1f5f9;padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.5;pointer-events:none;opacity:0;transition:opacity .15s ease;z-index:100;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.2);";
+      card.style.position = "relative";
+      card.appendChild(tip);
+      return tip;
+    };
+    const moveTip = (tip, card, e) => {
+      const r = card.getBoundingClientRect();
+      tip.style.left = Math.min(e.clientX - r.left + 12, r.width - tip.offsetWidth - 8) + "px";
+      tip.style.top = Math.max(8, e.clientY - r.top - tip.offsetHeight - 12) + "px";
+    };
+
+    drawValuationBands();
+    drawFinancialTrends();
+
+    /* ---------- valuation bands: PE / PB / PS over time (date x-axis) ---------- */
+    function drawValuationBands() {
+      const series = charts.valuation_series || [];
+      const bands = charts.valuation_bands || {};
+      if (series.length < 2) return;
+      const heading = findHeading(["估值快照与历史分位", "估值快照", "历史分位", "估值模式"]);
+      if (!heading) return;
+
+      const specs = [
+        { key: "pe_ttm", title: "PE-TTM 估值带" },
+        { key: "pb", title: "PB 估值带" },
+        { key: "ps_ttm", title: "PS-TTM 估值带" }
+      ];
+      const grid = document.createElement("div");
+      grid.className = "chart-grid";
+      specs.forEach(spec => {
+        const card = buildBandTimeCard(spec.key, spec.title);
+        if (card) grid.appendChild(card);
+      });
+      if (grid.children.length) insertAfterBlock(heading, grid);
+
+      function buildBandTimeCard(key, title) {
+        // positive-only points (a negative PE/PB/PS is meaningless on a band)
+        const pts = series
+          .map((r, i) => ({ i, date: String(r.trade_date || ""), v: Number(r[key]) }))
+          .filter(p => Number.isFinite(p.v) && p.v > 0);
+        if (pts.length < 2) return null;
+        const band = bands[key] || {};
+        const windows = band.windows || {};
+        const wkey = ["5y", "3y", "1y"].find(k => windows[k] && windows[k].sample_size);
+        const win = wkey ? windows[wkey] : null;
+        const current = Number.isFinite(Number(band.current)) ? Number(band.current) : pts[pts.length - 1].v;
+        const pctText = win && Number.isFinite(win.current_percentile) ? ` · 分位 ${win.current_percentile.toFixed(0)}%` : "";
+        const metricName = title.split(" ")[0];
+        const card = mkCard("chart-card", title, `当前 ${fmtNum(current)}${pctText}`);
+        const tip = mkTooltip(card);
+
+        const W = 480, H = 220, pad = { l: 38, r: 40, t: 12, b: 28 };
+        const usableW = W - pad.l - pad.r, usableH = H - pad.t - pad.b;
+        const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+
+        const levels = win ? [win.min, win.p25, win.median, win.p75, win.max].filter(Number.isFinite) : [];
+        const vals = pts.map(p => p.v).concat(levels);
+        let lo = Math.min(...vals), hi = Math.max(...vals);
+        if (lo === hi) { lo -= 1; hi += 1; }
+        const sp = hi - lo; lo -= sp * 0.06; hi += sp * 0.06;
+        const n = pts.length;
+        const x = i => pad.l + (n <= 1 ? usableW / 2 : i / (n - 1) * usableW);
+        const y = v => pad.t + (hi - v) / (hi - lo) * usableH;
+
+        // shaded P25–P75 zone
+        if (win && Number.isFinite(win.p25) && Number.isFinite(win.p75)) {
+          svg.appendChild(svgEl("rect", { x: pad.l, y: y(win.p75).toFixed(2), width: usableW, height: Math.max(1, y(win.p25) - y(win.p75)).toFixed(2), class: "band-box" }));
+        }
+        // horizontal percentile lines + right-edge labels
+        const bandLines = win ? [
+          ["max", win.max, "var(--neg)"],
+          ["P75", win.p75, "var(--ink-4)"],
+          ["中位", win.median, "var(--ink-3)"],
+          ["P25", win.p25, "var(--ink-4)"],
+          ["min", win.min, "var(--pos)"]
+        ].filter(l => Number.isFinite(l[1])) : [];
+        bandLines.forEach(item => {
+          const v = item[1], color = item[2];
+          svg.appendChild(svgEl("line", { x1: pad.l, x2: W - pad.r, y1: y(v).toFixed(2), y2: y(v).toFixed(2), stroke: color, "stroke-width": 1, "stroke-dasharray": "3 3", opacity: 0.65 }));
+          svg.appendChild(svgText(W - pad.r + 3, y(v) + 3, fmtNum(v), "start", color, 9));
+        });
+
+        // valuation line over time
+        const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(2)} ${y(p.v).toFixed(2)}`).join(" ");
+        svg.appendChild(svgEl("path", { d, class: "series-line", style: "stroke: var(--accent)" }));
+        const last = pts[pts.length - 1];
+        svg.appendChild(svgEl("circle", { cx: x(n - 1).toFixed(2), cy: y(last.v).toFixed(2), r: 3.5, fill: "var(--orange)", stroke: "#fff", "stroke-width": 1.5 }));
+
+        // x-axis date ticks (~4) + baseline
+        const ticks = 4;
+        for (let t = 0; t <= ticks; t++) {
+          const idx = Math.round(t / ticks * (n - 1));
+          svg.appendChild(svgText(x(idx), H - pad.b + 14, fmtDate(pts[idx].date).slice(0, 7), "middle", "var(--ink-4)", 9));
+        }
+        svg.appendChild(svgEl("line", { x1: pad.l, x2: W - pad.r, y1: pad.t + usableH, y2: pad.t + usableH, class: "axis" }));
+
+        // hover crosshair
+        const cursor = svgEl("line", { x1: 0, x2: 0, y1: pad.t, y2: pad.t + usableH, stroke: "var(--ink-4)", "stroke-width": 1, opacity: 0 });
+        svg.appendChild(cursor);
+        const hit = svgEl("rect", { x: pad.l, y: pad.t, width: usableW, height: usableH, fill: "transparent", style: "cursor:crosshair" });
+        hit.addEventListener("mousemove", e => {
+          const r = svg.getBoundingClientRect();
+          const px = (e.clientX - r.left) / r.width * W;
+          let idx = Math.round((px - pad.l) / usableW * (n - 1));
+          idx = Math.max(0, Math.min(n - 1, idx));
+          const p = pts[idx];
+          cursor.setAttribute("x1", x(idx)); cursor.setAttribute("x2", x(idx)); cursor.setAttribute("opacity", "1");
+          tip.innerHTML = `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${fmtDate(p.date)}</div><div>${metricName}: ${fmtNum(p.v)}</div>`;
+          tip.style.opacity = "1";
+          moveTip(tip, card, e);
+        });
+        hit.addEventListener("mouseleave", () => { cursor.setAttribute("opacity", "0"); tip.style.opacity = "0"; });
+        svg.appendChild(hit);
+
+        card.appendChild(svg);
+        card.appendChild(mkLegend([[(wkey ? wkey.toUpperCase() : "") + "分位带", "var(--accent-soft)"], ["估值", "var(--accent)"], ["当前", "var(--orange)"]]));
+        return card;
+      }
+    }
+
+    /* ---------- 3. financial trends ---------- */
+    function drawFinancialTrends() {
+      const rows = (charts.financial_trends || []).filter(r => r.end_date);
+      if (rows.length < 2) return;
+      const heading = findHeading(["成长性与财务质量诊断", "成长性与财务质量", "财务质量诊断", "成长性诊断"]);
+      if (!heading) return;
+
+      const labels = rows.map(r => String(r.end_date).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1/$2"));
+      const grid = document.createElement("div");
+      grid.className = "chart-grid";
+      const configs = [
+        { title: "营收 / 归母净利 (亿元)", type: "bars", fmt: fmtYi, fields: [
+          { key: "revenue", label: "营收", color: "var(--blue)", div: 1e8 },
+          { key: "n_income", label: "归母净利", color: "var(--orange)", div: 1e8 } ]},
+        { title: "同比增速 (%)", type: "line", fmt: v => fmtNum(v) + "%", fields: [
+          { key: "tr_yoy", label: "营收YoY", color: "var(--blue)" },
+          { key: "netprofit_yoy", label: "归母YoY", color: "var(--orange)" } ]},
+        { title: "盈利能力 (%)", type: "line", fmt: v => fmtNum(v) + "%", fields: [
+          { key: "roe", label: "ROE", color: "var(--violet)" },
+          { key: "grossprofit_margin", label: "毛利率", color: "var(--pos)" },
+          { key: "netprofit_margin", label: "净利率", color: "var(--cyan)" } ]}
+      ];
+      configs.forEach(cfg => {
+        const hasData = cfg.fields.some(f => rows.some(r => Number.isFinite(r[f.key])));
+        if (hasData) grid.appendChild(buildTrendCard(cfg, rows, labels));
+      });
+      if (grid.children.length) insertAfterBlock(heading, grid);
+
+      function buildTrendCard(cfg, rows, labels) {
+        const card = mkCard("chart-card", cfg.title, `${labels[0]} – ${labels[labels.length - 1]}`);
+        const tip = mkTooltip(card);
+        const W = 480, H = 210, pad = { l: 40, r: 14, t: 14, b: 30 };
+        const usableW = W - pad.l - pad.r, usableH = H - pad.t - pad.b;
+        const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+        const series = cfg.fields.map(f => ({
+          field: f,
+          pts: rows.map((r, i) => ({ i, date: labels[i], v: Number.isFinite(r[f.key]) ? r[f.key] / (f.div || 1) : null })).filter(p => Number.isFinite(p.v))
+        })).filter(s => s.pts.length);
+        if (!series.length) { svg.appendChild(svgText(W / 2, H / 2, "暂无数据", "middle")); card.appendChild(svg); return card; }
+        const vals = series.flatMap(s => s.pts.map(p => p.v));
+        let lo = Math.min(...vals, 0), hi = Math.max(...vals, 0);
+        if (lo === hi) { lo -= 1; hi += 1; }
+        const sp = hi - lo; lo -= sp * 0.08; hi += sp * 0.08;
+        const n = rows.length;
+        const x = i => pad.l + (n <= 1 ? usableW / 2 : (i + 0.5) / n * usableW);
+        const y = v => pad.t + (hi - v) / (hi - lo) * usableH;
+        for (let i = 0; i <= 4; i++) {
+          const gy = pad.t + usableH * i / 4;
+          svg.appendChild(svgEl("line", { x1: pad.l, x2: W - pad.r, y1: gy, y2: gy, class: "grid-line" }));
+        }
+        const y0 = y(0);
+        if (y0 >= pad.t && y0 <= pad.t + usableH) svg.appendChild(svgEl("line", { x1: pad.l, x2: W - pad.r, y1: y0, y2: y0, class: "axis" }));
+
+        if (cfg.type === "bars") {
+          const groupW = usableW / n, bw = Math.min(18, groupW / (series.length + 0.6));
+          series.forEach((s, si) => {
+            s.pts.forEach(p => {
+              const cx = pad.l + (p.i + 0.5) / n * usableW + (si - (series.length - 1) / 2) * bw;
+              const py = y(p.v), barY = p.v >= 0 ? py : y0;
+              svg.appendChild(svgEl("rect", { x: (cx - bw / 2).toFixed(2), y: barY.toFixed(2), width: bw.toFixed(2), height: Math.max(1, Math.abs(py - y0)).toFixed(2), fill: s.field.color, rx: 2, opacity: 0.85 }));
+            });
+          });
+        } else {
+          series.forEach(s => {
+            const d = s.pts.map((p, i) => `${i === 0 ? "M" : "L"} ${x(p.i).toFixed(2)} ${y(p.v).toFixed(2)}`).join(" ");
+            svg.appendChild(svgEl("path", { d, class: "series-line", style: `stroke:${s.field.color}` }));
+            s.pts.forEach(p => svg.appendChild(svgEl("circle", { cx: x(p.i).toFixed(2), cy: y(p.v).toFixed(2), r: 3, fill: s.field.color, stroke: "#fff", "stroke-width": 1.5 })));
+          });
+        }
+
+        // x labels + hover columns
+        rows.forEach((r, i) => {
+          svg.appendChild(svgText(x(i), H - pad.b + 14, labels[i], "middle", "var(--ink-4)", 9.5));
+          const hit = svgEl("rect", { x: (pad.l + i / n * usableW).toFixed(2), y: pad.t, width: (usableW / n).toFixed(2), height: usableH, fill: "transparent", style: "cursor:pointer" });
+          hit.addEventListener("mouseenter", () => {
+            tip.innerHTML = `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${labels[i]}</div>` +
+              cfg.fields.map(f => {
+                const raw = r[f.key];
+                if (!Number.isFinite(raw)) return "";
+                return `<div>${f.label}: ${cfg.fmt(raw)}</div>`;
+              }).join("");
+            tip.style.opacity = "1";
+          });
+          hit.addEventListener("mousemove", e => moveTip(tip, card, e));
+          hit.addEventListener("mouseleave", () => { tip.style.opacity = "0"; });
+          svg.appendChild(hit);
+        });
+        svg.appendChild(svgText(4, pad.t + 4, cfg.fmt(hi)));
+        svg.appendChild(svgText(4, pad.t + usableH, cfg.fmt(lo)));
+        card.appendChild(svg);
+        card.appendChild(mkLegend(cfg.fields.map(f => [f.label, f.color])));
+        return card;
+      }
+    }
+  })();
+  </script>
+</body>
+</html>

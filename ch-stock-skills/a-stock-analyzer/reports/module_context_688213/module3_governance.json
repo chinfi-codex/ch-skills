@@ -1,0 +1,947 @@
+{
+  "metadata": {
+    "type": "stock_ai_analyzer_evidence_pack",
+    "ts_code": "688213.SH",
+    "query": "688213.SH",
+    "generated_at": "2026-05-20 14:48:48",
+    "announcement_date": "2025-01-01~2026-05-20",
+    "source": "data_fetcher.build_analysis_context",
+    "context_generated_at": "2026-05-20 14:48:51"
+  },
+  "governance": {
+    "top10_holders": [
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260430",
+        "end_date": "20260331",
+        "holder_name": "徐辰",
+        "hold_amount": 54998783.0,
+        "hold_ratio": 13.6708,
+        "hold_float_ratio": 0.0527,
+        "hold_change": 0.0,
+        "holder_type": "自然人"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260430",
+        "end_date": "20260331",
+        "holder_name": "华芯投资管理有限责任公司-国家集成电路产业投资基金二期股份有限公司",
+        "hold_amount": 26931603.0,
+        "hold_ratio": 6.6942,
+        "hold_float_ratio": 8.3248,
+        "hold_change": 0.0,
+        "holder_type": "风险投资公司"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260430",
+        "end_date": "20260331",
+        "holder_name": "莫要武",
+        "hold_amount": 24060656.0,
+        "hold_ratio": 5.9806,
+        "hold_float_ratio": 0.0284,
+        "hold_change": 0.0,
+        "holder_type": "自然人"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260430",
+        "end_date": "20260331",
+        "holder_name": "BrizanChinaHoldingsLimited",
+        "hold_amount": 18119110.0,
+        "hold_ratio": 4.5038,
+        "hold_float_ratio": 5.6008,
+        "hold_change": 0.0,
+        "holder_type": "一般企业"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260430",
+        "end_date": "20260331",
+        "holder_name": "马伟剑",
+        "hold_amount": 15108714.0,
+        "hold_ratio": 3.7555,
+        "hold_float_ratio": 4.6703,
+        "hold_change": 81600.0,
+        "holder_type": "自然人"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260430",
+        "end_date": "20260331",
+        "holder_name": "共青城思智威科技产业投资合伙企业(有限合伙)",
+        "hold_amount": 12910441.0,
+        "hold_ratio": 3.2091,
+        "hold_float_ratio": 3.9907,
+        "hold_change": 0.0,
+        "holder_type": "风险投资公司"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260430",
+        "end_date": "20260331",
+        "holder_name": "香港中央结算有限公司",
+        "hold_amount": 10802906.0,
+        "hold_ratio": 2.6852,
+        "hold_float_ratio": 3.3393,
+        "hold_change": -877634.0,
+        "holder_type": "一般企业"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260430",
+        "end_date": "20260331",
+        "holder_name": "招商银行股份有限公司-华夏上证科创板50成份交易型开放式指数证券投资基金",
+        "hold_amount": 9734825.0,
+        "hold_ratio": 2.4197,
+        "hold_float_ratio": 3.0091,
+        "hold_change": -1253625.0,
+        "holder_type": "开放式投资基金"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260430",
+        "end_date": "20260331",
+        "holder_name": "中信证券股份有限公司-嘉实上证科创板芯片交易型开放式指数证券投资基金",
+        "hold_amount": 5902571.0,
+        "hold_ratio": 1.4671,
+        "hold_float_ratio": 1.8245,
+        "hold_change": -484502.0,
+        "holder_type": "开放式投资基金"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260430",
+        "end_date": "20260331",
+        "holder_name": "中国工商银行股份有限公司-易方达上证科创板50成份交易型开放式指数证券投资基金",
+        "hold_amount": 5299610.0,
+        "hold_ratio": 1.3173,
+        "hold_float_ratio": 1.6382,
+        "hold_change": -4955525.0,
+        "holder_type": "开放式投资基金"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "holder_name": "徐辰",
+        "hold_amount": 54998783.0,
+        "hold_ratio": 13.6736,
+        "hold_float_ratio": 0.0527,
+        "hold_change": 170340.0,
+        "holder_type": "自然人"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "holder_name": "华芯投资管理有限责任公司-国家集成电路产业投资基金二期股份有限公司",
+        "hold_amount": 26931603.0,
+        "hold_ratio": 6.6956,
+        "hold_float_ratio": 8.3269,
+        "hold_change": 0.0,
+        "holder_type": "风险投资公司"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "holder_name": "莫要武",
+        "hold_amount": 24060656.0,
+        "hold_ratio": 5.9818,
+        "hold_float_ratio": 0.0284,
+        "hold_change": 91800.0,
+        "holder_type": "自然人"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "holder_name": "BrizanChinaHoldingsLimited",
+        "hold_amount": 18119110.0,
+        "hold_ratio": 4.5047,
+        "hold_float_ratio": 5.6022,
+        "hold_change": 0.0,
+        "holder_type": "一般企业"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "holder_name": "马伟剑",
+        "hold_amount": 15027114.0,
+        "hold_ratio": 3.7359,
+        "hold_float_ratio": 4.6462,
+        "hold_change": 0.0,
+        "holder_type": "自然人"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "holder_name": "共青城思智威科技产业投资合伙企业(有限合伙)",
+        "hold_amount": 12910441.0,
+        "hold_ratio": 3.2097,
+        "hold_float_ratio": 3.9918,
+        "hold_change": 0.0,
+        "holder_type": "风险投资公司"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "holder_name": "香港中央结算有限公司",
+        "hold_amount": 11680540.0,
+        "hold_ratio": 2.9039,
+        "hold_float_ratio": 3.6115,
+        "hold_change": 446375.0,
+        "holder_type": "一般企业"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "holder_name": "招商银行股份有限公司-华夏上证科创板50成份交易型开放式指数证券投资基金",
+        "hold_amount": 10988450.0,
+        "hold_ratio": 2.7319,
+        "hold_float_ratio": 3.3975,
+        "hold_change": 1035474.0,
+        "holder_type": "开放式投资基金"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "holder_name": "中国工商银行股份有限公司-易方达上证科创板50成份交易型开放式指数证券投资基金",
+        "hold_amount": 10255135.0,
+        "hold_ratio": 2.5496,
+        "hold_float_ratio": 3.1708,
+        "hold_change": 86694.0,
+        "holder_type": "开放式投资基金"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "holder_name": "中信证券股份有限公司-嘉实上证科创板芯片交易型开放式指数证券投资基金",
+        "hold_amount": 6387073.0,
+        "hold_ratio": 1.5879,
+        "hold_float_ratio": 1.9748,
+        "hold_change": -3474.0,
+        "holder_type": "开放式投资基金"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251030",
+        "end_date": "20250930",
+        "holder_name": "徐辰",
+        "hold_amount": 54828443.0,
+        "hold_ratio": 13.6442,
+        "hold_float_ratio": 0.0,
+        "hold_change": 0.0,
+        "holder_type": "自然人"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251030",
+        "end_date": "20250930",
+        "holder_name": "华芯投资管理有限责任公司-国家集成电路产业投资基金二期股份有限公司",
+        "hold_amount": 26931603.0,
+        "hold_ratio": 6.702,
+        "hold_float_ratio": 8.3368,
+        "hold_change": 0.0,
+        "holder_type": "风险投资公司"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251030",
+        "end_date": "20250930",
+        "holder_name": "莫要武",
+        "hold_amount": 23968856.0,
+        "hold_ratio": 5.9647,
+        "hold_float_ratio": 0.0,
+        "hold_change": 0.0,
+        "holder_type": "自然人"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251030",
+        "end_date": "20250930",
+        "holder_name": "BrizanChinaHoldingsLimited",
+        "hold_amount": 18119110.0,
+        "hold_ratio": 4.509,
+        "hold_float_ratio": 5.6089,
+        "hold_change": -1947120.0,
+        "holder_type": "一般企业"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251030",
+        "end_date": "20250930",
+        "holder_name": "马伟剑",
+        "hold_amount": 15027114.0,
+        "hold_ratio": 3.7395,
+        "hold_float_ratio": 4.6517,
+        "hold_change": 0.0,
+        "holder_type": "自然人"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251030",
+        "end_date": "20250930",
+        "holder_name": "共青城思智威科技产业投资合伙企业(有限合伙)",
+        "hold_amount": 12910441.0,
+        "hold_ratio": 3.2128,
+        "hold_float_ratio": 3.9965,
+        "hold_change": 0.0,
+        "holder_type": "风险投资公司"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251030",
+        "end_date": "20250930",
+        "holder_name": "香港中央结算有限公司",
+        "hold_amount": 11234165.0,
+        "hold_ratio": 2.7956,
+        "hold_float_ratio": 3.4776,
+        "hold_change": NaN,
+        "holder_type": "一般企业"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251030",
+        "end_date": "20250930",
+        "holder_name": "中国工商银行股份有限公司-易方达上证科创板50成份交易型开放式指数证券投资基金",
+        "hold_amount": 10168441.0,
+        "hold_ratio": 2.5304,
+        "hold_float_ratio": 3.1477,
+        "hold_change": -1478221.0,
+        "holder_type": "开放式投资基金"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251030",
+        "end_date": "20250930",
+        "holder_name": "招商银行股份有限公司-华夏上证科创板50成份交易型开放式指数证券投资基金",
+        "hold_amount": 9952976.0,
+        "hold_ratio": 2.4768,
+        "hold_float_ratio": 3.081,
+        "hold_change": -5641221.0,
+        "holder_type": "开放式投资基金"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251030",
+        "end_date": "20250930",
+        "holder_name": "中信证券股份有限公司-嘉实上证科创板芯片交易型开放式指数证券投资基金",
+        "hold_amount": 6390547.0,
+        "hold_ratio": 1.5903,
+        "hold_float_ratio": 1.9782,
+        "hold_change": -291862.0,
+        "holder_type": "开放式投资基金"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250823",
+        "end_date": "20250630",
+        "holder_name": "徐辰",
+        "hold_amount": 54828443.0,
+        "hold_ratio": 13.6442,
+        "hold_float_ratio": 0.0,
+        "hold_change": 0.0,
+        "holder_type": "自然人"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250823",
+        "end_date": "20250630",
+        "holder_name": "华芯投资管理有限责任公司-国家集成电路产业投资基金二期股份有限公司",
+        "hold_amount": 26931603.0,
+        "hold_ratio": 6.702,
+        "hold_float_ratio": 8.3368,
+        "hold_change": -2612000.0,
+        "holder_type": "风险投资公司"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250823",
+        "end_date": "20250630",
+        "holder_name": "莫要武",
+        "hold_amount": 23968856.0,
+        "hold_ratio": 5.9647,
+        "hold_float_ratio": 0.0,
+        "hold_change": 0.0,
+        "holder_type": "自然人"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250823",
+        "end_date": "20250630",
+        "holder_name": "BrizanChinaHoldingsLimited",
+        "hold_amount": 20066230.0,
+        "hold_ratio": 4.9935,
+        "hold_float_ratio": 6.2116,
+        "hold_change": -3336000.0,
+        "holder_type": "一般企业"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250823",
+        "end_date": "20250630",
+        "holder_name": "招商银行股份有限公司-华夏上证科创板50成份交易型开放式指数证券投资基金",
+        "hold_amount": 15594197.0,
+        "hold_ratio": 3.8806,
+        "hold_float_ratio": 4.8273,
+        "hold_change": 1646449.0,
+        "holder_type": "开放式投资基金"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250823",
+        "end_date": "20250630",
+        "holder_name": "马伟剑",
+        "hold_amount": 15027114.0,
+        "hold_ratio": 3.7395,
+        "hold_float_ratio": 4.6517,
+        "hold_change": -1377684.0,
+        "holder_type": "自然人"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250823",
+        "end_date": "20250630",
+        "holder_name": "共青城思智威科技产业投资合伙企业(有限合伙)",
+        "hold_amount": 12910441.0,
+        "hold_ratio": 3.2128,
+        "hold_float_ratio": 3.9965,
+        "hold_change": -4238133.0,
+        "holder_type": "风险投资公司"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250823",
+        "end_date": "20250630",
+        "holder_name": "中国工商银行股份有限公司-易方达上证科创板50成份交易型开放式指数证券投资基金",
+        "hold_amount": 11646662.0,
+        "hold_ratio": 2.8983,
+        "hold_float_ratio": 3.6053,
+        "hold_change": 391078.0,
+        "holder_type": "开放式投资基金"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250823",
+        "end_date": "20250630",
+        "holder_name": "ForebrightSmartEyesTechnologyLimited",
+        "hold_amount": 8035853.0,
+        "hold_ratio": 1.9997,
+        "hold_float_ratio": 2.4875,
+        "hold_change": -3991398.0,
+        "holder_type": "一般企业"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250823",
+        "end_date": "20250630",
+        "holder_name": "中信证券股份有限公司-嘉实上证科创板芯片交易型开放式指数证券投资基金",
+        "hold_amount": 6682409.0,
+        "hold_ratio": 1.6629,
+        "hold_float_ratio": 2.0686,
+        "hold_change": NaN,
+        "holder_type": "开放式投资基金"
+      }
+    ],
+    "managers": [
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251227",
+        "name": "赵颂恩",
+        "gender": "F",
+        "lev": "董事会成员",
+        "title": "职工董事",
+        "edu": "硕士",
+        "national": "中国",
+        "birthday": "1987",
+        "begin_date": "20251226",
+        "end_date": null
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251227",
+        "name": "赵颂恩",
+        "gender": "F",
+        "lev": "委员会成员",
+        "title": "审计委员会委员",
+        "edu": "硕士",
+        "national": "中国",
+        "birthday": "1987",
+        "begin_date": "20251226",
+        "end_date": null
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251227",
+        "name": "胡文阁",
+        "gender": "M",
+        "lev": "监事",
+        "title": "监事会主席",
+        "edu": "硕士",
+        "national": "美国",
+        "birthday": "1963",
+        "begin_date": "20231208",
+        "end_date": "20251226"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251227",
+        "name": "胡文阁",
+        "gender": "M",
+        "lev": "监事",
+        "title": "监事",
+        "edu": "硕士",
+        "national": "美国",
+        "birthday": "1963",
+        "begin_date": "20220810",
+        "end_date": "20251226"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251227",
+        "name": "汪涛",
+        "gender": "M",
+        "lev": "监事",
+        "title": "职工监事",
+        "edu": "本科",
+        "national": "中国",
+        "birthday": "1997",
+        "begin_date": "20231110",
+        "end_date": "20251226"
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251227",
+        "name": "梁智昊",
+        "gender": "M",
+        "lev": "董事会成员",
+        "title": "董事",
+        "edu": "本科",
+        "national": "中国",
+        "birthday": "1993",
+        "begin_date": "20251226",
+        "end_date": null
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251227",
+        "name": "梁智昊",
+        "gender": "M",
+        "lev": "委员会成员",
+        "title": "战略委员会委员",
+        "edu": "本科",
+        "national": "中国",
+        "birthday": "1993",
+        "begin_date": "20251226",
+        "end_date": null
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251227",
+        "name": "周静",
+        "gender": "F",
+        "lev": "监事",
+        "title": "监事",
+        "edu": "本科",
+        "national": "中国",
+        "birthday": "1998",
+        "begin_date": "20231110",
+        "end_date": "20251226"
+      }
+    ],
+    "rewards": [
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "徐辰",
+        "title": "董事长,总经理,核心技术人员",
+        "reward": 4967300.0,
+        "hold_vol": 54998783.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "高秉强",
+        "title": "董事",
+        "reward": 0.0,
+        "hold_vol": 0.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "初家祥",
+        "title": "董事",
+        "reward": 0.0,
+        "hold_vol": 0.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "马伟剑",
+        "title": "董事,副总经理,核心技术人员",
+        "reward": 3583100.0,
+        "hold_vol": 15027114.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "梁智昊",
+        "title": "董事",
+        "reward": 0.0,
+        "hold_vol": 0.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "赵颂恩",
+        "title": "职工董事",
+        "reward": 42600.0,
+        "hold_vol": 51143.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "许军",
+        "title": "独立董事",
+        "reward": 96000.0,
+        "hold_vol": 0.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "施海娜",
+        "title": "独立董事",
+        "reward": 96000.0,
+        "hold_vol": 0.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "高富平",
+        "title": "独立董事",
+        "reward": 96000.0,
+        "hold_vol": 0.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "徐辰",
+        "title": "董事长,总经理,核心技术人员",
+        "reward": 4967300.0,
+        "hold_vol": 54998783.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "莫要武",
+        "title": "副总经理,核心技术人员",
+        "reward": 2656600.0,
+        "hold_vol": 24060656.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "高秉强",
+        "title": "董事",
+        "reward": 0.0,
+        "hold_vol": 0.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "李冰晶",
+        "title": "财务总监",
+        "reward": 1140300.0,
+        "hold_vol": 18127.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "初家祥",
+        "title": "董事",
+        "reward": 0.0,
+        "hold_vol": 0.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "黄敏珺",
+        "title": "董事会秘书",
+        "reward": 358800.0,
+        "hold_vol": 0.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "马伟剑",
+        "title": "董事,副总经理,核心技术人员",
+        "reward": 3583100.0,
+        "hold_vol": 15027114.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "路峰",
+        "title": "原董事",
+        "reward": 0.0,
+        "hold_vol": 0.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "梁智昊",
+        "title": "董事",
+        "reward": 0.0,
+        "hold_vol": 0.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "周崇远",
+        "title": "原董事",
+        "reward": 0.0,
+        "hold_vol": 0.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "name": "赵颂恩",
+        "title": "职工董事",
+        "reward": 42600.0,
+        "hold_vol": 51143.0
+      }
+    ],
+    "holder_number": [
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260430",
+        "end_date": "20260331",
+        "holder_num": 29193
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20260228",
+        "holder_num": 28992
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20260328",
+        "end_date": "20251231",
+        "holder_num": 22343
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20251030",
+        "end_date": "20250930",
+        "holder_num": 18334
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250823",
+        "end_date": "20250630",
+        "holder_num": 13241
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250419",
+        "end_date": "20250331",
+        "holder_num": 12779
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250419",
+        "end_date": "20241231",
+        "holder_num": 11403
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20241026",
+        "end_date": "20240930",
+        "holder_num": 7794
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20240824",
+        "end_date": "20240630",
+        "holder_num": 6727
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20240427",
+        "end_date": "20240331",
+        "holder_num": 6984
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20240427",
+        "end_date": "20231231",
+        "holder_num": 5636
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20231028",
+        "end_date": "20230930",
+        "holder_num": 4905
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20230826",
+        "end_date": "20230630",
+        "holder_num": 4641
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20230429",
+        "end_date": "20230331",
+        "holder_num": 4266
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20230429",
+        "end_date": "20221231",
+        "holder_num": 5214
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20221029",
+        "end_date": "20220930",
+        "holder_num": 6032
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20220802",
+        "end_date": "20220729",
+        "holder_num": 5615
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20220829",
+        "end_date": "20220630",
+        "holder_num": 5739
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20220519",
+        "end_date": "20220520",
+        "holder_num": 20772
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20210628",
+        "end_date": "20210628",
+        "holder_num": 50
+      }
+    ],
+    "holder_trade": [
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250628",
+        "holder_name": "马伟剑",
+        "holder_type": "G",
+        "in_de": "DE",
+        "change_vol": 1377684.0,
+        "change_ratio": 0.4265,
+        "after_share": 15027114.0,
+        "after_ratio": 4.6517,
+        "avg_price": NaN,
+        "total_share": 15027114.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250626",
+        "holder_name": "国家集成电路产业投资基金二期股份有限公司",
+        "holder_type": "C",
+        "in_de": "DE",
+        "change_vol": 1162000.0,
+        "change_ratio": 0.3597,
+        "after_share": 26931603.0,
+        "after_ratio": 8.3368,
+        "avg_price": NaN,
+        "total_share": 26931603.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250618",
+        "holder_name": "共青城思智威科技产业投资合伙企业(有限合伙)",
+        "holder_type": "C",
+        "in_de": "DE",
+        "change_vol": 4260000.0,
+        "change_ratio": 1.3187,
+        "after_share": 12910441.0,
+        "after_ratio": 3.9965,
+        "avg_price": 93.3889,
+        "total_share": 12910441.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250618",
+        "holder_name": "国家集成电路产业投资基金二期股份有限公司",
+        "holder_type": "C",
+        "in_de": "DE",
+        "change_vol": 1450000.0,
+        "change_ratio": 0.4489,
+        "after_share": 28093603.0,
+        "after_ratio": 8.6965,
+        "avg_price": NaN,
+        "total_share": 28093603.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250531",
+        "holder_name": "Brizan China Holdings Limited",
+        "holder_type": "C",
+        "in_de": "DE",
+        "change_vol": 25800.0,
+        "change_ratio": 0.008,
+        "after_share": 20066230.0,
+        "after_ratio": 6.2116,
+        "avg_price": NaN,
+        "total_share": 20066230.0
+      },
+      {
+        "ts_code": "688213.SH",
+        "ann_date": "20250520",
+        "holder_name": "Brizan China Holdings Limited",
+        "holder_type": "C",
+        "in_de": "DE",
+        "change_vol": 3310200.0,
+        "change_ratio": 1.0247,
+        "after_share": 20092030.0,
+        "after_ratio": 6.2196,
+        "avg_price": NaN,
+        "total_share": 20092030.0
+      }
+    ],
+    "share_float": [],
+    "block_trade": []
+  }
+}

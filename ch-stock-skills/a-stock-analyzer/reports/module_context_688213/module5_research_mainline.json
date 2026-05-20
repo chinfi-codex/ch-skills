@@ -1,0 +1,386 @@
+{
+  "metadata": {
+    "type": "stock_ai_analyzer_evidence_pack",
+    "ts_code": "688213.SH",
+    "query": "688213.SH",
+    "generated_at": "2026-05-20 14:48:48",
+    "announcement_date": "2025-01-01~2026-05-20",
+    "source": "data_fetcher.build_analysis_context",
+    "context_generated_at": "2026-05-20 14:48:51"
+  },
+  "institutional_research": {
+    "recent": [],
+    "model_responsibility": "机构调研频率、机构类型和问题关键词只验证市场关注度与主线连接，不等同于业绩改善。"
+  },
+  "valuation_market": {
+    "daily_basic_latest": [
+      {
+        "ts_code": "688213.SH",
+        "trade_date": "20260519",
+        "close": 110.91,
+        "turnover_rate": 7.0333,
+        "volume_ratio": 1.03,
+        "pe": 44.5643,
+        "pe_ttm": 42.6356,
+        "pb": 8.1726,
+        "ps": 4.9406,
+        "ps_ttm": 4.7503,
+        "dv_ratio": 0.2473,
+        "dv_ttm": 0.2473,
+        "total_share": 40230.6775,
+        "float_share": 32350.9476,
+        "total_mv": 4461984.4415,
+        "circ_mv": 3588043.5983
+      },
+      {
+        "ts_code": "688213.SH",
+        "trade_date": "20260518",
+        "close": 109.88,
+        "turnover_rate": 7.3529,
+        "volume_ratio": 1.19,
+        "pe": 44.1504,
+        "pe_ttm": 42.2396,
+        "pb": 8.0967,
+        "ps": 4.8947,
+        "ps_ttm": 4.7062,
+        "dv_ratio": 0.2496,
+        "dv_ttm": 0.2496,
+        "total_share": 40230.6775,
+        "float_share": 32350.9476,
+        "total_mv": 4420546.8437,
+        "circ_mv": 3554722.1223
+      },
+      {
+        "ts_code": "688213.SH",
+        "trade_date": "20260515",
+        "close": 104.45,
+        "turnover_rate": 5.4795,
+        "volume_ratio": 0.96,
+        "pe": 41.9686,
+        "pe_ttm": 40.1522,
+        "pb": 7.6966,
+        "ps": 4.6528,
+        "ps_ttm": 4.4736,
+        "dv_ratio": 0.2626,
+        "dv_ttm": 0.2626,
+        "total_share": 40230.6775,
+        "float_share": 32350.9476,
+        "total_mv": 4202094.2649,
+        "circ_mv": 3379056.4768
+      },
+      {
+        "ts_code": "688213.SH",
+        "trade_date": "20260514",
+        "close": 106.0,
+        "turnover_rate": 8.3611,
+        "volume_ratio": 1.79,
+        "pe": 42.5914,
+        "pe_ttm": 40.7481,
+        "pb": 7.8108,
+        "ps": 4.7219,
+        "ps_ttm": 4.54,
+        "dv_ratio": 0.2588,
+        "dv_ttm": 0.2588,
+        "total_share": 40230.6775,
+        "float_share": 32350.9476,
+        "total_mv": 4264451.815,
+        "circ_mv": 3429200.4456
+      },
+      {
+        "ts_code": "688213.SH",
+        "trade_date": "20260513",
+        "close": 100.5,
+        "turnover_rate": 4.8854,
+        "volume_ratio": 1.06,
+        "pe": 40.3815,
+        "pe_ttm": 38.6338,
+        "pb": 7.4055,
+        "ps": 4.4769,
+        "ps_ttm": 4.3044,
+        "dv_ratio": 0.273,
+        "dv_ttm": 0.273,
+        "total_share": 40230.6775,
+        "float_share": 32350.9476,
+        "total_mv": 4043183.0888,
+        "circ_mv": 3251270.2338
+      }
+    ],
+    "daily_latest": [
+      {
+        "ts_code": "688213.SH",
+        "trade_date": "20260519",
+        "open": 110.0,
+        "high": 112.81,
+        "low": 106.66,
+        "close": 110.91,
+        "pre_close": 109.88,
+        "change": 1.03,
+        "pct_chg": 0.9374,
+        "vol": 227533.06,
+        "amount": 2493423.517
+      },
+      {
+        "ts_code": "688213.SH",
+        "trade_date": "20260518",
+        "open": 105.55,
+        "high": 117.6,
+        "low": 105.55,
+        "close": 109.88,
+        "pre_close": 104.45,
+        "change": 5.43,
+        "pct_chg": 5.1987,
+        "vol": 237873.51,
+        "amount": 2671109.518
+      },
+      {
+        "ts_code": "688213.SH",
+        "trade_date": "20260515",
+        "open": 106.7,
+        "high": 109.88,
+        "low": 102.58,
+        "close": 104.45,
+        "pre_close": 106.0,
+        "change": -1.55,
+        "pct_chg": -1.4623,
+        "vol": 177266.36,
+        "amount": 1873827.378
+      },
+      {
+        "ts_code": "688213.SH",
+        "trade_date": "20260514",
+        "open": 100.4,
+        "high": 108.85,
+        "low": 100.11,
+        "close": 106.0,
+        "pre_close": 100.5,
+        "change": 5.5,
+        "pct_chg": 5.4726,
+        "vol": 270490.53,
+        "amount": 2860602.333
+      },
+      {
+        "ts_code": "688213.SH",
+        "trade_date": "20260513",
+        "open": 99.0,
+        "high": 100.93,
+        "low": 96.4,
+        "close": 100.5,
+        "pre_close": 99.5,
+        "change": 1.0,
+        "pct_chg": 1.005,
+        "vol": 158048.48,
+        "amount": 1560901.663
+      }
+    ],
+    "valuation_band": {
+      "ts_code": "688213.SH",
+      "latest_trade_date": "20260519",
+      "requested_years": 5,
+      "history_start": "20220520",
+      "total_trade_days": 968,
+      "bands": {
+        "pe_ttm": {
+          "current": 42.6356,
+          "positive_only": true,
+          "windows": {
+            "1y": {
+              "sample_size": 242,
+              "min": 30.5659,
+              "p25": 44.6611,
+              "median": 49.7445,
+              "mean": 54.0303,
+              "p75": 67.7989,
+              "max": 76.3108,
+              "current_percentile": 22.3
+            },
+            "3y": {
+              "sample_size": 539,
+              "min": 30.5659,
+              "p25": 61.9154,
+              "median": 77.5362,
+              "mean": 221.4538,
+              "p75": 114.6934,
+              "max": 1573.7811,
+              "current_percentile": 10.0
+            },
+            "5y": {
+              "sample_size": 728,
+              "min": 30.5659,
+              "p25": 62.9456,
+              "median": 78.1709,
+              "mean": 228.1855,
+              "p75": 355.5007,
+              "max": 1573.7811,
+              "current_percentile": 7.4
+            }
+          }
+        },
+        "pb": {
+          "current": 8.1726,
+          "positive_only": true,
+          "windows": {
+            "1y": {
+              "sample_size": 242,
+              "min": 6.101,
+              "p25": 7.5434,
+              "median": 8.1201,
+              "mean": 8.1988,
+              "p75": 8.881,
+              "max": 10.5761,
+              "current_percentile": 51.7
+            },
+            "3y": {
+              "sample_size": 724,
+              "min": 3.8194,
+              "p25": 5.3845,
+              "median": 6.9396,
+              "mean": 6.8809,
+              "p75": 8.2326,
+              "max": 11.1421,
+              "current_percentile": 74.2
+            },
+            "5y": {
+              "sample_size": 968,
+              "min": 3.6634,
+              "p25": 5.069,
+              "median": 5.8713,
+              "mean": 6.4426,
+              "p75": 7.7633,
+              "max": 11.1421,
+              "current_percentile": 80.7
+            }
+          }
+        },
+        "ps_ttm": {
+          "current": 4.7503,
+          "positive_only": true,
+          "windows": {
+            "1y": {
+              "sample_size": 242,
+              "min": 3.3891,
+              "p25": 4.5405,
+              "median": 5.0433,
+              "mean": 5.0394,
+              "p75": 5.6735,
+              "max": 6.6903,
+              "current_percentile": 39.3
+            },
+            "3y": {
+              "sample_size": 724,
+              "min": 3.3891,
+              "p25": 5.377,
+              "median": 6.0168,
+              "mean": 6.1782,
+              "p75": 7.0622,
+              "max": 9.7944,
+              "current_percentile": 16.3
+            },
+            "5y": {
+              "sample_size": 968,
+              "min": 3.3891,
+              "p25": 5.5758,
+              "median": 6.5011,
+              "mean": 6.6238,
+              "p75": 7.7651,
+              "max": 11.9214,
+              "current_percentile": 12.2
+            }
+          }
+        },
+        "dv_ttm": {
+          "current": 0.2473,
+          "positive_only": false,
+          "windows": {
+            "1y": {
+              "sample_size": 242,
+              "min": 0.1233,
+              "p25": 0.1495,
+              "median": 0.1773,
+              "mean": 0.2177,
+              "p75": 0.2918,
+              "max": 0.3606,
+              "current_percentile": 55.8
+            },
+            "3y": {
+              "sample_size": 447,
+              "min": 0.1233,
+              "p25": 0.161,
+              "median": 0.216,
+              "mean": 0.2262,
+              "p75": 0.2919,
+              "max": 0.3931,
+              "current_percentile": 62.2
+            },
+            "5y": {
+              "sample_size": 447,
+              "min": 0.1233,
+              "p25": 0.161,
+              "median": 0.216,
+              "mean": 0.2262,
+              "p75": 0.2919,
+              "max": 0.3931,
+              "current_percentile": 62.2
+            }
+          }
+        }
+      },
+      "model_responsibility": "脚本只给区间和分位。贵贱判断、用哪个指标（成熟龙头看 PE/PB 分位、红利股看 dv_ttm 分位、成长股 PE 分位仅作下行参考）、是否因增速降档而历史中枢失效，全部由模型按公司类型判断。"
+    }
+  },
+  "announcements": {
+    "original_text_candidates": [
+      {
+        "announcement_time": "2026-05-20",
+        "title": "关于向特定对象发行股票申请收到上海证券交易所审核意见通知的公告",
+        "subcategory": "资本运作-特定对象发行",
+        "tags": [
+          "资本运作",
+          "特定对象发行"
+        ],
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-20/1225315860.PDF",
+        "reason": "标题命中高信息密度事件，默认应进一步读取 PDF 原文。"
+      },
+      {
+        "announcement_time": "2026-05-12",
+        "title": "关于实际控制人、控股股东、董事、高级管理人员自愿承诺不减持公司股份的公告",
+        "subcategory": "减持",
+        "tags": [
+          "减持"
+        ],
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-12/1225291624.PDF",
+        "reason": "标题命中高信息密度事件，默认应进一步读取 PDF 原文。"
+      },
+      {
+        "announcement_time": "2026-05-07",
+        "title": "安永华明会计师事务所（特殊普通合伙）关于对思特威（上海）电子科技股份有限公司向特定对象发行股票申请文件的审核问询函回复的专项说明",
+        "subcategory": "问询回复",
+        "tags": [
+          "问询回复"
+        ],
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-07/1225280802.PDF",
+        "reason": "标题命中高信息密度事件，默认应进一步读取 PDF 原文。"
+      },
+      {
+        "announcement_time": "2026-05-07",
+        "title": "思特威（上海）电子科技股份有限公司向特定对象发行股票证券募集说明书（申报稿）",
+        "subcategory": "资本运作-特定对象发行",
+        "tags": [
+          "资本运作",
+          "特定对象发行"
+        ],
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-07/1225280800.PDF",
+        "reason": "标题命中高信息密度事件，默认应进一步读取 PDF 原文。"
+      },
+      {
+        "announcement_time": "2026-05-07",
+        "title": "关于思特威（上海）电子科技股份有限公司向特定对象发行A股股票申请文件的审核问询函回复",
+        "subcategory": "问询回复",
+        "tags": [
+          "问询回复"
+        ],
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-07/1225280799.PDF",
+        "reason": "标题命中高信息密度事件，默认应进一步读取 PDF 原文。"
+      }
+    ]
+  }
+}

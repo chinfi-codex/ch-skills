@@ -480,19 +480,173 @@ def report_sort_key(item: Dict[str, Any]) -> Any:
     )
 
 
-def extract_pdf_text(report_bytes: bytes, *, max_pages: int = 120, max_chars: int = 60000) -> Dict[str, Any]:
-    """Extract bounded text from PDF bytes with PyPDF2."""
-    if PdfReader is None:
-        raise RuntimeError("Missing dependency: install PyPDF2 before using PDF text extraction.")
+# Standard A-share periodic-report chapter headings (证监会模板). Friendly
+# aliases map a query to a chapter-title substring; anything not matching a
+# chapter falls back to keyword-window extraction over the full text.
+# Allow markdown decoration (#, *, spaces) before the heading, since pymupdf4llm
+# renders chapter titles as Markdown headings.
+PDF_CHAPTER_RE = re.compile(r"(?m)^\s*[#*\s]*第\s*[一二三四五六七八九十百]{1,3}\s*节\s*[*\s]*([^\n]{0,40})")
+SECTION_ALIASES = {
+    "mda": "管理层讨论与分析",
+    "管理层讨论": "管理层讨论与分析",
+    "经营": "管理层讨论与分析",
+    "经营情况": "管理层讨论与分析",
+    "财务报告": "财务报告",
+    "附注": "财务报告",
+    "notes": "财务报告",
+    "治理": "公司治理",
+    "公司治理": "公司治理",
+    "重要事项": "重要事项",
+    "募集": "重要事项",
+    "股东": "股份变动及股东情况",
+    "股份变动": "股份变动及股东情况",
+}
 
+
+def _read_pdf_pages(report_bytes: bytes, to_markdown: bool = False) -> Tuple[int, List[str], str]:
+    """Return (total_pages, per_page_text, engine).
+
+    Prefers pymupdf4llm (structure-preserving Markdown), then PyMuPDF (fitz),
+    then PyPDF2 — so the richer engines are used when installed but the function
+    still works on a bare PyPDF2 install.
+    """
+    if to_markdown:
+        try:
+            import fitz  # type: ignore
+            import pymupdf4llm  # type: ignore
+
+            doc = fitz.open(stream=report_bytes, filetype="pdf")
+            chunks = pymupdf4llm.to_markdown(doc, page_chunks=True)
+            pages = [str((c or {}).get("text", "")) for c in chunks]
+            return len(pages), pages, "pymupdf4llm"
+        except Exception:
+            pass
+    try:
+        import fitz  # type: ignore
+
+        doc = fitz.open(stream=report_bytes, filetype="pdf")
+        pages = [doc[i].get_text("text") for i in range(doc.page_count)]
+        return len(pages), pages, "pymupdf"
+    except Exception:
+        pass
+    if PdfReader is None:
+        raise RuntimeError("Missing dependency: install PyPDF2 (or PyMuPDF) before using PDF text extraction.")
     reader = PdfReader(io.BytesIO(report_bytes))
-    total_pages = len(reader.pages)
+    pages = [(p.extract_text() or "") for p in reader.pages]
+    return len(pages), pages, "pypdf2"
+
+
+def _locate_chapters(full_text: str) -> List[Dict[str, Any]]:
+    """Index standard chapter headings, skipping table-of-contents entries.
+
+    A chapter title appears twice: once in the TOC (with a dot leader + page
+    number) and once as the real body heading. We drop the TOC occurrences and,
+    when a title still repeats, keep the last (the body) occurrence.
+    """
+    found: List[Dict[str, Any]] = []
+    for match in PDF_CHAPTER_RE.finditer(full_text):
+        raw = match.group(1)
+        # TOC lines carry dot leaders / trailing page numbers — strip & skip them.
+        if re.search(r"\.{4,}|·{4,}|\…", raw):
+            continue
+        title = re.sub(r"[\s*#.·…]+$", "", raw).strip()
+        if not title:
+            continue
+        found.append({"title": title, "char_start": match.start()})
+    # Dedup by title, keeping the later (body) occurrence.
+    by_title: Dict[str, Dict[str, Any]] = {}
+    for ch in found:
+        by_title[ch["title"]] = ch
+    return sorted(by_title.values(), key=lambda c: c["char_start"])
+
+
+def _slice_section(full_text: str, chapters: List[Dict[str, Any]], section: str, max_chars: int) -> Dict[str, Any]:
+    """Resolve `section` to a chapter slice, or fall back to keyword windows."""
+    target = SECTION_ALIASES.get(section.strip().lower(), section.strip())
+    # 1) chapter match (by title substring)
+    for idx, chap in enumerate(chapters):
+        if target in chap["title"] or chap["title"] in target:
+            start = chap["char_start"]
+            end = chapters[idx + 1]["char_start"] if idx + 1 < len(chapters) else len(full_text)
+            text = full_text[start:end].strip()
+            truncated = len(text) > max_chars > 0
+            return {
+                "section_query": section,
+                "section_mode": "chapter",
+                "section_matched": chap["title"],
+                "section_found": True,
+                "text": text[:max_chars] if max_chars > 0 else text,
+                "truncated": truncated,
+            }
+    # 2) keyword windows around each occurrence of the raw query
+    windows: List[str] = []
+    window = 1500
+    used = 0
+    low = full_text.lower()
+    q = section.strip().lower()
+    pos = 0
+    while q and used < (max_chars or 10 ** 9):
+        hit = low.find(q, pos)
+        if hit < 0:
+            break
+        s = max(0, hit - window // 3)
+        e = min(len(full_text), hit + window)
+        snippet = full_text[s:e].strip()
+        windows.append(snippet)
+        used += len(snippet)
+        pos = e
+        if len(windows) >= 8:
+            break
+    joined = "\n\n…\n\n".join(windows)
+    return {
+        "section_query": section,
+        "section_mode": "keyword_window",
+        "section_matched": None,
+        "section_found": bool(windows),
+        "text": joined[:max_chars] if max_chars > 0 else joined,
+        "truncated": len(joined) > max_chars > 0,
+    }
+
+
+def extract_pdf_text(
+    report_bytes: bytes,
+    *,
+    max_pages: int = 120,
+    max_chars: int = 60000,
+    to_markdown: bool = False,
+    section: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Extract bounded text from PDF bytes.
+
+    Engine preference: pymupdf4llm → PyMuPDF → PyPDF2. When ``section`` is given,
+    the whole document is scanned so the requested chapter (e.g. 管理层讨论与分析,
+    财务报告) can be located and returned instead of the blind first-N-pages slice;
+    unknown sections fall back to keyword windows. ``to_markdown`` keeps Markdown
+    structure when pymupdf4llm is available.
+    """
+    total_pages, page_texts, engine = _read_pdf_pages(report_bytes, to_markdown=to_markdown)
+    chapters_full = _locate_chapters("\n\n".join(p or "" for p in page_texts))
+
+    result: Dict[str, Any] = {
+        "page_count": total_pages,
+        "engine": engine,
+        "chapters": [c["title"] for c in chapters_full],
+    }
+
+    if section:
+        full_text = "\n\n".join(p or "" for p in page_texts)
+        sliced = _slice_section(full_text, chapters_full, section, max_chars)
+        result.update(sliced)
+        result["extracted_pages"] = total_pages
+        result["text_length"] = len(result.get("text") or "")
+        return result
+
+    # Default: bounded first-N-pages slice (backward compatible).
     pages_to_read = total_pages if max_pages <= 0 else min(total_pages, max_pages)
     extracted_chunks: List[str] = []
     current_chars = 0
     for page_index in range(pages_to_read):
-        page = reader.pages[page_index]
-        page_text = (page.extract_text() or "").strip()
+        page_text = (page_texts[page_index] or "").strip()
         if not page_text:
             continue
         remaining_chars = max_chars - current_chars
@@ -505,12 +659,10 @@ def extract_pdf_text(report_bytes: bytes, *, max_pages: int = 120, max_chars: in
         extracted_chunks.append(page_text)
         current_chars += len(page_text)
 
-    return {
-        "page_count": total_pages,
-        "extracted_pages": pages_to_read,
-        "text_length": sum(len(chunk) for chunk in extracted_chunks),
-        "text": "\n\n".join(extracted_chunks),
-    }
+    result["extracted_pages"] = pages_to_read
+    result["text_length"] = sum(len(chunk) for chunk in extracted_chunks)
+    result["text"] = "\n\n".join(extracted_chunks)
+    return result
 
 
 def classify_board(code6: str) -> str:
@@ -1060,6 +1212,8 @@ class StockDataFetcher:
         include_excluded: bool = False,
         max_pages: int = 120,
         max_chars: int = 60000,
+        to_markdown: bool = False,
+        section: Optional[str] = None,
         timeout: int = DEFAULT_CNINFO_TIMEOUT,
     ) -> Dict[str, Any]:
         """Download one announcement PDF and extract plain text."""
@@ -1076,7 +1230,7 @@ class StockDataFetcher:
             timeout=timeout,
         )
         report_bytes = self.download_report_bytes(selected["download_url"], timeout=timeout)
-        selected.update(extract_pdf_text(report_bytes, max_pages=max_pages, max_chars=max_chars))
+        selected.update(extract_pdf_text(report_bytes, max_pages=max_pages, max_chars=max_chars, to_markdown=to_markdown, section=section))
         return selected
 
     def query_cninfo_announcements(
@@ -1233,6 +1387,8 @@ class StockDataFetcher:
         include_variants: bool = False,
         max_pages: int = 120,
         max_chars: int = 60000,
+        to_markdown: bool = False,
+        section: Optional[str] = None,
         timeout: int = DEFAULT_CNINFO_TIMEOUT,
     ) -> Dict[str, Any]:
         """Download one report PDF and extract plain text."""
@@ -1246,7 +1402,7 @@ class StockDataFetcher:
             timeout=timeout,
         )
         report_bytes = self.download_report_bytes(selected["download_url"], timeout=timeout)
-        selected.update(extract_pdf_text(report_bytes, max_pages=max_pages, max_chars=max_chars))
+        selected.update(extract_pdf_text(report_bytes, max_pages=max_pages, max_chars=max_chars, to_markdown=to_markdown, section=section))
         return selected
 
     def download_report_bytes(self, url: str, timeout: int = DEFAULT_CNINFO_TIMEOUT) -> bytes:
@@ -1634,6 +1790,8 @@ def _dataset_handlers() -> Dict[str, DatasetHandler]:
                 include_excluded=args.include_excluded,
                 max_pages=args.max_pages,
                 max_chars=args.max_chars,
+                to_markdown=args.to_markdown,
+                section=args.section,
                 timeout=args.timeout,
             )
         ),
@@ -1667,6 +1825,8 @@ def _dataset_handlers() -> Dict[str, DatasetHandler]:
                 include_variants=args.include_report_variants,
                 max_pages=args.max_pages,
                 max_chars=args.max_chars,
+                to_markdown=args.to_markdown,
+                section=args.section,
                 timeout=args.timeout,
             )
         ),
@@ -1727,6 +1887,8 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--download-dir")
     fetch.add_argument("--max-pages", type=int, default=120)
     fetch.add_argument("--max-chars", type=int, default=60000)
+    fetch.add_argument("--to-markdown", action="store_true", help="Keep Markdown structure when pymupdf4llm is installed (report-text/announcement-text).")
+    fetch.add_argument("--section", default=None, help="Extract a periodic-report chapter (mda/财务报告/重要事项/治理/股东) or keyword window instead of the first-N-pages slice.")
     fetch.add_argument("--years", type=int, default=5, help="Years of history for valuation-band.")
     fetch.add_argument("--timeout", type=int, default=DEFAULT_CNINFO_TIMEOUT)
 

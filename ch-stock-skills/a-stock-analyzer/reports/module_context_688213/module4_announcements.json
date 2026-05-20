@@ -1,0 +1,413 @@
+{
+  "metadata": {
+    "type": "stock_ai_analyzer_evidence_pack",
+    "ts_code": "688213.SH",
+    "query": "688213.SH",
+    "generated_at": "2026-05-20 14:48:48",
+    "announcement_date": "2025-01-01~2026-05-20",
+    "source": "data_fetcher.build_analysis_context",
+    "context_generated_at": "2026-05-20 14:48:51"
+  },
+  "announcements": {
+    "summary": {
+      "count": 30,
+      "original_text_candidate_count": 5
+    },
+    "recent": [
+      {
+        "announcement_time": "2026-05-20",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "关于向特定对象发行股票申请收到上海证券交易所审核意见通知的公告",
+        "subcategory": "资本运作-特定对象发行",
+        "tags": [
+          "资本运作",
+          "特定对象发行"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-20/1225315860.PDF"
+      },
+      {
+        "announcement_time": "2026-05-15",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "2025年年度权益分派实施公告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-15/1225306750.PDF"
+      },
+      {
+        "announcement_time": "2026-05-15",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "北京市竞天公诚律师事务所关于思特威（上海）电子科技股份有限公司差异化权益分派事项的法律意见书",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-15/1225306749.PDF"
+      },
+      {
+        "announcement_time": "2026-05-12",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "关于实际控制人、控股股东、董事、高级管理人员自愿承诺不减持公司股份的公告",
+        "subcategory": "减持",
+        "tags": [
+          "减持"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-12/1225291624.PDF"
+      },
+      {
+        "announcement_time": "2026-05-07",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "安永华明会计师事务所（特殊普通合伙）关于对思特威（上海）电子科技股份有限公司向特定对象发行股票申请文件的审核问询函回复的专项说明",
+        "subcategory": "问询回复",
+        "tags": [
+          "问询回复"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-07/1225280802.PDF"
+      },
+      {
+        "announcement_time": "2026-05-07",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "思特威（上海）电子科技股份有限公司向特定对象发行股票证券募集说明书（申报稿）",
+        "subcategory": "资本运作-特定对象发行",
+        "tags": [
+          "资本运作",
+          "特定对象发行"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-07/1225280800.PDF"
+      },
+      {
+        "announcement_time": "2026-05-07",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "关于思特威（上海）电子科技股份有限公司向特定对象发行A股股票申请文件的审核问询函回复",
+        "subcategory": "问询回复",
+        "tags": [
+          "问询回复"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-07/1225280799.PDF"
+      },
+      {
+        "announcement_time": "2026-05-07",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "关于向特定对象发行A股股票申请文件的审核问询函回复的提示性公告",
+        "subcategory": "问询回复",
+        "tags": [
+          "问询回复"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-07/1225280798.PDF"
+      },
+      {
+        "announcement_time": "2026-04-30",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "股东减持股份计划公告",
+        "subcategory": "减持",
+        "tags": [
+          "减持"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-30/1225257751.PDF"
+      },
+      {
+        "announcement_time": "2026-04-30",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "2026年第一季度报告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-30/1225257736.PDF"
+      },
+      {
+        "announcement_time": "2026-04-30",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "会计政策变更公告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-30/1225257707.PDF"
+      },
+      {
+        "announcement_time": "2026-04-25",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "关于向特定对象发行A股股票申请获得上海证券交易所受理的公告",
+        "subcategory": "资本运作-特定对象发行",
+        "tags": [
+          "资本运作",
+          "特定对象发行"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-25/1225188910.PDF"
+      },
+      {
+        "announcement_time": "2026-04-25",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "安永华明会计师事务所（特殊普通合伙）关于思特威（上海）电子科技股份有限公司向特定对象发行股票的财务报告及审计报告",
+        "subcategory": "资本运作-特定对象发行",
+        "tags": [
+          "资本运作",
+          "特定对象发行"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-25/1225188905.PDF"
+      },
+      {
+        "announcement_time": "2026-04-25",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "思特威（上海）电子科技股份有限公司向特定对象发行股票证券募集说明书（申报稿）",
+        "subcategory": "资本运作-特定对象发行",
+        "tags": [
+          "资本运作",
+          "特定对象发行"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-25/1225188892.PDF"
+      },
+      {
+        "announcement_time": "2026-04-25",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "中信建投证券股份有限公司关于思特威（上海）电子科技股份有限公司向特定对象发行股票之发行保荐书",
+        "subcategory": "资本运作-特定对象发行",
+        "tags": [
+          "资本运作",
+          "特定对象发行"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-25/1225188878.PDF"
+      },
+      {
+        "announcement_time": "2026-04-25",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "中信建投证券股份有限公司关于思特威（上海）电子科技股份有限公司向特定对象发行股票之上市保荐书",
+        "subcategory": "资本运作-特定对象发行",
+        "tags": [
+          "资本运作",
+          "特定对象发行"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-25/1225188874.PDF"
+      },
+      {
+        "announcement_time": "2026-04-25",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "北京市竞天公诚律师事务所关于思特威（上海）电子科技股份有限公司向特定对象发行股票之法律意见书",
+        "subcategory": "资本运作-特定对象发行",
+        "tags": [
+          "资本运作",
+          "特定对象发行"
+        ],
+        "needs_original_text": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-25/1225188868.PDF"
+      },
+      {
+        "announcement_time": "2026-04-18",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "2025年年度股东会决议公告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-18/1225119914.PDF"
+      },
+      {
+        "announcement_time": "2026-04-18",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "2025年年度股东会之法律意见书",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-18/1225119828.PDF"
+      },
+      {
+        "announcement_time": "2026-04-18",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "关于召开2025年年度暨2026年一季度业绩说明会的公告",
+        "subcategory": "其他",
+        "tags": [
+          "其他"
+        ],
+        "needs_original_text": false,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-18/1225119779.PDF"
+      }
+    ],
+    "original_text_candidates": [
+      {
+        "announcement_time": "2026-05-20",
+        "title": "关于向特定对象发行股票申请收到上海证券交易所审核意见通知的公告",
+        "subcategory": "资本运作-特定对象发行",
+        "tags": [
+          "资本运作",
+          "特定对象发行"
+        ],
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-20/1225315860.PDF",
+        "reason": "标题命中高信息密度事件，默认应进一步读取 PDF 原文。"
+      },
+      {
+        "announcement_time": "2026-05-12",
+        "title": "关于实际控制人、控股股东、董事、高级管理人员自愿承诺不减持公司股份的公告",
+        "subcategory": "减持",
+        "tags": [
+          "减持"
+        ],
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-12/1225291624.PDF",
+        "reason": "标题命中高信息密度事件，默认应进一步读取 PDF 原文。"
+      },
+      {
+        "announcement_time": "2026-05-07",
+        "title": "安永华明会计师事务所（特殊普通合伙）关于对思特威（上海）电子科技股份有限公司向特定对象发行股票申请文件的审核问询函回复的专项说明",
+        "subcategory": "问询回复",
+        "tags": [
+          "问询回复"
+        ],
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-07/1225280802.PDF",
+        "reason": "标题命中高信息密度事件，默认应进一步读取 PDF 原文。"
+      },
+      {
+        "announcement_time": "2026-05-07",
+        "title": "思特威（上海）电子科技股份有限公司向特定对象发行股票证券募集说明书（申报稿）",
+        "subcategory": "资本运作-特定对象发行",
+        "tags": [
+          "资本运作",
+          "特定对象发行"
+        ],
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-07/1225280800.PDF",
+        "reason": "标题命中高信息密度事件，默认应进一步读取 PDF 原文。"
+      },
+      {
+        "announcement_time": "2026-05-07",
+        "title": "关于思特威（上海）电子科技股份有限公司向特定对象发行A股股票申请文件的审核问询函回复",
+        "subcategory": "问询回复",
+        "tags": [
+          "问询回复"
+        ],
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-07/1225280799.PDF",
+        "reason": "标题命中高信息密度事件，默认应进一步读取 PDF 原文。"
+      }
+    ]
+  },
+  "reports": {
+    "recent": [
+      {
+        "announcement_time": "2026-04-30",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "2026年第一季度报告",
+        "report_type": "q1",
+        "report_type_label": "一季度报告",
+        "report_year": 2026,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-04-30/1225257736.PDF"
+      },
+      {
+        "announcement_time": "2026-03-28",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "2025年年度报告",
+        "report_type": "annual",
+        "report_type_label": "年度报告",
+        "report_year": 2025,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-03-28/1225047323.PDF"
+      },
+      {
+        "announcement_time": "2025-08-23",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "2025年半年度报告",
+        "report_type": "half",
+        "report_type_label": "半年度报告",
+        "report_year": 2025,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2025-08-23/1224555156.PDF"
+      },
+      {
+        "announcement_time": "2025-10-30",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "2025年第三季度报告",
+        "report_type": "q3",
+        "report_type_label": "三季度报告",
+        "report_year": 2025,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2025-10-30/1224757484.PDF"
+      },
+      {
+        "announcement_time": "2025-04-19",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "2025年第一季度报告",
+        "report_type": "q1",
+        "report_type_label": "一季度报告",
+        "report_year": 2025,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2025-04-19/1223155223.PDF"
+      },
+      {
+        "announcement_time": "2025-04-19",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "2024年年度报告",
+        "report_type": "annual",
+        "report_type_label": "年度报告",
+        "report_year": 2024,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2025-04-19/1223155210.PDF"
+      },
+      {
+        "announcement_time": "2024-08-24",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "2024年半年度报告",
+        "report_type": "half",
+        "report_type_label": "半年度报告",
+        "report_year": 2024,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2024-08-24/1220964287.PDF"
+      },
+      {
+        "announcement_time": "2024-10-26",
+        "sec_name": "思特威",
+        "sec_code": "688213",
+        "title": "2024年第三季度报告",
+        "report_type": "q3",
+        "report_type_label": "三季度报告",
+        "report_year": 2024,
+        "is_full_report": true,
+        "adjunct_url": "http://static.cninfo.com.cn/finalpage/2024-10-26/1221522891.PDF"
+      }
+    ]
+  }
+}

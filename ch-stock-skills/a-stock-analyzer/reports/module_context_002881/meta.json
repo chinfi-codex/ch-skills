@@ -1,0 +1,38 @@
+{
+  "metadata": {
+    "type": "stock_ai_analyzer_evidence_pack",
+    "ts_code": "002881.SZ",
+    "query": "002881.SZ",
+    "generated_at": "2026-05-20 14:16:11",
+    "announcement_date": "2025-11-20~2026-05-20",
+    "source": "data_fetcher.build_analysis_context",
+    "context_generated_at": "2026-05-20 14:16:14"
+  },
+  "subagent_contract": {
+    "module1_growth_financial": [
+      "module1_growth_financial.json",
+      "SKILL.md 第四节 + 第五节 5.7",
+      "成长与财务质量"
+    ],
+    "module2_valuation_market": [
+      "module2_valuation_market.json",
+      "SKILL.md 第五节（先 5.1 分型，再 5.2 估值快照/分位带）",
+      "估值与市场定价"
+    ],
+    "module3_governance": [
+      "module3_governance.json",
+      "SKILL.md 第六节",
+      "股东与治理"
+    ],
+    "module4_announcements": [
+      "module4_announcements.json",
+      "SKILL.md 公告与原文升级规则",
+      "公告事件验证"
+    ],
+    "module5_research_mainline": [
+      "module5_research_mainline.json",
+      "SKILL.md 主线归属 + 机构调研方法",
+      "机构调研与主线验证"
+    ]
+  }
+}

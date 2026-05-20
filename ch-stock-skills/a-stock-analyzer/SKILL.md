@@ -85,6 +85,22 @@ python scripts/data_fetcher.py pack 600519.SH --date 2026-01-01~2026-05-16 --evi
 - `tabtype=fulltext` 用于公告全文列表；`tabtype=relation` 仅作为互动易/调研相关列表的辅助入口。
 - PDF 原文读取使用本 skill 内置下载与 `PyPDF2` 文本抽取，不跨 skill 引用。
 
+### 2.3 把研报渲染成 HTML（可选）
+
+写完 Markdown 研报后，可用 `render_report_html.py` 渲染成自包含的单页 HTML（Claude UI 风格），并自动从 evidence 里嵌入两类图表：**PE/PB/PS 估值带时间序列**（`valuation-band` 的 `series` + 历史分位带，横轴日期、纵轴估值倍数，叠加 P25–P75 带与当前分位）、营收/归母净利/同比增速/盈利能力**财务趋势**（`income`+`financial`）。
+
+```bash
+python scripts/render_report_html.py -i reports/report_600519.md --evidence reports/evidence_600519.json
+# 不传 --evidence 时，会自动找同目录的 evidence_<代码>.json；找不到则只渲染正文、不嵌图表
+```
+
+**内容与输出格式解耦（重要）**：HTML 渲染器对正文是"只读装饰"——它不改写任何文字，只把 Markdown 转成 HTML，并在客户端用 JS 注入图表与 hero 卡片。因此写研报时**不需要为 HTML 迁就措辞或结构**：
+
+- 图表锚点是"尽力而为"。找不到对应小标题（如「估值快照与历史分位」「成长性与财务质量诊断」「核心判断」）时，对应图表**静默跳过**，不报错。
+- evidence 缺某个数据集时，对应图表自动不画，正文照常输出。
+- 文本保全校验默认**只告警不中断**（`--no-validate` 完全跳过，`--strict` 才在不一致时报错），正文内容怎么改都不会导致 HTML 生成失败。
+- 沿用模板（第八节）里的小标题命名能让图表落到最合适的位置；即使大改结构，最坏情况也只是少几张图，正文与样式不受影响。
+
 ---
 
 ## 三、工作流程
@@ -477,6 +493,8 @@ python scripts/data_fetcher.py fetch valuation-band 600519.SH --years 5
 ---
 
 ## 八、输出模板
+
+下面模板里的几个小标题同时是 HTML 渲染（2.3 节）的图表锚点：「核心判断」→ hero 卡片，「估值快照与历史分位」→ PE/PB/PS 估值带时间序列图，「成长性与财务质量诊断」→ 财务趋势图。沿用这些命名能让图表自动落位；但锚点是尽力而为，命名变了也只是少几张图，不影响正文。
 
 ```markdown
 # [公司名称]（[股票代码]）基本面研究

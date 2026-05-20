@@ -797,6 +797,32 @@ class StockDataFetcher:
                 "windows": per_window,
             }
 
+        # Daily valuation series for the date-axis band charts (PE/PB/PS over time).
+        # Downsampled to bound payload size; the last observation is always kept.
+        series_df = df[["trade_date", "pe_ttm", "pb", "ps_ttm"]].copy()
+        max_points = 320
+        step = max(1, int(len(series_df) / max_points))
+        sampled = series_df.iloc[::step]
+        if not series_df.empty and sampled.index[-1] != series_df.index[-1]:
+            sampled = pd.concat([sampled, series_df.iloc[[-1]]])
+
+        def _num(value: Any) -> Optional[float]:
+            try:
+                f = float(value)
+            except (TypeError, ValueError):
+                return None
+            return round(f, 4) if f == f else None
+
+        series = [
+            {
+                "trade_date": str(row.trade_date),
+                "pe_ttm": _num(row.pe_ttm),
+                "pb": _num(row.pb),
+                "ps_ttm": _num(row.ps_ttm),
+            }
+            for row in sampled.itertuples(index=False)
+        ]
+
         return {
             "ts_code": code,
             "latest_trade_date": latest_date,
@@ -804,6 +830,7 @@ class StockDataFetcher:
             "history_start": str(df["trade_date"].iloc[0]),
             "total_trade_days": int(df.shape[0]),
             "bands": bands,
+            "series": series,
             "model_responsibility": (
                 "脚本只给区间和分位。贵贱判断、用哪个指标（成熟龙头看 PE/PB 分位、红利股看 dv_ttm 分位、"
                 "成长股 PE 分位仅作下行参考）、是否因增速降档而历史中枢失效，全部由模型按公司类型判断。"

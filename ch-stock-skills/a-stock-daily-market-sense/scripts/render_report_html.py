@@ -1075,6 +1075,7 @@ def render_html(
     ];
     const stockSectionConfigs = [
       {{ headingText: "3.3", gridLabel: "module3-leaders" }},
+      {{ headingText: "5.1", gridLabel: "module5-capacity-up" }},
       {{ headingText: "5.2", gridLabel: "module5-star-breakout" }},
       {{ headingText: "5.3", gridLabel: "module5-early-limit" }}
     ];

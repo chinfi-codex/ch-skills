@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stderr-out", default=None, help="Stderr log output path.")
     parser.add_argument("--money-context-limit", type=int, default=80, help="Money-effect rows in context.")
     parser.add_argument("--decline-context-limit", type=int, default=20, help="Volume-decline rows in context.")
-    parser.add_argument("--low-context-limit", type=int, default=20, help="Low-position rows in context.")
+    parser.add_argument("--feature-context-limit", type=int, default=20, help="Module 5 feature-group rows per subgroup in context.")
     parser.add_argument("--amount-context-limit", type=int, default=20, help="Top-amount rows in context.")
     return parser
 
@@ -168,7 +168,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         evidence,
         money_limit=args.money_context_limit,
         decline_limit=args.decline_context_limit,
-        low_limit=args.low_context_limit,
+        feature_limit=args.feature_context_limit,
         amount_limit=args.amount_context_limit,
     )
     context_path.write_text(json.dumps(report_context, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -1,6 +1,6 @@
 ---
 name: tushare-daily-market-sense
-description: 基于 Tushare Pro A 股 daily 日线数据生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板指数趋势、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、低位异动/科创板月线突破/10:30前涨停等特征分组分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
+description: 基于 Tushare Pro A 股 daily 日线数据生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板指数趋势、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、容量上涨/科创板月线突破/10:30前涨停等特征分组分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
 version: 2.0.2
 ---
 
@@ -40,7 +40,11 @@ version: 2.0.2
 
 ```bash
 TUSHARE_TOKEN=your_token
+ALPHA_DB_BACKEND=postgresql
+ALPHA_PG_URL=postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp
 ```
+
+数据库连接统一走 `scripts/_shared/db_core.py`（开发仓库中为 `shared/db_core.py`）。首次进入任意 Agent 环境时先运行 `python3 scripts/_shared/db_ping.py --alpha-schema`；源仓库开发态用 `python3 ../../shared/db_ping.py --alpha-schema`。如果不能使用 Unix socket，再把 `ALPHA_PG_URL` 改为 `postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data`。
 
 运行脚本会先更新 `reference/market_data.csv`，并同步维护派生文件 `reference/market_data.json`，再生成情绪趋势：AKShare `stock_market_activity_legu()` 默认提供上涨、涨停、下跌、跌停、平盘、活跃度、情绪值、成交额等盘面情绪字段；搜狐涨跌停历史页仅在 AKShare 不可用或字段缺失时作为 fallback；Tushare `margin` 汇总 T-1 交易日融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。因此环境中还需安装 `akshare`。
 
@@ -81,7 +85,10 @@ python scripts\render_report_html.py --input reports\report_20260429.md
 | `--intraday-workers` | 分钟行情抓取线程数；保持小并发避免限流 | 2 |
 | `--decline-pct-max` | 爆量下跌最大当日涨幅 | -3.0 |
 | `--decline-volume-ratio` | 爆量下跌最低 20 日放量倍数 | 2.0 |
-| `--low-lookback-days` | 低位放量触发回看窗口 | 5 |
+| `--capacity-market-cap-threshold` | 容量上涨最低总市值，单位亿元，严格大于 | 70.0 |
+| `--capacity-amount-threshold` | 容量上涨最低成交额，单位亿元，严格大于 | 5.0 |
+| `--capacity-pct-threshold` | 容量上涨最低当日涨幅，严格大于 | 8.0 |
+| `--feature-sample-limit` | 模块 5 每组最大样本数 | 60 |
 
 ## Subagent 编排契约
 
@@ -114,7 +121,7 @@ HTML 输出只改变呈现方式：必须保留 Markdown 研报中的所有文�
 
 ## 示例
 
-用户：`复盘 2026-04-29 的 A 股盘面，重点看赚钱效应和低位放量。`
+用户：`复盘 2026-04-29 的 A 股盘面，重点看赚钱效应和容量上涨。`
 
 执行：
 

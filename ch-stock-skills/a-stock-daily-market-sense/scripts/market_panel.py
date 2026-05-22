@@ -674,7 +674,6 @@ def add_numeric_features(daily: pd.DataFrame) -> pd.DataFrame:
     df["close_to_high"] = df["close"] / df["high"].replace(0, pd.NA)
     df["amount_ma20_prev"] = grouped["amount"].transform(lambda s: s.shift(1).rolling(20, min_periods=5).mean())
     df["amount_ratio_20d"] = df["amount"] / df["amount_ma20_prev"]
-    # New: 15-day previous-mean ratio for the strict low-position spike rule (3x over the 10-15d baseline).
     df["amount_ma15_prev"] = grouped["amount"].transform(lambda s: s.shift(1).rolling(15, min_periods=10).mean())
     df["amount_ratio_15d"] = df["amount"] / df["amount_ma15_prev"]
     df["high_60d"] = grouped["high"].transform(lambda s: s.rolling(60, min_periods=20).max())
@@ -686,7 +685,6 @@ def add_numeric_features(daily: pd.DataFrame) -> pd.DataFrame:
     df["sustained_volume_days_5"] = grouped["amount_ratio_20d"].transform(
         lambda s: s.gt(1.5).rolling(5, min_periods=1).sum()
     )
-    # New: rolling 10-day coefficient of variation of close, used as the "走平/波动收敛" signal in low-position rule B.
     df["close_cv_10d"] = grouped["close"].transform(
         lambda s: s.rolling(10, min_periods=8).std() / s.rolling(10, min_periods=8).mean()
     )
@@ -2937,78 +2935,6 @@ def enrich_money_effect_intraday(
     return enriched
 
 
-def build_candidates(panel: pd.DataFrame, sample_limit: int) -> Dict[str, Any]:
-    liquid = panel.loc[panel["amount"].fillna(0) > 0].copy()
-    if liquid.empty:
-        return {
-            "strong_samples": [],
-            "weak_samples": [],
-            "low_position_volume_samples": [],
-            "divergence_samples": {"up_against_index": [], "down_against_index": []},
-        }
-
-    numeric_inputs = [
-        "pct_chg",
-        "ret_3d",
-        "ret_5d",
-        "ret_10d",
-        "amount",
-        "amount_ratio_20d",
-        "sustained_volume_days_5",
-        "rel_ret_5d",
-        "drawdown_120_high",
-        "close_position_120d",
-    ]
-    for column in numeric_inputs:
-        if column in liquid.columns:
-            liquid[column] = pd.to_numeric(liquid[column], errors="coerce")
-
-    liquid["strong_score"] = (
-        liquid["pct_chg"].fillna(0)
-        + liquid["ret_3d"].fillna(0) * 0.4
-        + liquid["ret_5d"].fillna(0) * 0.4
-        + liquid["amount_ratio_20d"].fillna(1).clip(upper=5) * 1.5
-        + liquid["rel_ret_5d"].fillna(0) * 0.4
-    )
-    liquid["weak_score"] = (
-        liquid["pct_chg"].fillna(0)
-        + liquid["ret_3d"].fillna(0) * 0.4
-        + liquid["ret_5d"].fillna(0) * 0.4
-        + liquid["rel_ret_5d"].fillna(0) * 0.4
-    )
-
-    strong = liquid.sort_values(["strong_score", "amount"], ascending=[False, False])
-    weak = liquid.sort_values(["weak_score", "amount"], ascending=[True, False])
-
-    low_volume = liquid.loc[
-        (liquid["drawdown_120_high"].fillna(0) <= -20)
-        & (liquid["close_position_120d"].fillna(1) <= 0.35)
-        & (liquid["amount_ratio_20d"].fillna(0) >= 1.8)
-        & (liquid["ret_3d"].fillna(-999) > 0)
-    ].sort_values(["sustained_volume_days_5", "amount_ratio_20d", "ret_5d"], ascending=[False, False, False])
-
-    up_against = liquid.loc[
-        (liquid["ret_5d"].fillna(-999) > 0)
-        & (liquid["rel_ret_5d"].fillna(-999) >= 5)
-        & (liquid["amount_ratio_20d"].fillna(0) >= 1.0)
-    ].sort_values(["rel_ret_5d", "ret_5d", "amount"], ascending=[False, False, False])
-
-    down_against = liquid.loc[
-        (liquid["ret_5d"].fillna(999) < 0)
-        & (liquid["rel_ret_5d"].fillna(999) <= -5)
-    ].sort_values(["rel_ret_5d", "ret_5d", "amount"], ascending=[True, True, False])
-
-    return {
-        "strong_samples": clean_candidates(strong, sample_limit),
-        "weak_samples": clean_candidates(weak, sample_limit),
-        "low_position_volume_samples": clean_candidates(low_volume, sample_limit),
-        "divergence_samples": {
-            "up_against_index": clean_candidates(up_against, sample_limit),
-            "down_against_index": clean_candidates(down_against, sample_limit),
-        },
-    }
-
-
 def build_money_effect_samples(
     panel: pd.DataFrame,
     pct_chg_threshold: float,
@@ -3246,47 +3172,14 @@ def build_volume_decline_samples(
     }
 
 
-def build_low_position_volume_anomaly_samples(
-    features: pd.DataFrame,
-    target_date: str,
-    drawdown_min_abs: float,
-    close_position_max: float,
-    cv_max: float,
-    spike_volume_ratio_min: float,
-    spike_pct_chg_min: float,
-    lookback_days: int,
-    sustain_volume_ratio_min: float,
-    quiet_volume_ratio_max: float,
+def build_capacity_up_samples(
+    panel: pd.DataFrame,
+    market_cap_threshold_100m_yuan: float,
+    amount_threshold_100m_yuan: float,
+    pct_chg_threshold: float,
     sample_limit: int,
 ) -> Dict[str, Any]:
-    """
-    Low-position volume anomaly samples — three categorized scenarios.
-
-    "Low position" (either A or B is enough):
-      A. Close position in the 120d range <= close_position_max (default 0.20),
-         i.e. near the historical bottom of the monthly range.
-      B. Drawdown from 120d high <= -drawdown_min_abs (default 35%) AND the most
-         recent 10 close prices are flat enough: close_cv_10d <= cv_max (default 3%).
-
-    "Volume spike" trigger day requires:
-      - amount_ratio_15d >= spike_volume_ratio_min (default 3.0)
-      - pct_chg          >= spike_pct_chg_min       (default 7.0)
-
-    Three scenarios based on where the trigger day falls relative to D and what
-    the volume / price did afterwards:
-
-      starter      — trigger day == D (today is the spike day).
-      sustain      — trigger day is within [D-lookback_days, D-1] AND every
-                     post-trigger day has amount >= trigger amount * sustain_volume_ratio_min
-                     AND close at D >= open of trigger day. Interpretation: 换手吃筹.
-      quiet        — trigger day is within [D-lookback_days, D-1] AND median amount
-                     of the most recent 3 days is <= trigger amount * quiet_volume_ratio_max
-                     AND close at D >= 0.95 * close of trigger day. Interpretation: 缩量企稳.
-
-    Stocks may match multiple scenarios; we tag each candidate with its primary
-    scenario by priority: starter > sustain > quiet.
-    """
-    if features is None or features.empty:
+    if panel is None or panel.empty:
         return {
             "available": False,
             "filter_criteria": {},
@@ -3294,353 +3187,93 @@ def build_low_position_volume_anomaly_samples(
             "summary": {"candidate_count": 0},
         }
 
-    df = features.copy()
-    df["trade_date"] = df["trade_date"].astype(str)
+    df = panel.copy()
     for column in (
-        "open", "high", "low", "close", "pct_chg", "amount",
-        "amount_ratio_15d", "amount_ratio_20d",
-        "drawdown_120_high", "close_position_120d", "close_cv_10d",
-        "close_ma5", "prev_high_10d", "close_to_high", "history_days",
+        "pct_chg", "amount", "total_mv", "circ_mv", "close",
+        "turnover_rate", "turnover_rate_f", "volume_ratio",
     ):
         if column in df.columns:
             df[column] = pd.to_numeric(df[column], errors="coerce")
 
-    # Resolve the trade dates around target.
-    all_dates = sorted(df["trade_date"].unique())
-    if target_date not in all_dates:
-        return {
-            "available": False,
-            "filter_criteria": {},
-            "candidates": [],
-            "summary": {"candidate_count": 0},
-        }
-    target_idx = all_dates.index(target_date)
-    lookback_start_idx = max(0, target_idx - lookback_days)
-    window_dates = all_dates[lookback_start_idx : target_idx + 1]
-    if not window_dates:
-        return {
-            "available": False,
-            "filter_criteria": {},
-            "candidates": [],
-            "summary": {"candidate_count": 0},
-        }
+    names = df["name"].fillna("").astype(str) if "name" in df.columns else pd.Series("", index=df.index)
+    markets = df["market"].fillna("").astype(str) if "market" in df.columns else pd.Series("", index=df.index)
+    ts_codes = df["ts_code"].fillna("").astype(str)
+    total_mv_100m = df["total_mv"] / 10000 if "total_mv" in df.columns else pd.Series(float("nan"), index=df.index)
+    amount_100m = df["amount"] / 100000 if "amount" in df.columns else pd.Series(float("nan"), index=df.index)
 
-    window_df = df.loc[df["trade_date"].isin(window_dates)].copy()
+    qualified = df.loc[
+        (total_mv_100m > market_cap_threshold_100m_yuan)
+        & (amount_100m > amount_threshold_100m_yuan)
+        & (df["pct_chg"].fillna(-999) > pct_chg_threshold)
+        & ~markets.eq("北交所")
+        & ~ts_codes.str.endswith(".BJ")
+        & ~names.str.upper().str.contains("ST", na=False)
+    ].copy()
 
-    # Compute "low position" qualifier on each row inside the window:
-    # A: close_position_120d <= close_position_max
-    # B: drawdown_120_high <= -drawdown_min_abs AND close_cv_10d <= cv_max
-    window_df["is_low_A"] = window_df["close_position_120d"].fillna(1.0) <= close_position_max
-    window_df["is_low_B"] = (
-        (window_df["drawdown_120_high"].fillna(0) <= -drawdown_min_abs)
-        & (window_df["close_cv_10d"].fillna(1.0) <= cv_max)
-    )
-    window_df["is_low_position"] = window_df["is_low_A"] | window_df["is_low_B"]
-
-    names = window_df["name"].fillna("") if "name" in window_df.columns else pd.Series("", index=window_df.index)
-    is_special_or_new = names.str.startswith(("ST", "*ST", "退", "C"))
-    is_mature = window_df["history_days"].fillna(0) >= 60
-    has_1y_amount = window_df["amount"].fillna(0) >= 100000
-
-    # Observation pool: current broad coverage rule.
-    window_df["is_observation_trigger"] = (
-        window_df["is_low_position"]
-        & (window_df["amount_ratio_15d"].fillna(0) >= spike_volume_ratio_min)
-        & (window_df["pct_chg"].fillna(-999) >= spike_pct_chg_min)
-    )
-
-    # High-quality pool A: deep drawdown + strong thrust.
-    window_df["is_high_quality_A"] = (
-        (window_df["drawdown_120_high"].fillna(0) <= -45.0)
-        & (window_df["amount_ratio_15d"].fillna(0) >= 2.5)
-        & (window_df["pct_chg"].fillna(-999) >= 10.0)
-        & has_1y_amount
-        & is_mature
-        & ~is_special_or_new
-    )
-
-    # High-quality pool B: broader low zone + strong momentum quality.
-    window_df["is_high_quality_B"] = (
-        (window_df["close_position_120d"].fillna(1.0) <= 0.35)
-        & (window_df["drawdown_120_high"].fillna(0) <= -20.0)
-        & (window_df["amount_ratio_15d"].fillna(0) >= 3.0)
-        & (window_df["pct_chg"].fillna(-999) >= 15.0)
-        & has_1y_amount
-        & is_mature
-        & ~is_special_or_new
-        & (window_df["close"].fillna(0) >= window_df["prev_high_10d"].fillna(float("inf")))
-        & (window_df["close_to_high"].fillna(0) >= 0.95)
-    )
-
-    # Trigger day can enter through the observation pool or either high-quality pool.
-    window_df["is_spike_trigger"] = (
-        window_df["is_observation_trigger"]
-        | window_df["is_high_quality_A"]
-        | window_df["is_high_quality_B"]
-    )
-
-    # Build per-stock series indexed by trade_date.
-    candidates: List[Dict[str, Any]] = []
-    target_rows = window_df.loc[window_df["trade_date"] == target_date].set_index("ts_code")
-    triggered_codes = window_df.loc[window_df["is_spike_trigger"], "ts_code"].dropna().unique()
-    if len(triggered_codes) == 0:
+    if qualified.empty:
         return {
             "available": True,
             "filter_criteria": {
-                "low_position_rule": (
-                    f"A: close_position_120d <= {close_position_max}; "
-                    f"B: drawdown_120_high <= -{drawdown_min_abs}% AND close_cv_10d <= {cv_max}"
-                ),
-                "spike_trigger": (
-                    f"amount_ratio_15d >= {spike_volume_ratio_min} AND pct_chg >= {spike_pct_chg_min}"
-                ),
-                "post_trigger_display_rule": "days_since_trigger == 0 OR today_close >= today_close_ma5",
-                "lookback_days_for_trigger": lookback_days,
-                "sustain_post_volume_ratio_min": sustain_volume_ratio_min,
-                "quiet_post_volume_ratio_max": quiet_volume_ratio_max,
+                "total_mv_100m_yuan_min_exclusive": market_cap_threshold_100m_yuan,
+                "amount_100m_yuan_min_exclusive": amount_threshold_100m_yuan,
+                "pct_chg_min_exclusive": pct_chg_threshold,
+                "exclude": "北交所/.BJ；ST/*ST",
                 "sample_limit": sample_limit,
+                "sort_by": "涨幅降序，其次成交额降序",
             },
             "candidates": [],
-            "summary": {
-                "candidate_count": 0,
-                "starter_count": 0,
-                "sustain_count": 0,
-                "quiet_count": 0,
-                "undetermined_count": 0,
-                "quality_A_count": 0,
-                "quality_B_count": 0,
-                "quality_A_plus_B_count": 0,
-                "quality_C_count": 0,
-                "high_quality_A_count": 0,
-                "high_quality_B_count": 0,
-            },
+            "summary": {"candidate_count": 0},
         }
 
-    grouped = window_df.loc[window_df["ts_code"].isin(triggered_codes)].groupby("ts_code", group_keys=False)
-    for ts_code, sub in grouped:
-        sub = sub.sort_values("trade_date").reset_index(drop=True)
-        if sub.empty or sub["is_spike_trigger"].sum() == 0:
-            continue
+    qualified["amount_100m_yuan"] = qualified["amount"] / 100000
+    qualified["total_mv_100m_yuan"] = qualified["total_mv"] / 10000
+    if "circ_mv" in qualified.columns:
+        qualified["circ_mv_100m_yuan"] = qualified["circ_mv"] / 10000
+    else:
+        qualified["circ_mv_100m_yuan"] = None
 
-        # Find the most recent trigger day inside the window.
-        trigger_rows = sub.loc[sub["is_spike_trigger"]]
-        if trigger_rows.empty:
-            continue
-        trigger_row = trigger_rows.iloc[-1]
-        trigger_date = str(trigger_row["trade_date"])
-        trigger_idx_in_window = sub.index[sub["trade_date"] == trigger_date].tolist()
-        if not trigger_idx_in_window:
-            continue
-        t_idx = trigger_idx_in_window[-1]
-        days_since_trigger = (len(sub) - 1) - t_idx  # 0 means trigger == today
+    qualified = qualified.sort_values(["pct_chg", "amount"], ascending=[False, False]).head(sample_limit)
 
-        target_row = target_rows.loc[ts_code] if ts_code in target_rows.index else None
-        if target_row is None:
-            continue
-
-        target_close = float(target_row.get("close") or 0)
-        target_close_ma5 = target_row.get("close_ma5")
-        if days_since_trigger > 0:
-            if pd.isna(target_close_ma5) or target_close < float(target_close_ma5):
-                continue
-
-        scenario = None
-        sustain_ratio = None
-        quiet_ratio = None
-        post_trigger_days = sub.iloc[t_idx + 1 :]
-
-        if days_since_trigger == 0:
-            scenario = "starter"
-        else:
-            trigger_amount = float(trigger_row.get("amount") or 0)
-            trigger_open = float(trigger_row.get("open") or 0)
-            trigger_close = float(trigger_row.get("close") or 0)
-
-            # Sustain check: every post-trigger day's amount >= trigger * sustain_ratio_min,
-            #                AND target close >= trigger open (price has not collapsed).
-            if not post_trigger_days.empty and trigger_amount > 0:
-                post_amounts = pd.to_numeric(post_trigger_days["amount"], errors="coerce").dropna()
-                if not post_amounts.empty:
-                    min_post_ratio = float(post_amounts.min() / trigger_amount)
-                    sustain_ratio = round(min_post_ratio, 4)
-                    if (
-                        min_post_ratio >= sustain_volume_ratio_min
-                        and target_close >= trigger_open
-                    ):
-                        scenario = "sustain"
-
-            # Quiet check: median of last 3 days' amount <= trigger * quiet_ratio_max,
-            #              AND target close >= 0.95 * trigger close (price has not broken down).
-            if scenario is None and trigger_amount > 0 and trigger_close > 0:
-                tail = pd.to_numeric(post_trigger_days["amount"].tail(3), errors="coerce").dropna()
-                if not tail.empty:
-                    median_post_ratio = float(tail.median() / trigger_amount)
-                    quiet_ratio = round(median_post_ratio, 4)
-                    if (
-                        median_post_ratio <= quiet_volume_ratio_max
-                        and target_close >= 0.95 * trigger_close
-                    ):
-                        scenario = "quiet"
-
-        if scenario is None:
-            # Triggered in window but post-trigger behavior matched neither sustain nor quiet:
-            # treat as 分歧型 / undetermined; still surface for completeness.
-            scenario = "undetermined"
-
-        matched_models: List[str] = []
-        if bool(trigger_row.get("is_high_quality_A")):
-            matched_models.append("high_quality_A_deep_drawdown_thrust")
-        if bool(trigger_row.get("is_high_quality_B")):
-            matched_models.append("high_quality_B_broad_momentum_quality")
-        matched_model_labels = [
-            {
-                "high_quality_A_deep_drawdown_thrust": "高质量A：深回撤强启动",
-                "high_quality_B_broad_momentum_quality": "高质量B：宽低位强动量质量",
-            }.get(model, model)
-            for model in matched_models
-        ]
-        quality_tier = "+".join(["A" if "high_quality_A_deep_drawdown_thrust" in matched_models else "",
-                                 "B" if "high_quality_B_broad_momentum_quality" in matched_models else ""]).strip("+")
-        if not quality_tier:
-            quality_tier = "C"
-        scenario_label = {
-            "starter": "启动型",
-            "sustain": "持续换手型",
-            "quiet": "缩量企稳型",
-            "undetermined": "分歧型",
-        }.get(scenario, scenario)
-
+    candidates: List[Dict[str, Any]] = []
+    for _, row in qualified.iterrows():
+        amount = safe_float(row.get("amount"))
+        total_mv = safe_float(row.get("total_mv"))
+        circ_mv = safe_float(row.get("circ_mv"))
         candidates.append({
-            "ts_code": ts_code,
-            "name": nullable_value(target_row.get("name")),
-            "market": nullable_value(target_row.get("market")),
-            "scenario": scenario,
-            "scenario_label": scenario_label,
-            "quality_tier": quality_tier,
-            "matched_models": matched_models,
-            "matched_model_labels": matched_model_labels,
-            "observation_pool": bool(trigger_row.get("is_observation_trigger")),
-            "trigger_date": trigger_date,
-            "days_since_trigger": int(days_since_trigger),
-            "trigger_pct_chg": round(float(trigger_row.get("pct_chg") or 0), 2),
-            "trigger_amount_ratio_15d": round(float(trigger_row.get("amount_ratio_15d") or 0), 2),
-            "trigger_amount_100m_yuan": round(float(trigger_row.get("amount") or 0) / 100000, 2),
-            "trigger_drawdown_120_high": round(float(trigger_row.get("drawdown_120_high") or 0), 2),
-            "trigger_close_position_120d": (
-                round(float(trigger_row.get("close_position_120d")), 4)
-                if pd.notna(trigger_row.get("close_position_120d"))
-                else None
-            ),
-            "trigger_close_to_high": (
-                round(float(trigger_row.get("close_to_high")), 4)
-                if pd.notna(trigger_row.get("close_to_high"))
-                else None
-            ),
-            "trigger_break_prev_high_10d": bool(
-                pd.notna(trigger_row.get("prev_high_10d"))
-                and float(trigger_row.get("close") or 0) >= float(trigger_row.get("prev_high_10d"))
-            ),
-            "history_days": (
-                int(trigger_row.get("history_days"))
-                if pd.notna(trigger_row.get("history_days"))
-                else None
-            ),
-            "trigger_low_track": "+".join(
-                track for track, matched in (
-                    ("A", bool(trigger_row.get("is_low_A"))),
-                    ("B", bool(trigger_row.get("is_low_B"))),
-                )
-                if matched
-            ) or "HQ",
-            "post_trigger_min_volume_ratio": sustain_ratio,
-            "post_trigger_recent3_volume_ratio": quiet_ratio,
-            "today_close": round(float(target_row.get("close") or 0), 2),
-            "today_close_ma5": (
-                round(float(target_close_ma5), 2)
-                if pd.notna(target_close_ma5)
-                else None
-            ),
-            "today_above_ma5": (
-                bool(target_close >= float(target_close_ma5))
-                if pd.notna(target_close_ma5)
-                else None
-            ),
-            "today_pct_chg": round(float(target_row.get("pct_chg") or 0), 2),
-            "today_amount_100m_yuan": round(float(target_row.get("amount") or 0) / 100000, 2),
-            "today_drawdown_120_high": round(float(target_row.get("drawdown_120_high") or 0), 2),
-            "today_close_position_120d": (
-                round(float(target_row.get("close_position_120d")), 4)
-                if pd.notna(target_row.get("close_position_120d"))
-                else None
-            ),
+            "ts_code": nullable_value(row.get("ts_code")),
+            "name": nullable_value(row.get("name")),
+            "market": nullable_value(row.get("market")),
+            "pct_chg": round_optional(row.get("pct_chg"), 2),
+            "amount_100m_yuan": round_optional(amount / 100000, 2) if amount is not None else None,
+            "total_mv_100m_yuan": round_optional(total_mv / 10000, 2) if total_mv is not None else None,
+            "circ_mv_100m_yuan": round_optional(circ_mv / 10000, 2) if circ_mv is not None else None,
+            "close": round_optional(row.get("close"), 2),
+            "turnover_rate": round_optional(row.get("turnover_rate"), 2),
+            "volume_ratio": round_optional(row.get("volume_ratio"), 2),
+            "trigger_reason": "当天总市值 > 70 亿、成交额 > 5 亿、涨幅 > 8%，且排除北交所与 ST",
         })
-
-    # Sort: high-quality pools first, then starter/sustain/quiet/undetermined.
-    scenario_priority = {"starter": 0, "sustain": 1, "quiet": 2, "undetermined": 3}
-    quality_priority = {"A+B": 0, "A": 0, "B": 1, "C": 2}
-    candidates.sort(key=lambda r: (
-        quality_priority.get(r["quality_tier"], 99),
-        scenario_priority.get(r["scenario"], 99),
-        -float(r.get("trigger_amount_ratio_15d") or 0),
-        -float(r.get("trigger_pct_chg") or 0),
-    ))
-    candidates = candidates[:sample_limit]
-
-    counts: Dict[str, int] = {"starter": 0, "sustain": 0, "quiet": 0, "undetermined": 0}
-    quality_counts: Dict[str, int] = {"A": 0, "B": 0, "A+B": 0, "C": 0}
-    model_counts: Dict[str, int] = {
-        "high_quality_A_deep_drawdown_thrust": 0,
-        "high_quality_B_broad_momentum_quality": 0,
-    }
-    for c in candidates:
-        counts[c["scenario"]] = counts.get(c["scenario"], 0) + 1
-        quality_counts[c["quality_tier"]] = quality_counts.get(c["quality_tier"], 0) + 1
-        for model in c.get("matched_models") or []:
-            model_counts[model] = model_counts.get(model, 0) + 1
 
     return {
         "available": True,
         "filter_criteria": {
-            "low_position_rule_A": f"120日价格分位 <= {close_position_max}",
-            "low_position_rule_B": (
-                f"距120日高点回撤 <= -{drawdown_min_abs}% 且 10日收盘价变异系数 <= {cv_max}"
-            ),
-            "spike_volume_ratio_min": spike_volume_ratio_min,
-            "spike_pct_chg_min": spike_pct_chg_min,
-            "high_quality_pool_A": (
-                "距120日高点回撤 <= -45%，15日放量倍数 >= 2.5，"
-                "当日涨幅 >= 10%，成交额 >= 1亿，历史交易天数 >= 60，"
-                "且排除 ST/*ST/退/C 新股"
-            ),
-            "high_quality_pool_B": (
-                "120日价格分位 <= 0.35，距120日高点回撤 <= -20%，"
-                "15日放量倍数 >= 3.0，当日涨幅 >= 15%，成交额 >= 1亿，"
-                "收盘价突破前10日高点，收盘/最高 >= 0.95，"
-                "历史交易天数 >= 60，且排除 ST/*ST/退/C 新股"
-            ),
-            "post_trigger_display_rule": "触发日为今日，或今日收盘价仍站在5日均线上方",
-            "lookback_days_for_trigger": lookback_days,
-            "sustain_post_volume_ratio_min": sustain_volume_ratio_min,
-            "quiet_post_volume_ratio_max": quiet_volume_ratio_max,
+            "total_mv_100m_yuan_min_exclusive": market_cap_threshold_100m_yuan,
+            "amount_100m_yuan_min_exclusive": amount_threshold_100m_yuan,
+            "pct_chg_min_exclusive": pct_chg_threshold,
+            "exclude": "北交所/.BJ；ST/*ST",
             "sample_limit": sample_limit,
-            "sort_priority": "质量层级 A/A+B > B > C；同层级内按 启动型 > 持续换手型 > 缩量企稳型 > 分歧型 排序",
+            "sort_by": "涨幅降序，其次成交额降序",
+            "amount_unit_note": "Tushare daily 的 amount 单位为千元，脚本内部已按亿元阈值换算。",
+            "market_cap_unit_note": "Tushare daily_basic 的 total_mv 单位为万元，脚本内部已按亿元阈值换算。",
         },
         "candidates": candidates,
         "summary": {
             "candidate_count": len(candidates),
-            "starter_count": counts.get("starter", 0),
-            "sustain_count": counts.get("sustain", 0),
-            "quiet_count": counts.get("quiet", 0),
-            "undetermined_count": counts.get("undetermined", 0),
-            "quality_A_count": quality_counts.get("A", 0),
-            "quality_B_count": quality_counts.get("B", 0),
-            "quality_A_plus_B_count": quality_counts.get("A+B", 0),
-            "quality_C_count": quality_counts.get("C", 0),
-            "high_quality_A_count": model_counts.get("high_quality_A_deep_drawdown_thrust", 0),
-            "high_quality_B_count": model_counts.get("high_quality_B_broad_momentum_quality", 0),
+            "total_amount_100m_yuan": round(sum(float(item.get("amount_100m_yuan") or 0) for item in candidates), 2),
+            "median_pct_chg": round_optional(qualified["pct_chg"].median(), 2),
+            "max_pct_chg": round_optional(qualified["pct_chg"].max(), 2),
+            "median_total_mv_100m_yuan": round_optional(qualified["total_mv_100m_yuan"].median(), 2),
         },
     }
-
 
 def code_to_ts_code(code: Any) -> Optional[str]:
     code_str = str(code or "").strip()
@@ -3935,7 +3568,7 @@ def build_early_limit_up_1030_samples(
 
 def build_feature_group_overlaps(groups: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     labels = {
-        "low_position_anomaly": "低位异动",
+        "capacity_up": "容量上涨",
         "star_120_high_monthly_breakout": "科创板月线突破",
         "early_limit_up_1030": "10:30前涨停",
     }
@@ -3973,23 +3606,26 @@ def build_feature_group_overlaps(groups: Dict[str, Dict[str, Any]]) -> List[Dict
 
 
 def build_feature_group_analysis_samples(
-    low_position_anomaly: Dict[str, Any],
     features: pd.DataFrame,
     panel: pd.DataFrame,
     basic: pd.DataFrame,
     target_date: str,
     sample_limit: int,
+    capacity_market_cap_threshold_100m_yuan: float,
+    capacity_amount_threshold_100m_yuan: float,
+    capacity_pct_chg_threshold: float,
 ) -> Dict[str, Any]:
-    low_group = {
-        "available": low_position_anomaly.get("available", False),
-        "filter_criteria": low_position_anomaly.get("filter_criteria"),
-        "summary": low_position_anomaly.get("summary"),
-        "candidates": low_position_anomaly.get("candidates", []),
-    }
+    capacity_group = build_capacity_up_samples(
+        panel,
+        market_cap_threshold_100m_yuan=capacity_market_cap_threshold_100m_yuan,
+        amount_threshold_100m_yuan=capacity_amount_threshold_100m_yuan,
+        pct_chg_threshold=capacity_pct_chg_threshold,
+        sample_limit=sample_limit,
+    )
     star_group = build_star_monthly_breakout_samples(features, target_date, sample_limit)
     early_group = build_early_limit_up_1030_samples(target_date, panel, basic, sample_limit)
     groups = {
-        "low_position_anomaly": low_group,
+        "capacity_up": capacity_group,
         "star_120_high_monthly_breakout": star_group,
         "early_limit_up_1030": early_group,
     }
@@ -3999,7 +3635,7 @@ def build_feature_group_analysis_samples(
         "groups": groups,
         "overlap_hits": overlaps,
         "summary": {
-            "low_position_anomaly_count": len(low_group.get("candidates") or []),
+            "capacity_up_count": len(capacity_group.get("candidates") or []),
             "star_120_high_monthly_breakout_count": len(star_group.get("candidates") or []),
             "early_limit_up_1030_count": len(early_group.get("candidates") or []),
             "overlap_hit_count": len(overlaps),
@@ -4042,7 +3678,7 @@ def build_report_context(
     evidence: Dict[str, Any],
     money_limit: int = 80,
     decline_limit: int = 20,
-    low_limit: int = 20,
+    feature_limit: int = 20,
     amount_limit: int = 20,
 ) -> Dict[str, Any]:
     money_fields = [
@@ -4072,30 +3708,18 @@ def build_report_context(
         "elasticity_hint_score",
     ]
     decline_fields = money_fields + ["decline_intensity"]
-    low_fields = [
+    capacity_fields = [
         "ts_code",
         "name",
         "market",
-        "scenario",
-        "scenario_label",
-        "quality_tier",
-        "matched_models",
-        "matched_model_labels",
-        "trigger_date",
-        "days_since_trigger",
-        "trigger_pct_chg",
-        "trigger_amount_ratio_15d",
-        "trigger_amount_100m_yuan",
-        "trigger_low_track",
-        "trigger_drawdown_120_high",
-        "trigger_close_position_120d",
-        "trigger_close_to_high",
-        "trigger_break_prev_high_10d",
-        "post_trigger_min_volume_ratio",
-        "post_trigger_recent3_volume_ratio",
-        "today_close",
-        "today_close_ma5",
-        "today_amount_100m_yuan",
+        "pct_chg",
+        "amount_100m_yuan",
+        "total_mv_100m_yuan",
+        "circ_mv_100m_yuan",
+        "close",
+        "turnover_rate",
+        "volume_ratio",
+        "trigger_reason",
     ]
     star_fields = [
         "ts_code",
@@ -4205,26 +3829,17 @@ def build_report_context(
                 decline_limit,
             ),
         },
-        "low_position_volume_anomaly": {
-            "filter_criteria": (evidence.get("low_position_volume_anomaly_samples") or {}).get("filter_criteria"),
-            "summary": (evidence.get("low_position_volume_anomaly_samples") or {}).get("summary"),
-            "candidates": compact_records(
-                (evidence.get("low_position_volume_anomaly_samples") or {}).get("candidates", []),
-                low_fields,
-                low_limit,
-            ),
-        },
         "feature_group_analysis": {
             "summary": feature_groups.get("summary"),
             "model_responsibility": feature_groups.get("model_responsibility"),
             "groups": {
-                "low_position_anomaly": {
-                    "filter_criteria": (feature_group_payload.get("low_position_anomaly") or {}).get("filter_criteria"),
-                    "summary": (feature_group_payload.get("low_position_anomaly") or {}).get("summary"),
+                "capacity_up": {
+                    "filter_criteria": (feature_group_payload.get("capacity_up") or {}).get("filter_criteria"),
+                    "summary": (feature_group_payload.get("capacity_up") or {}).get("summary"),
                     "candidates": compact_records(
-                        (feature_group_payload.get("low_position_anomaly") or {}).get("candidates", []),
-                        low_fields,
-                        low_limit,
+                        (feature_group_payload.get("capacity_up") or {}).get("candidates", []),
+                        capacity_fields,
+                        feature_limit,
                     ),
                 },
                 "star_120_high_monthly_breakout": {
@@ -4233,7 +3848,7 @@ def build_report_context(
                     "candidates": compact_records(
                         (feature_group_payload.get("star_120_high_monthly_breakout") or {}).get("candidates", []),
                         star_fields,
-                        low_limit,
+                        feature_limit,
                     ),
                 },
                 "early_limit_up_1030": {
@@ -4245,11 +3860,11 @@ def build_report_context(
                     "candidates": compact_records(
                         (feature_group_payload.get("early_limit_up_1030") or {}).get("candidates", []),
                         early_limit_fields,
-                        low_limit,
+                        feature_limit,
                     ),
                 },
             },
-            "overlap_hits": compact_records(feature_groups.get("overlap_hits", []), overlap_fields, low_limit),
+            "overlap_hits": compact_records(feature_groups.get("overlap_hits", []), overlap_fields, feature_limit),
         },
         "reporting_notes": [
             "本上下文是面向模型的轻量辅助包，不是完整证据归档。",
@@ -4273,6 +3888,8 @@ def collect_candidate_codes(
 
     amount_money = args.money_amount_threshold * 100000
     amount_decline = args.decline_amount_threshold * 100000
+    amount_capacity = args.capacity_amount_threshold * 100000
+    market_cap_capacity = args.capacity_market_cap_threshold * 10000
 
     m2_codes = set(panel.nlargest(min(20, len(panel)), "amount")["ts_code"].dropna().astype(str))
     m3_codes = set(
@@ -4291,11 +3908,18 @@ def collect_candidate_codes(
         ].dropna().astype(str)
     )
 
-    low_window = trade_dates[-(max(0, int(args.low_lookback_days)) + 1):]
-    m5_codes = set(
-        screening_features.loc[
-            (screening_features["trade_date"].astype(str).isin(low_window))
-            & (pd.to_numeric(screening_features["pct_chg"], errors="coerce").fillna(-999) >= args.low_spike_pct_chg),
+    panel_market = panel["market"].fillna("").astype(str) if "market" in panel.columns else pd.Series("", index=panel.index)
+    panel_names = panel["name"].fillna("").astype(str) if "name" in panel.columns else pd.Series("", index=panel.index)
+    panel_ts_codes = panel["ts_code"].fillna("").astype(str)
+    panel_total_mv = panel["total_mv"] if "total_mv" in panel.columns else pd.Series(0, index=panel.index)
+    capacity_codes = set(
+        panel.loc[
+            (pd.to_numeric(panel["pct_chg"], errors="coerce").fillna(-999) > args.capacity_pct_threshold)
+            & (pd.to_numeric(panel["amount"], errors="coerce").fillna(0) > amount_capacity)
+            & (pd.to_numeric(panel_total_mv, errors="coerce").fillna(0) > market_cap_capacity)
+            & ~panel_market.eq("北交所")
+            & ~panel_ts_codes.str.endswith(".BJ")
+            & ~panel_names.str.upper().str.contains("ST", na=False),
             "ts_code",
         ].dropna().astype(str)
     )
@@ -4311,7 +3935,7 @@ def collect_candidate_codes(
             "ts_code",
         ].dropna().astype(str)
     )
-    m5_codes = m5_codes | star_codes
+    m5_codes = capacity_codes | star_codes
 
     return {
         "m2": m2_codes,
@@ -4587,26 +4211,15 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         amount_threshold_100m_yuan=args.decline_amount_threshold,
         sample_limit=args.decline_sample_limit,
     )
-    low_position_anomaly = build_low_position_volume_anomaly_samples(
-        features,
-        target_date=target_date,
-        drawdown_min_abs=args.low_drawdown_min,
-        close_position_max=args.low_close_position_max,
-        cv_max=args.low_cv_max,
-        spike_volume_ratio_min=args.low_spike_volume_ratio,
-        spike_pct_chg_min=args.low_spike_pct_chg,
-        lookback_days=args.low_lookback_days,
-        sustain_volume_ratio_min=args.low_sustain_ratio,
-        quiet_volume_ratio_max=args.low_quiet_ratio,
-        sample_limit=args.low_sample_limit,
-    )
     feature_group_analysis = build_feature_group_analysis_samples(
-        low_position_anomaly=low_position_anomaly,
         features=features,
         panel=panel,
         basic=basic,
         target_date=target_date,
-        sample_limit=args.low_sample_limit,
+        sample_limit=args.feature_sample_limit,
+        capacity_market_cap_threshold_100m_yuan=args.capacity_market_cap_threshold,
+        capacity_amount_threshold_100m_yuan=args.capacity_amount_threshold,
+        capacity_pct_chg_threshold=args.capacity_pct_threshold,
     )
     stock_kline_records = build_stock_kline_records(
         daily=daily,
@@ -4666,7 +4279,6 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         ),
         "money_effect_samples": money_effect,
         "volume_decline_samples": volume_decline,
-        "low_position_volume_anomaly_samples": low_position_anomaly,
         "feature_group_analysis_samples": feature_group_analysis,
         "stock_kline_records": stock_kline_records,
         "notes": [
@@ -4681,8 +4293,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "money_effect_samples 按涨幅和成交额阈值筛选，并按成交额排序，是每日赚钱效应和上涨主线分析的标准候选池。",
             "money_effect_samples 会尽量用 stk_mins 为候选股补充日内高点时间；若接口无权限、限流或无数据，intraday_data_available=false，只能使用日线强度和弹性提示分。",
             "volume_decline_samples 按涨跌幅、20日放量倍数和成交额阈值筛选，并按爆量下跌强度（20日放量倍数 * 跌幅绝对值）排序。",
-            "low_position_volume_anomaly_samples 使用严格规则（3倍放量、涨幅7%以上、深回撤或底部区域），并分类为启动型、持续换手型、缩量企稳型和分歧型。",
-            "feature_group_analysis_samples 是模块 5 的新证据包：低位异动、科创板120日新高且真实月K突破、10:30前涨停三组分别输出，并提供 overlap_hits 供模型做交叉命中上涨归因。",
+            "feature_group_analysis_samples 是模块 5 的证据包：容量上涨、科创板120日新高且真实月K突破、10:30前涨停三组分别输出，并提供 overlap_hits 供模型做交叉命中上涨归因。",
         ],
     }
 
@@ -4734,25 +4345,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     panel.add_argument("--decline-sample-limit", type=int, default=60,
                        help="Volume-decline pool: max rows after sorting (default 60).")
 
-    # Low-position volume anomaly (低位放量异动) — module 5 feature-group subgroup.
-    panel.add_argument("--low-drawdown-min", type=float, default=35.0,
-                       help="Low-position pool rule B: minimum |drawdown_120_high| in percent (default 35.0).")
-    panel.add_argument("--low-close-position-max", type=float, default=0.20,
-                       help="Low-position pool rule A: maximum close_position_120d (default 0.20).")
-    panel.add_argument("--low-cv-max", type=float, default=0.03,
-                       help="Low-position pool rule B: maximum 10-day close coefficient of variation, the 走平 signal (default 0.03).")
-    panel.add_argument("--low-spike-volume-ratio", type=float, default=3.0,
-                       help="Low-position pool: minimum amount_ratio_15d for the spike trigger day (default 3.0).")
-    panel.add_argument("--low-spike-pct-chg", type=float, default=7.0,
-                       help="Low-position pool: minimum pct_chg in percent on the spike trigger day (default 7.0).")
-    panel.add_argument("--low-lookback-days", type=int, default=5,
-                       help="Low-position pool: how many trading days to look back for the trigger day (default 5).")
-    panel.add_argument("--low-sustain-ratio", type=float, default=0.7,
-                       help="Sustain scenario: every post-trigger day's amount must be >= sustain_ratio * trigger amount (default 0.7).")
-    panel.add_argument("--low-quiet-ratio", type=float, default=0.5,
-                       help="Quiet scenario: median of last 3 post-trigger days' amount must be <= quiet_ratio * trigger amount (default 0.5).")
-    panel.add_argument("--low-sample-limit", type=int, default=60,
-                       help="Low-position pool: max rows after sorting (default 60).")
+    # Capacity-up (容量上涨) — module 5 feature-group subgroup.
+    panel.add_argument("--capacity-market-cap-threshold", type=float, default=70.0,
+                       help="Capacity-up pool: minimum total market cap in 100m yuan, exclusive (default 70.0 == 70亿).")
+    panel.add_argument("--capacity-amount-threshold", type=float, default=5.0,
+                       help="Capacity-up pool: minimum amount in 100m yuan, exclusive (default 5.0 == 5亿).")
+    panel.add_argument("--capacity-pct-threshold", type=float, default=8.0,
+                       help="Capacity-up pool: minimum pct_chg in percent, exclusive (default 8.0).")
+    panel.add_argument("--feature-sample-limit", type=int, default=60,
+                       help="Module 5 feature-group max rows per subgroup (default 60).")
 
     return parser
 

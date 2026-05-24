@@ -31,16 +31,11 @@ REQUEST_HEADERS = {"User-Agent": "Mozilla/5.0"}
 DEFAULT_CONFIG: Dict[str, Any] = {
     "indices": [
         {"ticker": "QQQ", "name": "纳指100"},
-        {"ticker": "SPY", "name": "标普500"},
-        {"ticker": "DIA", "name": "道琼斯"},
-        {"ticker": "IWM", "name": "罗素2000"},
     ],
     "groups": [],
     "thresholds": {
-        "big_drop": -10.0,
-        "big_rise": 10.0,
-        "warning": -5.0,
-        "highlight": 5.0,
+        "drop": -7.0,
+        "rise": 7.0,
     },
     "output": {
         "show_5day_trend": True,
@@ -120,7 +115,7 @@ def fetch_chart_history(ticker: str) -> list[Dict[str, Any]]:
 
 def get_latest_completed_trading_day(
     history_by_ticker: Dict[str, Optional[list[Dict[str, Any]]]],
-    reference_ticker: str = "SPY",
+    reference_ticker: str = "QQQ",
 ) -> date:
     """Resolve the latest completed trading day from available history."""
     reference_history = history_by_ticker.get(reference_ticker)
@@ -199,14 +194,10 @@ def collect_unique_tickers(config: Dict[str, Any]) -> list[str]:
 
 
 def classify_move(change_pct: float, thresholds: Dict[str, float]) -> str:
-    if change_pct <= thresholds.get("big_drop", -10.0):
-        return "big_drop"
-    if change_pct >= thresholds.get("big_rise", 10.0):
-        return "big_rise"
-    if change_pct <= thresholds.get("warning", -5.0):
-        return "warning_drop"
-    if change_pct >= thresholds.get("highlight", 5.0):
-        return "highlight_rise"
+    if change_pct <= thresholds.get("drop", -7.0):
+        return "drop"
+    if change_pct >= thresholds.get("rise", 7.0):
+        return "rise"
     return "normal"
 
 
@@ -241,34 +232,37 @@ def build_group_evidence(
     return groups
 
 
+def build_ticker_group_map(config: Dict[str, Any]) -> Dict[str, list[str]]:
+    mapping: Dict[str, list[str]] = {}
+    for group in config.get("groups", []):
+        name = group.get("name", "")
+        for ticker in group.get("stocks", []):
+            mapping.setdefault(ticker, []).append(name)
+    return mapping
+
+
 def build_abnormal_evidence(
     snapshots: Dict[str, Optional[Dict[str, Any]]],
     thresholds: Dict[str, float],
+    ticker_group_map: Optional[Dict[str, list[str]]] = None,
 ) -> Dict[str, list[Dict[str, Any]]]:
+    ticker_group_map = ticker_group_map or {}
     buckets: Dict[str, list[Dict[str, Any]]] = {
-        "big_drops": [],
-        "big_rises": [],
-        "warning_drops": [],
-        "highlight_rises": [],
+        "drops": [],
+        "rises": [],
     }
     for ticker, snapshot in snapshots.items():
         if not snapshot:
             continue
         label = classify_move(snapshot["change_pct"], thresholds)
-        item = {"ticker": ticker, **snapshot}
-        if label == "big_drop":
-            buckets["big_drops"].append(item)
-        elif label == "big_rise":
-            buckets["big_rises"].append(item)
-        elif label == "warning_drop":
-            buckets["warning_drops"].append(item)
-        elif label == "highlight_rise":
-            buckets["highlight_rises"].append(item)
+        item = {"ticker": ticker, "groups": ticker_group_map.get(ticker, []), **snapshot}
+        if label == "drop":
+            buckets["drops"].append(item)
+        elif label == "rise":
+            buckets["rises"].append(item)
 
-    buckets["big_drops"].sort(key=lambda item: item["change_pct"])
-    buckets["big_rises"].sort(key=lambda item: item["change_pct"], reverse=True)
-    buckets["warning_drops"].sort(key=lambda item: item["change_pct"])
-    buckets["highlight_rises"].sort(key=lambda item: item["change_pct"], reverse=True)
+    buckets["drops"].sort(key=lambda item: item["change_pct"])
+    buckets["rises"].sort(key=lambda item: item["change_pct"], reverse=True)
     return buckets
 
 
@@ -315,9 +309,40 @@ def build_market_evidence(config: Dict[str, Any], report_date: Optional[date] = 
         "thresholds": config.get("thresholds", {}),
         "indices": index_snapshots,
         "groups": build_group_evidence(config, stock_snapshots),
-        "abnormal_moves": build_abnormal_evidence(stock_snapshots, config.get("thresholds", {})),
+        "abnormal_moves": build_abnormal_evidence(
+            stock_snapshots,
+            config.get("thresholds", {}),
+            build_ticker_group_map(config),
+        ),
         "errors": errors,
     }
+
+
+def maybe_sync_from_lark(config_path: str) -> Optional[str]:
+    """Try to sync the yaml from the configured Lark sheet. Return note or None.
+
+    Failure is non-fatal: we log to stderr and keep using the existing yaml.
+    """
+    try:
+        existing = load_config(config_path)
+    except Exception:
+        return None
+    token = (existing.get("lark_sheet") or {}).get("spreadsheet_token")
+    if not token:
+        return "lark_sheet.spreadsheet_token 未配置，使用本地 yaml。"
+
+    try:
+        from sync_from_lark import sync as _sync  # noqa: WPS433 (local import on purpose)
+    except Exception as exc:
+        sys.stderr.write(f"[sync] 无法导入 sync_from_lark: {exc}\n")
+        return f"sync_from_lark 不可用：{exc}"
+
+    try:
+        _sync(Path(config_path).expanduser().resolve())
+        return "已从飞书表格同步最新观察池。"
+    except Exception as exc:
+        sys.stderr.write(f"[sync] 同步失败，沿用本地 yaml：{exc}\n")
+        return f"飞书同步失败：{exc}（沿用本地 yaml）"
 
 
 def main() -> None:
@@ -326,10 +351,18 @@ def main() -> None:
     parser.add_argument("--date", "-d", help="交易日，格式 YYYY-MM-DD；默认取最近一个已结束交易日")
     parser.add_argument("--output", "-o", help="输出 JSON 文件路径")
     parser.add_argument("--json", "-j", action="store_true", help="兼容旧参数；当前默认总是输出 JSON")
+    parser.add_argument("--no-sync", action="store_true", help="跳过从飞书表格同步配置")
     args = parser.parse_args()
+
+    sync_note: Optional[str] = None
+    if not args.no_sync:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        sync_note = maybe_sync_from_lark(args.config)
 
     config = load_config(args.config)
     evidence = build_market_evidence(config, parse_report_date(args.date))
+    if sync_note:
+        evidence["sync_note"] = sync_note
     content = json.dumps(evidence, ensure_ascii=False, indent=2, default=str)
 
     if args.output:

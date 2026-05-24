@@ -1,61 +1,79 @@
 # 美股日报观察池配置
+#
+# ⚠️ 本文件由 scripts/sync_from_lark.py 从飞书表格同步生成，请勿手工编辑。
+# 编辑入口（飞书表格 URL）：
+#   https://cmvg02tu57.feishu.cn/sheets/X40osPw9YhO4xWtfTH4canIundf
+# 跳过 sync：python scripts/generate_report.py --no-sync
 
+lark_sheet:
+  spreadsheet_token: X40osPw9YhO4xWtfTH4canIundf
+  url: https://cmvg02tu57.feishu.cn/sheets/X40osPw9YhO4xWtfTH4canIundf
+  sheets:
+    watchlist: watchlist
+    groups: groups
+    thresholds: thresholds
 indices:
-  - ticker: QQQ
-    name: 纳指100
-    desc: 跟踪纳斯达克100指数 ETF
-
-
+- ticker: QQQ
+  name: 纳指100；本观察池仅以纳指为大盘锚
 groups:
-  - name: Mag7
-    desc: 科技七巨头
-    emoji: 🚀
-    stocks:
-      - NVDA
-      - TSLA
-      - META
-      - AMZN
-      - GOOGL
-      - AAPL
-      - MSFT
-
-  - name: AI
-    desc: AI 硬件
-    emoji: 🤖
-    stocks:
-      - LITE
-      - COHR
-      - TSEM
-      - VRT
-      - GEV
-
-  - name: Semi & 存储
-    desc: 半导体与存储设备
-    emoji: 💾
-    stocks:
-      - LRCX
-      - KLAC
-      - ASML
-      - TSM
-      - MU
-      - SNDK
-
-  - name: Token Infra
-    desc: Token基础设施
-    emoji: ☁️
-    stocks:
-      - NET
-      - FAST
-      - DDOG
-      - SNOW
-
-
+- name: Mag7
+  desc: 科技七巨头
+  emoji: 🚀
+  stocks:
+  - NVDA
+  - TSLA
+  - GOOGL
+  - META
+  - AMZN
+  - MSFT
+  - AAPL
+- name: AI光存
+  desc: AI 光通信芯片/模块 + 存储
+  emoji: 💡
+  stocks:
+  - LITE
+  - COHR
+  - MRVL
+  - TSEM
+  - MU
+  - SNDK
+  - AAOI
+  - FN
+  - WDC
+  - STX
+- name: AI Cloud
+  desc: AI 算力云
+  emoji: ☁️
+  stocks:
+  - CRWV
+  - NBIS
+  - APLD
+  - IREN
+- name: Semi
+  desc: 半导体设备 + 代工（含部分设计端）
+  emoji: 🔬
+  stocks:
+  - TSM
+  - LRCX
+  - KLAC
+  - ASML
+  - AMAT
+  - AVGO
+  - AMD
+- name: IGV
+  desc: 软件 / SaaS / AI 应用
+  emoji: 🧩
+  stocks:
+  - NET
+  - DDOG
+  - SNOW
+  - FIG
+  - PLTR
+  - CRWD
+  - NOW
 thresholds:
-  big_drop: -10.0
-  big_rise: 10.0
-  warning: -5.0
-  highlight: 5.0
-
+  drop: -7.0
+  rise: 7.0
 output:
   show_5day_trend: true
   show_volume: false

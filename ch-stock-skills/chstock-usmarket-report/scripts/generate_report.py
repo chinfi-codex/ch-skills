@@ -345,6 +345,40 @@ def maybe_sync_from_lark(config_path: str) -> Optional[str]:
         return f"飞书同步失败：{exc}（沿用本地 yaml）"
 
 
+def maybe_scan_market(
+    enabled: bool,
+    min_change: float,
+    min_cap_billion: float,
+    limit: int,
+    evidence_date: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Optionally pull whole-market movers via scan_market.scan_movers.
+
+    Returns the scan evidence dict (with an extra `date_aligned` field) or None.
+    Failure is non-fatal: we log to stderr and skip.
+    """
+    if not enabled:
+        return None
+    try:
+        from scan_market import scan_movers as _scan  # noqa: WPS433
+    except Exception as exc:
+        sys.stderr.write(f"[scan] 无法导入 scan_market: {exc}\n")
+        return None
+    try:
+        result = _scan(
+            min_change_pct=min_change,
+            min_market_cap_usd=min_cap_billion * 1e9,
+            limit_per_side=limit,
+        )
+    except Exception as exc:
+        sys.stderr.write(f"[scan] 全市场扫描失败：{exc}\n")
+        return None
+    # Tag whether the scan window matches the report's date.
+    scan_date = result.get("scan_date")
+    result["date_aligned"] = bool(scan_date and evidence_date and scan_date == evidence_date)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fetch structured evidence for a US-market watchlist")
     parser.add_argument("--config", "-c", help="配置文件路径", default=str(DEFAULT_CONFIG_PATH))
@@ -352,17 +386,37 @@ def main() -> None:
     parser.add_argument("--output", "-o", help="输出 JSON 文件路径")
     parser.add_argument("--json", "-j", action="store_true", help="兼容旧参数；当前默认总是输出 JSON")
     parser.add_argument("--no-sync", action="store_true", help="跳过从飞书表格同步配置")
+    parser.add_argument("--no-market-scan", action="store_true", help="跳过全市场 ±7% / 市值 ≥ $10B 扫描")
+    parser.add_argument("--scan-limit", type=int, default=20, help="全市场扫描每个方向最多保留几只，默认 20")
+    parser.add_argument("--scan-min-change", type=float, default=7.0, help="全市场扫描 |涨跌幅| 阈值，默认 7.0")
+    parser.add_argument(
+        "--scan-min-cap-billion",
+        type=float,
+        default=10.0,
+        help="全市场扫描市值阈值（10亿美元为单位），默认 10（即 $10B）",
+    )
     args = parser.parse_args()
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
     sync_note: Optional[str] = None
     if not args.no_sync:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
         sync_note = maybe_sync_from_lark(args.config)
 
     config = load_config(args.config)
     evidence = build_market_evidence(config, parse_report_date(args.date))
     if sync_note:
         evidence["sync_note"] = sync_note
+
+    market_wide = maybe_scan_market(
+        enabled=not args.no_market_scan,
+        min_change=args.scan_min_change,
+        min_cap_billion=args.scan_min_cap_billion,
+        limit=args.scan_limit,
+        evidence_date=evidence.get("date"),
+    )
+    if market_wide is not None:
+        evidence["market_wide_movers"] = market_wide
     content = json.dumps(evidence, ensure_ascii=False, indent=2, default=str)
 
     if args.output:

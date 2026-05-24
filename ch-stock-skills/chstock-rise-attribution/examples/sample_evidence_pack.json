@@ -1,0 +1,212 @@
+{
+  "pack_type": "Evidence Pack",
+  "pack_subtype": "AttributionEvidence",
+  "task_id": "rise-attr-300308.SZ-2026-05-23",
+  "created_at": "2026-05-23T11:32:14Z",
+  "producer": "chstock-rise-attribution",
+  "write_permission": false,
+  "input_sources": {
+    "alphavault_registry": {
+      "alphavault_root": "/path/to/AlphaVault",
+      "registry_total": 1247,
+      "registry_matched": 6,
+      "date_filtered": 3,
+      "returned": 3,
+      "skipped": null,
+      "sources": [
+        {
+          "来源ID": "cninfo_300308_20260522_001",
+          "来源类型": "crawlers",
+          "文件路径": "RAW/crawlers/cninfo/300308_20260522_重大合同公告.pdf",
+          "来源机构": "巨潮资讯网",
+          "来源权重": "高",
+          "最后摄取时间": "2026-05-22T19:14:08Z",
+          "更新页面": ["wiki/01-个股词条/中际旭创.md"],
+          "登记状态": "ingested",
+          "文件存在": true
+        },
+        {
+          "来源ID": "report_citi_20260523_001",
+          "来源类型": "clippings",
+          "文件路径": "RAW/clippings/2-AI 应用/Citi-中际旭创-1.6T订单确认-20260523.pdf",
+          "来源机构": "Citi",
+          "来源权重": "高",
+          "最后摄取时间": "2026-05-23T08:42:31Z",
+          "更新页面": ["wiki/01-个股词条/中际旭创.md"],
+          "登记状态": "ingested",
+          "文件存在": true
+        }
+      ]
+    },
+    "announcements": {
+      "query": {"stock": "300308", "date": "2026-05-16~2026-05-24"},
+      "total": 4,
+      "announcements": [
+        {
+          "title": "中际旭创：关于签订重大合同的公告",
+          "ann_date": "2026-05-22",
+          "ann_time": "19:08",
+          "category": "重大合同",
+          "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-22/1220812345.PDF",
+          "rule_id": "rule_major_contract"
+        },
+        {
+          "title": "中际旭创：关于回购股份进展的公告",
+          "ann_date": "2026-05-20",
+          "ann_time": "17:30",
+          "category": "回购",
+          "adjunct_url": "http://static.cninfo.com.cn/finalpage/2026-05-20/1220798765.PDF",
+          "rule_id": "rule_buyback"
+        }
+      ]
+    },
+    "interactive_qa": {
+      "query": {"company": "中际旭创", "date_from": "2026-04-23", "date_to": "2026-05-24"},
+      "total": 12,
+      "items": [
+        {
+          "question_date": "2026-05-08",
+          "question": "请问公司 1.6T 光模块目前出货情况如何？",
+          "answer_date": "2026-05-10",
+          "answer": "公司 1.6T 光模块已实现批量出货，订单需求旺盛，详见公司近期公告。",
+          "answer_tone": "明确承认",
+          "url": "https://irm.cninfo.com.cn/views/qa?stockcode=300308&qaid=20260510-xxx"
+        }
+      ]
+    }
+  },
+  "source_paths": [
+    "RAW/crawlers/cninfo/300308_20260522_重大合同公告.pdf",
+    "RAW/clippings/2-AI 应用/Citi-中际旭创-1.6T订单确认-20260523.pdf"
+  ],
+  "source_urls": [
+    "http://static.cninfo.com.cn/finalpage/2026-05-22/1220812345.PDF",
+    "http://static.cninfo.com.cn/finalpage/2026-05-20/1220798765.PDF",
+    "https://irm.cninfo.com.cn/views/qa?stockcode=300308&qaid=20260510-xxx"
+  ],
+  "related_pages": [
+    "wiki/01-个股词条/中际旭创.md"
+  ],
+  "data_points": {
+    "name": "中际旭创",
+    "ts_code": "300308.SZ",
+    "trade_date": "2026-05-23",
+    "pct_chg_reported": 8.5,
+    "industry": "通信设备",
+    "limit_up_flag": false,
+    "price_snapshot": {
+      "target_daily": [
+        {"trade_date": "20260519", "open": 168.50, "close": 170.20, "pre_close": 167.80, "pct_chg": 1.43, "vol": 12345678, "amount": 2105432100.0},
+        {"trade_date": "20260520", "open": 170.50, "close": 169.30, "pre_close": 170.20, "pct_chg": -0.53, "vol": 9876543, "amount": 1672345600.0},
+        {"trade_date": "20260521", "open": 169.00, "close": 171.50, "pre_close": 169.30, "pct_chg": 1.30, "vol": 11234567, "amount": 1923456700.0},
+        {"trade_date": "20260522", "open": 171.80, "close": 172.00, "pre_close": 171.50, "pct_chg": 0.29, "vol": 10987654, "amount": 1887654300.0},
+        {"trade_date": "20260523", "open": 173.50, "close": 186.62, "pre_close": 172.00, "pct_chg": 8.50, "vol": 23456789, "amount": 4256789010.0}
+      ],
+      "target_basic": [
+        {"trade_date": "20260523", "turnover_rate": 5.21, "turnover_rate_f": 6.74, "volume_ratio": 2.31, "pe": 32.5, "pb": 8.4, "total_mv": 14800000.0, "circ_mv": 11400000.0}
+      ]
+    },
+    "industry_peers_on_date": {
+      "industry": "通信设备",
+      "peer_count": 68,
+      "mean_pct_chg": 2.10,
+      "median_pct_chg": 1.65,
+      "limit_up_count": 3,
+      "limit_down_count": 0
+    }
+  },
+  "claims": [
+    {
+      "claim": "公司 5/22 19:08 披露 1.6T 光模块大客户重大合同，订单金额匹配业绩弹性预期",
+      "catalyst_category": "公司公告事件",
+      "tier": "主因",
+      "source_org": "巨潮资讯网",
+      "source_weight": "高",
+      "source_path": "RAW/crawlers/cninfo/300308_20260522_重大合同公告.pdf",
+      "page_path": "wiki/01-个股词条/中际旭创.md",
+      "confidence": "high",
+      "raw_excerpt_or_summary": "由 SubAgent / 工作单元从公告 PDF 抽取后填入；主 Agent 不读全文。",
+      "tracking_relevance": "命中页面 ## 未知 / 后续跟踪 TODO-IRD-2026-04-29-01：1.6T 出货节奏",
+      "conflict": null,
+      "gap": null
+    },
+    {
+      "claim": "Citi 5/23 早间发布跟随报告确认 1.6T 出货节奏与订单可见度",
+      "catalyst_category": "公司公告事件",
+      "tier": "次因",
+      "source_org": "Citi",
+      "source_weight": "高",
+      "source_path": "RAW/clippings/2-AI 应用/Citi-中际旭创-1.6T订单确认-20260523.pdf",
+      "page_path": "wiki/01-个股词条/中际旭创.md",
+      "confidence": "medium",
+      "raw_excerpt_or_summary": "由 report_unit 工作单元从研报 PDF 抽取后填入。",
+      "tracking_relevance": null,
+      "conflict": null,
+      "gap": null
+    },
+    {
+      "claim": "通信设备板块当日 +2.10% 普涨；该股 +8.50% 显著超越板块均值，孤立大涨成分主导",
+      "catalyst_category": "行业主线",
+      "tier": "辅助",
+      "source_org": "Tushare daily",
+      "source_weight": "高",
+      "source_path": null,
+      "page_path": null,
+      "confidence": "high",
+      "raw_excerpt_or_summary": "industry_peers_on_date.mean_pct_chg=2.10；剩余涨幅 6.40pct 仍需公司层面解释。",
+      "tracking_relevance": null,
+      "conflict": null,
+      "gap": null
+    },
+    {
+      "claim": "5/8 互动易明确承认 1.6T 批量出货，与 5/22 公告口径一致",
+      "catalyst_category": "互动易回应",
+      "tier": "辅助",
+      "source_org": "互动易",
+      "source_weight": "中",
+      "source_path": null,
+      "page_path": null,
+      "confidence": "medium",
+      "raw_excerpt_or_summary": "见 interactive_qa.items[0]。",
+      "tracking_relevance": null,
+      "conflict": null,
+      "gap": "旧消息复用，时间不对齐，仅作为机制锚点。"
+    },
+    {
+      "claim": "扣除主因/次因/板块联动后，剩余约 2.5pct 涨幅无明确催化",
+      "catalyst_category": "资金情绪",
+      "tier": "未解释",
+      "source_org": null,
+      "source_weight": "低",
+      "source_path": null,
+      "page_path": null,
+      "confidence": "low",
+      "raw_excerpt_or_summary": null,
+      "tracking_relevance": "建议追加 L2 龙虎榜数据核实；本 skill 不接 L2。",
+      "conflict": null,
+      "gap": "需外部数据（龙虎榜 / 北向 / 融资盘）补证。"
+    }
+  ],
+  "analysis": {
+    "summary": "5/22 重大合同公告 + Citi 跟随报告构成主线催化（公司公告事件），板块 +2.10% 普涨贡献辅助，剩余涨幅 ≈ 2.5pct 未能解释。",
+    "counter_check": [
+      "5/20 回购进展公告时间不在 T-1 ~ T 窗口，且回购规模属常规进展，不构成日内催化。",
+      "互动易 5/8 回复时间在 T-15，机制对齐但时间不对齐，不能升主因。"
+    ],
+    "limit_up": false,
+    "isolated_rise": true
+  },
+  "conflicts": [],
+  "confidence": "medium-high",
+  "recommended_action": "可形成研究报告候选；建议更新 wiki/01-个股词条/中际旭创.md ## 未知 / 后续跟踪 中 TODO-IRD-2026-04-29-01 状态为'已验证'，需用户确认后写入。",
+  "raw_storage_path": "RAW/crawlers/cninfo/300308_20260522_重大合同公告.pdf",
+  "subtasks": [
+    {"step": "price_window_snapshot", "status": "ok"},
+    {"step": "query_alphavault_raw", "status": "ok"},
+    {"step": "cninfo_announcement_search", "status": "ok"},
+    {"step": "interactive_qa_search", "status": "ok"}
+  ],
+  "gaps": [
+    "资金面归因未覆盖（本 skill 不接 L2 龙虎榜）"
+  ]
+}

@@ -23,6 +23,8 @@ rename: {}
 
 # 仓库级共享运行时代码会被打包到指定 skill 内，保证同步/发布后的 skill 自包含。
 # skills 可写目标 skill 名，或源仓库相对路径；dest 必须是 skill 包内部相对路径。
+# 数据库型 skill 必须加入这里，才能在各 Agent 安装目录中获得 scripts/_shared/db_core.py
+# 与 scripts/_shared/db_ping.py。
 shared:
   bundles:
     - source: shared

@@ -17,9 +17,13 @@ description: 当用户要求从金十、财联社、GitHub Trending、Product Hu
 
 ```bash
 export ALPHA_DB_BACKEND=postgresql
-export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data"
+export ALPHA_PG_URL="${ALPHA_PG_URL:-postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp}"
+python3 scripts/_shared/db_ping.py --alpha-schema   # 同步后的 skill 包
+# 源仓库开发态用: python3 ../shared/db_ping.py --alpha-schema
 python scripts/collect_news.py --date today
 ```
+
+如果安装包中没有 `scripts/_shared/db_ping.py`，说明 shared bundle 没同步，回到源仓库运行 `python scripts/skill_sync.py`。如果当前环境不能使用 Unix socket，把 `ALPHA_PG_URL` 改成 `postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data`。
 
 只有在需要离线或本机临时 fallback 时才使用 SQLite：
 

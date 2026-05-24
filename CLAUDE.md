@@ -83,6 +83,24 @@ skill-vetter <skill路径>   # 发布前必跑
 
 脚本必须从环境变量读取敏感信息,**禁止硬编码**;`.env` 已在 `.gitignore`。
 
+### PostgreSQL 快速连接
+
+数据库统一走 `shared/db_core.py`。默认后端是 PostgreSQL，优先读取 `ALPHA_PG_URL`，再兼容 `DATABASE_URL`，最后 fallback 到本机 Unix socket：
+
+```bash
+export ALPHA_DB_BACKEND=postgresql
+export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp"
+python3 shared/db_ping.py --alpha-schema
+```
+
+如果当前 Agent 只能走 TCP：
+
+```bash
+export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data"
+```
+
+不要在具体 skill 里新建私有连接方案；新增数据库型 skill 时，把它加入 `skill-sync.yaml` 的 `shared.bundles`，让 `shared/` 同步到安装包的 `scripts/_shared/`。详细约定见 `shared/POSTGRESQL.md`。
+
 ## 修改 Skill 时的工作流
 
 1. 改 `SKILL.md` 或脚本

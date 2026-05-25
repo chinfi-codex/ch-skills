@@ -32,6 +32,10 @@ shared:
       skills:
         - ch-news-reporter
         - a-stock-daily-market-sense
+    - source: shared/html_report
+      dest: scripts/_shared/html_report
+      skills:
+        - a-stock-analyzer
 
 # 排除规则（开发/评测产物，不同步到 Agent 安装目录）
 exclude:

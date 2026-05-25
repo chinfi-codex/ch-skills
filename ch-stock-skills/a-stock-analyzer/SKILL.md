@@ -92,9 +92,12 @@ python scripts/data_fetcher.py pack 600519.SH --date 2026-01-01~2026-05-16 --evi
 写完 Markdown 研报后，可用 `render_report_html.py` 渲染成自包含的单页 HTML（Claude UI 风格），并自动从 evidence 里嵌入两类图表：**PE/PB/PS 估值带时间序列**（`valuation-band` 的 `series` + 历史分位带，横轴日期、纵轴估值倍数，叠加 P25–P75 带与当前分位）、营收/归母净利/同比增速/盈利能力**财务趋势**（`income`+`financial`）。
 
 ```bash
-python scripts/render_report_html.py -i reports/report_600519.md --evidence reports/evidence_600519.json
+python scripts/render_report_html.py -i reports/report_600519.md --evidence reports/evidence_600519.json [--theme {default,print}]
 # 不传 --evidence 时，会自动找同目录的 evidence_<代码>.json；找不到则只渲染正文、不嵌图表
+# --theme 默认 default(Claude UI)；print 为黑白衬线、A4 友好，适合导出 PDF 或邮件附件
 ```
+
+样式模板由仓库通用 `shared/html_report` 提供（同步到 `scripts/_shared/html_report/`），新增主题只需在该目录的 `themes/` 下放一个 CSS 文件。
 
 **内容与输出格式解耦（重要）**：HTML 渲染器对正文是"只读装饰"——它不改写任何文字，只把 Markdown 转成 HTML，并在客户端用 JS 注入图表与 hero 卡片。因此写研报时**不需要为 HTML 迁就措辞或结构**：
 

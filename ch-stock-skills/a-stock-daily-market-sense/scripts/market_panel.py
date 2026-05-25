@@ -3817,7 +3817,7 @@ def build_report_context(
                     money_limit,
                 ),
                 "sorting": "按成交额（亿元）降序；elasticity_hint_score 只辅助识别主线内弹性股，不改写候选池排序。",
-                "model_responsibility": "由模型按业务事实归纳主题，并在 ★★/★★★ 主线内区分领导股与弹性股；不要使用预设行业标签，也不要把弹性提示分当作机械分类器。",
+                "model_responsibility": "由模型按业务事实归纳主题作为内部判定步骤，报告不输出单独主题分组陈列表；只在 ★★/★★★ 主线内区分领导股与弹性股。不要使用预设行业标签，也不要把弹性提示分当作机械分类器。",
             },
         },
         "volume_decline": {

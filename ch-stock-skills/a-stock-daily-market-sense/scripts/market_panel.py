@@ -2675,12 +2675,6 @@ def candidate_columns() -> List[str]:
         "drawdown_120_high",
         "close_position_120d",
         "close_to_high",
-        "intraday_data_available",
-        "intraday_high_time_label",
-        "intraday_high_phase",
-        "close_to_intraday_high",
-        "intraday_high_from_prev_close_pct",
-        "intraday_data_reason",
         "elasticity_hint_score",
     ]
 
@@ -2701,10 +2695,6 @@ def clean_candidates(df: pd.DataFrame, limit: int) -> List[Dict[str, Any]]:
         "name",
         "market",
         "trade_date",
-        "intraday_data_available",
-        "intraday_high_time_label",
-        "intraday_high_phase",
-        "intraday_data_reason",
     }
     numeric_cols = [c for c in out.columns if c not in non_numeric_cols]
     for col in numeric_cols:
@@ -2719,59 +2709,6 @@ def clamp(value: Optional[float], lower: float, upper: float) -> float:
     return max(lower, min(upper, float(value)))
 
 
-def minute_phase_from_time(time_label: Optional[str]) -> Optional[str]:
-    if not time_label:
-        return None
-    compact = time_label.replace(":", "")
-    try:
-        hhmm = int(compact[:4])
-    except Exception:
-        return None
-    if hhmm <= 1000:
-        return "开盘后快速冲高"
-    if hhmm <= 1030:
-        return "早盘冲高"
-    if hhmm <= 1130:
-        return "上午后段冲高"
-    if hhmm <= 1330:
-        return "午后开盘冲高"
-    if hhmm <= 1430:
-        return "午后冲高"
-    return "尾盘冲高"
-
-
-def intraday_time_score(time_label: Optional[str]) -> float:
-    if not time_label:
-        return 0.0
-    compact = time_label.replace(":", "")
-    try:
-        hhmm = int(compact[:4])
-    except Exception:
-        return 0.0
-    if hhmm <= 1000:
-        return 2.0
-    if hhmm <= 1030:
-        return 1.6
-    if hhmm <= 1130:
-        return 1.2
-    if hhmm <= 1330:
-        return 0.9
-    if hhmm <= 1430:
-        return 0.6
-    return 0.3
-
-
-def estimate_prev_close(record: Dict[str, Any]) -> Optional[float]:
-    close = safe_float(record.get("close"))
-    pct_chg = safe_float(record.get("pct_chg"))
-    if close is None or pct_chg is None:
-        return None
-    denominator = 1.0 + pct_chg / 100.0
-    if denominator <= 0:
-        return None
-    return close / denominator
-
-
 def calculate_elasticity_hint_score(record: Dict[str, Any]) -> Optional[float]:
     """Deterministic trading-activity hint; the model still decides final roles."""
     amount_ratio = safe_float(record.get("amount_ratio_20d"))
@@ -2780,18 +2717,16 @@ def calculate_elasticity_hint_score(record: Dict[str, Any]) -> Optional[float]:
     ret_5d = safe_float(record.get("ret_5d"))
     rel_ret_5d = safe_float(record.get("rel_ret_5d"))
     total_mv = safe_float(record.get("total_mv_100m_yuan"))
-    close_to_intraday_high = safe_float(record.get("close_to_intraday_high"))
     close_to_high = safe_float(record.get("close_to_high"))
 
-    close_strength = close_to_intraday_high if close_to_intraday_high is not None else close_to_high
     score = 0.0
     score += clamp(amount_ratio, 0.0, 5.0) * 1.2
     score += clamp(volume_ratio, 0.0, 5.0) * 0.6
     score += clamp(turnover, 0.0, 20.0) * 0.18
     score += clamp(ret_5d, 0.0, 30.0) * 0.10
     score += clamp(rel_ret_5d, 0.0, 30.0) * 0.12
-    if close_strength is not None:
-        score += clamp((close_strength - 0.90) * 20.0, 0.0, 2.0)
+    if close_to_high is not None:
+        score += clamp((close_to_high - 0.90) * 20.0, 0.0, 2.0)
     if total_mv is not None:
         if total_mv <= 80:
             score += 2.0
@@ -2801,138 +2736,14 @@ def calculate_elasticity_hint_score(record: Dict[str, Any]) -> Optional[float]:
             score += 1.0
         elif total_mv <= 1000:
             score += 0.4
-    score += intraday_time_score(record.get("intraday_high_time_label"))
     return round(score, 2)
 
 
-def fetch_intraday_high_summary(
-    pro: Any,
-    ts_code: str,
-    trade_date: str,
-    freq: str,
-    daily_record: Dict[str, Any],
-) -> Dict[str, Any]:
-    base = {
-        "intraday_data_available": False,
-        "intraday_high_time_label": None,
-        "intraday_high_phase": None,
-        "close_to_intraday_high": None,
-        "intraday_high_from_prev_close_pct": None,
-        "intraday_data_reason": None,
-    }
-    if not ts_code or pro is None:
-        return {**base, "intraday_data_reason": "missing pro or ts_code"}
-
-    day = datetime.strptime(trade_date, "%Y%m%d").strftime("%Y-%m-%d")
-    start_date = f"{day} 09:30:00"
-    end_date = f"{day} 15:00:00"
-    try:
-        intraday = pro.stk_mins(
-            ts_code=ts_code,
-            freq=freq,
-            start_date=start_date,
-            end_date=end_date,
-        )
-    except Exception as exc:
-        return {**base, "intraday_data_reason": f"stk_mins failed: {exc}"}
-
-    if intraday is None or intraday.empty:
-        return {**base, "intraday_data_reason": "stk_mins returned no rows"}
-    if "high" not in intraday.columns:
-        return {**base, "intraday_data_reason": "stk_mins missing high column"}
-
-    time_col = next(
-        (col for col in ["trade_time", "datetime", "trade_date", "time"] if col in intraday.columns),
-        None,
-    )
-    if time_col is None:
-        return {**base, "intraday_data_reason": "stk_mins missing time column"}
-
-    df = intraday.copy()
-    df["high"] = pd.to_numeric(df["high"], errors="coerce")
-    df["_time"] = pd.to_datetime(df[time_col], errors="coerce")
-    df = df.dropna(subset=["high", "_time"]).sort_values("_time")
-    if df.empty:
-        return {**base, "intraday_data_reason": "stk_mins high/time values invalid"}
-
-    high_value = float(df["high"].max())
-    high_row = df.loc[df["high"] == high_value].iloc[0]
-    high_time = high_row["_time"]
-    time_label = high_time.strftime("%H:%M")
-    close = safe_float(daily_record.get("close"))
-    prev_close = estimate_prev_close(daily_record)
-    return {
-        **base,
-        "intraday_data_available": True,
-        "intraday_high_time_label": time_label,
-        "intraday_high_phase": minute_phase_from_time(time_label),
-        "close_to_intraday_high": round(close / high_value, 4) if close is not None and high_value > 0 else None,
-        "intraday_high_from_prev_close_pct": (
-            round((high_value / prev_close - 1.0) * 100.0, 2)
-            if prev_close is not None and prev_close > 0
-            else None
-        ),
-        "intraday_data_reason": "stk_mins",
-    }
-
-
-def enrich_money_effect_intraday(
-    records: List[Dict[str, Any]],
-    pro: Optional[Any],
-    trade_date: Optional[str],
-    freq: str,
-    skip_intraday: bool,
-    workers: int,
-) -> List[Dict[str, Any]]:
-    if not records:
-        return records
-
-    enriched = [dict(record) for record in records]
-    if skip_intraday or pro is None or not trade_date:
-        reason = "skip_intraday enabled" if skip_intraday else "missing pro or trade_date"
-        for record in enriched:
-            record.update({
-                "intraday_data_available": False,
-                "intraday_high_time_label": None,
-                "intraday_high_phase": None,
-                "close_to_intraday_high": None,
-                "intraday_high_from_prev_close_pct": None,
-                "intraday_data_reason": reason,
-            })
-            record["elasticity_hint_score"] = calculate_elasticity_hint_score(record)
-        return enriched
-
-    def load_one(index_record: Tuple[int, Dict[str, Any]]) -> Tuple[int, Dict[str, Any]]:
-        index, record = index_record
-        summary = fetch_intraday_high_summary(
-            pro,
-            str(record.get("ts_code") or ""),
-            trade_date,
-            freq,
-            record,
-        )
-        return index, summary
-
-    max_workers = max(1, int(workers or 1))
-    if max_workers == 1:
-        for index, record in enumerate(enriched):
-            _, summary = load_one((index, record))
-            record.update(summary)
-            record["elasticity_hint_score"] = calculate_elasticity_hint_score(record)
-        return enriched
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_map = {
-            executor.submit(load_one, (index, record)): index
-            for index, record in enumerate(enriched)
-        }
-        for future in as_completed(future_map):
-            index, summary = future.result()
-            enriched[index].update(summary)
-
-    for record in enriched:
+def add_elasticity_hint_scores(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    scored = [dict(record) for record in records]
+    for record in scored:
         record["elasticity_hint_score"] = calculate_elasticity_hint_score(record)
-    return enriched
+    return scored
 
 
 def build_money_effect_samples(
@@ -2940,11 +2751,6 @@ def build_money_effect_samples(
     pct_chg_threshold: float,
     amount_threshold_100m_yuan: float,
     sample_limit: int,
-    pro: Optional[Any] = None,
-    target_date: Optional[str] = None,
-    intraday_freq: str = "1min",
-    skip_intraday: bool = False,
-    intraday_workers: int = 2,
 ) -> Dict[str, Any]:
     """
     Build the money-effect candidate pool for daily theme grouping.
@@ -2973,8 +2779,6 @@ def build_money_effect_samples(
                 "amount_threshold_100m_yuan": amount_threshold_100m_yuan,
                 "sample_limit": sample_limit,
                 "sort_by": "成交额降序",
-                "intraday_freq": intraday_freq,
-                "skip_intraday": skip_intraday,
             },
             "candidates": [],
             "summary": {"candidate_count": 0},
@@ -3001,8 +2805,6 @@ def build_money_effect_samples(
                 "amount_threshold_100m_yuan": amount_threshold_100m_yuan,
                 "sample_limit": sample_limit,
                 "sort_by": "成交额降序",
-                "intraday_freq": intraday_freq,
-                "skip_intraday": skip_intraday,
             },
             "candidates": [],
             "summary": {
@@ -3043,19 +2845,8 @@ def build_money_effect_samples(
             "sample_limit": sample_limit,
             "sort_by": "成交额降序",
             "amount_unit_note": "Tushare daily 的 amount 单位为千元，脚本内部已按亿元阈值换算。",
-            "intraday_freq": intraday_freq,
-            "skip_intraday": skip_intraday,
-            "intraday_workers": max(1, int(intraday_workers or 1)),
-            "intraday_note": "仅对赚钱效应候选池调用 Tushare stk_mins；失败时标记 intraday_data_available=false，不影响日报生成。",
         },
-        "candidates": enrich_money_effect_intraday(
-            clean_candidates(qualified, sample_limit),
-            pro=pro,
-            trade_date=target_date,
-            freq=intraday_freq,
-            skip_intraday=skip_intraday,
-            workers=intraday_workers,
-        ),
+        "candidates": add_elasticity_hint_scores(clean_candidates(qualified, sample_limit)),
         "summary": summary,
     }
 
@@ -3699,12 +3490,6 @@ def build_report_context(
         "close_to_high",
         "total_mv_100m_yuan",
         "circ_mv_100m_yuan",
-        "intraday_data_available",
-        "intraday_high_time_label",
-        "intraday_high_phase",
-        "close_to_intraday_high",
-        "intraday_high_from_prev_close_pct",
-        "intraday_data_reason",
         "elasticity_hint_score",
     ]
     decline_fields = money_fields + ["decline_intensity"]
@@ -4198,11 +3983,6 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         pct_chg_threshold=args.money_pct_threshold,
         amount_threshold_100m_yuan=args.money_amount_threshold,
         sample_limit=args.money_sample_limit,
-        pro=pro,
-        target_date=target_date,
-        intraday_freq=args.intraday_freq,
-        skip_intraday=args.skip_intraday,
-        intraday_workers=args.intraday_workers,
     )
     volume_decline = build_volume_decline_samples(
         candidate_panel,
@@ -4291,7 +4071,6 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "个股价格序列统一使用前复权口径：Tushare daily OHLC * adj_factor / 目标日前最新 adj_factor；成交额和成交量仍为原始口径。",
             "指数 K 线来自 Tushare index_daily，不涉及个股复权口径。",
             "money_effect_samples 按涨幅和成交额阈值筛选，并按成交额排序，是每日赚钱效应和上涨主线分析的标准候选池。",
-            "money_effect_samples 会尽量用 stk_mins 为候选股补充日内高点时间；若接口无权限、限流或无数据，intraday_data_available=false，只能使用日线强度和弹性提示分。",
             "volume_decline_samples 按涨跌幅、20日放量倍数和成交额阈值筛选，并按爆量下跌强度（20日放量倍数 * 跌幅绝对值）排序。",
             "feature_group_analysis_samples 是模块 5 的证据包：容量上涨、科创板120日新高且真实月K突破、10:30前涨停三组分别输出，并提供 overlap_hits 供模型做交叉命中上涨归因。",
         ],
@@ -4328,12 +4107,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
                        help="Money-effect pool: minimum amount in 100m yuan (default 2.0 == 2亿).")
     panel.add_argument("--money-sample-limit", type=int, default=80,
                        help="Money-effect pool: max rows after sorting by amount desc (default 80).")
-    panel.add_argument("--intraday-freq", default="1min", choices=["1min", "5min", "15min", "30min", "60min"],
-                       help="Money-effect intraday enrichment frequency for Tushare stk_mins (default 1min).")
-    panel.add_argument("--skip-intraday", action="store_true",
-                       help="Skip Tushare stk_mins intraday enrichment for money-effect candidates.")
-    panel.add_argument("--intraday-workers", type=int, default=2,
-                       help="Max worker threads for stk_mins enrichment; keep small to avoid rate limits (default 2).")
 
     # Volume-decline (爆量下跌) candidate pool.
     panel.add_argument("--decline-pct-max", type=float, default=-3.0,

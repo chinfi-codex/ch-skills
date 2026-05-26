@@ -10,7 +10,7 @@ version: 2.0.3
 
 基于 Tushare 日线、指数、成交额与本地情绪历史，为 A 股盘后复盘生成结构化研报：盘面趋势、成交额集中度、赚钱效应与上涨主线、爆量下跌风险、特征分组分析。
 
-不做单股基本面深度研究、港股/美股/基金/期货/加密分析、分钟级交易决策、自动下单、组合优化或买卖建议。脚本只负责取数、计算、筛选、切分 JSON；主题归纳、风险措辞和研报写作由模型完成。
+不做单股基本面深度研究、港股/美股/基金/期货/加密分析、超短线交易决策、自动下单、组合优化或买卖建议。脚本只负责取数、计算、筛选、切分 JSON；主题归纳、风险措辞和研报写作由模型完成。
 
 ## 核心理念
 
@@ -80,9 +80,6 @@ python scripts\render_report_html.py --input reports\report_20260429.md [--theme
 | `--index-kline-days` | HTML 上证/创业板 K 线展示窗口，独立于 `--market-trend-days` | 120 |
 | `--money-pct-threshold` | 赚钱效应最低当日涨幅 | 7.0 |
 | `--money-amount-threshold` | 赚钱效应最低成交额，单位亿元 | 2.0 |
-| `--intraday-freq` | 赚钱效应候选股分钟增强频率；用于日内高点时间 | 1min |
-| `--skip-intraday` | 跳过分钟行情增强；无 Tushare 分钟权限或排查限流时使用 | false |
-| `--intraday-workers` | 分钟行情抓取线程数；保持小并发避免限流 | 2 |
 | `--decline-pct-max` | 爆量下跌最大当日涨幅 | -3.0 |
 | `--decline-volume-ratio` | 爆量下跌最低 20 日放量倍数 | 2.0 |
 | `--capacity-market-cap-threshold` | 容量上涨最低总市值，单位亿元，严格大于 | 70.0 |

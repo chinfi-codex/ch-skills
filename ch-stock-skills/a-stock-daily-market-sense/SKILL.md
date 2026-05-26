@@ -27,7 +27,8 @@ version: 2.0.3
    - 没有 subagent 能力时，按同样模块顺序单会话执行，每次只加载当前模块的 JSON、方法论和模板段。
 4. 聚合成稿：主 agent 读取 6 段输出、`assembled_checks.json` 与 `reference/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。默认不做外部收评校验、不搜索第三方行情综述、不在报告中加入“外部校验参考”；只有用户明确要求时才补充外部来源。
 5. 按需生成 HTML：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文；若同目录存在 `evidence_YYYYMMDD_utf8.json`，HTML 会自动读取其中的上证指数、创业板指数 120 日 K 线并插入对应指数趋势分析前。
-6. 清理临时产物：确认 `reports/report_YYYYMMDD.md` 已写入并可读后，删除同日期的临时证据与上下文文件，只保留最终报告。若已按需生成 HTML，则同时保留 `reports/report_YYYYMMDD.html`。必须清理：
+6. 证据包边界：`reports/evidence_YYYYMMDD_utf8.json` 是本 skill 的 Market Evidence Pack，只属于 skill 输出目录。即使在 AlphaVault 中写入趋势复盘，也不要把该证据包复制或登记为 `RAW/crawlers/` 来源；AlphaVault 侧只写最终趋势复盘 Markdown/HTML、索引和日志。
+7. 清理临时产物：确认 `reports/report_YYYYMMDD.md` 已写入并可读后，删除同日期的临时证据与上下文文件，只保留最终报告。若已按需生成 HTML，则同时保留 `reports/report_YYYYMMDD.html`。必须清理：
    - `reports/evidence_YYYYMMDD_utf8.json`
    - `reports/evidence_YYYYMMDD_utf8.stderr.log`
    - `reports/report_context_YYYYMMDD.json`
@@ -62,7 +63,7 @@ python scripts\run_daily_panel.py --asof 20260429 --lookback 120 --market-trend-
 - `reports/module_context_YYYYMMDD/`：供 subagent 分工的模块级 JSON。
 - `reference/market_data.json`：`market_data.csv` 的全量派生 JSON，按交易日升序保留所有列、清洗数值并提供 `series` 给 HTML 趋势图使用。
 
-这些文件中，evidence、report_context 和 module_context 是研报撰写过程中的临时产物。最终报告生成并核对后，应按工作流程第 6 步删除，只保留 `reports/report_YYYYMMDD.md`、按需生成的 `reports/report_YYYYMMDD.html`，以及长期维护的 `reference/market_data.csv` / `reference/market_data.json`。
+这些文件中，evidence、report_context 和 module_context 是研报撰写过程中的临时产物。最终报告生成并核对后，应按工作流程第 7 步删除，只保留 `reports/report_YYYYMMDD.md`、按需生成的 `reports/report_YYYYMMDD.html`，以及长期维护的 `reference/market_data.csv` / `reference/market_data.json`。
 
 HTML 输出命令：
 

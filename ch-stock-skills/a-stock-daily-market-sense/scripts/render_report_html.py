@@ -176,7 +176,7 @@ SUMMARY_HERO_JS = r"""
 (function () {
   const root = document.getElementById("report-body");
   if (!root) return;
-  const summaryH3 = Array.from(root.querySelectorAll("h3")).find(h => h.textContent.trim().startsWith("一句话盘面判断"));
+  const summaryH3 = Array.from(root.querySelectorAll("h2,h3")).find(h => h.textContent.trim().startsWith("一句话盘面判断"));
   if (!summaryH3) return;
 
   const card = document.createElement("aside");
@@ -191,6 +191,8 @@ SUMMARY_HERO_JS = r"""
   while (cur && !/^H[1-6]$/.test(cur.tagName)) {
     const next = cur.nextElementSibling;
     const txt = cur.textContent.trim();
+    if (txt && /^[^\dA-Za-z\u4e00-\u9fff]*\d+\./.test(txt)) break;
+    if (collected.length >= 3) break;
     if (cur.tagName === "P" && txt && !/^-{3,}$/.test(txt)) {
       cur.classList.add("summary-body");
       collected.push(cur);

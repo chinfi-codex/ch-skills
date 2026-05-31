@@ -1026,7 +1026,7 @@ def collect_rss(
     return items
 
 
-def collect_sources(args: argparse.Namespace, date_key: str) -> dict[str, list[NewsItem]]:
+def collect_sources(args: argparse.Namespace, date_key: str) -> tuple[dict[str, list[NewsItem]], dict[str, str]]:
     session = get_session()
     selected = (
         {args.source}
@@ -1064,34 +1064,26 @@ def collect_sources(args: argparse.Namespace, date_key: str) -> dict[str, list[N
         except Exception as exc:  # Keep other sources usable when one endpoint fails.
             errors[name] = str(exc)
             results[name] = []
-    if errors:
-        results["_errors"] = [
-            NewsItem(
-                source_type="error",
-                source_name=name,
-                published_at=now_shanghai().isoformat(timespec="seconds"),
-                title=f"{name} collection failed",
-                content=message,
-                url="",
-                metadata={"error": True},
-            )
-            for name, message in errors.items()
-        ]
-    return results
+    return results, errors
 
 
-def print_summary(results: dict[str, list[NewsItem]], written: dict[str, int]) -> None:
-    summary = {
+def print_summary(results: dict[str, list[NewsItem]], written: dict[str, int], errors: dict[str, str] | None = None) -> None:
+    summary: dict[str, Any] = {
         name: {"fetched_for_date": len(items), "written": written.get(name, 0)}
         for name, items in results.items()
     }
+    if errors:
+        summary["_errors"] = {
+            name: {"message": msg, "fetched_for_date": 0, "written": 0}
+            for name, msg in errors.items()
+        }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
 def main() -> int:
     args = parse_args()
     date_key = resolve_date_key(args.date)
-    results = collect_sources(args, date_key)
+    results, errors = collect_sources(args, date_key)
     written: dict[str, int] = {}
 
     if not args.dry_run:
@@ -1110,7 +1102,7 @@ def main() -> int:
             for name, items in results.items():
                 written[name] = write_items(con, items, date_key)
 
-    print_summary(results, written)
+    print_summary(results, written, errors)
     return 0
 
 

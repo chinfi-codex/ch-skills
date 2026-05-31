@@ -294,10 +294,45 @@ def build_scan(evidence: dict) -> Dict[str, Any]:
     }
 
 
+def _stderr_summary(scan: dict) -> str:
+    """One-line human-readable summary printed to stderr so a Deep run is visible
+    in the terminal even when stdout is captured to JSON."""
+    code = scan.get("ts_code", "?")
+    theses = scan.get("thesis_candidates") or []
+    subtypes = [t.get("subtype") or t.get("archetype") or "?" for t in theses]
+    thesis_str = "+".join(subtypes) if subtypes else "none"
+
+    flags = scan.get("anomaly_flags") or []
+    sev_counts: Dict[str, int] = {}
+    for f in flags:
+        s = str(f.get("severity") or "?")
+        sev_counts[s] = sev_counts.get(s, 0) + 1
+    flag_str = " ".join(f"{k}:{v}" for k, v in sorted(sev_counts.items())) or "0"
+
+    probe_count = sum(len(t.get("probes") or []) for t in theses) + sum(
+        1 for f in flags if f.get("probe")
+    )
+    high_priority = sev_counts.get("high", 0) + sum(
+        1 for t in theses if "预期差" in (t.get("archetype") or "")
+    )
+    pdf_budget = max(3, min(10, high_priority + 2))
+    web_budget = max(3, min(10, len(theses) * 2 + 1))
+
+    return (
+        f"[thesis_scan] {code} thesis={thesis_str} | flags={flag_str} | "
+        f"probes={probe_count} | budget hint: ≤{pdf_budget} PDF / ≤{web_budget} web"
+    )
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Deterministic thesis & anomaly scan over an evidence pack.")
     parser.add_argument("--evidence", "-e", required=True, help="Path to evidence_<code>.json from data_fetcher pack.")
     parser.add_argument("--out", "-o", default=None, help="Optional path to write the scan JSON.")
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress the human-readable stderr summary (kept for scripted callers).",
+    )
     args = parser.parse_args(argv)
 
     evidence = json.loads(Path(args.evidence).read_text(encoding="utf-8"))
@@ -306,6 +341,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
     print(text)
+    if not args.quiet:
+        print(_stderr_summary(scan), file=sys.stderr)
     return 0
 
 

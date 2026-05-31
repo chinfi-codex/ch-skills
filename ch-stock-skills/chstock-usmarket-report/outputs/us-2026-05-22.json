@@ -1,0 +1,648 @@
+{
+  "type": "us_market_watchlist_evidence",
+  "date": "2026-05-22",
+  "generated_at": "2026-05-24 16:01:10",
+  "config_path": "/Users/chenhuizhang/Desktop/ch-skills/ch-stock-skills/chstock-usmarket-report/assets/stock_pool.yaml",
+  "thresholds": {
+    "drop": -7.0,
+    "rise": 7.0
+  },
+  "indices": [
+    {
+      "ticker": "QQQ",
+      "snapshot": {
+        "ticker": "QQQ",
+        "trade_date": "2026-05-22",
+        "close": 717.54,
+        "prev_close": 714.51,
+        "change_pct": 0.4241,
+        "five_day_trend_pct": 1.6518,
+        "volume": 32999600,
+        "name": "纳指100；本观察池仅以纳指为大盘锚"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "name": "Mag7",
+      "emoji": "🚀",
+      "tickers": [
+        "NVDA",
+        "TSLA",
+        "GOOGL",
+        "META",
+        "AMZN",
+        "MSFT",
+        "AAPL"
+      ],
+      "stocks": [
+        {
+          "ticker": "NVDA",
+          "snapshot": {
+            "ticker": "NVDA",
+            "trade_date": "2026-05-22",
+            "close": 215.33,
+            "prev_close": 219.51,
+            "change_pct": -1.9042,
+            "five_day_trend_pct": -3.1441,
+            "volume": 168346300
+          }
+        },
+        {
+          "ticker": "TSLA",
+          "snapshot": {
+            "ticker": "TSLA",
+            "trade_date": "2026-05-22",
+            "close": 426.01,
+            "prev_close": 417.85,
+            "change_pct": 1.9529,
+            "five_day_trend_pct": 3.9074,
+            "volume": 45944100
+          }
+        },
+        {
+          "ticker": "GOOGL",
+          "snapshot": {
+            "ticker": "GOOGL",
+            "trade_date": "2026-05-22",
+            "close": 382.97,
+            "prev_close": 387.66,
+            "change_pct": -1.2098,
+            "five_day_trend_pct": -3.5194,
+            "volume": 20401900
+          }
+        },
+        {
+          "ticker": "META",
+          "snapshot": {
+            "ticker": "META",
+            "trade_date": "2026-05-22",
+            "close": 610.26,
+            "prev_close": 607.38,
+            "change_pct": 0.4742,
+            "five_day_trend_pct": -0.1554,
+            "volume": 11671600
+          }
+        },
+        {
+          "ticker": "AMZN",
+          "snapshot": {
+            "ticker": "AMZN",
+            "trade_date": "2026-05-22",
+            "close": 266.32,
+            "prev_close": 268.46,
+            "change_pct": -0.7971,
+            "five_day_trend_pct": 0.5512,
+            "volume": 27470500
+          }
+        },
+        {
+          "ticker": "MSFT",
+          "snapshot": {
+            "ticker": "MSFT",
+            "trade_date": "2026-05-22",
+            "close": 418.57,
+            "prev_close": 419.09,
+            "change_pct": -0.1241,
+            "five_day_trend_pct": -1.1734,
+            "volume": 22341900
+          }
+        },
+        {
+          "ticker": "AAPL",
+          "snapshot": {
+            "ticker": "AAPL",
+            "trade_date": "2026-05-22",
+            "close": 308.82,
+            "prev_close": 304.99,
+            "change_pct": 1.2558,
+            "five_day_trend_pct": 3.6865,
+            "volume": 43627900
+          }
+        }
+      ],
+      "summary": {
+        "valid_count": 7,
+        "up_count": 3,
+        "down_count": 4,
+        "avg_change_pct": -0.0503
+      }
+    },
+    {
+      "name": "AI光存",
+      "emoji": "💡",
+      "tickers": [
+        "LITE",
+        "COHR",
+        "MRVL",
+        "TSEM",
+        "AAOI",
+        "MU",
+        "SNDK",
+        "WDC",
+        "STX",
+        "CRDO"
+      ],
+      "stocks": [
+        {
+          "ticker": "LITE",
+          "snapshot": {
+            "ticker": "LITE",
+            "trade_date": "2026-05-22",
+            "close": 946.9,
+            "prev_close": 964.5,
+            "change_pct": -1.8248,
+            "five_day_trend_pct": 6.9968,
+            "volume": 3059900
+          }
+        },
+        {
+          "ticker": "COHR",
+          "snapshot": {
+            "ticker": "COHR",
+            "trade_date": "2026-05-22",
+            "close": 377.57,
+            "prev_close": 378.0,
+            "change_pct": -0.1138,
+            "five_day_trend_pct": 4.0625,
+            "volume": 3980200
+          }
+        },
+        {
+          "ticker": "MRVL",
+          "snapshot": {
+            "ticker": "MRVL",
+            "trade_date": "2026-05-22",
+            "close": 196.33,
+            "prev_close": 190.69,
+            "change_pct": 2.9577,
+            "five_day_trend_pct": 16.2197,
+            "volume": 19768800
+          }
+        },
+        {
+          "ticker": "TSEM",
+          "snapshot": {
+            "ticker": "TSEM",
+            "trade_date": "2026-05-22",
+            "close": 283.43,
+            "prev_close": 279.01,
+            "change_pct": 1.5842,
+            "five_day_trend_pct": 14.254,
+            "volume": 1383500
+          }
+        },
+        {
+          "ticker": "AAOI",
+          "snapshot": {
+            "ticker": "AAOI",
+            "trade_date": "2026-05-22",
+            "close": 181.49,
+            "prev_close": 176.81,
+            "change_pct": 2.6469,
+            "five_day_trend_pct": 4.7501,
+            "volume": 10254600
+          }
+        },
+        {
+          "ticker": "MU",
+          "snapshot": {
+            "ticker": "MU",
+            "trade_date": "2026-05-22",
+            "close": 751.0,
+            "prev_close": 762.1,
+            "change_pct": -1.4565,
+            "five_day_trend_pct": 10.1916,
+            "volume": 35775900
+          }
+        },
+        {
+          "ticker": "SNDK",
+          "snapshot": {
+            "ticker": "SNDK",
+            "trade_date": "2026-05-22",
+            "close": 1478.6899,
+            "prev_close": 1542.24,
+            "change_pct": -4.1206,
+            "five_day_trend_pct": 10.9286,
+            "volume": 9593600
+          }
+        },
+        {
+          "ticker": "WDC",
+          "snapshot": {
+            "ticker": "WDC",
+            "trade_date": "2026-05-22",
+            "close": 484.28,
+            "prev_close": 486.46,
+            "change_pct": -0.4481,
+            "five_day_trend_pct": 5.5812,
+            "volume": 4481900
+          }
+        },
+        {
+          "ticker": "STX",
+          "snapshot": {
+            "ticker": "STX",
+            "trade_date": "2026-05-22",
+            "close": 812.73,
+            "prev_close": 810.46,
+            "change_pct": 0.2801,
+            "five_day_trend_pct": 9.7038,
+            "volume": 2531400
+          }
+        },
+        {
+          "ticker": "CRDO",
+          "snapshot": {
+            "ticker": "CRDO",
+            "trade_date": "2026-05-22",
+            "close": 218.41,
+            "prev_close": 193.39,
+            "change_pct": 12.9376,
+            "five_day_trend_pct": 39.7645,
+            "volume": 8509500
+          }
+        }
+      ],
+      "summary": {
+        "valid_count": 10,
+        "up_count": 5,
+        "down_count": 5,
+        "avg_change_pct": 1.2443
+      }
+    },
+    {
+      "name": "AI Cloud",
+      "emoji": "☁️",
+      "tickers": [
+        "CRWV",
+        "NBIS",
+        "APLD",
+        "IREN"
+      ],
+      "stocks": [
+        {
+          "ticker": "CRWV",
+          "snapshot": {
+            "ticker": "CRWV",
+            "trade_date": "2026-05-22",
+            "close": 105.49,
+            "prev_close": 107.58,
+            "change_pct": -1.9427,
+            "five_day_trend_pct": 1.6575,
+            "volume": 19866300
+          }
+        },
+        {
+          "ticker": "NBIS",
+          "snapshot": {
+            "ticker": "NBIS",
+            "trade_date": "2026-05-22",
+            "close": 214.77,
+            "prev_close": 219.93,
+            "change_pct": -2.3462,
+            "five_day_trend_pct": 7.4602,
+            "volume": 10569800
+          }
+        },
+        {
+          "ticker": "APLD",
+          "snapshot": {
+            "ticker": "APLD",
+            "trade_date": "2026-05-22",
+            "close": 45.87,
+            "prev_close": 48.02,
+            "change_pct": -4.4773,
+            "five_day_trend_pct": 17.1947,
+            "volume": 22151800
+          }
+        },
+        {
+          "ticker": "IREN",
+          "snapshot": {
+            "ticker": "IREN",
+            "trade_date": "2026-05-22",
+            "close": 56.83,
+            "prev_close": 58.06,
+            "change_pct": -2.1185,
+            "five_day_trend_pct": 12.6239,
+            "volume": 36173200
+          }
+        }
+      ],
+      "summary": {
+        "valid_count": 4,
+        "up_count": 0,
+        "down_count": 4,
+        "avg_change_pct": -2.7212
+      }
+    },
+    {
+      "name": "Semi",
+      "emoji": "🔬",
+      "tickers": [
+        "TSM",
+        "LRCX",
+        "KLAC",
+        "ASML",
+        "AMAT",
+        "AVGO",
+        "INTC",
+        "AMD",
+        "QCOM"
+      ],
+      "stocks": [
+        {
+          "ticker": "TSM",
+          "snapshot": {
+            "ticker": "TSM",
+            "trade_date": "2026-05-22",
+            "close": 404.52,
+            "prev_close": 407.15,
+            "change_pct": -0.646,
+            "five_day_trend_pct": 2.1644,
+            "volume": 7096500
+          }
+        },
+        {
+          "ticker": "LRCX",
+          "snapshot": {
+            "ticker": "LRCX",
+            "trade_date": "2026-05-22",
+            "close": 305.35,
+            "prev_close": 302.24,
+            "change_pct": 1.029,
+            "five_day_trend_pct": 9.8539,
+            "volume": 7854700
+          }
+        },
+        {
+          "ticker": "KLAC",
+          "snapshot": {
+            "ticker": "KLAC",
+            "trade_date": "2026-05-22",
+            "close": 1888.38,
+            "prev_close": 1842.1801,
+            "change_pct": 2.5079,
+            "five_day_trend_pct": 7.5112,
+            "volume": 723100
+          }
+        },
+        {
+          "ticker": "ASML",
+          "snapshot": {
+            "ticker": "ASML",
+            "trade_date": "2026-05-22",
+            "close": 1632.9,
+            "prev_close": 1592.0,
+            "change_pct": 2.5691,
+            "five_day_trend_pct": 10.9013,
+            "volume": 1666700
+          }
+        },
+        {
+          "ticker": "AMAT",
+          "snapshot": {
+            "ticker": "AMAT",
+            "trade_date": "2026-05-22",
+            "close": 432.16,
+            "prev_close": 427.36,
+            "change_pct": 1.1232,
+            "five_day_trend_pct": 4.495,
+            "volume": 4889300
+          }
+        },
+        {
+          "ticker": "AVGO",
+          "snapshot": {
+            "ticker": "AVGO",
+            "trade_date": "2026-05-22",
+            "close": 414.14,
+            "prev_close": 414.57,
+            "change_pct": -0.1037,
+            "five_day_trend_pct": -1.5616,
+            "volume": 14062100
+          }
+        },
+        {
+          "ticker": "INTC",
+          "snapshot": {
+            "ticker": "INTC",
+            "trade_date": "2026-05-22",
+            "close": 119.84,
+            "prev_close": 118.5,
+            "change_pct": 1.1308,
+            "five_day_trend_pct": 10.7886,
+            "volume": 82206800
+          }
+        },
+        {
+          "ticker": "AMD",
+          "snapshot": {
+            "ticker": "AMD",
+            "trade_date": "2026-05-22",
+            "close": 467.51,
+            "prev_close": 449.59,
+            "change_pct": 3.9859,
+            "five_day_trend_pct": 11.0501,
+            "volume": 34661300
+          }
+        },
+        {
+          "ticker": "QCOM",
+          "snapshot": {
+            "ticker": "QCOM",
+            "trade_date": "2026-05-22",
+            "close": 238.16,
+            "prev_close": 213.41,
+            "change_pct": 11.5974,
+            "five_day_trend_pct": 16.9515,
+            "volume": 30332300
+          }
+        }
+      ],
+      "summary": {
+        "valid_count": 9,
+        "up_count": 7,
+        "down_count": 2,
+        "avg_change_pct": 2.5771
+      }
+    },
+    {
+      "name": "IGV",
+      "emoji": "🧩",
+      "tickers": [
+        "NET",
+        "DDOG",
+        "SNOW",
+        "FIG",
+        "PLTR",
+        "CRWD",
+        "NOW"
+      ],
+      "stocks": [
+        {
+          "ticker": "NET",
+          "snapshot": {
+            "ticker": "NET",
+            "trade_date": "2026-05-22",
+            "close": 216.17,
+            "prev_close": 212.65,
+            "change_pct": 1.6553,
+            "five_day_trend_pct": 7.1475,
+            "volume": 2109300
+          }
+        },
+        {
+          "ticker": "DDOG",
+          "snapshot": {
+            "ticker": "DDOG",
+            "trade_date": "2026-05-22",
+            "close": 222.32,
+            "prev_close": 218.04,
+            "change_pct": 1.9629,
+            "five_day_trend_pct": 6.4649,
+            "volume": 4870800
+          }
+        },
+        {
+          "ticker": "SNOW",
+          "snapshot": {
+            "ticker": "SNOW",
+            "trade_date": "2026-05-22",
+            "close": 172.2,
+            "prev_close": 165.54,
+            "change_pct": 4.0232,
+            "five_day_trend_pct": 4.8466,
+            "volume": 5950700
+          }
+        },
+        {
+          "ticker": "FIG",
+          "snapshot": {
+            "ticker": "FIG",
+            "trade_date": "2026-05-22",
+            "close": 22.71,
+            "prev_close": 21.59,
+            "change_pct": 5.1876,
+            "five_day_trend_pct": -6.7734,
+            "volume": 16840600
+          }
+        },
+        {
+          "ticker": "PLTR",
+          "snapshot": {
+            "ticker": "PLTR",
+            "trade_date": "2026-05-22",
+            "close": 136.88,
+            "prev_close": 137.415,
+            "change_pct": -0.3893,
+            "five_day_trend_pct": 1.2876,
+            "volume": 27484300
+          }
+        },
+        {
+          "ticker": "CRWD",
+          "snapshot": {
+            "ticker": "CRWD",
+            "trade_date": "2026-05-22",
+            "close": 663.46,
+            "prev_close": 648.23,
+            "change_pct": 2.3495,
+            "five_day_trend_pct": 7.212,
+            "volume": 2778400
+          }
+        },
+        {
+          "ticker": "NOW",
+          "snapshot": {
+            "ticker": "NOW",
+            "trade_date": "2026-05-22",
+            "close": 102.13,
+            "prev_close": 99.69,
+            "change_pct": 2.4476,
+            "five_day_trend_pct": -1.2473,
+            "volume": 23542800
+          }
+        }
+      ],
+      "summary": {
+        "valid_count": 7,
+        "up_count": 6,
+        "down_count": 1,
+        "avg_change_pct": 2.4624
+      }
+    },
+    {
+      "name": "AI Server",
+      "emoji": "🖥️",
+      "tickers": [
+        "DELL"
+      ],
+      "stocks": [
+        {
+          "ticker": "DELL",
+          "snapshot": {
+            "ticker": "DELL",
+            "trade_date": "2026-05-22",
+            "close": 295.19,
+            "prev_close": 252.8,
+            "change_pct": 16.7682,
+            "five_day_trend_pct": 24.0138,
+            "volume": 15256900
+          }
+        }
+      ],
+      "summary": {
+        "valid_count": 1,
+        "up_count": 1,
+        "down_count": 0,
+        "avg_change_pct": 16.7682
+      }
+    }
+  ],
+  "abnormal_moves": {
+    "drops": [],
+    "rises": [
+      {
+        "ticker": "DELL",
+        "groups": [
+          "AI Server"
+        ],
+        "trade_date": "2026-05-22",
+        "close": 295.19,
+        "prev_close": 252.8,
+        "change_pct": 16.7682,
+        "five_day_trend_pct": 24.0138,
+        "volume": 15256900
+      },
+      {
+        "ticker": "CRDO",
+        "groups": [
+          "AI光存"
+        ],
+        "trade_date": "2026-05-22",
+        "close": 218.41,
+        "prev_close": 193.39,
+        "change_pct": 12.9376,
+        "five_day_trend_pct": 39.7645,
+        "volume": 8509500
+      },
+      {
+        "ticker": "QCOM",
+        "groups": [
+          "Semi"
+        ],
+        "trade_date": "2026-05-22",
+        "close": 238.16,
+        "prev_close": 213.41,
+        "change_pct": 11.5974,
+        "five_day_trend_pct": 16.9515,
+        "volume": 30332300
+      }
+    ]
+  },
+  "errors": {},
+  "sync_note": "已从飞书表格同步最新观察池。"
+}

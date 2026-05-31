@@ -83,6 +83,205 @@ def latest_window(band: dict, metric: str) -> Dict[str, Any]:
     return {"current": m.get("current")}
 
 
+# --- people & governance surfacing (facts only; NO judgement) ---------------- #
+# Core roles whose turnover is worth surfacing to the model (it decides meaning).
+CORE_TITLES = ("董事长", "总经理", "总裁", "财务总监", "董事会秘书", "CEO", "首席")
+# holder_type substrings that mark an institutional holder (vs natural person / 一般企业).
+INSTITUTIONAL_TYPES = ("基金", "社保", "保险", "QFII", "信托", "资管", "养老", "证券公司")
+
+
+def _year(value: Any) -> Optional[int]:
+    s = str(value or "")
+    return int(s[:4]) if len(s) >= 4 and s[:4].isdigit() else None
+
+
+def _is_core_title(title: Any) -> bool:
+    t = str(title or "")
+    return any(c in t for c in CORE_TITLES)
+
+
+def build_people_governance(evidence: dict, ts_code: Optional[str]) -> Dict[str, Any]:
+    """Surface deterministic people/governance facts from managers / rewards /
+    top10-holders / holder-trade. This makes NO good/bad call — it only摆事实
+    and suggests which公告/联网 to pull next (probes). All judgement is the
+    model's job per references/growth_success_rate.md."""
+    ds = lambda n: dataset(evidence, n)  # noqa: E731
+    managers = ds("managers") if isinstance(ds("managers"), list) else []
+    rewards = ds("rewards") if isinstance(ds("rewards"), list) else []
+    top10 = ds("top10-holders") if isinstance(ds("top10-holders"), list) else []
+    htrade = ds("holder-trade") if isinstance(ds("holder-trade"), list) else []
+    company = ds("company") if isinstance(ds("company"), dict) else {}
+    income = ds("income") if isinstance(ds("income"), list) else []
+
+    # ---- management stability (from managers begin/end) ----
+    seen = set()
+    mrows: List[dict] = []
+    for r in managers:
+        if not isinstance(r, dict):
+            continue
+        key = (r.get("name"), r.get("title"), r.get("begin_date"), r.get("end_date"))
+        if key in seen:
+            continue
+        seen.add(key)
+        mrows.append(r)
+    in_office = [r for r in mrows if not r.get("end_date")]
+    departed = [r for r in mrows if r.get("end_date")]
+    core_departures = [
+        {"name": r.get("name"), "title": r.get("title"), "end_date": r.get("end_date")}
+        for r in departed if _is_core_title(r.get("title"))
+    ]
+    birth_years = [y for r in mrows if (y := _year(r.get("birthday"))) is not None]
+    management = {
+        "rows_available": len(mrows),
+        "in_office_count": len(in_office),
+        "departed_in_sample": len(departed),
+        "core_role_departures": core_departures,
+        "birth_year_range": [min(birth_years), max(birth_years)] if birth_years else None,
+        "missing_birthday": sum(1 for r in mrows if _year(r.get("birthday")) is None),
+    }
+
+    # ---- interest alignment (chairman/manager holdings & pay from rewards) ----
+    chairman = (company.get("chairman") or "").strip()
+    manager = (company.get("manager") or "").strip()
+    rw_by_name: Dict[str, dict] = {}
+    for r in rewards:
+        if not isinstance(r, dict) or r.get("name") is None:
+            continue
+        nm = r.get("name")
+        prev = rw_by_name.get(nm)
+        if prev is None or str(r.get("ann_date", "")) >= str(prev.get("ann_date", "")):
+            rw_by_name[nm] = r
+
+    def reward_of(name: str) -> Optional[dict]:
+        r = rw_by_name.get(name)
+        if not r:
+            return None
+        return {"title": r.get("title"), "reward": to_num(r.get("reward")),
+                "hold_vol": to_num(r.get("hold_vol"))}
+
+    key_execs = []
+    for nm, r in rw_by_name.items():
+        if _is_core_title(r.get("title")):
+            key_execs.append({"name": nm, "title": r.get("title"),
+                              "reward": to_num(r.get("reward")),
+                              "hold_vol": to_num(r.get("hold_vol"))})
+    alignment = {
+        "chairman": chairman or None,
+        "chairman_eq_manager": bool(chairman and chairman == manager),
+        "chairman_reward_hold": reward_of(chairman) if chairman else None,
+        "key_execs": key_execs[:8],
+    }
+
+    # ---- ownership concentration & balance (latest top10 snapshot) ----
+    by_end: Dict[str, List[dict]] = {}
+    for r in top10:
+        if isinstance(r, dict) and r.get("end_date"):
+            by_end.setdefault(str(r.get("end_date")), []).append(r)
+    ends = sorted(by_end)
+    latest = by_end[ends[-1]] if ends else []
+    prior = by_end[ends[-2]] if len(ends) >= 2 else []
+
+    def inst_ratio(holders: List[dict]) -> Optional[float]:
+        if not holders:
+            return None
+        s = 0.0
+        for h in holders:
+            t = str(h.get("holder_type") or "")
+            if any(k in t for k in INSTITUTIONAL_TYPES):
+                s += to_num(h.get("hold_ratio")) or 0.0
+        return round(s, 2)
+
+    ranked = sorted(latest, key=lambda h: to_num(h.get("hold_ratio")) or 0.0, reverse=True)
+    top1 = ranked[0] if ranked else {}
+    top2 = ranked[1] if len(ranked) > 1 else {}
+    r1 = to_num(top1.get("hold_ratio")) if top1 else None
+    r2 = to_num(top2.get("hold_ratio")) if top2 else None
+    ownership = {
+        "as_of": ends[-1] if ends else None,
+        "top1": {"name": top1.get("holder_name"), "ratio": r1, "type": top1.get("holder_type")} if top1 else None,
+        "top2_ratio": r2,
+        "top1_top2_gap": round(r1 - r2, 2) if (r1 is not None and r2 is not None) else None,
+        "chairman_in_top_holders": bool(chairman and any(chairman == h.get("holder_name") for h in latest)),
+        "institutional_ratio": inst_ratio(latest),
+        "institutional_ratio_prior": inst_ratio(prior),
+    }
+
+    # ---- important-shareholder trades (holder-trade) ----
+    def _dir(r: dict) -> str:
+        return str(r.get("in_de") or "").upper()
+    ins = [r for r in htrade if isinstance(r, dict) and _dir(r) == "IN"]
+    outs = [r for r in htrade if isinstance(r, dict) and _dir(r) in ("DE", "OUT")]
+
+    def vol_sum(rows: List[dict]) -> float:
+        return round(sum(to_num(r.get("change_vol")) or 0.0 for r in rows), 0)
+
+    shareholder_actions = {
+        "records": len([r for r in htrade if isinstance(r, dict)]),
+        "increase_count": len(ins), "increase_vol": vol_sum(ins),
+        "decrease_count": len(outs), "decrease_vol": vol_sum(outs),
+    }
+
+    # ---- organization & talent density (D 子框架的可算部分；事实，非判断) ----
+    ann_inc_pg = annual_rows(income)
+    latest_inc = ann_inc_pg[-1] if ann_inc_pg else {}
+    employees = to_num(company.get("employees"))
+    rev = to_num(latest_inc.get("revenue"))
+    rd = to_num(latest_inc.get("rd_exp"))
+    organization = {
+        "employees": int(employees) if employees else None,
+        "latest_annual": latest_inc.get("end_date") if latest_inc else None,
+        "revenue_per_capita_wan": round(rev / employees / 1e4, 1) if (rev and employees) else None,
+        "rd_to_revenue_pct": round(rd / rev * 100, 2) if (rev and rd is not None) else None,
+    }
+
+    # ---- probes: what公告/联网 to pull to do the real人/治理尽调 (Deep 方向三) ----
+    probes = [
+        {"why": "核对历史承诺兑现：激励考核目标 / 业绩承诺是否达成（最硬的 track record）",
+         "cmd": f"fetch announcements {ts_code} --searchkey 股权激励",
+         "and": "对照后续定期报告的实际达成情况"},
+        {"why": "治理合规历史：监管函 / 问询 / 处罚 / 会计差错更正",
+         "cmd": f"fetch announcements {ts_code} --searchkey 监管函",
+         "and": f"fetch announcements {ts_code} --searchkey 问询"},
+        {"why": "控股股东股权质押 / 资金占用风险",
+         "cmd": f"fetch announcements {ts_code} --searchkey 质押"},
+        {"why": "重要股东减持节奏与主体",
+         "cmd": f"fetch announcements {ts_code} --searchkey 减持"},
+        {"why": "创始人 / 实控人产业背景、连续创业战绩、行业声誉、言行一致性",
+         "cmd": "联网检索创始人 / 实控人履历（本 skill 无此数据，归 Deep 方向三）"},
+        {"why": "组织执行力：研发人员结构 / 核心技术人员变动 / 股权激励覆盖广度与考核进取性",
+         "cmd": f"fetch report-text {ts_code} --report-type annual --section 研发",
+         "and": f"fetch announcements {ts_code} --searchkey 股权激励（看覆盖人数与考核目标）"},
+    ]
+
+    notes: List[str] = []
+    if not mrows:
+        notes.append("缺 managers：无法看高管结构 / 稳定性。")
+    elif len(in_office) < 5:
+        notes.append(
+            f"managers 疑为部分快照（在任仅 {len(in_office)} 行，通常董监高 9–15 人）："
+            "高管稳定性为 best-effort，完整名册与跨年变动需读历年公告或联网补全。"
+        )
+    if not rw_by_name:
+        notes.append("缺 rewards：无法看管理层持股 / 薪酬绑定。")
+    if not ends:
+        notes.append("缺 top10-holders：无法看集中度 / 制衡。")
+
+    return {
+        "management": management,
+        "alignment": alignment,
+        "ownership": ownership,
+        "organization": organization,
+        "shareholder_actions": shareholder_actions,
+        "probes": probes,
+        "notes": notes,
+        "surfacing_only": (
+            "以上仅为人/治理事实的确定性摆放，无评级、无好坏判断。"
+            "创始人素质、团队 track record（承诺兑现）、治理诚信的判断与档位，"
+            "全部由模型按 references/growth_success_rate.md 完成（骨架轻量 / Deep 方向三全量）。"
+        ),
+    }
+
+
 def build_scan(evidence: dict) -> Dict[str, Any]:
     ds = lambda n: dataset(evidence, n)  # noqa: E731
     income = ds("income") if isinstance(ds("income"), list) else []
@@ -272,12 +471,15 @@ def build_scan(evidence: dict) -> Dict[str, Any]:
                  "and": f"fetch report-text {ts_code} --report-type annual --section mda + 联网检索当前主线"}],
                "必须靠方向二年报挖掘确认")
 
+    people_governance = build_people_governance(evidence, ts_code)
+
     notes = []
     if not band:
         notes.append("缺 valuation-band：无法判断估值分位，预期差 A1/A2 分型不可靠。")
     if len(ann_inc) < 3:
         notes.append(f"年度样本仅 {len(ann_inc)} 期：CAGR/稳定性代表性弱，建议 income/financial 提高 --limit。")
     notes.append("月线横盘需长周期日线确认（pack 默认 daily 仅 60 日）。")
+    notes.extend(people_governance.get("notes", []))
 
     return {
         "ts_code": ts_code,
@@ -286,10 +488,12 @@ def build_scan(evidence: dict) -> Dict[str, Any]:
         "valuation": valuation,
         "thesis_candidates": theses,
         "anomaly_flags": flags,
+        "people_governance": people_governance,
         "notes": notes,
         "model_responsibility": (
-            "脚本只做阈值 surfacing：命题原型与异常旗标都是线索，不是结论。"
-            "命题证实/证伪、归因、贵贱与买卖判断、措辞，全部由模型按 references/deep_mode.md 完成。"
+            "脚本只做阈值 surfacing：命题原型、异常旗标、人/治理事实都是线索，不是结论。"
+            "命题证实/证伪、归因、贵贱与买卖判断、成长成功率档位与措辞，全部由模型按 "
+            "references/deep_mode.md 与 references/growth_success_rate.md 完成。"
         ),
     }
 
@@ -318,16 +522,85 @@ def _stderr_summary(scan: dict) -> str:
     pdf_budget = max(3, min(10, high_priority + 2))
     web_budget = max(3, min(10, len(theses) * 2 + 1))
 
+    pg = scan.get("people_governance") or {}
+    mgmt = pg.get("management") or {}
+    own = pg.get("ownership") or {}
+    sa = pg.get("shareholder_actions") or {}
+    pg_str = (
+        f"core_exits={len(mgmt.get('core_role_departures') or [])} "
+        f"top1={(own.get('top1') or {}).get('ratio')} "
+        f"减持记录={sa.get('decrease_count', 0)}"
+    )
+
     return (
         f"[thesis_scan] {code} thesis={thesis_str} | flags={flag_str} | "
-        f"probes={probe_count} | budget hint: ≤{pdf_budget} PDF / ≤{web_budget} web"
+        f"probes={probe_count} | people/gov: {pg_str} | "
+        f"budget hint: ≤{pdf_budget} PDF / ≤{web_budget} web"
     )
+
+
+def build_plan(scan: dict) -> str:
+    """Consolidate scan probes (thesis + anomaly flags + people_governance) into a
+    numbered research work-order (markdown). Deterministic reformat / dedup — it
+    assigns NO priority judgement of its own; the model refines order & landing
+    spots per references/orchestration.md §2."""
+    code = scan.get("ts_code", "?")
+    # (rank, 归属, cmd, why, 落点) — lower rank = surfaced earlier (high-severity / 预期差 first)
+    items: List[tuple] = []
+    for t in scan.get("thesis_candidates") or []:
+        tag = f"命题·{t.get('subtype') or t.get('archetype') or '?'}"
+        rank = 1 if "预期差" in (t.get("archetype") or "") else 2
+        for p in t.get("probes") or []:
+            items.append((rank, tag, p.get("cmd"), p.get("why"), "核心看点 / 主线归属"))
+    sev_rank = {"high": 0, "med": 2, "low": 3}
+    for f in scan.get("anomaly_flags") or []:
+        pr = f.get("probe") or {}
+        tag = f"旗标·{f.get('category')}/{f.get('metric')}({f.get('severity')})"
+        items.append((sev_rank.get(str(f.get("severity")), 2), tag, pr.get("cmd"),
+                      pr.get("why"), "成长诊断 / 风险 / 估值置信度"))
+    for p in (scan.get("people_governance") or {}).get("probes") or []:
+        items.append((2, "成长成功率·人/治理", p.get("cmd"), p.get("why"), "成长成功率子节"))
+
+    # dedup by cmd, keep the lowest rank (earliest) occurrence
+    best: Dict[str, tuple] = {}
+    for rank, tag, cmd, why, land in items:
+        if not cmd:
+            continue
+        if cmd not in best or rank < best[cmd][0]:
+            best[cmd] = (rank, tag, why, land)
+    rows = sorted(best.items(), key=lambda kv: kv[1][0])
+
+    highs = sum(1 for f in scan.get("anomaly_flags") or [] if f.get("severity") == "high")
+    pdf_b = max(3, min(10, highs + 2))
+    web_b = max(3, min(10, len(scan.get("thesis_candidates") or []) * 2 + 1))
+
+    lines = [
+        f"# 调研工单 · {code}",
+        f"> 预算建议：读 ≤{pdf_b} 篇 PDF / 联网 ≤{web_b} 次。逐项核销（⬜→✅/⚠️数据缺/✗超预算）。"
+        f"编排见 references/orchestration.md。",
+        "",
+        "| 编号 | 归属 | 动作 | 落点 | 状态 |",
+        "|---|---|---|---|---|",
+    ]
+    for i, (cmd, (_rank, tag, why, land)) in enumerate(rows, 1):
+        why_s = f"（{why}）" if why else ""
+        lines.append(f"| W{i} | {tag} | `{cmd}`{why_s} | {land} | ⬜ |")
+    lines += [
+        "",
+        "> 确定性骨架：主 agent 据此增删项、定优先级、补落点，再开始派子代理。脚本不下判断。",
+    ]
+    return "\n".join(lines)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Deterministic thesis & anomaly scan over an evidence pack.")
     parser.add_argument("--evidence", "-e", required=True, help="Path to evidence_<code>.json from data_fetcher pack.")
     parser.add_argument("--out", "-o", default=None, help="Optional path to write the scan JSON.")
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="Emit a consolidated research work-order (markdown) instead of the scan JSON.",
+    )
     parser.add_argument(
         "--quiet",
         action="store_true",
@@ -337,6 +610,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     evidence = json.loads(Path(args.evidence).read_text(encoding="utf-8"))
     scan = build_scan(evidence)
+    if args.plan:
+        print(build_plan(scan))
+        return 0
     text = json.dumps(scan, ensure_ascii=False, indent=2)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")

@@ -188,3 +188,25 @@ CREATE TABLE IF NOT EXISTS reports (
 
 CREATE INDEX IF NOT EXISTS idx_reports_type_date
     ON reports(report_type, date_key);
+
+
+-- -------------------------------------------------------------------------
+-- 11. Report state / watchboard (ch-news-reporter)
+-- -------------------------------------------------------------------------
+-- One rolling analysis state per (profile, date_key).  Holds the living
+-- "watchboard": current regime, tracking-item ledger, actor weights, signal
+-- watchlist, probabilities and next nodes.  Written by scripts/save_report_state.py,
+-- read back by scripts/prepare_report_data.py to carry state across days.
+-- payload is stored as TEXT (JSON string) in both PostgreSQL and SQLite so the
+-- read/write path is identical on both backends.
+CREATE TABLE IF NOT EXISTS report_state (
+    profile     TEXT NOT NULL,
+    date_key    DATE NOT NULL,
+    payload     TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (profile, date_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_state_profile_date
+    ON report_state(profile, date_key);

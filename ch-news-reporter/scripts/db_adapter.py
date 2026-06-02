@@ -105,6 +105,22 @@ def _init_sqlite_schema(conn: Any) -> None:
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_enrichments_item ON enrichments(item_id)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS report_state (
+            profile TEXT NOT NULL,
+            date_key TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (profile, date_key)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_report_state_profile_date "
+        "ON report_state(profile, date_key)"
+    )
 
 
 def _init_postgresql_schema(conn: Any) -> None:
@@ -374,6 +390,114 @@ def get_enrichments_by_items(
         cur.execute(adapt_sql(sql), item_ids)
 
     return rows_to_dicts(cur.fetchall())
+
+
+# ---------------------------------------------------------------------------
+# Coverage (DB-first read policy)
+# ---------------------------------------------------------------------------
+def count_items_by_source(conn: Any, date_key: str) -> dict[str, int]:
+    """Return {source_type: row_count} for a given date_key.
+
+    Used by the DB-first read policy: collect_news skips sources already
+    present, prepare_report_data reports per-source coverage to the model.
+    """
+    ph = placeholder()
+    sql = (
+        f"SELECT source_type, COUNT(*) AS n FROM items "
+        f"WHERE date_key = {ph} GROUP BY source_type"
+    )
+    if BACKEND == Backend.SQLITE:
+        cur = conn.execute(sql, (date_key,))
+    else:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(adapt_sql(sql), (date_key,))
+    counts: dict[str, int] = {}
+    for row in rows_to_dicts(cur.fetchall()):
+        counts[str(row.get("source_type"))] = int(row.get("n") or 0)
+    return counts
+
+
+# ---------------------------------------------------------------------------
+# Report state / watchboard CRUD
+# ---------------------------------------------------------------------------
+def write_report_state(
+    conn: Any,
+    profile: str,
+    date_key: str,
+    payload_json: str,
+    now_iso: str,
+) -> None:
+    """Upsert one watchboard payload for (profile, date_key).
+
+    payload_json must already be a JSON string.  created_at is preserved on
+    update; only payload and updated_at change.
+    """
+    ph = placeholder()
+    sql = f"""
+        INSERT INTO report_state (profile, date_key, payload, created_at, updated_at)
+        VALUES ({ph},{ph},{ph},{ph},{ph})
+        ON CONFLICT(profile, date_key) DO UPDATE SET
+            payload=excluded.payload,
+            updated_at=excluded.updated_at
+    """
+    params = (profile, date_key, payload_json, now_iso, now_iso)
+    if BACKEND == Backend.SQLITE:
+        conn.execute(sql, params)
+    else:
+        conn.cursor().execute(adapt_sql(sql), params)
+
+
+def get_latest_report_state(
+    conn: Any, profile: str, before_date_key: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    """Return the most recent report_state row for *profile*.
+
+    When *before_date_key* is given, only rows strictly earlier are considered
+    (so regenerating day N loads day N-1, not N's own state).  Returns None when
+    the table or any matching row is absent.
+    """
+    if not table_exists(conn, "report_state"):
+        return None
+    ph = placeholder()
+    conditions = [f"profile = {ph}"]
+    params: list[Any] = [profile]
+    if before_date_key:
+        conditions.append(f"date_key < {ph}")
+        params.append(before_date_key)
+    where_clause = " AND ".join(conditions)
+    sql = (
+        f"SELECT * FROM report_state WHERE {where_clause} "
+        f"ORDER BY date_key DESC LIMIT {ph}"
+    )
+    params.append(1)
+    if BACKEND == Backend.SQLITE:
+        cur = conn.execute(sql, params)
+    else:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(adapt_sql(sql), params)
+    row = cur.fetchone()
+    return row_to_dict(row) if row else None
+
+
+def get_report_state(
+    conn: Any, profile: str, date_key: str
+) -> Optional[dict[str, Any]]:
+    """Return the exact report_state row for (profile, date_key), or None."""
+    if not table_exists(conn, "report_state"):
+        return None
+    ph = placeholder()
+    sql = (
+        f"SELECT * FROM report_state WHERE profile = {ph} AND date_key = {ph} "
+        f"LIMIT {ph}"
+    )
+    params: list[Any] = [profile, date_key, 1]
+    if BACKEND == Backend.SQLITE:
+        cur = conn.execute(sql, params)
+    else:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(adapt_sql(sql), params)
+    row = cur.fetchone()
+    return row_to_dict(row) if row else None
 
 
 # ---------------------------------------------------------------------------

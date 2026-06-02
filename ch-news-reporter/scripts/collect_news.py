@@ -26,12 +26,28 @@ from bs4 import BeautifulSoup
 
 from db_adapter import (
     adapt_sql,
+    count_items_by_source as db_count_items_by_source,
     get_connection,
     init_news_schema,
     placeholder,
     write_items as db_write_items,
 )
 from jin10_mcp import Jin10McpClient
+
+
+COLLECTOR_SOURCE_TYPE = {
+    "cls": "cls",
+    "jin10": "jin10",
+    "github": "github_trending",
+    "rss": "rss",
+    "product_hunt": "product_hunt",
+    "hacker_news": "hacker_news",
+}
+ALL_COLLECTORS = set(COLLECTOR_SOURCE_TYPE)
+
+
+def requested_collectors(source: str) -> set[str]:
+    return set(ALL_COLLECTORS) if source == "all" else {source}
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -97,6 +113,15 @@ def parse_args() -> argparse.Namespace:
         "--replace-date",
         action="store_true",
         help="Delete selected source rows for the target date before writing.",
+    )
+    parser.add_argument(
+        "--only-missing",
+        action="store_true",
+        help=(
+            "DB-first: only collect sources that have no rows yet for the target "
+            "date. Sources already present are skipped (no network call). "
+            "Ignored when --replace-date is set."
+        ),
     )
     return parser.parse_args()
 
@@ -1026,20 +1051,15 @@ def collect_rss(
     return items
 
 
-def collect_sources(args: argparse.Namespace, date_key: str) -> tuple[dict[str, list[NewsItem]], dict[str, str]]:
+def collect_sources(
+    args: argparse.Namespace,
+    date_key: str,
+    restrict_to: set[str] | None = None,
+) -> tuple[dict[str, list[NewsItem]], dict[str, str]]:
     session = get_session()
-    selected = (
-        {args.source}
-        if args.source != "all"
-        else {
-            "cls",
-            "jin10",
-            "github",
-            "rss",
-            "product_hunt",
-            "hacker_news",
-        }
-    )
+    selected = requested_collectors(args.source)
+    if restrict_to is not None:
+        selected = selected & restrict_to
     results: dict[str, list[NewsItem]] = {}
     errors: dict[str, str] = {}
 
@@ -1067,7 +1087,12 @@ def collect_sources(args: argparse.Namespace, date_key: str) -> tuple[dict[str, 
     return results, errors
 
 
-def print_summary(results: dict[str, list[NewsItem]], written: dict[str, int], errors: dict[str, str] | None = None) -> None:
+def print_summary(
+    results: dict[str, list[NewsItem]],
+    written: dict[str, int],
+    errors: dict[str, str] | None = None,
+    skipped: list[str] | None = None,
+) -> None:
     summary: dict[str, Any] = {
         name: {"fetched_for_date": len(items), "written": written.get(name, 0)}
         for name, items in results.items()
@@ -1077,13 +1102,30 @@ def print_summary(results: dict[str, list[NewsItem]], written: dict[str, int], e
             name: {"message": msg, "fetched_for_date": 0, "written": 0}
             for name, msg in errors.items()
         }
+    if skipped:
+        summary["_skipped_present"] = skipped
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
 def main() -> int:
     args = parse_args()
     date_key = resolve_date_key(args.date)
-    results, errors = collect_sources(args, date_key)
+
+    restrict_to: set[str] | None = None
+    skipped: list[str] = []
+    if args.only_missing and not args.replace_date:
+        with init_db(Path(args.db)) as con:
+            counts = db_count_items_by_source(con, date_key)
+        requested = requested_collectors(args.source)
+        present = {
+            name
+            for name in requested
+            if counts.get(COLLECTOR_SOURCE_TYPE[name], 0) > 0
+        }
+        restrict_to = requested - present
+        skipped = sorted(present)
+
+    results, errors = collect_sources(args, date_key, restrict_to=restrict_to)
     written: dict[str, int] = {}
 
     if not args.dry_run:
@@ -1102,7 +1144,7 @@ def main() -> int:
             for name, items in results.items():
                 written[name] = write_items(con, items, date_key)
 
-    print_summary(results, written, errors)
+    print_summary(results, written, errors, skipped=skipped)
     return 0
 
 

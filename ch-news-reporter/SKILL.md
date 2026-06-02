@@ -53,22 +53,25 @@ SQLite fallback 下的 `--db` 参数仅指定本地 SQLite 文件；PostgreSQL �
 
 ## 工作流程
 
-### 1. 刷新新闻库
+### 1. 刷新新闻库（DB-first）
 
-进入 skill 目录后运行采集脚本。默认日期为 Asia/Shanghai 的当天。
+进入 skill 目录后运行采集脚本。默认日期为 Asia/Shanghai 的当天。**默认走 DB-first:先看库里当天有没有数据,缺哪个源才补哪个源。**
 
 ```bash
-python scripts/collect_news.py --date today
+python scripts/collect_news.py --date today --only-missing
 ```
+
+`--only-missing` 会先查库里目标日期各源的行数,只对零行的源发起采集,已有的源连网络请求都不发。今天首跑时库空→全采;重跑或补历史日→读库不重采,保证同一报告日的证据可复现(这也是 watchboard 跨天结算能成立的前提)。需要强制重抓时用 `--replace-date`(优先级高于 `--only-missing`)。
 
 常用参数：
 
 - `--date today` 或 `--date YYYY-MM-DD`：采集目标日期。
+- `--only-missing`：DB-first,只补库里当天缺失的源;已有的源跳过,不发请求。
 - `--source all|cls|jin10|github|rss|product_hunt|hacker_news`：限制采集来源，默认 `all`。
 - `--config config/sources.yaml`：RSS 配置文件。
 - `--db data/news_research.sqlite`：仅 SQLite fallback 使用的本地文件路径；PostgreSQL 模式下忽略。
 - `--limit N`：每个来源最多写入 N 条，适合调试。
-- `--replace-date`：先删除目标日期内所选来源的旧数据，再重新写入；修正规则或重跑当天库时使用。
+- `--replace-date`：先删除目标日期内所选来源的旧数据，再重新写入；修正规则或重跑当天库时使用（覆盖 `--only-missing`）。
 
 来源说明：
 
@@ -92,6 +95,11 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --format j
 - `--profile ai_daily|iran_dynamic|macro_daily`：报告画像；信源配置在 `config/report_profiles.yaml`。
 - `--include-enrichments`：把 `enrichments` 表里的二次加工结果拼回证据包。
 - `--format json|markdown`：JSON 适合 Agent 继续处理，Markdown 适合人工核查。
+
+evidence packet 现在还带两块新内容(DB-first 与活动状态):
+
+- `coverage`：本 profile 各期望源在库里当天的行数与缺失源清单。某源缺数时,报告里相应判断要降级标注"今日该源无数据"。
+- `prior_state`：`state_enabled` 的 profile(三个日报都已开启)会带上**最近一期 watchboard**(date < 今天)。markdown 输出里是 `## Prior Watchboard` 段,列出今天必须逐条结算的 open 跟踪项;冷启动(无上一期)时按各 profile methodology 的种子/默认构造第一份。机制见 `references/reports/watchboard.md`。
 
 `macro_daily` 会先从当天金十、财联社和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
 
@@ -156,15 +164,14 @@ python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 5
 
 读取通用 `references/research_methodology.md`，或按报告 profile 读取：
 
+- `references/reports/watchboard.md`：活动状态层通用机制（所有 `state_enabled` 的 profile 共用，先读这个）。
 - `references/reports/ai_daily/methodology.md`
 - `references/reports/ai_daily/enrichment.md`：AI 日报 enrichment 子方法，包含 target 选择契约和解读方法。
 - `references/reports/macro_daily/methodology.md`
-- `references/reports/iran_dynamic/methodology.md`
-- `references/reports/iran_dynamic/frame_postdeadline.md`（当前默认加载，停火窗口 4/21 到期后阶段）
-- `references/reports/iran_dynamic/frame_ceasefire.md`（仅作历史档案，停火期分析方法）
+- `references/reports/iran_dynamic/methodology.md`（自包含，已并入原 frame 的稳定内容，含冷启动种子）
 - `references/reports/iran_dynamic/economic_impact_framework.md`
 
-根据问题选择财经、AI、产品观察、开源生态或地缘风险框架。`iran_dynamic` 必须优先读取 `methodology.md`，按其阶段感知加载规则选择 `frame_postdeadline.md`（默认）或新建框架，再按需要加载经济影响框架。
+根据问题选择财经、AI、产品观察、开源生态或地缘风险框架。`state_enabled` 的 profile 先读 `watchboard.md` 理解活动状态机制，再读各自 `methodology.md`，并逐条结算 packet 里 `prior_state` 的 open 跟踪项。`iran_dynamic` 的路径（A/B/C）、权重、信号清单现在都在 watchboard 里每日滚动，**不再有 frame 相位文件**；按 methodology"路径判定逻辑"用近 7-14 天证据现判，再按需要加载经济影响框架。
 
 `macro_daily` 必须优先读取 `references/reports/macro_daily/methodology.md`，并以 `macro_data_events` 判断当天是否有中国 CPI/PPI/社融/PMI 月度数据更新；没有事件时不引用旧月度数据做“今日更新”。
 
@@ -208,7 +215,18 @@ python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 5
 7. 反向场景与风险（流动性方向 vs 市场位置是否矛盾、何种证据会推翻判断）
 8. 后续观察（24-72h 关键数据/会议/价格位）
 
-`iran_dynamic` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含路径判定（A 续期 / B 交战 / C 僵尸化）、当前子分支、战争烈度、今日边际变化、各方行动、能源与市场反应、下一关键节点倒计时、路径子分支概率今日变动和 24-72h 观察清单。
+`iran_dynamic` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含路径判定（A 续期 / B 交战 / C 僵尸化）、当前子分支、战争烈度、今日边际变化、**框架演进与跟踪项结算（逐条结算上一期 open 项）**、各方行动、能源与市场反应、下一关键节点倒计时、路径子分支概率今日变动和 24-72h 观察清单。
+
+### 7. 回写活动状态（watchboard）
+
+`state_enabled` 的 profile（ai_daily / macro_daily / iran_dynamic）出完报告后,必须把今天的新 watchboard 存回去,供明天 carry-forward:
+
+```bash
+cat today_watchboard.json | python scripts/save_report_state.py \
+    --profile iran_dynamic --date today --state-file -
+```
+
+watchboard 的 JSON 结构(regime / tracking_items / next_nodes / falsifiers / frame)与各 profile 的 frame 字段见 `references/reports/watchboard.md` 与各自 methodology。脚本做结构校验(必填字段、frame 字段齐全、概率求和、**上一期 open 项有没有被漏结算**),报错就按提示补全再存——它只查结构,不评判分析内容。`--check-only` 可只验证不写。
 
 ## 数据表说明
 
@@ -217,6 +235,7 @@ python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 5
 - `items`：统一新闻表。
 - `items_fts`：FTS5 全文索引。
 - `enrichments`：可选二次加工表，由 `enrich_targets.py` 写入，不改变原始 `items`。
+- `report_state`：活动状态层(watchboard),按 `(profile, date_key)` 存每日分析状态;由 `save_report_state.py` 写入、`prepare_report_data.py` 读回,与原始 `items` 解耦。属运行时数据,不进发布包。
 
 核心字段：
 
@@ -335,7 +354,7 @@ python scripts/prepare_report_data.py --profile macro_daily --date today --forma
 ```bash
 export ALPHA_DB_BACKEND=postgresql
 export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data"
-python scripts/collect_news.py --date today --source all
+python scripts/collect_news.py --date today --source all --only-missing
 python scripts/prepare_report_data.py --profile iran_dynamic --date today --format markdown
 ```
 
@@ -347,9 +366,8 @@ python scripts/macro_monitor.py market
 
 加载：
 
-- `references/reports/iran_dynamic/methodology.md`
-- `references/reports/iran_dynamic/frame_postdeadline.md`（默认加载，停火窗口 4/21 到期后阶段）
-- `references/reports/iran_dynamic/frame_ceasefire.md`（仅历史档案）
+- `references/reports/watchboard.md`（活动状态机制）
+- `references/reports/iran_dynamic/methodology.md`（含冷启动种子）
 - `references/reports/iran_dynamic/economic_impact_framework.md`
 - `references/reports/iran_dynamic/template.md`
 
@@ -357,7 +375,10 @@ python scripts/macro_monitor.py market
 
 - 当前阶段路径判定（A 续期 / B 交战 / C 僵尸化）与子分支。
 - 战争烈度级别与趋势箭头。
-- 今日边际变化（1-3 条；按 frame_postdeadline.md 三条判定线筛选）。
+- 今日边际变化（1-3 条；按 methodology"边际变化判定"三条线筛选）。
+- 框架演进与跟踪项结算：逐条结算上一期 open 跟踪项，写清新开 / 关闭与框架微调。
 - 美国、以色列、伊朗的核心行动（emoji 内嵌升级/缓和性质，不再独立板块）。
 - 能源节点状态 + 价格变动 + 传导评估（统一为"能源与市场反应"）。
 - 路径子分支概率今日变动、下一关键节点倒计时、24-72h 观察清单。
+
+出完报告后用 `save_report_state.py` 回写今天的 watchboard，供明天 carry-forward。

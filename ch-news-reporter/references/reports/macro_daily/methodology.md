@@ -20,6 +20,19 @@
 
 因此：**每天先回答"流动性边际方向"，再回答"市场已经定价了多少"，最后回答"两者之间还有多少空间"**。
 
+## 活动状态(watchboard)
+
+通用机制读 `references/reports/watchboard.md`。宏观日报的关注点随事件队列前移(这周盯美联储、下周盯 CPI),用 watchboard 把"当下主线"和"临近数据事件"跨天记住、滚动结算。
+
+`frame` 字段(声明见 `report_profiles.yaml` 的 `state_schema`):
+
+- `swing_factor`:当下流动性的主驱动维度(利率 / 汇率 / 政策预期 / 风险偏好),即今天最值得盯的那一维。
+- `liquidity_bias`:上一次给出的流动性边际方向(收紧 / 边际收紧 / 中性 / 边际宽松 / 宽松)。
+- `position_regime`:`{纳指: 高/中/低, 上证: 高/中/低}`,上次判定的市场位置档位。
+- `imminent_data_events`:临近的 CPI/PPI/社融/PMI/非农/FOMC 等带日期的数据事件,作为跟踪项进台账。
+
+每天先读 packet 的 `Prior Watchboard`,逐条结算:昨天说"CPI 是关键摆动项"——今天 CPI 落地了吗,实际值验证还是证伪了昨天的判断?昨天判的 `liquidity_bias` 今天被价格证实还是反转?`imminent_data_events` 里到期的事件结算掉、新临近的补进来。结算写进报告"框架演进"板块,再用 `save_report_state.py` 回写。首次无上一期时,按当日流动性三维度直接构造第一份。
+
 ## 流动性观测三维度
 
 ### 1. 美元体系流动性（决定纳指 / 美股 / 黄金 / BTC / 新兴市场）

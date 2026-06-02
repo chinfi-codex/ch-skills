@@ -17,8 +17,10 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from db_adapter import (
+    count_items_by_source as db_count_items_by_source,
     get_connection,
     get_enrichments_by_items as db_get_enrichments_by_items,
+    get_latest_report_state as db_get_latest_report_state,
     query_items as db_query_items,
     table_exists,
 )
@@ -549,9 +551,54 @@ def build_enrichment_candidates(items: list[dict[str, Any]]) -> list[dict[str, A
     return candidates
 
 
+def build_coverage(
+    con: Any, profile: dict[str, Any], date_key: str | None
+) -> dict[str, Any]:
+    """Per-source row coverage for the date (DB-first read policy).
+
+    Lets the Agent see which expected sources are present/missing so thin days
+    can be flagged in the report; the deterministic count stays in the script.
+    """
+    expected = profile_sources(profile)
+    if date_key is None:
+        return {
+            "date_key": "all",
+            "expected_sources": expected,
+            "by_source": {},
+            "missing": [],
+            "all_present": True,
+        }
+    counts = db_count_items_by_source(con, date_key)
+    by_source = {source: int(counts.get(source, 0)) for source in expected}
+    missing = [source for source, count in by_source.items() if count == 0]
+    return {
+        "date_key": date_key,
+        "expected_sources": expected,
+        "by_source": by_source,
+        "missing": missing,
+        "all_present": not missing,
+    }
+
+
+def load_prior_state(
+    con: Any, profile_name: str, date_key: str | None
+) -> dict[str, Any] | None:
+    """Most recent watchboard strictly before date_key (carry-forward input)."""
+    row = db_get_latest_report_state(con, profile_name, before_date_key=date_key)
+    if not row:
+        return None
+    payload = json_loads(str(row.get("payload")), {})
+    return {
+        "state_date_key": str(row.get("date_key")),
+        "updated_at": str(row.get("updated_at")) if row.get("updated_at") else None,
+        "watchboard": payload,
+    }
+
+
 def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     profile = load_profile(Path(args.config), args.profile)
     date_key = resolve_date_key(args.date)
+    state_enabled = bool(profile.get("state_enabled"))
     with get_connection(str(Path(args.db))) as con:
         base_items = query_items(con, profile, date_key, args.limit)
         items = apply_profile_filters(base_items, profile)
@@ -559,6 +606,10 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
             query_enrichments(con, [str(item["id"]) for item in items])
             if args.include_enrichments
             else {}
+        )
+        coverage = build_coverage(con, profile, date_key)
+        prior_state = (
+            load_prior_state(con, args.profile, date_key) if state_enabled else None
         )
 
     for item in items:
@@ -570,6 +621,9 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         "date_key": date_key or "all",
         "generated_at": now_iso(),
         "sources": profile_sources(profile),
+        "coverage": coverage,
+        "state_enabled": state_enabled,
+        "prior_state": prior_state,
         "base_items_count": len(base_items),
         "items_count": len(items),
         "items": items,
@@ -703,6 +757,45 @@ def emit_markdown(packet: dict[str, Any]) -> None:
         print(f"- Base items before profile filters: {packet['base_items_count']}")
     print(f"- Items: {packet['items_count']}")
     print(f"- Enrichment candidates: {len(packet['enrichment_candidates'])}\n")
+
+    coverage = packet.get("coverage") or {}
+    if coverage.get("by_source"):
+        present = "; ".join(
+            f"{source}={count}" for source, count in coverage["by_source"].items()
+        )
+        print("## Coverage (DB-first)\n")
+        print(f"- By source: {present}")
+        missing = coverage.get("missing") or []
+        print(f"- Missing sources: {', '.join(missing) if missing else '(none)'}\n")
+
+    if packet.get("state_enabled"):
+        prior = packet.get("prior_state")
+        print("## Prior Watchboard (carry-forward)\n")
+        if not prior:
+            print(
+                "- None found — cold start. Build the initial watchboard from "
+                "methodology defaults / seed, then save with save_report_state.py.\n"
+            )
+        else:
+            watchboard = prior.get("watchboard") or {}
+            open_items = [
+                item
+                for item in (watchboard.get("tracking_items") or [])
+                if isinstance(item, dict) and item.get("status") == "open"
+            ]
+            print(f"- State date: {prior.get('state_date_key')}")
+            print(f"- Regime: {watchboard.get('regime')}")
+            print(f"- Open tracking items to reconcile today: {len(open_items)}")
+            for item in open_items:
+                print(
+                    f"  - {item.get('id')} (opened {item.get('opened')}): "
+                    f"{item.get('statement')}"
+                )
+            print(
+                "- Full prior watchboard JSON:\n"
+                + json.dumps(watchboard, ensure_ascii=False, indent=2, default=str)
+                + "\n"
+            )
 
     if packet.get("macro_market_signals"):
         signals = packet["macro_market_signals"]

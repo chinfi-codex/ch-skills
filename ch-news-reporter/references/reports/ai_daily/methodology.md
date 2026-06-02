@@ -9,6 +9,18 @@
 
 两条线先各自分析,再横向贯通,最后形成对当日 AI 行业边际变化的判断。完整公司清单与别名见 `config/report_profiles.yaml` 的 `company_groups`。
 
+## 活动状态(watchboard)
+
+通用机制读 `references/reports/watchboard.md`。AI 日报的关注点每天漂移(这周 MCP 工具链热、下周可能是 Voice Agent),用 watchboard 把它跨天记住、滚动结算。
+
+`frame` 字段(声明见 `report_profiles.yaml` 的 `state_schema`):
+
+- `hot_themes`:当前在跟踪的方向信号(MCP 工具链 / AI Coding / 推理优化 ...),对应"趋势聚类"。
+- `watch_companies`:预期近期有动作的重点公司,对应"重点公司动作矩阵"。
+- `watch_projects`:标了"值得继续观察"的开源项目 / 产品,带 id 进台账,等热度兑现成趋势再结算。
+
+每天先读 packet 的 `Prior Watchboard`,逐条结算:昨天标 watch 的项目今天热度是涨是退、有没有出 release;昨天判热的 `hot_theme` 今天有没有新证据接力;昨天预期会动的公司今天动了没有。结算结果写进报告"框架演进"板块,再用 `save_report_state.py` 回写新 watchboard。首次无上一期时,按当日双引擎结果直接构造第一份。
+
 ## 第一性原理:为什么用"双引擎"
 
 AI 行业的边际信息在两个源头交替出现,任何一个单看都不够:

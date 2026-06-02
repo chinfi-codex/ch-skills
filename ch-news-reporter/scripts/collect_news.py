@@ -118,9 +118,20 @@ def parse_args() -> argparse.Namespace:
         "--only-missing",
         action="store_true",
         help=(
-            "DB-first: only collect sources that have no rows yet for the target "
-            "date. Sources already present are skipped (no network call). "
-            "Ignored when --replace-date is set."
+            "DB-first: only collect sources that have fewer than --min-rows rows "
+            "for the target date. Sources already present are skipped (no network "
+            "call). Ignored when --replace-date is set."
+        ),
+    )
+    parser.add_argument(
+        "--min-rows",
+        type=int,
+        default=1,
+        help=(
+            "With --only-missing, the row count at or above which a source counts "
+            "as already present. Default 1 (any row = present). Raise it to force "
+            "backfill of thinly-covered sources such as RSS, where a single feed "
+            "item would otherwise mark the whole source done."
         ),
     )
     return parser.parse_args()
@@ -1117,10 +1128,11 @@ def main() -> int:
         with init_db(Path(args.db)) as con:
             counts = db_count_items_by_source(con, date_key)
         requested = requested_collectors(args.source)
+        threshold = max(1, args.min_rows)
         present = {
             name
             for name in requested
-            if counts.get(COLLECTOR_SOURCE_TYPE[name], 0) > 0
+            if counts.get(COLLECTOR_SOURCE_TYPE[name], 0) >= threshold
         }
         restrict_to = requested - present
         skipped = sorted(present)

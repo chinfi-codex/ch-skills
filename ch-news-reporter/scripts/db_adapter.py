@@ -48,6 +48,37 @@ DEFAULT_DB_PATH = _SCRIPT_DIR.parent / "data" / "news_research.sqlite"
 
 
 # ---------------------------------------------------------------------------
+# Connection preflight (DB-first read/write policy)
+# ---------------------------------------------------------------------------
+def ensure_connectable(db_path: Optional[str] = None) -> None:
+    """Probe the configured backend before a DB-first read/write.
+
+    DB-first reporting is meaningless against an unreachable backend, so we
+    fail with an actionable recovery message instead of letting a raw
+    connection-pool traceback escape.  Only connection setup runs inside the
+    probe body, so any exception here is a connectivity/availability problem
+    (not a query bug) and is safe to relabel.
+    """
+    try:
+        with get_connection(db_path):
+            pass
+    except Exception as exc:
+        if BACKEND == Backend.SQLITE:
+            hint = (
+                f"SQLite backend unreachable (db={db_path!r}): {exc}. "
+                "Check the --db path / ALPHA_SQLITE_DIR and filesystem permissions."
+            )
+        else:
+            hint = (
+                f"PostgreSQL backend unreachable: {exc} "
+                "Start the server or fix ALPHA_PG_URL and run init_alpha_data.sql; "
+                "or re-run offline with ALPHA_DB_BACKEND=sqlite (reads the local "
+                "--db SQLite file)."
+            )
+        raise RuntimeError(hint) from exc
+
+
+# ---------------------------------------------------------------------------
 # Schema initialisation
 # ---------------------------------------------------------------------------
 def init_news_schema(conn: Any) -> None:
@@ -420,6 +451,24 @@ def count_items_by_source(conn: Any, date_key: str) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 # Report state / watchboard CRUD
 # ---------------------------------------------------------------------------
+_REPORT_STATE_STR_FIELDS = ("date_key", "created_at", "updated_at")
+
+
+def _normalize_report_state_row(row: Any) -> dict[str, Any]:
+    """Coerce date_key/created_at/updated_at to str.
+
+    PostgreSQL stores them as DATE / TIMESTAMPTZ and SQLite as TEXT, so the raw
+    row hands back different Python types per backend.  Normalising here lets
+    every caller treat a report_state row identically regardless of backend.
+    """
+    data = row_to_dict(row)
+    for field in _REPORT_STATE_STR_FIELDS:
+        value = data.get(field)
+        if value is not None and not isinstance(value, str):
+            data[field] = str(value)
+    return data
+
+
 def write_report_state(
     conn: Any,
     profile: str,
@@ -476,7 +525,7 @@ def get_latest_report_state(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(adapt_sql(sql), params)
     row = cur.fetchone()
-    return row_to_dict(row) if row else None
+    return _normalize_report_state_row(row) if row else None
 
 
 def get_report_state(
@@ -497,7 +546,7 @@ def get_report_state(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(adapt_sql(sql), params)
     row = cur.fetchone()
-    return row_to_dict(row) if row else None
+    return _normalize_report_state_row(row) if row else None
 
 
 # ---------------------------------------------------------------------------

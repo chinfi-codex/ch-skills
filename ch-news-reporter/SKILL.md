@@ -34,6 +34,8 @@ python scripts/collect_news.py --date today --db data/news_research.sqlite
 
 SQLite fallback 下的 `--db` 参数仅指定本地 SQLite 文件；PostgreSQL 模式下连接信息完全由 `ALPHA_PG_URL` 决定。
 
+DB-first 的取数/回写脚本(`collect_news.py` / `prepare_report_data.py` / `save_report_state.py`)在 PostgreSQL 不可达时不会抛裸栈,而是先做一次连接预检,失败就打印可执行的恢复提示并以非零码退出:要么把库拉起来 / 修 `ALPHA_PG_URL` 后重跑,要么按上面的方式切到 `ALPHA_DB_BACKEND=sqlite` 离线跑。**不会**静默回退到可能为空的本地库,以免发出"看起来正常其实没数据"的报告。
+
 ## 适用场景与边界
 
 使用本 skill 的典型场景：
@@ -61,12 +63,13 @@ SQLite fallback 下的 `--db` 参数仅指定本地 SQLite 文件；PostgreSQL �
 python scripts/collect_news.py --date today --only-missing
 ```
 
-`--only-missing` 会先查库里目标日期各源的行数,只对零行的源发起采集,已有的源连网络请求都不发。今天首跑时库空→全采;重跑或补历史日→读库不重采,保证同一报告日的证据可复现(这也是 watchboard 跨天结算能成立的前提)。需要强制重抓时用 `--replace-date`(优先级高于 `--only-missing`)。
+`--only-missing` 会先查库里目标日期各源的行数,只对行数低于阈值(`--min-rows`,默认 1,即零行)的源发起采集,已有的源连网络请求都不发。今天首跑时库空→全采;重跑或补历史日→读库不重采,保证同一报告日的证据可复现(这也是 watchboard 跨天结算能成立的前提)。需要强制重抓时用 `--replace-date`(优先级高于 `--only-missing`)。
 
 常用参数：
 
 - `--date today` 或 `--date YYYY-MM-DD`：采集目标日期。
 - `--only-missing`：DB-first,只补库里当天缺失的源;已有的源跳过,不发请求。
+- `--min-rows N`:配合 `--only-missing`,行数达到 N 才算"已有"。默认 1(任意一条即视为已采)。RSS 这类多 feed 源容易"一条就算齐",想强制补全时把阈值调高。
 - `--source all|cls|jin10|github|rss|product_hunt|hacker_news`：限制采集来源，默认 `all`。
 - `--config config/sources.yaml`：RSS 配置文件。
 - `--db data/news_research.sqlite`：仅 SQLite fallback 使用的本地文件路径；PostgreSQL 模式下忽略。
@@ -248,14 +251,16 @@ watchboard 的 JSON 结构(regime / tracking_items / next_nodes / falsifiers / f
 
 采集使用稳定哈希去重。重复运行同一天采集不会重复插入同一条记录。
 
-`enrichments` 核心字段：
+`enrichments` 表的真实列（`init_alpha_data.sql` / `db_adapter.py` 一致）：
 
 - `item_id`：对应 `items.id`。
-- `target_type`：`github_repo`、`product_website` 或 `article_url`。
-- `target_url`：被二次抓取的 URL。
-- `status` / `fetched_at`：抓取状态与更新时间。
-- `title` / `text_excerpt`：页面标题与 README/网页正文片段。
-- `metadata_json` / `raw_json`：结构化详情与原始补充数据。
+- `enrichment_type`：二次加工类型，对应逻辑视图里的 `target_type`（`github_repo`、`product_website`、`article_url`）。
+- `source`：被二次抓取的 URL，对应逻辑视图里的 `target_url`。
+- `model` / `prompt_hash`：若该 enrichment 经过模型加工，记录所用模型与 prompt 指纹；纯抓取则留空。
+- `result_json`：抓取/加工结果的 JSON 串，是这张表的有效载荷。
+- `created_at`：写入时间。
+
+`prepare_report_data.py` 读这张表时，会把 `result_json` 展平成给模型看的 enrichment 对象（带 `target_type` / `target_url` / `status` / `fetched_at` / `title` / `text_excerpt` / `metadata` 等字段）；这些是逻辑视图，不是表里的物理列。直接查库排错时以上面的真实列为准。
 
 二次加工层可以抓 README、官网 HTML、meta、标题和正文片段，可以做去重、排序、字段抽取和截断；不判断产品价值、不生成结论、不拼完整报告。
 
@@ -294,7 +299,7 @@ watchboard 的 JSON 结构(regime / tracking_items / next_nodes / falsifiers / f
 ```bash
 export ALPHA_DB_BACKEND=postgresql
 export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data"
-python scripts/collect_news.py --date today
+python scripts/collect_news.py --date today --only-missing
 python scripts/prepare_report_data.py --profile ai_daily --date today --format json
 # Agent 读取 references/reports/ai_daily/enrichment.md 后，从 enrichment_candidates 中挑选 targets。
 python scripts/enrich_targets.py --targets-file selected_targets.json
@@ -322,7 +327,7 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 ```bash
 export ALPHA_DB_BACKEND=postgresql
 export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data"
-python scripts/collect_news.py --date today --source all
+python scripts/collect_news.py --date today --source all --only-missing
 python scripts/prepare_report_data.py --profile macro_daily --date today --format markdown
 ```
 

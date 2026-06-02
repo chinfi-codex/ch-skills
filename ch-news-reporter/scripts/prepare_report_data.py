@@ -18,6 +18,7 @@ import yaml
 
 from db_adapter import (
     count_items_by_source as db_count_items_by_source,
+    ensure_connectable as db_ensure_connectable,
     get_connection,
     get_enrichments_by_items as db_get_enrichments_by_items,
     get_latest_report_state as db_get_latest_report_state,
@@ -599,7 +600,9 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     profile = load_profile(Path(args.config), args.profile)
     date_key = resolve_date_key(args.date)
     state_enabled = bool(profile.get("state_enabled"))
-    with get_connection(str(Path(args.db))) as con:
+    db_path = str(Path(args.db))
+    db_ensure_connectable(db_path)
+    with get_connection(db_path) as con:
         base_items = query_items(con, profile, date_key, args.limit)
         items = apply_profile_filters(base_items, profile)
         enrichments = (
@@ -912,7 +915,11 @@ def emit_markdown(packet: dict[str, Any]) -> None:
 
 def main() -> int:
     args = parse_args()
-    packet = build_packet(args)
+    try:
+        packet = build_packet(args)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if args.format == "json":
         print(json.dumps(packet, ensure_ascii=False, indent=2, default=str))
     else:

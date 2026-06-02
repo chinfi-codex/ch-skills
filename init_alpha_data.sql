@@ -198,7 +198,10 @@ CREATE INDEX IF NOT EXISTS idx_reports_type_date
 -- watchlist, probabilities and next nodes.  Written by scripts/save_report_state.py,
 -- read back by scripts/prepare_report_data.py to carry state across days.
 -- payload is stored as TEXT (JSON string) in both PostgreSQL and SQLite so the
--- read/write path is identical on both backends.
+-- read/write path is identical on both backends.  date_key/created_at/updated_at
+-- keep native PG types here (DATE / TIMESTAMPTZ) while SQLite stores them as
+-- TEXT; db_adapter._normalize_report_state_row coerces them back to str on read
+-- so callers see identical Python types regardless of backend.
 CREATE TABLE IF NOT EXISTS report_state (
     profile     TEXT NOT NULL,
     date_key    DATE NOT NULL,

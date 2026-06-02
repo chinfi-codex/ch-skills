@@ -31,6 +31,7 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from db_adapter import (
+    ensure_connectable as db_ensure_connectable,
     get_connection,
     get_latest_report_state as db_get_latest_report_state,
     init_news_schema,
@@ -43,7 +44,31 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 DEFAULT_DB = Path("data/news_research.sqlite")
 DEFAULT_CONFIG = Path("config/report_profiles.yaml")
 ALLOWED_STATUS = {"open", "confirmed", "dismissed", "expired"}
+SETTLED_STATUS = {"confirmed", "dismissed", "expired"}
 ENVELOPE_REQUIRED = ["as_of", "regime", "tracking_items", "next_nodes"]
+# Fields every tracking item must carry so it can be referenced across days.
+ITEM_REQUIRED = ["opened", "statement"]
+# Tolerate one-decimal rounding (e.g. 33.3*3=99.9) but reject real drift like
+# 99.6 / 100.4.  Override per schema field with `sum_tol`.
+DEFAULT_SUM_TOL = 0.2
+# A probability bucket moving by at least this much (vs the prior watchboard)
+# counts as a framework move that must be explained in `frame_change`.
+FRAME_MOVE_EPS = 0.5
+
+
+def _is_empty(value: Any) -> bool:
+    """Treat None, blank strings and empty containers all as 'not provided'.
+
+    A required field set to ``[]`` / ``{}`` / ``""`` is structurally as thin as
+    one that is missing, so the validator must reject it the same way.
+    """
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) == 0
+    return False
 
 
 def parse_args() -> argparse.Namespace:
@@ -135,11 +160,14 @@ def validate(
         if field not in payload or payload.get(field) in (None, ""):
             errors.append(f"missing required envelope field: {field}")
 
-    if not payload.get("falsifiers"):
-        warnings.append(
-            "no 'falsifiers' field — add a falsifiable condition so the next day "
-            "can challenge today's call instead of anchoring to it"
+    falsifiers = payload.get("falsifiers")
+    if _is_empty(falsifiers):
+        errors.append(
+            "missing 'falsifiers' — list at least one falsifiable condition so the "
+            "next day can challenge today's call instead of anchoring to it"
         )
+    elif not isinstance(falsifiers, list):
+        errors.append("falsifiers must be a list")
 
     if not profile.get("state_enabled"):
         warnings.append(
@@ -153,6 +181,14 @@ def validate(
         raw_items = []
     items = raw_items or []
     seen_ids: set[str] = set()
+    # Prior watchboard, used by three carry-forward checks below: per-item
+    # "update" intent, the silent-drop guard, and the frame_change rationale.
+    prior_wb = (prior or {}).get("watchboard") or {}
+    prior_items = {
+        str(it.get("id")): it
+        for it in (prior_wb.get("tracking_items") or [])
+        if isinstance(it, dict) and it.get("id")
+    }
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
             errors.append(f"tracking_items[{idx}] is not an object")
@@ -164,12 +200,45 @@ def validate(
             if tid in seen_ids:
                 errors.append(f"duplicate tracking_item id: {tid}")
             seen_ids.add(str(tid))
+        label = item.get("id") or idx
         status = item.get("status")
         if status not in ALLOWED_STATUS:
             errors.append(
-                f"tracking_item {item.get('id') or idx} has invalid status "
+                f"tracking_item {label} has invalid status "
                 f"{status!r} (allowed: {sorted(ALLOWED_STATUS)})"
             )
+        for field in ITEM_REQUIRED:
+            if _is_empty(item.get(field)):
+                errors.append(f"tracking_item {label} missing {field}")
+        # A settled item must record what happened; an open item leaves it null.
+        if status in SETTLED_STATUS and _is_empty(item.get("resolution")):
+            errors.append(
+                f"tracking_item {label} is {status} but has no resolution — record "
+                "what happened and which frame field it moved"
+            )
+        if _is_empty(item.get("expires_after")):
+            warnings.append(
+                f"tracking_item {label} has no expires_after — set one to keep the "
+                "ledger from growing without bound"
+            )
+        # Intent on carried-open items: if an item carried from the prior period
+        # stays open but its statement changed, that is a modification action and
+        # must say what moved and why (settled items use `resolution` instead).
+        prior_item = prior_items.get(str(tid)) if tid else None
+        if (
+            prior_item is not None
+            and prior_item.get("status") == "open"
+            and status == "open"
+        ):
+            prev_stmt = str(prior_item.get("statement") or "").strip()
+            cur_stmt = str(item.get("statement") or "").strip()
+            if prev_stmt and cur_stmt and prev_stmt != cur_stmt and _is_empty(
+                item.get("update")
+            ):
+                errors.append(
+                    f"tracking_item {label} 的 statement 较上一期有改动，但缺 'update'"
+                    "（写明今日对这条做了什么动作、为何仍 open）"
+                )
 
     nodes = payload.get("next_nodes")
     if nodes is not None and not isinstance(nodes, list):
@@ -185,7 +254,7 @@ def validate(
             frame = {}
         for field, rule in schema.items():
             rule = rule or {}
-            present = field in frame and frame.get(field) not in (None, "")
+            present = field in frame and not _is_empty(frame.get(field))
             if rule.get("required") and not present:
                 errors.append(f"frame missing required field: {field}")
             if not present:
@@ -201,23 +270,22 @@ def validate(
                 errors.append(f"frame.{field} must be a map")
             target_sum = rule.get("sum")
             if target_sum is not None and isinstance(value, dict):
+                tol = float(rule.get("sum_tol", DEFAULT_SUM_TOL))
                 try:
                     total = sum(float(v) for v in value.values())
                 except (TypeError, ValueError):
                     errors.append(f"frame.{field} values must be numeric to sum")
                 else:
-                    if abs(total - float(target_sum)) > 0.5:
+                    if abs(total - float(target_sum)) > tol:
                         errors.append(
-                            f"frame.{field} sums to {total:g}, expected {target_sum}"
+                            f"frame.{field} sums to {total:g}, expected {target_sum} "
+                            f"(tolerance ±{tol:g})"
                         )
 
     # Silent-drop guard: every prior open item must be reconciled (appear by id).
     if prior:
-        prior_wb = prior.get("watchboard") or {}
         prior_open = [
-            str(it.get("id"))
-            for it in (prior_wb.get("tracking_items") or [])
-            if isinstance(it, dict) and it.get("status") == "open" and it.get("id")
+            pid for pid, it in prior_items.items() if it.get("status") == "open"
         ]
         for pid in prior_open:
             if pid not in seen_ids:
@@ -225,6 +293,32 @@ def validate(
                     f"prior open tracking_item {pid} is missing from today's "
                     "watchboard — reconcile it (confirm/dismiss/expire) or carry it "
                     "forward as open"
+                )
+
+        # Framework-move intent: if path or any probability bucket moved vs the
+        # prior watchboard, the day must record *why* in `frame_change`.
+        cur_frame = payload.get("frame") or {}
+        prior_frame = prior_wb.get("frame") or {}
+        if isinstance(cur_frame, dict) and isinstance(prior_frame, dict) and prior_frame:
+            moved: list[str] = []
+            if prior_frame.get("path") != cur_frame.get("path"):
+                moved.append("path")
+            pp = prior_frame.get("probabilities") or {}
+            cp = cur_frame.get("probabilities") or {}
+            if isinstance(pp, dict) and isinstance(cp, dict) and (pp or cp):
+                try:
+                    max_delta = max(
+                        abs(float(cp.get(k, 0)) - float(pp.get(k, 0)))
+                        for k in set(pp) | set(cp)
+                    )
+                except (TypeError, ValueError):
+                    max_delta = 0.0
+                if max_delta > FRAME_MOVE_EPS:
+                    moved.append("probabilities")
+            if moved and _is_empty(payload.get("frame_change")):
+                errors.append(
+                    f"框架发生移动（{'/'.join(moved)}）但缺 'frame_change' 说明"
+                    "（写明 path/概率/权重为何这么挪）"
                 )
 
     return errors, warnings
@@ -236,7 +330,14 @@ def main() -> int:
     profile = load_profile(Path(args.config), args.profile)
     payload = read_state_payload(args.state_file)
 
-    with get_connection(str(Path(args.db))) as con:
+    db_path = str(Path(args.db))
+    try:
+        db_ensure_connectable(db_path)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    with get_connection(db_path) as con:
         init_news_schema(con)
         if not table_exists(con, "report_state"):
             raise SystemExit(

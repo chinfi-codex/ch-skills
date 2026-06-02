@@ -12,7 +12,7 @@ profiles:
     state_enabled: true
     # watchboard frame 字段:AI 日报每天滚动跟踪的快变量
     state_schema:
-      hot_themes: {type: list}        # 在跟踪的方向信号(MCP 工具链 / AI Coding ...)
+      hot_themes: {type: list, required: true}   # 在跟踪的方向信号(MCP 工具链 / AI Coding ...),至少 1 条
       watch_companies: {type: list}   # 预期近期有动作的厂商
       watch_projects: {type: list}    # 待验证热度→趋势的开源项目
     # 重点公司归类字典:Agent 读取 evidence packet 后用这个字典把当日新闻按公司归类

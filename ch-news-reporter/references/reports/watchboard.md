@@ -42,7 +42,7 @@ watchboard 是一个 JSON 对象,通用骨架(所有 profile 一致):
 
 - `regime`:自由字符串,不是枚举。局势/格局换挡时你直接改这个标签,不需要换文件。
 - `falsifiers`:**必须认真填**。每天写下"什么证据会推翻今天的判断",逼自己留反向通道,别锚定昨天。
-- `frame`:profile 特有的快变量(伊朗的 path/权重/信号清单、宏观的 swing_factor/位置档位、AI 的热门主题/待观察项),字段清单和约束写在该 profile 的 `methodology.md` 与 `report_profiles.yaml` 的 `state_schema`。
+- `frame`:profile 特有的快变量(伊朗的 path/权重/信号清单、宏观的 swing_factor/位置档位、AI 的工程演进矢量/产品形态),字段清单和约束写在该 profile 的 `methodology.md` 与 `report_profiles.yaml` 的 `state_schema`。
 - `frame_change`:**框架移动的意图**。只要相对上一期 `path` 变了、或任一概率桶移动 ≥ 0.5,就**必须**写明为什么这么挪(可以是一句话,也可以是按 path/概率/权重分条的 map)——否则 `save_report_state.py` 报错。框架没动时可省略。这是把"概率为什么从 45 挪到 40"从散文里捞出来、焊进状态的字段;冷启动(无上一期)不要求。
 - `as_of` / `carried_from` 你不填时脚本会按日期自动补,但建议你显式写清。
 

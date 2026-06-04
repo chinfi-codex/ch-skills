@@ -12,8 +12,12 @@ profiles:
     state_enabled: true
     # watchboard frame 字段:AI 日报每天滚动跟踪的快变量
     state_schema:
-      hot_themes: {type: list, required: true}   # 在跟踪的方向信号(MCP 工具链 / AI Coding ...),至少 1 条
-      watch_companies: {type: list}   # 预期近期有动作的厂商
+      # 两条 agent 论点轴(取代扁平 hot_themes):每条都带"走到哪一档",因为"演进方向"
+      # 和"渗透率"本质是沿阶段移动,扁平 list 记不住档位。校验器只查顶层字段存在/非空/
+      # 是 list;下列对象内部结构是给模型看的填写约定,不强校验。
+      agent_eng_vectors: {type: list, required: true}   # Q1 工程演进矢量,至少 1 条。每项: {vector, stage: 实验|收敛中|事实标准, open_pain, side: lab|oss|both}
+      product_forms: {type: list}     # Q2 新产品形态与渗透。每项: {form, segment: 开发者|专业用户|大众|企业, penetration_stage: 萌芽|早期采用|主流化, usage_signal(真实使用≠star/votes)}
+      watch_companies: {type: list}   # 预期近期有动作的前沿实验室/厂商
       watch_projects: {type: list}    # 待验证热度→趋势的开源项目
     # 重点公司归类字典:Agent 读取 evidence packet 后用这个字典把当日新闻按公司归类
     # 到"模型发布 / 产品更新 / API & 定价 / 融资 & 政策"四类动作矩阵中。

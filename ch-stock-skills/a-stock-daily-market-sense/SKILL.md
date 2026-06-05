@@ -1,6 +1,6 @@
 ---
 name: tushare-daily-market-sense
-description: 基于 Tushare Pro A 股 daily 日线数据生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板指数趋势、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、容量上涨/科创板月线突破/10:30前涨停等特征分组分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
+description: 基于 Tushare Pro A 股 daily 日线数据和 Baostock 风格指数生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板/科创50指数趋势、市场风格判断、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、容量上涨/科创板月线突破/10:30前涨停等特征分组分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
 version: 2.0.3
 ---
 
@@ -26,7 +26,7 @@ version: 2.0.3
    - 有 subagent 编排能力时，主 agent 将 5 个模块 JSON 分发给 5 个 subagent 并行撰写。
    - 没有 subagent 能力时，按同样模块顺序单会话执行，每次只加载当前模块的 JSON、方法论和模板段。
 4. 聚合成稿：主 agent 读取 6 段输出、`assembled_checks.json` 与 `reference/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。默认不做外部收评校验、不搜索第三方行情综述、不在报告中加入“外部校验参考”；只有用户明确要求时才补充外部来源。
-5. 按需生成 HTML：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文；若同目录存在 `evidence_YYYYMMDD_utf8.json`，HTML 会自动读取其中的上证指数、创业板指数 120 日 K 线并插入对应指数趋势分析前。
+5. 按需生成 HTML：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文；若同目录存在 `evidence_YYYYMMDD_utf8.json`，HTML 会自动读取其中的上证指数、创业板指数、科创50 120 日 K 线并插入指数趋势分析附近。
 6. 证据包边界：`reports/evidence_YYYYMMDD_utf8.json` 是本 skill 的 Market Evidence Pack，只属于 skill 输出目录。即使在 AlphaVault 中写入趋势复盘，也不要把该证据包复制或登记为 `RAW/crawlers/` 来源；AlphaVault 侧只写最终趋势复盘 Markdown/HTML、索引和日志。
 7. 清理临时产物：确认 `reports/report_YYYYMMDD.md` 已写入并可读后，删除同日期的临时证据与上下文文件，只保留最终报告。若已按需生成 HTML，则同时保留 `reports/report_YYYYMMDD.html`。必须清理：
    - `reports/evidence_YYYYMMDD_utf8.json`
@@ -47,7 +47,7 @@ ALPHA_PG_URL=postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp
 
 数据库连接统一走 `scripts/_shared/db_core.py`（开发仓库中为 `shared/db_core.py`）。首次进入任意 Agent 环境时先运行 `python3 scripts/_shared/db_ping.py --alpha-schema`；源仓库开发态用 `python3 ../../shared/db_ping.py --alpha-schema`。如果不能使用 Unix socket，再把 `ALPHA_PG_URL` 改为 `postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data`。
 
-运行脚本会先更新 `reference/market_data.csv`，并同步维护派生文件 `reference/market_data.json`，再生成情绪趋势：AKShare `stock_market_activity_legu()` 默认提供上涨、涨停、下跌、跌停、平盘、活跃度、情绪值、成交额等盘面情绪字段；搜狐涨跌停历史页仅在 AKShare 不可用或字段缺失时作为 fallback；Tushare `margin` 汇总 T-1 交易日融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。因此环境中还需安装 `akshare`。
+运行脚本会先更新 `reference/market_data.csv`，并同步维护派生文件 `reference/market_data.json`，再生成情绪趋势：AKShare `stock_market_activity_legu()` 默认提供上涨、涨停、下跌、跌停、平盘、活跃度、情绪值、成交额等盘面情绪字段；搜狐涨跌停历史页仅在 AKShare 不可用或字段缺失时作为 fallback；Tushare `margin` 汇总 T-1 交易日融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。市场风格代理指数使用 Baostock `query_history_k_data_plus`，默认覆盖超大盘、沪深300、中证500、中证1000、国证2000、中证红利、300成长、300价值。因此环境中还需安装 `akshare` 和 `baostock`。
 
 基础命令：
 
@@ -78,7 +78,7 @@ python scripts\render_report_html.py --input reports\report_20260429.md [--theme
 | 参数 | 含义 | 默认 |
 |---|---|---:|
 | `--fetch-workers` | cache/API 获取线程数；排查限流时设为 1 | 6 |
-| `--index-kline-days` | HTML 上证/创业板 K 线展示窗口，独立于 `--market-trend-days` | 120 |
+| `--index-kline-days` | HTML 上证/创业板/科创50 K 线展示窗口，独立于 `--market-trend-days` | 120 |
 | `--money-pct-threshold` | 赚钱效应最低当日涨幅 | 7.0 |
 | `--money-amount-threshold` | 赚钱效应最低成交额，单位亿元 | 2.0 |
 | `--decline-pct-max` | 爆量下跌最大当日涨幅 | -3.0 |
@@ -122,7 +122,7 @@ Python 不调用 Anthropic API、不调用任何 LLM、不硬编码模型名。C
 
 禁止输出买卖建议。可以写“风险传导”“持续性待验证”“主线确认度”，不要写“买入/卖出/止损/目标价”。
 
-HTML 输出只改变呈现方式：必须保留 Markdown 研报中的所有文字、表格、引用和免责声明。`==...==` 高亮段落在 HTML 中渲染为浅蓝提示块；正文前可以增加 `market_data.json` 驱动的趋势图区域。若可读取同日期 evidence，HTML 可以在“上证指数趋势”“创业板指数趋势”正文前插入对应指数的 120 日 K 线图，并在图中展示成交金额柱；也可以在 3.3、5.2、5.3 股票明细表下方插入表内股票的 120 日 K 线图。这些图表只展示 evidence 中已有的 OHLC 与成交金额数据，不得新增与 Markdown 不一致的分析结论。
+HTML 输出只改变呈现方式：必须保留 Markdown 研报中的所有文字、表格、引用和免责声明。`==...==` 高亮段落在 HTML 中渲染为浅蓝提示块；正文前可以增加 `market_data.json` 驱动的趋势图区域。若可读取同日期 evidence，HTML 可以在“指数趋势”正文附近插入上证指数、创业板指数、科创50 的 120 日 K 线图，并在图中展示成交金额柱；也可以在 3.3、5.2、5.3 股票明细表下方插入表内股票的 120 日 K 线图。这些图表只展示 evidence 中已有的 OHLC 与成交金额数据，不得新增与 Markdown 不一致的分析结论。
 
 ## 示例
 

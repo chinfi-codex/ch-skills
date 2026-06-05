@@ -10,7 +10,9 @@ investment recommendations. The model using the skill performs interpretation.
 from __future__ import annotations
 
 import argparse
+import contextlib
 from html.parser import HTMLParser
+import io
 import json
 import os
 import sys
@@ -34,6 +36,11 @@ try:
     import akshare as ak
 except ImportError:  # pragma: no cover - optional runtime dependency
     ak = None
+
+try:
+    import baostock as bs
+except ImportError:  # pragma: no cover - optional runtime dependency
+    bs = None
 
 try:
     import requests
@@ -101,7 +108,25 @@ MARKET_HISTORY_DB_COLUMNS = {
 MARKET_TREND_INDEXES = {
     "shanghai": {"name": "上证指数", "ts_code": "000001.SH"},
     "chinext": {"name": "创业板指数", "ts_code": "399006.SZ"},
+    "star50": {"name": "科创50", "ts_code": "000688.SH"},
 }
+MARKET_STYLE_INDEXES = {
+    "mega_cap": {"name": "超大盘", "bs_code": "sh.000043", "style_role": "容量大盘"},
+    "csi300": {"name": "沪深300", "bs_code": "sh.000300", "style_role": "容量中枢"},
+    "csi500": {"name": "中证500", "bs_code": "sh.000905", "style_role": "中盘代表"},
+    "csi1000": {"name": "中证1000", "bs_code": "sh.000852", "style_role": "小盘代表"},
+    "guozheng2000": {
+        "name": "国证2000",
+        "bs_code": "sz.399303",
+        "style_role": "微盘代理",
+        "proxy_note": "Baostock 指数字典未见直接的微盘指数，默认用国证2000代理小微盘风格。",
+    },
+    "csi_dividend": {"name": "中证红利", "bs_code": "sh.000922", "style_role": "红利防守"},
+    "csi300_growth": {"name": "300成长", "bs_code": "sh.000918", "style_role": "成长"},
+    "csi300_value": {"name": "300价值", "bs_code": "sh.000919", "style_role": "价值"},
+}
+BAOSTOCK_STYLE_FIELDS = "date,code,open,high,low,close,preclose,volume,amount,pctChg"
+BAOSTOCK_STYLE_SOURCE_URL = "https://www.baostock.com/mainContent?file=dataExplain.md"
 DEFAULT_INDEX_KLINE_DAYS = 120
 MARKET_HISTORY_PRIMARY_SOURCE = "tushare.daily+sentiment_calc"
 MARKET_HISTORY_SUPPLEMENT_SOURCE = "tushare.daily,daily_basic,margin(T-1)"
@@ -2140,6 +2165,322 @@ def build_index_trend_summary(
     }
 
 
+def ymd_to_dash_date(value: str) -> str:
+    return ymd_to_dt(value).strftime("%Y-%m-%d")
+
+
+def baostock_result_to_frame(result: Any) -> pd.DataFrame:
+    if result is None:
+        return pd.DataFrame()
+    if hasattr(result, "get_data"):
+        try:
+            return result.get_data()
+        except Exception:
+            pass
+
+    fields = [field.strip() for field in BAOSTOCK_STYLE_FIELDS.split(",")]
+    rows: List[List[Any]] = []
+    try:
+        while result.error_code == "0" and result.next():
+            rows.append(result.get_row_data())
+    except Exception:
+        return pd.DataFrame()
+    return pd.DataFrame(rows, columns=fields)
+
+
+def normalize_baostock_trade_date(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    raw = str(value).strip()
+    if not raw:
+        return ""
+    try:
+        return normalize_date(raw)
+    except ValueError:
+        return ""
+
+
+def standardize_baostock_index_daily(raw: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
+    if raw is None or raw.empty:
+        return pd.DataFrame()
+
+    df = raw.copy()
+    df = df.rename(columns={
+        "date": "trade_date",
+        "code": "bs_code",
+        "preclose": "pre_close",
+        "volume": "vol",
+        "pctChg": "pct_chg",
+    })
+    if "trade_date" not in df.columns:
+        return pd.DataFrame()
+
+    df["trade_date"] = df["trade_date"].apply(normalize_baostock_trade_date)
+    df = df.loc[df["trade_date"] != ""].copy()
+    df["bs_code"] = config.get("bs_code")
+    df["name"] = config.get("name")
+    for column in ["open", "high", "low", "close", "pre_close", "pct_chg", "vol", "amount"]:
+        if column in df.columns:
+            df[column] = parse_numeric_text_series(df[column])
+    return df.sort_values("trade_date").reset_index(drop=True)
+
+
+def build_market_style_index_summary(
+    raw: pd.DataFrame,
+    config: Dict[str, Any],
+    target_date: str,
+    trend_days: int,
+) -> Dict[str, Any]:
+    if raw is None or raw.empty:
+        return {
+            "available": False,
+            "name": config.get("name"),
+            "bs_code": config.get("bs_code"),
+            "style_role": config.get("style_role"),
+            "proxy_note": config.get("proxy_note"),
+            "reason": "baostock returned no data",
+        }
+
+    df = standardize_baostock_index_daily(raw, config)
+    if df.empty:
+        return {
+            "available": False,
+            "name": config.get("name"),
+            "bs_code": config.get("bs_code"),
+            "style_role": config.get("style_role"),
+            "proxy_note": config.get("proxy_note"),
+            "reason": "baostock data could not be standardized",
+        }
+
+    df = df.loc[df["trade_date"] <= target_date].dropna(subset=["close"]).sort_values("trade_date")
+    if df.empty:
+        return {
+            "available": False,
+            "name": config.get("name"),
+            "bs_code": config.get("bs_code"),
+            "style_role": config.get("style_role"),
+            "proxy_note": config.get("proxy_note"),
+            "reason": "no rows on or before target date",
+        }
+
+    safe_trend_days = max(20, int(trend_days))
+    df = df.tail(max(safe_trend_days, 60)).copy()
+    for period in (1, 5, 20, 60):
+        df[f"ret_{period}d"] = pct_return(df["close"], period)
+    for period in (20, 60):
+        df[f"ma{period}"] = df["close"].rolling(period, min_periods=max(5, period // 2)).mean()
+
+    if "amount" in df.columns:
+        df["amount_ma20_prev"] = df["amount"].shift(1).rolling(20, min_periods=5).mean()
+        df["amount_ratio_20d"] = df["amount"] / df["amount_ma20_prev"].replace(0, pd.NA)
+    else:
+        df["amount_ratio_20d"] = None
+
+    latest = df.iloc[-1]
+    close = latest.get("close")
+    ma20 = latest.get("ma20")
+    ma60 = latest.get("ma60")
+    pct_chg = latest.get("pct_chg") if pd.notna(latest.get("pct_chg")) else latest.get("ret_1d")
+    amount = latest.get("amount") if "amount" in df.columns else None
+
+    return {
+        "available": True,
+        "name": config.get("name"),
+        "bs_code": config.get("bs_code"),
+        "style_role": config.get("style_role"),
+        "proxy_note": config.get("proxy_note"),
+        "trade_date": str(latest.get("trade_date")),
+        "window_start": str(df["trade_date"].iloc[0]),
+        "window_end": str(df["trade_date"].iloc[-1]),
+        "records_loaded": int(len(df)),
+        "latest": {
+            "close": round_optional(close, 2),
+            "pct_chg": round_optional(pct_chg, 2),
+            "amount": round_optional(amount, 2),
+            "amount_100m_yuan": round_optional(amount / 100000000, 2) if amount is not None and pd.notna(amount) else None,
+        },
+        "returns": {
+            "ret_1d": round_optional(pct_chg, 2),
+            "ret_5d": round_optional(latest.get("ret_5d"), 2),
+            "ret_20d": round_optional(latest.get("ret_20d"), 2),
+            "ret_60d": round_optional(latest.get("ret_60d"), 2),
+        },
+        "moving_averages": {
+            "ma20": round_optional(ma20, 2),
+            "ma60": round_optional(ma60, 2),
+            "close_vs_ma20_pct": pct_change_optional(close, ma20),
+            "close_vs_ma60_pct": pct_change_optional(close, ma60),
+        },
+        "volume_price": {
+            "amount_unit": "yuan",
+            "amount_ratio_20d": round_optional(latest.get("amount_ratio_20d"), 2),
+            "price_volume_state_hint": classify_price_volume_state(pct_chg, latest.get("amount_ratio_20d")),
+        },
+        "trend_stage_hint": classify_index_trend_stage(
+            close,
+            ma20,
+            ma60,
+            latest.get("ret_20d"),
+            latest.get("ret_60d"),
+        ),
+    }
+
+
+def market_style_return(style: Dict[str, Any], key: str, field: str) -> Optional[float]:
+    item = ((style.get("indices") or {}).get(key) or {})
+    value = ((item.get("returns") or {}).get(field))
+    return safe_float(value)
+
+
+def build_style_spread(style: Dict[str, Any], label: str, left_key: str, right_key: str) -> Dict[str, Any]:
+    indices = style.get("indices") or {}
+    left = indices.get(left_key) or {}
+    right = indices.get(right_key) or {}
+    left_5d = market_style_return(style, left_key, "ret_5d")
+    right_5d = market_style_return(style, right_key, "ret_5d")
+    left_20d = market_style_return(style, left_key, "ret_20d")
+    right_20d = market_style_return(style, right_key, "ret_20d")
+    return {
+        "label": label,
+        "left_key": left_key,
+        "left_name": left.get("name"),
+        "right_key": right_key,
+        "right_name": right.get("name"),
+        "ret_5d_diff": round(left_5d - right_5d, 2) if left_5d is not None and right_5d is not None else None,
+        "ret_20d_diff": round(left_20d - right_20d, 2) if left_20d is not None and right_20d is not None else None,
+    }
+
+
+def build_market_style_summary(index_summaries: Dict[str, Dict[str, Any]], target_date: str, start_date: str) -> Dict[str, Any]:
+    available_count = sum(1 for item in index_summaries.values() if item.get("available"))
+    style: Dict[str, Any] = {
+        "available": available_count > 0,
+        "source": "baostock.query_history_k_data_plus",
+        "source_reference": BAOSTOCK_STYLE_SOURCE_URL,
+        "trade_date": target_date,
+        "window_start": start_date,
+        "window_end": target_date,
+        "indices": index_summaries,
+        "included_indices": list(MARKET_STYLE_INDEXES.keys()),
+        "proxy_notes": {
+            key: config["proxy_note"]
+            for key, config in MARKET_STYLE_INDEXES.items()
+            if config.get("proxy_note")
+        },
+        "missing": [
+            {
+                "key": key,
+                "name": item.get("name"),
+                "reason": item.get("reason"),
+            }
+            for key, item in index_summaries.items()
+            if not item.get("available")
+        ],
+    }
+    if not style["available"]:
+        style["reason"] = "no Baostock style index data available"
+        style["spreads"] = []
+        return style
+
+    style["spreads"] = [
+        build_style_spread(style, "微盘代理相对沪深300", "guozheng2000", "csi300"),
+        build_style_spread(style, "中证1000相对沪深300", "csi1000", "csi300"),
+        build_style_spread(style, "中证500相对沪深300", "csi500", "csi300"),
+        build_style_spread(style, "中证红利相对300成长", "csi_dividend", "csi300_growth"),
+        build_style_spread(style, "300成长相对300价值", "csi300_growth", "csi300_value"),
+        build_style_spread(style, "超大盘相对国证2000", "mega_cap", "guozheng2000"),
+    ]
+    return style
+
+
+def build_unavailable_market_style(reason: str, target_date: str, start_date: str) -> Dict[str, Any]:
+    return {
+        "available": False,
+        "source": "baostock.query_history_k_data_plus",
+        "source_reference": BAOSTOCK_STYLE_SOURCE_URL,
+        "trade_date": target_date,
+        "window_start": start_date,
+        "window_end": target_date,
+        "included_indices": list(MARKET_STYLE_INDEXES.keys()),
+        "indices": {
+            key: {
+                "available": False,
+                "name": config.get("name"),
+                "bs_code": config.get("bs_code"),
+                "style_role": config.get("style_role"),
+                "proxy_note": config.get("proxy_note"),
+                "reason": reason,
+            }
+            for key, config in MARKET_STYLE_INDEXES.items()
+        },
+        "spreads": [],
+        "reason": reason,
+    }
+
+
+def fetch_market_style_from_baostock(target_date: str, start_date: str, trend_days: int) -> Dict[str, Any]:
+    if bs is None:
+        return build_unavailable_market_style("missing optional dependency: baostock", target_date, start_date)
+
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            login = bs.login()
+    except Exception as exc:
+        return build_unavailable_market_style(f"baostock login failed: {exc}", target_date, start_date)
+
+    if getattr(login, "error_code", "0") != "0":
+        reason = getattr(login, "error_msg", "") or getattr(login, "error_code", "unknown")
+        return build_unavailable_market_style(f"baostock login failed: {reason}", target_date, start_date)
+
+    summaries: Dict[str, Dict[str, Any]] = {}
+    try:
+        for key, config in MARKET_STYLE_INDEXES.items():
+            try:
+                result = bs.query_history_k_data_plus(
+                    config["bs_code"],
+                    BAOSTOCK_STYLE_FIELDS,
+                    start_date=ymd_to_dash_date(start_date),
+                    end_date=ymd_to_dash_date(target_date),
+                    frequency="d",
+                    adjustflag="3",
+                )
+                if getattr(result, "error_code", "0") != "0":
+                    reason = getattr(result, "error_msg", "") or getattr(result, "error_code", "unknown")
+                    summaries[key] = {
+                        "available": False,
+                        "name": config.get("name"),
+                        "bs_code": config.get("bs_code"),
+                        "style_role": config.get("style_role"),
+                        "proxy_note": config.get("proxy_note"),
+                        "reason": f"baostock query failed: {reason}",
+                    }
+                else:
+                    summaries[key] = build_market_style_index_summary(
+                        baostock_result_to_frame(result),
+                        config,
+                        target_date,
+                        trend_days,
+                    )
+            except Exception as exc:
+                summaries[key] = {
+                    "available": False,
+                    "name": config.get("name"),
+                    "bs_code": config.get("bs_code"),
+                    "style_role": config.get("style_role"),
+                    "proxy_note": config.get("proxy_note"),
+                    "reason": f"baostock query failed: {exc}",
+                }
+            time.sleep(0.05)
+    finally:
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                bs.logout()
+        except Exception:
+            pass
+
+    return build_market_style_summary(summaries, target_date, start_date)
+
+
 def collect_stock_kline_targets(*payloads: Dict[str, Any]) -> List[Dict[str, Any]]:
     targets: List[Dict[str, Any]] = []
     by_code: Dict[str, Dict[str, Any]] = {}
@@ -2634,6 +2975,12 @@ def build_market_trend(
             kline_days=safe_index_kline_days,
         )
 
+    market_style = fetch_market_style_from_baostock(
+        target_date=target_date,
+        start_date=start_date,
+        trend_days=safe_trend_days,
+    )
+
     return {
         "metadata": {
             "trend_days_requested": safe_trend_days,
@@ -2642,8 +2989,10 @@ def build_market_trend(
             "index_end_date": target_date,
             "sentiment_source": str(DEFAULT_MARKET_HISTORY_CSV),
             "included_indices": list(MARKET_TREND_INDEXES.keys()),
+            "market_style_source": market_style.get("source"),
         },
         "indices": indices,
+        "market_style": market_style,
         "sentiment": build_sentiment_trend(target_date, safe_trend_days),
     }
 
@@ -3457,11 +3806,48 @@ def compact_records(records: List[Dict[str, Any]], fields: List[str], limit: int
 def compact_index_trend(index: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "name": index.get("name"),
+        "ts_code": index.get("ts_code"),
         "latest": index.get("latest"),
         "returns": index.get("returns"),
         "moving_averages": index.get("moving_averages"),
         "volume_price": index.get("volume_price"),
         "levels": index.get("levels"),
+        "trend_stage_hint": index.get("trend_stage_hint"),
+    }
+
+
+def compact_market_style_index(index: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "available": index.get("available"),
+        "name": index.get("name"),
+        "bs_code": index.get("bs_code"),
+        "style_role": index.get("style_role"),
+        "proxy_note": index.get("proxy_note"),
+        "latest": index.get("latest"),
+        "returns": index.get("returns"),
+        "moving_averages": index.get("moving_averages"),
+        "volume_price": index.get("volume_price"),
+        "trend_stage_hint": index.get("trend_stage_hint"),
+        "reason": index.get("reason"),
+    }
+
+
+def compact_market_style(style: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(style, dict):
+        return {}
+    return {
+        "available": style.get("available"),
+        "source": style.get("source"),
+        "source_reference": style.get("source_reference"),
+        "trade_date": style.get("trade_date"),
+        "proxy_notes": style.get("proxy_notes"),
+        "indices": {
+            key: compact_market_style_index(value)
+            for key, value in (style.get("indices") or {}).items()
+        },
+        "spreads": style.get("spreads"),
+        "missing": style.get("missing"),
+        "reason": style.get("reason"),
     }
 
 
@@ -3579,6 +3965,7 @@ def build_report_context(
                     key: compact_index_trend(value)
                     for key, value in (market_trend.get("indices") or {}).items()
                 },
+                "market_style": compact_market_style(market_trend.get("market_style") or {}),
             },
         },
         "amount_concentration": {
@@ -4066,10 +4453,11 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "不要把市场、行业或概念标签作为预设分组规则；主题应由模型基于证据和业务事实归纳。",
             "Tushare daily 的 amount 单位为千元；total_amount_100m_yuan 已换算为亿元。",
             "limit_up_approx_count 和 limit_down_approx_count 是基于日涨跌幅阈值的近似统计。官方 limit_list_d 默认跳过以避免限流，需要时使用 --with-limit。",
-            "market_trend 只作为模块 1 证据：上证指数、创业板指数，以及 reference/market_data.csv 的情绪趋势。",
+            "market_trend 只作为模块 1 证据：上证指数、创业板指数、科创50、Baostock 风格代理指数，以及 reference/market_data.csv 的情绪趋势。",
             "amount_concentration 只衡量成交额集中度，不分配主题或行业。",
             "个股价格序列统一使用前复权口径：Tushare daily OHLC * adj_factor / 目标日前最新 adj_factor；成交额和成交量仍为原始口径。",
             "指数 K 线来自 Tushare index_daily，不涉及个股复权口径。",
+            "市场风格代理指数来自 Baostock query_history_k_data_plus；amount 原始单位为元，amount_100m_yuan 已换算为亿元。Baostock 指数字典未见直接微盘指数，默认用国证2000代理小微盘风格。",
             "money_effect_samples 按涨幅和成交额阈值筛选，并按成交额排序，是每日赚钱效应和上涨主线分析的标准候选池。",
             "volume_decline_samples 按涨跌幅、20日放量倍数和成交额阈值筛选，并按爆量下跌强度（20日放量倍数 * 跌幅绝对值）排序。",
             "feature_group_analysis_samples 是模块 5 的证据包：容量上涨、科创板120日新高且真实月K突破、10:30前涨停三组分别输出，并提供 overlap_hits 供模型做交叉命中上涨归因。",

@@ -82,7 +82,7 @@ def extract_index_kline_payload(evidence: dict, source_path: Optional[Path]) -> 
         },
         "indices": {},
     }
-    for key in ("shanghai", "chinext"):
+    for key in ("shanghai", "chinext", "star50"):
         item = indices.get(key) or {}
         records = item.get("kline_records") if isinstance(item, dict) else []
         if isinstance(records, list):
@@ -212,7 +212,7 @@ SUMMARY_HERO_JS = r"""
         return `<span class="${cls}">${sign}${num}${unit}</span>`;
       }
     );
-    h = h.replace(/(上证|创业板|半导体设备与材料|电力能源)/g, '<span class="kw">$1</span>');
+    h = h.replace(/(上证|创业板|科创50|国证2000|中证红利|半导体设备与材料|电力能源)/g, '<span class="kw">$1</span>');
     p.innerHTML = h;
   });
 })();
@@ -234,8 +234,9 @@ const reportBody = document.getElementById("report-body");
 if (!reportBody) return;
 
 const indexConfigs = [
-  { key: "shanghai", anchorTexts: ["上证指数趋势判断", "上证指数趋势"], fallbackTitle: "上证指数" },
-  { key: "chinext", anchorTexts: ["创业板趋势判断", "创业板指数趋势判断", "创业板指数趋势"], fallbackTitle: "创业板指数" }
+  { key: "shanghai", anchorTexts: ["指数趋势", "上证指数趋势判断", "上证指数趋势"], fallbackTitle: "上证指数" },
+  { key: "chinext", anchorTexts: ["指数趋势", "创业板趋势判断", "创业板指数趋势判断", "创业板指数趋势"], fallbackTitle: "创业板指数" },
+  { key: "star50", anchorTexts: ["指数趋势", "科创50趋势判断", "科创50指数趋势", "科创50"], fallbackTitle: "科创50" }
 ];
 const stockSectionConfigs = [
   { headingText: "3.3", gridLabel: "module3-leaders" },
@@ -297,12 +298,12 @@ function insertStockTableKlines() {
 }
 
 function findInsertionAnchor(texts) {
-  const anchors = reportBody.querySelectorAll("p, h3, h4");
+  const anchors = reportBody.querySelectorAll("p, h2, h3, h4");
   for (const text of texts) {
     for (const element of anchors) {
       if (!element.textContent.includes(text)) continue;
       const tag = element.tagName.toLowerCase();
-      return { element, insert: tag === "h3" || tag === "h4" ? "after" : "before" };
+      return { element, insert: tag === "h2" || tag === "h3" || tag === "h4" ? "after" : "before" };
     }
   }
   return null;

@@ -233,7 +233,7 @@ watchboard 的 JSON 结构(regime / tracking_items / next_nodes / falsifiers / f
 
 ### 8. 按需生成 HTML（展示层）
 
-当用户要 HTML、网页、可视化或截图风格的日报时，先写好并核对 `reports/<profile>_<date>.md`，再把它渲染成一份自包含单页 HTML（Claude UI 风格，图表不依赖外部 CDN，本地浏览器直接打开）。HTML 只是展示层：**不新增任何研报判断，也不删减 Markdown 正文**——共享渲染器会做文本保全校验，缺字报警告不阻断。
+当用户要 HTML、网页、可视化或截图风格的日报时，先写好并核对 `reports/<profile>_<date>.md`，再把它渲染成一份自包含单页 HTML（AlphaVault 站点风格，图表不依赖外部 CDN，本地浏览器直接打开；另有 `--theme claude` 暖色风格）。HTML 只是展示层：**不新增任何研报判断，也不删减 Markdown 正文**——共享渲染器会做文本保全校验，缺字报警告不阻断。
 
 ```bash
 python scripts/render_report_html.py -i reports/macro_daily_2026-05-19.md

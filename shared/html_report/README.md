@@ -83,7 +83,8 @@ skill 独有的格式化(价格精度、亿/万亿 除数)仍留在各自 hook �
 
 ## 主题
 
-- `default`:Claude-UI 暖橙 + 数据红绿,默认值
+- `default`:AlphaVault 站点风格(Google Material)——冷白底 + Google 蓝 + 红绿涨跌,默认值。CSS 与 AlphaVault Site 的 `siteCss()` 同源(Google Sans、g-palette、Material 卡片/阴影、4 色 logo 点)
+- `claude`:Claude.ai 暖色风格——奶油底 + 黏土橙(clay)强调 + 衬线(serif)标题,编辑器质感
 - `print`:黑白衬线、A4 友好,适合导出 PDF 或邮件附件
 
 新增主题:在 `themes/` 下放 `<name>.css`,`list_themes()` 自动发现。

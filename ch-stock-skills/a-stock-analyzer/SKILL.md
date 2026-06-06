@@ -89,12 +89,12 @@ python scripts/data_fetcher.py pack 600519.SH --date 2026-01-01~2026-05-16 --evi
 
 ### 2.3 把研报渲染成 HTML（可选）
 
-写完 Markdown 研报后，可用 `render_report_html.py` 渲染成自包含的单页 HTML（Claude UI 风格），并自动从 evidence 里嵌入两类图表：**PE/PB/PS 估值带时间序列**（`valuation-band` 的 `series` + 历史分位带，横轴日期、纵轴估值倍数，叠加 P25–P75 带与当前分位）、营收/归母净利/同比增速/盈利能力**财务趋势**（`income`+`financial`）。
+写完 Markdown 研报后，可用 `render_report_html.py` 渲染成自包含的单页 HTML（AlphaVault 站点风格，默认主题；另有 `--theme claude` 暖色风格），并自动从 evidence 里嵌入两类图表：**PE/PB/PS 估值带时间序列**（`valuation-band` 的 `series` + 历史分位带，横轴日期、纵轴估值倍数，叠加 P25–P75 带与当前分位）、营收/归母净利/同比增速/盈利能力**财务趋势**（`income`+`financial`）。
 
 ```bash
-python scripts/render_report_html.py -i reports/report_600519.md --evidence reports/evidence_600519.json [--theme {default,print}]
+python scripts/render_report_html.py -i reports/report_600519.md --evidence reports/evidence_600519.json [--theme {default,claude,print}]
 # 不传 --evidence 时，会自动找同目录的 evidence_<代码>.json；找不到则只渲染正文、不嵌图表
-# --theme 默认 default(Claude UI)；print 为黑白衬线、A4 友好，适合导出 PDF 或邮件附件
+# --theme 默认 default(AlphaVault 站点风格)；claude 为 Claude.ai 暖色；print 为黑白衬线、A4 友好
 ```
 
 样式模板由仓库通用 `shared/html_report` 提供（同步到 `scripts/_shared/html_report/`），新增主题只需在该目录的 `themes/` 下放一个 CSS 文件。

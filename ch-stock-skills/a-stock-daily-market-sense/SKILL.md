@@ -68,10 +68,10 @@ python scripts\run_daily_panel.py --asof 20260429 --lookback 120 --market-trend-
 HTML 输出命令：
 
 ```powershell
-python scripts\render_report_html.py --input reports\report_20260429.md [--theme default|print]
+python scripts\render_report_html.py --input reports\report_20260429.md [--theme default|claude|print]
 ```
 
-默认输出 `reports/report_20260429.html`，并将 `reference/market_data.json` 内嵌到 HTML 中。本地浏览器可直接打开，图表不依赖外部 CDN。`--theme` 默认 `default`（Claude UI 暖橙）；`--theme print` 为黑白衬线、A4 友好，适合导出 PDF 或邮件附件。样式模板由仓库通用 `shared/html_report`（同步到 `scripts/_shared/html_report/`）提供，与 `a-stock-analyzer` 共用。
+默认输出 `reports/report_20260429.html`，并将 `reference/market_data.json` 内嵌到 HTML 中。本地浏览器可直接打开，图表不依赖外部 CDN。`--theme` 默认 `default`（AlphaVault 站点 / Google Material）；`--theme claude` 为 Claude.ai 暖色风格；`--theme print` 为黑白衬线、A4 友好，适合导出 PDF 或邮件附件。样式模板由仓库通用 `shared/html_report`（同步到 `scripts/_shared/html_report/`）提供，与 `a-stock-analyzer` 共用。
 
 常用参数：
 

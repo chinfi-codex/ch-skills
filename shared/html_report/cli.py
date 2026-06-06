@@ -81,7 +81,8 @@ def _run(
     parser.add_argument("--output", "-o", default=None, help="HTML output path. Defaults to input with .html suffix.")
     parser.add_argument("--title", default=None, help="HTML document title. Defaults to the input stem.")
     parser.add_argument("--theme", default="default", choices=list_themes(),
-                        help="Style theme. default = Claude-UI; print = monochrome serif, A4-friendly.")
+                        help="Style theme. default = AlphaVault (Google Material); claude = Claude.ai (warm); "
+                             "print = monochrome serif, A4-friendly.")
     parser.add_argument("--no-validate", action="store_true", help="Skip Markdown text-preservation validation.")
     parser.add_argument("--strict", action="store_true",
                         help="Abort on text-preservation mismatch instead of warning. Off by default so content "

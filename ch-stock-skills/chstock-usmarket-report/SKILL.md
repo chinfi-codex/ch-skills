@@ -1,6 +1,6 @@
 ---
 name: chstock-usmarket-report
-description: 当用户要求生成美股观察池日报、复盘昨晚/昨夜美股、查看我的美股池/美股自选表现、看每只个股的涨跌明细、找昨夜美股异动票（±7%）并查异动原因、回看指定 YYYY-MM-DD 美股交易日、判断纳斯达克大盘走势、扫描全市场当日大涨大跌的中大盘股（市值 ≥ $10B）时使用此 skill。本 skill 以纳斯达克 100（QQQ）为大盘锚（不引入 SPY/DIA/IWM）；报告由两个证据池组成——**观察池内每只个股逐行明细** + **全市场 ±7% / 市值 ≥ $10B 的中大盘异动扫描**；任何异动票（无论来自观察池还是全市场扫描）都必须通过 WebSearch 检索近期催化/利空后再写入异动段。脚本只输出确定性 JSON 证据包，判断、归因、风险提示由模型完成。不用于盘中实时监控、个股深度基本面研究、目标价或买卖建议；不覆盖港股、A 股、加密货币、SPY/DIA/IWM 风格四象限。
+description: 当用户要求生成美股观察池日报、复盘昨晚/昨夜美股、查看我的美股池/美股自选表现、看每只个股的涨跌明细、找昨夜美股异动票（±7%）并查异动原因、回看指定 YYYY-MM-DD 美股交易日、判断纳斯达克大盘走势、扫描全市场当日大涨大跌的中大盘股（市值 ≥ $10B），或要求把美股日报输出为 HTML / 可浏览页面 / AlphaVault Site 派生浏览层时使用此 skill。本 skill 以纳斯达克 100（QQQ）为大盘锚（不引入 SPY/DIA/IWM）；报告由两个证据池组成——**观察池内每只个股逐行明细** + **全市场 ±7% / 市值 ≥ $10B 的中大盘异动扫描**；任何异动票（无论来自观察池还是全市场扫描）都必须通过 WebSearch 检索近期催化/利空后再写入异动段。脚本输出确定性 JSON 证据包，并可在最终 Markdown 定稿后生成派生 HTML；判断、归因、风险提示由模型完成。不用于盘中实时监控、个股深度基本面研究、目标价或买卖建议；不覆盖港股、A 股、加密货币、SPY/DIA/IWM 风格四象限。
 ---
 
 # 美股观察池日报（纳指版）
@@ -128,6 +128,12 @@ QQQ 用三个数读：
    - `errors` 失败 ticker 必须在末尾透明披露。
    - 产出：最终 Markdown。
 
+6. **HTML 派生输出（用户要求 HTML / Site 时才做）**
+   - Markdown 是日报真相源；HTML 只做浏览层，不反向改写正文判断。
+   - 在最终 Markdown 定稿后运行 `python scripts/render_report_html.py --input <report.md> --evidence <evidence.json> --output <report.html>`。
+   - renderer 默认剥离 YAML frontmatter，避免 `report_tag`、`primary_sources` 等机器元数据在浏览页可见；只有 frontmatter 本身就是正文时才加 `--keep-frontmatter`。
+   - 产出：自包含 HTML，含 QQQ / 观察池分组 / 异动扫描的轻量图表；如果没有 evidence JSON，也能退化为纯 Markdown HTML。
+
 ## 数据获取（脚本抓手）
 
 三个脚本，各做一件原子事：
@@ -160,6 +166,17 @@ python scripts/scan_market.py                                       # 默认 ±7
 python scripts/scan_market.py --min-change 5 --min-cap-billion 50   # 更宽涨幅 + 只看 ≥$50B 巨头
 python scripts/scan_market.py --output outputs/market-scan.json
 ```
+
+### `scripts/render_report_html.py`
+最终 Markdown → 自包含 HTML。脚本只负责浏览层渲染与 evidence 驱动的小图表，不生成正文、不补充归因、不改写投资判断。
+
+```bash
+python scripts/render_report_html.py --input reports/us-2026-05-22.md --evidence outputs/us-2026-05-22.json
+python scripts/render_report_html.py --input reports/us-2026-05-22.md --evidence outputs/us-2026-05-22.json --output reports/us-2026-05-22.html
+python scripts/render_report_html.py --input reports/us-2026-05-22.md --theme print
+```
+
+返回 JSON 摘要包含 `input / output / evidence / data_date / frontmatter_stripped / charts`。依赖来自仓库级 `shared/html_report`，同步后会打包到 `scripts/_shared/html_report/`。
 
 ### evidence JSON 返回字段
 
@@ -257,6 +274,13 @@ python scripts/scan_market.py --output outputs/market-scan.json
 | 未查的票必须标"未做联网核查" | 让用户知道哪些是表格事实、哪些有故事 |
 | 未查到原因要写"未检索到" | 不杜撰，不留空 |
 
+HTML 输出规则：
+
+- 只在用户要求 HTML、可浏览页面、Site 派生层、或需要本地 HTML 归档时生成；普通日报只交 Markdown。
+- HTML 必须从已经定稿的 Markdown 渲染，不能让 renderer 代写正文，也不能把 HTML 作为 Wiki 真相源。
+- 若输入 Markdown 带 YAML frontmatter，默认剥离后再渲染；这样浏览层不会露出机器字段，同时不影响 Wiki 侧保留 frontmatter。
+- HTML 图表只读 evidence JSON 中已经存在的价格/市值字段；异动原因仍以正文里的 WebSearch/WebFetch 来源为准。
+
 ## 示例
 
 ### Input
@@ -270,6 +294,8 @@ python scripts/generate_report.py
 # 拿到 evidence 后：
 #   1) 观察池 abnormal_moves.rises / .drops → 必查（通常为空）
 #   2) market_wide_movers.rises / .drops → 按§5 优先级裁剪 → 必查清单 WebSearch
+# Markdown 定稿后，如用户要求 HTML：
+#   python scripts/render_report_html.py --input reports/us-2026-05-22.md --evidence outputs/us-2026-05-22.json
 ```
 
 ### Output（节选）

@@ -25,6 +25,7 @@ from importlib import resources
 from typing import List, Optional
 
 from .chart_hook import ChartHook
+from .chartkit import chartkit_js
 from .markdown_engine import render_markdown
 from .safe_json import safe_json_for_script
 from .text_validator import validate_text_preserved
@@ -136,6 +137,14 @@ class HtmlReportBuilder:
         """
         self._ui_decorations.append(js)
 
+    def add_decoration(self, decoration: object) -> None:
+        """Append a typed decoration (e.g. ``PillDecoration`` / ``HeroDecoration``)
+        or a raw JS string. Typed decorations expose a ``.js`` property; this is
+        sugar over :meth:`add_ui_decoration`.
+        """
+        js = getattr(decoration, "js", decoration)
+        self._ui_decorations.append(js)
+
     def render(self, markdown_text: str, *, validate: bool = True) -> str:
         body_html = render_markdown(markdown_text)
         chart_envelope = {hook.name: hook.payload for hook in self._hooks}
@@ -145,6 +154,9 @@ class HtmlReportBuilder:
             for hook in self._hooks
         )
         ui_extras = "\n".join(f"<script>\n{js}\n</script>" for js in self._ui_decorations)
+        # The chart kit (window.CK) is only needed when hooks draw charts; emit it
+        # once, after the base UI script and before any hook IIFE runs.
+        chartkit_block = f"<script>\n{chartkit_js()}</script>\n" if self._hooks else ""
 
         escaped_title = html.escape(self.title)
         doc_head_html = ""
@@ -179,7 +191,7 @@ class HtmlReportBuilder:
   <script id="chart-data" type="application/json">{chart_json}</script>
   <script>
 {_BASE_UI_JS}  </script>
-{ui_extras}
+{chartkit_block}{ui_extras}
 {hook_scripts}
 </body>
 </html>

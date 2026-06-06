@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Render a daily-market-sense Markdown report as a self-contained HTML page.
 
-Markdown→HTML rendering, CSS theming and text-preservation validation come
-from the shared ``html_report`` package. This file owns only the
-market-sense-specific bits: loading market_data.json / evidence_*.json,
-extracting the index K-line + stock K-line + market-trend payloads, and the
-JS that draws those charts.
+All the generic machinery — CLI parsing, Markdown→HTML, theming, the chart kit
+(``window.CK``), text-preservation validation and the pill/hero decorations —
+comes from the shared ``html_report`` package (synced into ``scripts/_shared/``).
+This file owns only the market-sense-specific bits: loading market_data.json /
+evidence_*.json, extracting the index K-line + stock K-line + market-trend
+payloads, the pill vocabulary and the JS that draws those charts.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import sys
@@ -27,19 +27,14 @@ _BUNDLED_SHARED = SCRIPT_ROOT / "_shared"
 _DEV_SHARED = SCRIPT_ROOT.parents[2] / "shared"
 sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
 
-from html_report import ChartHook, HtmlReportBuilder, list_themes  # noqa: E402
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Render a Markdown daily market report to static HTML.")
-    parser.add_argument("--input", "-i", required=True, help="Markdown report path, e.g. reports/report_YYYYMMDD.md.")
-    parser.add_argument("--output", "-o", default=None, help="HTML output path. Defaults to input path with .html suffix.")
-    parser.add_argument("--market-data", default=str(DEFAULT_MARKET_DATA), help="Derived market_data.json path.")
-    parser.add_argument("--evidence", default=None, help="Evidence JSON path. Defaults to sibling evidence_YYYYMMDD_utf8.json when input is report_YYYYMMDD.md.")
-    parser.add_argument("--title", default=None, help="HTML document title.")
-    parser.add_argument("--theme", default="default", choices=list_themes(), help="HTML style theme. default = Claude-UI; print = monochrome serif, A4-friendly.")
-    parser.add_argument("--no-validate", action="store_true", help="Skip Markdown text preservation validation.")
-    return parser
+from html_report import (  # noqa: E402
+    ChartHook,
+    HeroDecoration,
+    HtmlReportBuilder,
+    PillDecoration,
+    RenderJob,
+    render_report,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -139,89 +134,29 @@ def extract_stock_kline_payload(evidence: dict, source_path: Optional[Path]) -> 
 
 
 # --------------------------------------------------------------------------- #
-# Skill-specific UI decoration: pill rules + "一句话盘面判断" hero card.
+# Decorations: pill vocabulary + "一句话盘面判断" hero card (mechanism lives in
+# the shared package; here we only declare the market-sense-specific data).
 # --------------------------------------------------------------------------- #
-PILL_RULES_JS = r"""
-(function () {
-  const root = document.getElementById("report-body");
-  if (!root) return;
-  const pillRules = [
-    { re: /^高位强势股退潮$/, cls: "pill neg" },
-    { re: /^流动性杀跌$/, cls: "pill warn" },
-    { re: /^主线内部分歧$/, cls: "pill warn" },
-    { re: /^高位趋势$/, cls: "pill" },
-    { re: /^高$/, cls: "pill neg" },
-    { re: /^中$/, cls: "pill warn" },
-    { re: /^低$/, cls: "pill pos" },
-    { re: /^领导股$/, cls: "pill" },
-    { re: /^弹性股$/, cls: "pill violet" },
-    { re: /^启动型$|^持续换手型$|^分歧型$/, cls: "pill" },
-    { re: /^[ABC]$/, cls: "pill" }
-  ];
-  root.querySelectorAll("td").forEach(td => {
-    const trimmed = td.textContent.trim();
-    if (!trimmed || td.children.length > 0) return;
-    for (const rule of pillRules) {
-      if (rule.re.test(trimmed)) {
-        td.innerHTML = `<span class="${rule.cls}">${trimmed}</span>`;
-        return;
-      }
-    }
-  });
-})();
-"""
+MARKET_SENSE_PILL_RULES = [
+    (r"^高位强势股退潮$", "pill neg"),
+    (r"^流动性杀跌$", "pill warn"),
+    (r"^主线内部分歧$", "pill warn"),
+    (r"^高位趋势$", "pill"),
+    (r"^高$", "pill neg"),
+    (r"^中$", "pill warn"),
+    (r"^低$", "pill pos"),
+    (r"^领导股$", "pill"),
+    (r"^弹性股$", "pill violet"),
+    (r"^启动型$|^持续换手型$|^分歧型$", "pill"),
+    (r"^[ABC]$", "pill"),
+]
 
-
-SUMMARY_HERO_JS = r"""
-(function () {
-  const root = document.getElementById("report-body");
-  if (!root) return;
-  const summaryH3 = Array.from(root.querySelectorAll("h2,h3")).find(h => h.textContent.trim().startsWith("一句话盘面判断"));
-  if (!summaryH3) return;
-
-  const card = document.createElement("aside");
-  card.className = "summary-card";
-  const label = document.createElement("div");
-  label.className = "summary-label";
-  label.textContent = summaryH3.textContent.trim();
-  card.appendChild(label);
-
-  const collected = [];
-  let cur = summaryH3.nextElementSibling;
-  while (cur && !/^H[1-6]$/.test(cur.tagName)) {
-    const next = cur.nextElementSibling;
-    const txt = cur.textContent.trim();
-    if (txt && /^[^\dA-Za-z\u4e00-\u9fff]*\d+\./.test(txt)) break;
-    if (collected.length >= 3) break;
-    if (cur.tagName === "P" && txt && !/^-{3,}$/.test(txt)) {
-      cur.classList.add("summary-body");
-      collected.push(cur);
-    } else {
-      cur.remove();
-    }
-    cur = next;
-  }
-  collected.forEach(node => card.appendChild(node));
-  summaryH3.replaceWith(card);
-
-  collected.forEach(p => {
-    let h = p.innerHTML.replace(
-      /([+\-])(\d+(?:\.\d+)?)(%|pct|倍)/g,
-      (_, sign, num, unit) => {
-        const cls = sign === "+" ? "num-pos" : "num-neg";
-        return `<span class="${cls}">${sign}${num}${unit}</span>`;
-      }
-    );
-    h = h.replace(/(上证|创业板|科创50|国证2000|中证红利|半导体设备与材料|电力能源)/g, '<span class="kw">$1</span>');
-    p.innerHTML = h;
-  });
-})();
-"""
+HERO_KEYWORDS = "上证|创业板|科创50|国证2000|中证红利|半导体设备与材料|电力能源"
 
 
 # --------------------------------------------------------------------------- #
 # Chart drawing: index K-lines + stock-table K-lines.
-# Reads its payload slice from __payload (set by builder per hook).
+# Reads its payload slice from __payload; draws with the shared chart kit (CK).
 # --------------------------------------------------------------------------- #
 KLINE_CHARTS_JS = r"""
 const payload = __payload.index || {};
@@ -232,6 +167,10 @@ const stockByCode = stockPayload.by_ts_code || {};
 const stockNameIndex = stockPayload.name_to_ts_code || {};
 const reportBody = document.getElementById("report-body");
 if (!reportBody) return;
+
+const { svgEl, svgText } = CK;
+const formatDate = CK.fmt.date;
+const formatPercent = CK.fmt.signedPct;
 
 const indexConfigs = [
   { key: "shanghai", anchorTexts: ["指数趋势", "上证指数趋势判断", "上证指数趋势"], fallbackTitle: "上证指数" },
@@ -375,20 +314,12 @@ function buildKlineCard(rows, indexData, fallbackTitle) {
   card.appendChild(subtitle);
   card.appendChild(drawKline(rows, card));
 
-  const legend = document.createElement("div");
-  legend.className = "legend";
-  [
+  card.appendChild(CK.legend([
     ["K线", "var(--neg)"],
     ["MA20", "var(--blue)"],
     ["MA60", "var(--orange)"],
     ["成交金额", "rgba(100,116,139,0.55)"]
-  ].forEach(([label, color]) => {
-    const span = document.createElement("span");
-    span.style.setProperty("--legend-color", color);
-    span.textContent = label;
-    legend.appendChild(span);
-  });
-  card.appendChild(legend);
+  ]));
   return card;
 }
 
@@ -432,9 +363,7 @@ function drawKline(rows, card) {
   svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: amountBottom, y2: amountBottom, class: "axis" }));
   svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: amountTop, y2: amountTop, class: "grid-line", opacity: 0.55 }));
 
-  const tooltip = document.createElement("div");
-  tooltip.style.cssText = "position:absolute;background:rgba(15,23,42,0.92);color:#f1f5f9;padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.5;pointer-events:none;opacity:0;transition:opacity 0.15s ease;z-index:100;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.2);";
-  card.appendChild(tooltip);
+  const tooltip = CK.tooltip(card);
 
   enriched.forEach(row => {
     const px = x(row.idx);
@@ -484,11 +413,7 @@ function drawKline(rows, card) {
       ].join("");
       tooltip.style.opacity = "1";
     });
-    hit.addEventListener("mousemove", event => {
-      const r = card.getBoundingClientRect();
-      tooltip.style.left = `${Math.min(event.clientX - r.left + 12, r.width - tooltip.offsetWidth - 8)}px`;
-      tooltip.style.top = `${Math.max(8, event.clientY - r.top - tooltip.offsetHeight - 12)}px`;
-    });
+    hit.addEventListener("mousemove", event => CK.moveTip(tooltip, card, event));
     hit.addEventListener("mouseleave", () => { tooltip.style.opacity = "0"; });
     svg.appendChild(hit);
   });
@@ -517,27 +442,11 @@ function rollingAverage(rows, idx, windowSize) {
   return slice.reduce((sum, value) => sum + value, 0) / windowSize;
 }
 function toNumber(value) { const n = Number(value); return Number.isFinite(n) ? n : null; }
-function svgEl(name, attrs) {
-  const el = document.createElementNS("http://www.w3.org/2000/svg", name);
-  Object.entries(attrs || {}).forEach(([k, v]) => el.setAttribute(k, v));
-  return el;
-}
-function svgText(x, y, text, anchor, color) {
-  const el = svgEl("text", { x, y, "text-anchor": anchor, fill: color, "font-size": "11" });
-  el.textContent = text;
-  return el;
-}
-function formatDate(value) { return String(value || "").replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3"); }
 function formatNumber(value) {
   if (!Number.isFinite(value)) return "—";
   const abs = Math.abs(value);
   const digits = abs >= 1000 ? 1 : abs >= 100 ? 2 : 3;
   return value.toFixed(digits);
-}
-function formatPercent(value) {
-  if (!Number.isFinite(value)) return "—";
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(2)}%`;
 }
 function formatAmount(value) {
   if (!Number.isFinite(value)) return "—";
@@ -555,6 +464,8 @@ const records = Array.isArray(data.records) ? data.records.filter(r => r && r.tr
 if (!records.length) return;
 
 const reportBody = document.getElementById("report-body");
+const { svgEl, svgText } = CK;
+const formatDate = CK.fmt.date;
 const headings = reportBody.querySelectorAll("h3");
 let targetHeading = null;
 for (const h of headings) {
@@ -584,15 +495,7 @@ charts.forEach(config => {
   card.appendChild(title);
   const drawable = drawChart(records, config, card, subtitle);
   card.appendChild(drawable);
-  const legend = document.createElement("div");
-  legend.className = "legend";
-  config.fields.forEach(field => {
-    const span = document.createElement("span");
-    span.style.setProperty("--legend-color", field.color);
-    span.textContent = field.key;
-    legend.appendChild(span);
-  });
-  card.appendChild(legend);
+  card.appendChild(CK.legend(config.fields.map(field => [field.key, field.color])));
   chartSection.appendChild(card);
 });
 
@@ -644,10 +547,7 @@ function drawChart(rows, config, card, subtitle) {
   }
   svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: height - pad.bottom, y2: height - pad.bottom, class: "axis" }));
 
-  const tooltip = document.createElement("div");
-  tooltip.style.cssText = "position:absolute;background:rgba(15,23,42,0.92);color:#f1f5f9;padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.5;pointer-events:none;opacity:0;transition:opacity 0.15s ease;z-index:100;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.2);";
-  card.style.position = "relative";
-  card.appendChild(tooltip);
+  const tooltip = CK.tooltip(card);
 
   const isBar = config.type === "bar";
   const barWidth = isBar ? Math.max(2, usableW / rows.length * 0.55) : 0;
@@ -682,11 +582,7 @@ function drawChart(rows, config, card, subtitle) {
           tooltip.innerHTML = `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${formatDate(p.date)}</div><div style="font-weight:600;">${item.field.key}: ${formatValue(p.value, item.field.unit)}</div>`;
           tooltip.style.opacity = "1";
         });
-        hit.addEventListener("mousemove", e => {
-          const r = card.getBoundingClientRect();
-          tooltip.style.left = `${Math.min(e.clientX - r.left + 12, r.width - tooltip.offsetWidth - 8)}px`;
-          tooltip.style.top = `${Math.max(8, e.clientY - r.top - tooltip.offsetHeight - 12)}px`;
-        });
+        hit.addEventListener("mousemove", e => CK.moveTip(tooltip, card, e));
         hit.addEventListener("mouseleave", () => {
           rect.setAttribute("opacity", "0.85");
           tooltip.style.opacity = "0";
@@ -710,11 +606,7 @@ function drawChart(rows, config, card, subtitle) {
           tooltip.innerHTML = `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${formatDate(p.date)}</div><div style="font-weight:600;">${item.field.key}: ${formatValue(p.value, item.field.unit)}</div>`;
           tooltip.style.opacity = "1";
         });
-        hit.addEventListener("mousemove", e => {
-          const r = card.getBoundingClientRect();
-          tooltip.style.left = `${Math.min(e.clientX - r.left + 12, r.width - tooltip.offsetWidth - 8)}px`;
-          tooltip.style.top = `${Math.max(8, e.clientY - r.top - tooltip.offsetHeight - 12)}px`;
-        });
+        hit.addEventListener("mousemove", e => CK.moveTip(tooltip, card, e));
         hit.addEventListener("mouseleave", () => { tooltip.style.opacity = "0"; });
         svg.appendChild(hit);
       });
@@ -725,17 +617,6 @@ function drawChart(rows, config, card, subtitle) {
   return svg;
 }
 
-function svgEl(name, attrs) {
-  const el = document.createElementNS("http://www.w3.org/2000/svg", name);
-  Object.entries(attrs || {}).forEach(([k, v]) => el.setAttribute(k, v));
-  return el;
-}
-function svgText(x, y, text, anchor, color) {
-  const el = svgEl("text", { x, y, "text-anchor": anchor, fill: color, "font-size": "11" });
-  el.textContent = text;
-  return el;
-}
-function formatDate(value) { return String(value || "").replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3"); }
 function formatValue(value, unit) {
   if (!Number.isFinite(value)) return "—";
   const abs = Math.abs(value);
@@ -745,8 +626,20 @@ function formatValue(value, unit) {
 """
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+# --------------------------------------------------------------------------- #
+# Thin manifest: declare inputs, decorations and charts; shared runner does
+# the rest (parse args, render, validate, write, print summary).
+# --------------------------------------------------------------------------- #
+def add_arguments(parser) -> None:
+    parser.add_argument("--market-data", default=str(DEFAULT_MARKET_DATA), help="Derived market_data.json path.")
+    parser.add_argument(
+        "--evidence",
+        default=None,
+        help="Evidence JSON path. Defaults to sibling evidence_YYYYMMDD_utf8.json when input is report_YYYYMMDD.md.",
+    )
+
+
+def build_job(args) -> RenderJob:
     input_path = Path(args.input)
     output_path = Path(args.output) if args.output else input_path.with_suffix(".html")
     market_data_path = Path(args.market_data)
@@ -759,8 +652,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     stock_kline_data = extract_stock_kline_payload(evidence, evidence_path)
 
     builder = HtmlReportBuilder(title=title, theme=args.theme)
-    builder.add_ui_decoration(PILL_RULES_JS)
-    builder.add_ui_decoration(SUMMARY_HERO_JS)
+    builder.add_decoration(PillDecoration(MARKET_SENSE_PILL_RULES))
+    builder.add_decoration(HeroDecoration(
+        heading_prefix="一句话盘面判断",
+        collect_tags=("P",),
+        max_blocks=3,
+        stop_at_numbered=True,
+        number_units="%|pct|倍",
+        keyword_pattern=HERO_KEYWORDS,
+        stop_mode="any_heading",
+    ))
     builder.add_chart_hook(ChartHook(
         name="klines",
         payload={
@@ -772,29 +673,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     ))
     builder.add_chart_hook(ChartHook(name="market-trends", payload=market_data, js=MARKET_TRENDS_JS))
 
-    html_text = builder.render(markdown_text, validate=not args.no_validate)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(html_text, encoding="utf-8")
-    print(json.dumps({
-        "input": str(input_path),
-        "output": str(output_path),
-        "theme": args.theme,
-        "market_data": str(market_data_path),
-        "evidence": str(evidence_path) if evidence_path is not None else None,
-        "index_kline_records": {
-            key: len((value or {}).get("records") or [])
-            for key, value in (index_kline_data.get("indices") or {}).items()
+    return RenderJob(
+        markdown_text=markdown_text,
+        builder=builder,
+        output_path=output_path,
+        summary={
+            "market_data": str(market_data_path),
+            "evidence": str(evidence_path) if evidence_path is not None else None,
+            "index_kline_records": {
+                key: len((value or {}).get("records") or [])
+                for key, value in (index_kline_data.get("indices") or {}).items()
+            },
+            "stock_kline_records": len(stock_kline_data.get("by_ts_code") or {}),
+            "records_available": (market_data.get("quality") or {}).get("records_available", 0),
         },
-        "stock_kline_records": len(stock_kline_data.get("by_ts_code") or {}),
-        "records_available": (market_data.get("quality") or {}).get("records_available", 0),
-    }, ensure_ascii=False, indent=2))
-    return 0
+    )
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+    raise SystemExit(
+        render_report(
+            description="Render a Markdown daily market report to static HTML.",
+            build_job=build_job,
+            add_arguments=add_arguments,
+        )
+    )

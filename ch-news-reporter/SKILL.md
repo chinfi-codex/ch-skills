@@ -1,6 +1,6 @@
 ---
 name: ch-news-reporter
-description: 当用户要求从金十、财联社、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、宏观、地缘冲突或伊朗动态新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出 AI 日报、每日宏观日报、财经研究简报、热门产品观察、市场信号复盘、伊朗/中东局势动态或风险资产影响分析时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写日报”“抓取新闻库做研究”“生成伊朗动态播报”“分析霍尔木兹/油价/黄金受局势影响”等多步骤任务；不用于单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
+description: 当用户要求从金十、财联社、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、宏观、地缘冲突或伊朗动态新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出 AI 日报、每日宏观日报、财经研究简报、热门产品观察、市场信号复盘、伊朗/中东局势动态或风险资产影响分析，或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写日报”“抓取新闻库做研究”“生成伊朗动态播报”“分析霍尔木兹/油价/黄金受局势影响”等多步骤任务；不用于单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
 ---
 
 # CH News Reporter
@@ -230,6 +230,29 @@ cat today_watchboard.json | python scripts/save_report_state.py \
 ```
 
 watchboard 的 JSON 结构(regime / tracking_items / next_nodes / falsifiers / frame)与各 profile 的 frame 字段见 `references/reports/watchboard.md` 与各自 methodology。脚本做结构校验(必填字段、frame 字段齐全、概率求和、**上一期 open 项有没有被漏结算**),报错就按提示补全再存——它只查结构,不评判分析内容。`--check-only` 可只验证不写。
+
+### 8. 按需生成 HTML（展示层）
+
+当用户要 HTML、网页、可视化或截图风格的日报时，先写好并核对 `reports/<profile>_<date>.md`，再把它渲染成一份自包含单页 HTML（Claude UI 风格，图表不依赖外部 CDN，本地浏览器直接打开）。HTML 只是展示层：**不新增任何研报判断，也不删减 Markdown 正文**——共享渲染器会做文本保全校验，缺字报警告不阻断。
+
+```bash
+python scripts/render_report_html.py -i reports/macro_daily_2026-05-19.md
+# 默认输出同名 .html；profile 从文件名前缀自动识别（ai_daily / macro_daily / iran_dynamic）
+```
+
+三个 profile 通用的处理：
+
+- `一句话结论` 段自动升格成醒目的 hero 摘要卡。
+- 表格里的 +/- 数值、涨跌方向自动染色；非加粗的分类格（如宏观日报「性质」列的"数据事件/政策表态"）渲染成彩色 pill。
+- `--theme print` 出黑白衬线、A4 友好版，适合导出 PDF 或邮件附件；文件名非标准前缀时用 `--profile` 手动指定。
+
+`iran_dynamic` 额外能画**路径概率图**（A 续期 / B 交战 / C 僵尸化 的概率条），把当天 watchboard 传进来即可：
+
+```bash
+python scripts/render_report_html.py -i reports/iran_dynamic_2026-06-04.md --watchboard today_watchboard.json
+```
+
+渲染框架来自仓库通用 `shared/html_report`（随 `shared` bundle 同步到 `scripts/_shared/html_report/`），与 A 股各 skill 共用同一套主题与图表工具；新增样式主题只需在该目录 `themes/` 下放一个 CSS 文件。
 
 ## 数据表说明
 

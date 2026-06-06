@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Render an a-stock-analyzer Markdown report as a self-contained HTML page.
 
-Markdown→HTML rendering, CSS theming and text-preservation validation come
-from the shared ``html_report`` package (synced into ``scripts/_shared/``).
+All the generic machinery — CLI parsing, Markdown→HTML, theming, the chart kit
+(``window.CK``), text-preservation validation and the pill/hero decorations —
+comes from the shared ``html_report`` package (synced into ``scripts/_shared/``).
 This file owns only the analyzer-specific bits: evidence loading, the chart
-payload extraction (PE/PB/PS valuation bands + financial trends), and the
-JS that draws those charts.
+payload extraction (PE/PB/PS valuation bands + financial trends), the pill
+vocabulary and the JS that draws those two charts.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import sys
@@ -22,19 +22,14 @@ _BUNDLED_SHARED = SCRIPT_ROOT / "_shared"
 _DEV_SHARED = SCRIPT_ROOT.parents[2] / "shared"
 sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
 
-from html_report import ChartHook, HtmlReportBuilder, list_themes  # noqa: E402
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Render a Markdown stock report to static HTML.")
-    parser.add_argument("--input", "-i", required=True, help="Markdown report path, e.g. reports/report_600519.md.")
-    parser.add_argument("--output", "-o", default=None, help="HTML output path. Defaults to input path with .html suffix.")
-    parser.add_argument("--evidence", default=None, help="Evidence JSON path. Defaults to sibling evidence_<code>.json when input is report_<code>.md.")
-    parser.add_argument("--title", default=None, help="HTML document title.")
-    parser.add_argument("--theme", default="default", choices=list_themes(), help="HTML style theme. default = Claude-UI; print = monochrome serif, A4-friendly.")
-    parser.add_argument("--no-validate", action="store_true", help="Skip Markdown text preservation validation entirely.")
-    parser.add_argument("--strict", action="store_true", help="Abort on text-preservation mismatch instead of warning. Off by default so content changes never break HTML generation.")
-    return parser
+from html_report import (  # noqa: E402
+    ChartHook,
+    HeroDecoration,
+    HtmlReportBuilder,
+    PillDecoration,
+    RenderJob,
+    render_report,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -127,134 +122,44 @@ def extract_chart_payload(evidence: dict, source_path: Optional[Path]) -> Dict[s
 
 
 # --------------------------------------------------------------------------- #
-# UI decoration: promote "核心判断" section into a hero summary card.
+# Decorations: pill vocabulary + "核心判断" hero card (mechanism lives in the
+# shared package; here we only declare the analyzer-specific data).
 # --------------------------------------------------------------------------- #
-PILL_RULES_JS = r"""
-(function () {
-  const root = document.getElementById("report-body");
-  if (!root) return;
-  const pillRules = [
-    { re: /^(成长股|成熟龙头|红利价值)$/, cls: "pill" },
-    { re: /^(强连接|核心标的)$/, cls: "pill neg" },
-    { re: /^(弱连接|边缘受益)$/, cls: "pill warn" },
-    { re: /^(无连接|脱离主线)$/, cls: "pill" },
-    { re: /^(深度低估|合理偏低)$/, cls: "pill pos" },
-    { re: /^(偏高|透支|极度乐观)$/, cls: "pill neg" },
-    { re: /^(合理|合理定价)$/, cls: "pill" },
-    { re: /^(强|高)$/, cls: "pill neg" },
-    { re: /^(中)$/, cls: "pill warn" },
-    { re: /^(弱|低)$/, cls: "pill pos" },
-    { re: /^(基准|乐观|压力|Bull|Bear|Base)$/, cls: "pill violet" }
-  ];
-  root.querySelectorAll("td").forEach(td => {
-    const trimmed = td.textContent.trim();
-    if (!trimmed || td.children.length > 0) return;
-    for (const rule of pillRules) {
-      if (rule.re.test(trimmed)) {
-        td.innerHTML = `<span class="${rule.cls}">${trimmed}</span>`;
-        return;
-      }
-    }
-  });
-})();
-"""
-
-
-SUMMARY_HERO_JS = r"""
-(function () {
-  const root = document.getElementById("report-body");
-  if (!root) return;
-  const summaryH = Array.from(root.querySelectorAll("h2, h3")).find(h => h.textContent.trim().startsWith("核心判断"));
-  if (!summaryH) return;
-  const card = document.createElement("aside");
-  card.className = "summary-card";
-  const label = document.createElement("div");
-  label.className = "summary-label";
-  label.textContent = summaryH.textContent.trim();
-  card.appendChild(label);
-  const stopTags = summaryH.tagName === "H2" ? /^H[12]$/ : /^H[123]$/;
-  const collected = [];
-  let cur = summaryH.nextElementSibling;
-  while (cur && !stopTags.test(cur.tagName)) {
-    const next = cur.nextElementSibling;
-    const txt = cur.textContent.trim();
-    if ((cur.tagName === "P" || cur.tagName === "UL") && txt && !/^-{3,}$/.test(txt)) {
-      cur.classList.add("summary-body");
-      collected.push(cur);
-    } else {
-      cur.remove();
-    }
-    cur = next;
-  }
-  collected.forEach(node => card.appendChild(node));
-  summaryH.replaceWith(card);
-  collected.forEach(p => {
-    p.innerHTML = p.innerHTML.replace(/([+\-])(\d+(?:\.\d+)?)(%|pct|倍|x|分位)/g,
-      (_, sign, num, unit) => `<span class="${sign === "+" ? "num-pos" : "num-neg"}">${sign}${num}${unit}</span>`);
-  });
-})();
-"""
+ANALYZER_PILL_RULES = [
+    (r"^(成长股|成熟龙头|红利价值)$", "pill"),
+    (r"^(强连接|核心标的)$", "pill neg"),
+    (r"^(弱连接|边缘受益)$", "pill warn"),
+    (r"^(无连接|脱离主线)$", "pill"),
+    (r"^(深度低估|合理偏低)$", "pill pos"),
+    (r"^(偏高|透支|极度乐观)$", "pill neg"),
+    (r"^(合理|合理定价)$", "pill"),
+    (r"^(强|高)$", "pill neg"),
+    (r"^(中)$", "pill warn"),
+    (r"^(弱|低)$", "pill pos"),
+    (r"^(基准|乐观|压力|Bull|Bear|Base)$", "pill violet"),
+]
 
 
 # --------------------------------------------------------------------------- #
 # Chart drawing JS: valuation bands + financial trends.
-# Runs inside builder-supplied IIFE; reads its slice from __payload.
+# Runs inside builder-supplied IIFE; reads its slice from __payload, draws with
+# the shared chart kit (window.CK).
 # --------------------------------------------------------------------------- #
 STOCK_CHARTS_JS = r"""
 const charts = __payload || {};
 const root = document.getElementById("report-body");
 if (!root) return;
-const NS = "http://www.w3.org/2000/svg";
 
-const svgEl = (name, attrs) => {
-  const el = document.createElementNS(NS, name);
-  Object.entries(attrs || {}).forEach(([k, v]) => el.setAttribute(k, v));
-  return el;
-};
-const svgText = (x, y, text, anchor, color, size) => {
-  const el = svgEl("text", { x, y, "text-anchor": anchor || "start", fill: color || "var(--ink-4)", "font-size": size || 11 });
-  el.textContent = text;
-  return el;
-};
-const fmtDate = v => String(v || "").replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
-const fmtNum = (v, d) => Number.isFinite(v) ? v.toFixed(d == null ? (Math.abs(v) >= 100 ? 1 : Math.abs(v) >= 10 ? 2 : 2) : d) : "—";
+const { svgEl, svgText } = CK;
+const fmtDate = CK.fmt.date;
+const fmtNum = CK.fmt.num;
 const fmtYi = v => Number.isFinite(v) ? (v / 1e8).toFixed(2) + "亿" : "—";
-const findHeading = (texts) => {
-  const list = Array.from(root.querySelectorAll("h2, h3, h4"));
-  for (const t of texts) { const h = list.find(e => e.textContent.includes(t)); if (h) return h; }
-  return null;
-};
+const findHeading = (texts) => CK.findHeading(root, texts);
 const insertAfterBlock = (heading, node) => { heading.after(node); };
-const mkCard = (cls, title, subtitle) => {
-  const card = document.createElement("article");
-  card.className = cls;
-  if (title) { const t = document.createElement("div"); t.className = "chart-title"; t.textContent = title; card.appendChild(t); }
-  if (subtitle) { const s = document.createElement("div"); s.className = "chart-subtitle"; s.textContent = subtitle; card.appendChild(s); }
-  return card;
-};
-const mkLegend = (items) => {
-  const legend = document.createElement("div");
-  legend.className = "legend";
-  items.forEach(([label, color]) => {
-    const span = document.createElement("span");
-    span.style.setProperty("--legend-color", color);
-    span.textContent = label;
-    legend.appendChild(span);
-  });
-  return legend;
-};
-const mkTooltip = (card) => {
-  const tip = document.createElement("div");
-  tip.style.cssText = "position:absolute;background:rgba(15,23,42,0.92);color:#f1f5f9;padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.5;pointer-events:none;opacity:0;transition:opacity .15s ease;z-index:100;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.2);";
-  card.style.position = "relative";
-  card.appendChild(tip);
-  return tip;
-};
-const moveTip = (tip, card, e) => {
-  const r = card.getBoundingClientRect();
-  tip.style.left = Math.min(e.clientX - r.left + 12, r.width - tip.offsetWidth - 8) + "px";
-  tip.style.top = Math.max(8, e.clientY - r.top - tip.offsetHeight - 12) + "px";
-};
+const mkCard = CK.card;
+const mkLegend = CK.legend;
+const mkTooltip = CK.tooltip;
+const moveTip = CK.moveTip;
 
 drawValuationBands();
 drawFinancialTrends();
@@ -453,8 +358,19 @@ function drawFinancialTrends() {
 """
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+# --------------------------------------------------------------------------- #
+# Thin manifest: declare inputs, decorations and charts; shared runner does
+# the rest (parse args, render, validate, write, print summary).
+# --------------------------------------------------------------------------- #
+def add_arguments(parser) -> None:
+    parser.add_argument(
+        "--evidence",
+        default=None,
+        help="Evidence JSON path. Defaults to sibling evidence_<code>.json when input is report_<code>.md.",
+    )
+
+
+def build_job(args) -> RenderJob:
     input_path = Path(args.input)
     output_path = Path(args.output) if args.output else input_path.with_suffix(".html")
     evidence_path = Path(args.evidence) if args.evidence else default_evidence_path(input_path)
@@ -469,40 +385,30 @@ def main(argv: Optional[List[str]] = None) -> int:
     meta_text = header_sub + (" · " + latest if (latest and header_sub) else latest)
 
     builder = HtmlReportBuilder(title=title, theme=args.theme, meta_text=meta_text)
-    builder.add_ui_decoration(PILL_RULES_JS)
-    builder.add_ui_decoration(SUMMARY_HERO_JS)
+    builder.add_decoration(PillDecoration(ANALYZER_PILL_RULES))
+    # stop_mode="section": a subheading *inside* 核心判断 keeps collecting (the
+    # original analyzer behaviour), rather than truncating the hero card.
+    builder.add_decoration(HeroDecoration(heading_prefix="核心判断", stop_mode="section"))
     builder.add_chart_hook(ChartHook(name="stock-charts", payload=charts, js=STOCK_CHARTS_JS))
 
-    validation_warning: Optional[str] = None
-    try:
-        html_text = builder.render(markdown_text, validate=not args.no_validate)
-    except RuntimeError as exc:
-        if args.strict or args.no_validate:
-            raise
-        # Content/format are decoupled: a preservation mismatch is reported as a
-        # warning but never blocks HTML output (run with --strict to hard-fail).
-        validation_warning = str(exc)
-        print(f"warning: {exc}", file=sys.stderr)
-        html_text = builder.render(markdown_text, validate=False)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(html_text, encoding="utf-8")
-    print(json.dumps({
-        "input": str(input_path),
-        "output": str(output_path),
-        "evidence": str(evidence_path) if evidence_path is not None else None,
-        "theme": args.theme,
-        "valuation_series_points": len(charts.get("valuation_series") or []),
-        "valuation_bands": sorted((charts.get("valuation_bands") or {}).keys()),
-        "financial_periods": len(charts.get("financial_trends") or []),
-        "validation_warning": validation_warning,
-    }, ensure_ascii=False, indent=2))
-    return 0
+    return RenderJob(
+        markdown_text=markdown_text,
+        builder=builder,
+        output_path=output_path,
+        summary={
+            "evidence": str(evidence_path) if evidence_path is not None else None,
+            "valuation_series_points": len(charts.get("valuation_series") or []),
+            "valuation_bands": sorted((charts.get("valuation_bands") or {}).keys()),
+            "financial_periods": len(charts.get("financial_trends") or []),
+        },
+    )
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as exc:  # noqa: BLE001
-        print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+    raise SystemExit(
+        render_report(
+            description="Render a Markdown stock report to static HTML.",
+            build_job=build_job,
+            add_arguments=add_arguments,
+        )
+    )

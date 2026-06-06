@@ -67,12 +67,14 @@ HeroDecoration(heading_prefix="一句话盘面判断",
 builder 在有 ChartHook 时,自动在 base-UI 脚本之后、各 hook IIFE 之前注入一次 `chartkit.js`,暴露 `window.CK`。hook JS 不再各自重定义 `svgEl`,直接用:
 
 - `CK.svgEl(name, attrs)` / `CK.svgText(x, y, text, anchor, color, size)`
-- `CK.fmt.date(v)` / `CK.fmt.num(v, d)` / `CK.fmt.signedPct(v)`
+- `CK.fmt.date(v)` / `CK.fmt.num(v, d)` / `CK.fmt.signedPct(v)` / `CK.num(v)`
 - `CK.tooltip(card)` / `CK.moveTip(tip, card, e)`
 - `CK.card(cls, title, sub)` / `CK.legend([[label, color], …])` / `CK.grid(cls)`
-- `CK.findHeading(root, texts[, sel])` / `CK.findNextTable(heading)`
+- `CK.metricGrid([{title, value, subtitle, signValue}, …])` / `CK.metricCard(spec)` —— KPI / 指标卡,样式在 theme 里
+- `CK.horizontalBarCard({title, subtitle, rows:[{label, value, meta}], maxRows})` —— 通用横向涨跌条,样式在 theme 里
+- `CK.findHeading(root, texts[, sel])` / `CK.findNextTable(heading)` / `CK.insertAfter(root, texts, node)`
 
-skill 独有的格式化(价格精度、亿/万亿 除数)仍留在各自 hook 里,因为单位本就不同。
+通用图表类型和 CSS 放在 shared；skill 独有的格式化(价格精度、亿/万亿 除数)、字段映射和"画哪些行"仍留在各自 hook 里,因为这些是领域判断。
 
 ### ChartHook JS 协议
 

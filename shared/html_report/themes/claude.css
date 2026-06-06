@@ -224,6 +224,16 @@ mark { background: rgba(217, 119, 87, 0.22); padding: 1px 4px; border-radius: va
 .chart-title { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--ink-2); }
 .chart-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 6px; font-family: var(--font-mono); }
 .chart-card svg { display: block; width: 100%; height: auto; overflow: visible; }
+.metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 16px 0 8px; }
+.metric-card { background: var(--surface); border: 1px solid var(--line-1); border-radius: var(--r-md); box-shadow: var(--shadow-1); padding: 14px 16px 13px; }
+.metric-title { color: var(--muted); font-size: 12px; font-weight: 600; margin-bottom: 5px; }
+.metric-value { font-family: var(--font-mono); font-size: 24px; line-height: 1.2; color: var(--ink-1); }
+.metric-value.pos, .bar-value.pos { color: var(--neg); fill: var(--neg); }
+.metric-value.neg, .bar-value.neg { color: var(--pos); fill: var(--pos); }
+.metric-sub { color: var(--muted); font-size: 12px; line-height: 1.6; margin-top: 5px; }
+.bar-pos { fill: var(--neg); }
+.bar-neg { fill: var(--pos); }
+.bar-fill { opacity: 0.82; }
 
 /* candlestick / k-line */
 .kline-card { background: var(--surface); border: 1px solid var(--line-1); border-radius: var(--r-md); box-shadow: var(--shadow-1); padding: 14px 16px 12px; margin: 10px 0 16px; position: relative; }
@@ -289,6 +299,7 @@ mark { background: rgba(217, 119, 87, 0.22); padding: 1px 4px; border-radius: va
   .page { width: calc(100vw - 24px); padding-top: 20px; margin-bottom: 56px; }
   .report { padding: 24px 18px; }
   .chart-grid { grid-template-columns: 1fr; gap: 14px; }
+  .metric-grid { grid-template-columns: 1fr; gap: 14px; }
   .kline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .stock-kline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .kline-card { padding: 12px 10px 10px; }

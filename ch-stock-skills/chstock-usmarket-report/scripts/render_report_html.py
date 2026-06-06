@@ -34,15 +34,11 @@ FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n.*?\n---[ \t]*(?:\n|$)", re.DOTALL)
 DATE_RE = re.compile(r"(?P<date>\d{4}-\d{2}-\d{2}|\d{8})")
 
 
-USMARKET_EXTRA_CSS = """
-.usmetric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 16px 0 8px; }
-.usmetric-card { background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--r-md); box-shadow: var(--shadow-1); padding: 14px 16px 13px; }
-.usmetric-title { color: var(--muted); font-size: 12px; font-weight: 500; margin-bottom: 5px; }
-.usmetric-value { font-family: var(--font-mono); font-size: 24px; line-height: 1.2; color: var(--ink-1); }
-.usmetric-sub { color: var(--muted); font-size: 12px; line-height: 1.6; margin-top: 5px; }
-.usmetric-value.pos { color: var(--neg); }
-.usmetric-value.neg { color: var(--pos); }
-@media (max-width: 760px) { .usmetric-grid { grid-template-columns: 1fr; } }
+USMARKET_COLOR_CSS = """
+td .num-pos, .summary-card .summary-body .num-pos, .metric-value.pos, .bar-value.pos { color: var(--pos); fill: var(--pos); }
+td .num-neg, .summary-card .summary-body .num-neg, .metric-value.neg, .bar-value.neg { color: var(--neg); fill: var(--neg); }
+.bar-pos { fill: var(--pos); }
+.bar-neg { fill: var(--neg); }
 """
 
 
@@ -60,16 +56,9 @@ const data = __payload || {};
 const root = document.getElementById("report-body");
 if (!root || !data || data.missing) return;
 
-const { svgEl, svgText } = CK;
 const fmtPct = CK.fmt.signedPct;
-const fmtNum = CK.fmt.num;
 const fmtPrice = v => Number.isFinite(v) ? "$" + v.toFixed(2) : "—";
 const fmtCap = v => Number.isFinite(v) ? "$" + v.toFixed(1) + "B" : "—";
-const clsFor = v => {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n === 0) return "";
-  return n > 0 ? "pos" : "neg";
-};
 
 insertOverview();
 insertWatchlistCharts();
@@ -79,124 +68,71 @@ function insertOverview() {
   const qqq = data.index || {};
   const stats = data.stats || {};
   const scan = data.market_scan || {};
-  const grid = document.createElement("div");
-  grid.className = "usmetric-grid";
-  grid.appendChild(metricCard("QQQ", fmtPct(num(qqq.change_pct)), `收盘 ${fmtPrice(num(qqq.close))} · 5日 ${fmtPct(num(qqq.five_day_trend_pct))}`, num(qqq.change_pct)));
-  grid.appendChild(metricCard("观察池", `${stats.up_count || 0}/${stats.valid_count || 0}`, `上涨个股 / 有效个股 · 异动 ${stats.watchlist_abnormal_count || 0} 只`, null));
-  grid.appendChild(metricCard("全市场扫描", `${scan.rise_count || 0}/${scan.drop_count || 0}`, `上涨/下跌 Top · scan_date=${scan.scan_date || "—"}`, null));
-  insertAfter(["大盘", "QQQ"], grid);
+  const grid = CK.metricGrid([
+    {
+      title: "QQQ",
+      value: fmtPct(CK.num(qqq.change_pct)),
+      subtitle: `收盘 ${fmtPrice(CK.num(qqq.close))} · 5日 ${fmtPct(CK.num(qqq.five_day_trend_pct))}`,
+      signValue: CK.num(qqq.change_pct)
+    },
+    {
+      title: "观察池",
+      value: `${stats.up_count || 0}/${stats.valid_count || 0}`,
+      subtitle: `上涨个股 / 有效个股 · 异动 ${stats.watchlist_abnormal_count || 0} 只`
+    },
+    {
+      title: "全市场扫描",
+      value: `${scan.rise_count || 0}/${scan.drop_count || 0}`,
+      subtitle: `上涨/下跌 Top · scan_date=${scan.scan_date || "—"}`
+    }
+  ]);
+  CK.insertAfter(root, ["大盘", "QQQ"], grid);
 }
 
 function insertWatchlistCharts() {
-  const groupRows = (data.groups || []).filter(r => Number.isFinite(num(r.avg_change_pct)));
-  const topRows = (data.watchlist_top || []).filter(r => Number.isFinite(num(r.change_pct)));
+  const groupRows = (data.groups || []).filter(r => Number.isFinite(CK.num(r.avg_change_pct)));
+  const topRows = (data.watchlist_top || []).filter(r => Number.isFinite(CK.num(r.change_pct)));
   if (!groupRows.length && !topRows.length) return;
 
   const grid = CK.grid("chart-grid");
   if (groupRows.length) {
-    grid.appendChild(horizontalBarCard(
-      "观察池分组均值",
-      "按各组有效成员当日涨跌均值",
-      groupRows.map(r => ({ label: r.name || "未命名", value: num(r.avg_change_pct), meta: `${r.up_count || 0}/${r.valid_count || 0}` }))
-    ));
+    grid.appendChild(CK.horizontalBarCard({
+      title: "观察池分组均值",
+      subtitle: "按各组有效成员当日涨跌均值",
+      rows: groupRows.map(r => ({ label: r.name || "未命名", value: CK.num(r.avg_change_pct), meta: `${r.up_count || 0}/${r.valid_count || 0}` }))
+    }));
   }
   if (topRows.length) {
-    grid.appendChild(horizontalBarCard(
-      "观察池波动前列",
-      "按 |当日涨跌幅| 排序，最多 12 只",
-      topRows.map(r => ({ label: r.ticker, value: num(r.change_pct), meta: r.group_names || "" }))
-    ));
+    grid.appendChild(CK.horizontalBarCard({
+      title: "观察池波动前列",
+      subtitle: "按 |当日涨跌幅| 排序，最多 12 只",
+      rows: topRows.map(r => ({ label: r.ticker, value: CK.num(r.change_pct), meta: r.group_names || "" }))
+    }));
   }
-  insertAfter(["观察池个股明细"], grid);
+  CK.insertAfter(root, ["观察池个股明细"], grid);
 }
 
 function insertMoverCharts() {
-  const marketTop = (data.market_top || []).filter(r => Number.isFinite(num(r.change_pct)));
-  const abnormal = (data.watchlist_abnormal || []).filter(r => Number.isFinite(num(r.change_pct)));
+  const marketTop = (data.market_top || []).filter(r => Number.isFinite(CK.num(r.change_pct)));
+  const abnormal = (data.watchlist_abnormal || []).filter(r => Number.isFinite(CK.num(r.change_pct)));
   if (!marketTop.length && !abnormal.length) return;
 
   const grid = CK.grid("chart-grid");
   if (abnormal.length) {
-    grid.appendChild(horizontalBarCard(
-      "观察池 ±7% 异动",
-      "进入异动核查流程的自选票",
-      abnormal.map(r => ({ label: r.ticker, value: num(r.change_pct), meta: r.group_names || "" }))
-    ));
+    grid.appendChild(CK.horizontalBarCard({
+      title: "观察池 ±7% 异动",
+      subtitle: "进入异动核查流程的自选票",
+      rows: abnormal.map(r => ({ label: r.ticker, value: CK.num(r.change_pct), meta: r.group_names || "" }))
+    }));
   }
   if (marketTop.length && (data.market_scan || {}).date_aligned !== false) {
-    grid.appendChild(horizontalBarCard(
-      "全市场大票异动",
-      "市值 >= $10B，按 |涨跌幅| 排序",
-      marketTop.map(r => ({ label: r.ticker, value: num(r.change_pct), meta: fmtCap(num(r.market_cap_billion)) }))
-    ));
-  }
-  insertAfter(["异动扫描"], grid);
-}
-
-function metricCard(title, value, sub, signValue) {
-  const card = document.createElement("article");
-  card.className = "usmetric-card";
-  const titleEl = document.createElement("div");
-  titleEl.className = "usmetric-title";
-  titleEl.textContent = title;
-  const valueEl = document.createElement("div");
-  valueEl.className = `usmetric-value ${clsFor(signValue)}`;
-  valueEl.textContent = value;
-  const subEl = document.createElement("div");
-  subEl.className = "usmetric-sub";
-  subEl.textContent = sub;
-  card.append(titleEl, valueEl, subEl);
-  return card;
-}
-
-function horizontalBarCard(title, subtitle, rows) {
-  rows = rows.slice(0, 12);
-  const card = CK.card("chart-card", title, subtitle);
-  const W = 520, rowH = 24, top = 18, bottom = 20;
-  const H = top + rows.length * rowH + bottom;
-  const pad = { l: 94, r: 58, t: top, b: bottom };
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
-  const maxAbs = Math.max(1, ...rows.map(r => Math.abs(num(r.value) || 0)));
-  const zeroX = pad.l + (W - pad.l - pad.r) / 2;
-  const scale = (W - pad.l - pad.r) / 2 / maxAbs;
-
-  svg.appendChild(svgEl("line", { x1: zeroX, x2: zeroX, y1: pad.t - 8, y2: H - pad.b + 4, class: "grid-line" }));
-  rows.forEach((row, i) => {
-    const y = pad.t + i * rowH;
-    const value = num(row.value) || 0;
-    const width = Math.abs(value) * scale;
-    const x = value >= 0 ? zeroX : zeroX - width;
-    svg.appendChild(svgText(8, y + 13, row.label || "", "start", "var(--ink-2)", 10));
-    svg.appendChild(svgEl("rect", {
-      x: x.toFixed(2),
-      y: (y + 3).toFixed(2),
-      width: Math.max(1, width).toFixed(2),
-      height: 12,
-      rx: 3,
-      fill: value >= 0 ? "var(--neg)" : "var(--pos)",
-      opacity: 0.82
+    grid.appendChild(CK.horizontalBarCard({
+      title: "全市场大票异动",
+      subtitle: "市值 >= $10B，按 |涨跌幅| 排序",
+      rows: marketTop.map(r => ({ label: r.ticker, value: CK.num(r.change_pct), meta: fmtCap(CK.num(r.market_cap_billion)) }))
     }));
-    svg.appendChild(svgText(W - 8, y + 13, fmtPct(value), "end", value >= 0 ? "var(--neg)" : "var(--pos)", 10));
-    if (row.meta) svg.appendChild(svgText(pad.l - 8, y + 13, row.meta, "end", "var(--ink-4)", 9));
-  });
-  card.appendChild(svg);
-  return card;
-}
-
-function insertAfter(texts, node) {
-  const heading = CK.findHeading(root, texts);
-  if (heading) {
-    heading.after(node);
-    return;
   }
-  const h1 = root.querySelector("h1");
-  if (h1 && h1.nextElementSibling) h1.nextElementSibling.before(node);
-  else root.prepend(node);
-}
-
-function num(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
+  CK.insertAfter(root, ["异动扫描"], grid);
 }
 """
 
@@ -408,7 +344,7 @@ def build_job(args: Any) -> RenderJob:
         title=title,
         theme=args.theme,
         meta_text=meta_text,
-        extra_css=USMARKET_EXTRA_CSS,
+        extra_css=USMARKET_COLOR_CSS,
     )
     builder.add_decoration(PillDecoration(USMARKET_PILL_RULES))
     builder.add_chart_hook(ChartHook(name="usmarket", payload=payload, js=USMARKET_CHARTS_JS))

@@ -2,7 +2,8 @@
  * every skill's chart hook used to redefine for itself. Injected once by the
  * builder (right after the base UI script, before any ChartHook IIFE), so
  * hook JS can read everything off `window.CK` instead of carrying private
- * copies of svgEl / svgText / tooltip / card / legend / heading-finders.
+ * copies of svgEl / svgText / tooltip / card / legend / heading-finders,
+ * metric cards, or simple horizontal bars.
  *
  * Skill-specific number formatting (price precision, 亿/万亿 unit divisors)
  * stays in each skill's hook because the units genuinely differ; only the
@@ -35,6 +36,17 @@ window.CK = (function () {
     /* signed percentage, e.g. +2.04% / -3.07% */
     signedPct: (v) => (Number.isFinite(v) ? `${v > 0 ? "+" : ""}${v.toFixed(2)}%` : "—"),
   };
+
+  function num(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function signedClass(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n === 0) return "";
+    return n > 0 ? "pos" : "neg";
+  }
 
   /* dark floating tooltip; appended to `card`, returns the element */
   function tooltip(card) {
@@ -90,6 +102,98 @@ window.CK = (function () {
     return g;
   }
 
+  function metricCard(spec) {
+    const c = document.createElement("article");
+    c.className = spec.className || "metric-card";
+
+    const title = document.createElement("div");
+    title.className = "metric-title";
+    title.textContent = spec.title || "";
+
+    const value = document.createElement("div");
+    const signCls = signedClass(spec.signValue);
+    value.className = `metric-value${signCls ? ` ${signCls}` : ""}`;
+    value.textContent = spec.value == null ? "—" : String(spec.value);
+
+    const sub = document.createElement("div");
+    sub.className = "metric-sub";
+    sub.textContent = spec.subtitle || spec.sub || "";
+
+    c.append(title, value, sub);
+    return c;
+  }
+
+  function metricGrid(items) {
+    const g = document.createElement("div");
+    g.className = "metric-grid";
+    (items || []).forEach(item => g.appendChild(metricCard(item)));
+    return g;
+  }
+
+  function horizontalBarCard(spec) {
+    const rows = (spec.rows || []).slice(0, spec.maxRows || 12);
+    const c = card(spec.className || "chart-card", spec.title, spec.subtitle);
+    if (!rows.length) return c;
+
+    const W = spec.width || 520;
+    const rowH = spec.rowHeight || 24;
+    const top = spec.top == null ? 18 : spec.top;
+    const bottom = spec.bottom == null ? 20 : spec.bottom;
+    const pad = {
+      l: spec.labelWidth || 94,
+      r: spec.valueWidth || 58,
+      t: top,
+      b: bottom,
+    };
+    const H = top + rows.length * rowH + bottom;
+    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+    const maxAbs = Math.max(1, ...rows.map(row => Math.abs(num(row.value) || 0)));
+    const zeroX = pad.l + (W - pad.l - pad.r) / 2;
+    const scale = (W - pad.l - pad.r) / 2 / maxAbs;
+
+    svg.appendChild(svgEl("line", {
+      x1: zeroX,
+      x2: zeroX,
+      y1: pad.t - 8,
+      y2: H - pad.b + 4,
+      class: "grid-line",
+    }));
+
+    rows.forEach((row, i) => {
+      const y = pad.t + i * rowH;
+      const value = num(row.value) || 0;
+      const width = Math.abs(value) * scale;
+      const x = value >= 0 ? zeroX : zeroX - width;
+      const signCls = value >= 0 ? "pos" : "neg";
+
+      const label = svgText(8, y + 13, row.label || "", "start", "var(--ink-2)", 10);
+      label.setAttribute("class", "bar-label");
+      svg.appendChild(label);
+
+      svg.appendChild(svgEl("rect", {
+        x: x.toFixed(2),
+        y: (y + 3).toFixed(2),
+        width: Math.max(1, width).toFixed(2),
+        height: 12,
+        rx: 3,
+        class: `bar-fill ${signCls === "pos" ? "bar-pos" : "bar-neg"}`,
+      }));
+
+      const valueText = svgText(W - 8, y + 13, fmt.signedPct(value), "end", null, 10);
+      valueText.setAttribute("class", `bar-value ${signCls}`);
+      svg.appendChild(valueText);
+
+      if (row.meta) {
+        const meta = svgText(pad.l - 8, y + 13, row.meta, "end", "var(--ink-4)", 9);
+        meta.setAttribute("class", "bar-meta");
+        svg.appendChild(meta);
+      }
+    });
+
+    c.appendChild(svg);
+    return c;
+  }
+
   /* first heading (default h2/h3/h4) whose text contains one of `texts` */
   function findHeading(root, texts, sel) {
     const list = Array.from(root.querySelectorAll(sel || "h2, h3, h4"));
@@ -112,5 +216,34 @@ window.CK = (function () {
     return null;
   }
 
-  return { NS, svgEl, svgText, fmt, tooltip, moveTip, card, legend, grid, findHeading, findNextTable };
+  function insertAfter(root, texts, node, fallback) {
+    const heading = findHeading(root, texts);
+    if (heading) {
+      heading.after(node);
+      return;
+    }
+    const target = fallback || root.querySelector("h1");
+    if (target && target.nextElementSibling) target.nextElementSibling.before(node);
+    else root.prepend(node);
+  }
+
+  return {
+    NS,
+    svgEl,
+    svgText,
+    fmt,
+    num,
+    signedClass,
+    tooltip,
+    moveTip,
+    card,
+    legend,
+    grid,
+    metricCard,
+    metricGrid,
+    horizontalBarCard,
+    findHeading,
+    findNextTable,
+    insertAfter,
+  };
 })();

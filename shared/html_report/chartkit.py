@@ -1,7 +1,8 @@
 """Loader for the shared chart-kit JavaScript.
 
-The kit (``chartkit.js``) defines ``window.CK`` — the SVG/DOM primitives that
-chart hooks share (svgEl, svgText, tooltip, card, legend, heading finders).
+The kit (``chartkit.js``) defines ``window.CK`` — the SVG/DOM primitives and
+small generic chart components that hooks share (metric cards, horizontal bars,
+tooltips, cards, legends, heading finders).
 The builder injects it once per page, right after the base UI script and
 before any ChartHook IIFE, so hooks can drop their private copies.
 """

@@ -1,6 +1,6 @@
 # CH Skills PostgreSQL 连接契约
 
-本仓库所有需要数据库的 skill 默认使用同一套 PostgreSQL 连接入口：`shared/db_core.py`。不要在单个 skill 里重新发明连接配置、连接池或表存在性检查。
+本仓库所有需要数据库的 skill 默认使用同一套 PostgreSQL 连接入口：`shared/data/db_core.py`。不要在单个 skill 里重新发明连接配置、连接池或表存在性检查。
 
 ## 快速连接
 
@@ -9,14 +9,14 @@
 ```bash
 export ALPHA_DB_BACKEND=postgresql
 export ALPHA_PG_URL="${ALPHA_PG_URL:-postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp}"
-python3 shared/db_ping.py --alpha-schema
+python3 shared/data/db_ping.py --alpha-schema
 ```
 
 如果当前环境没有 Unix socket，改用 TCP：
 
 ```bash
 export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data"
-python3 shared/db_ping.py --alpha-schema
+python3 shared/data/db_ping.py --alpha-schema
 ```
 
 在同步后的 skill 包里验证连接：
@@ -41,7 +41,7 @@ python3 scripts/_shared/db_ping.py --alpha-schema
 
 ## 新 skill 接入方式
 
-脚本只依赖 `db_core`，不要直接依赖 `psycopg2.connect`：
+脚本只依赖 `db_core`，不要直接依赖 `psycopg2.connect`。开发态 fallback 指向仓库里的 `shared/data/`（data 能力目录），同步后则命中打平进 skill 的 `_shared/`：
 
 ```python
 import sys
@@ -49,18 +49,19 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 BUNDLED_SHARED = SCRIPT_DIR / "_shared"
-DEV_SHARED = SCRIPT_DIR.parents[2] / "shared"
+# parents[N] 视 skill 在仓库中的嵌套深度而定，最终要指向 <repo>/shared/data
+DEV_SHARED = SCRIPT_DIR.parents[2] / "shared" / "data"
 sys.path.insert(0, str(BUNDLED_SHARED if BUNDLED_SHARED.exists() else DEV_SHARED))
 
 from db_core import get_connection, table_exists
 ```
 
-若 skill 会被同步到各 Agent 目录，并且需要数据库，在 `skill-sync.yaml` 的 `shared.bundles` 中把它加入 `skills` 列表，让 `shared/` 被打包到 `scripts/_shared/`。
+若 skill 会被同步到各 Agent 目录，并且需要数据库，在 `skill-sync.yaml` 的 `shared.bundles` 中把它加入 data bundle 的 `skills` 列表，让 `shared/data/` 打平打包到 `scripts/_shared/`。dest 是扁平的——`db_core.py`、`db_ping.py` 仍落在 `_shared/` 根，所以 skill 脚本里 `from db_core import` 的写法不随子目录化改变。
 
 ## 诊断顺序
 
-1. 先跑 `python3 shared/db_ping.py --alpha-schema`，确认是连接问题、依赖问题还是 schema 问题。
+1. 先跑 `python3 shared/data/db_ping.py --alpha-schema`，确认是连接问题、依赖问题还是 schema 问题。
 2. 如果报 `psycopg2 is required`，安装 `psycopg2-binary`，或临时设置 `ALPHA_DB_BACKEND=sqlite`。
 3. 如果 socket DSN 失败，换成 `localhost:5432` TCP DSN。
-4. 如果连接成功但缺表，执行 `psql -d alpha_data -f init_alpha_data.sql` 初始化 schema。
+4. 如果连接成功但缺表，执行 `psql -d alpha_data -f shared/data/init_alpha_data.sql` 初始化 schema。
 5. 不要把 `.env`、真实口令或个人云数据库地址提交进仓库；文档和日志只能输出脱敏 DSN。

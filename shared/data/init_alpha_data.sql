@@ -1,7 +1,7 @@
 -- =========================================================================
 -- Alpha Data — PostgreSQL Schema
 -- Compatible with CH Skills (ch-news-reporter + a-stock-daily-market-sense)
--- Run: psql -U alpha_user -d alpha_data -f init_alpha_data.sql
+-- Run (from repo root): psql -U alpha_user -d alpha_data -f shared/data/init_alpha_data.sql
 -- =========================================================================
 
 -- -------------------------------------------------------------------------

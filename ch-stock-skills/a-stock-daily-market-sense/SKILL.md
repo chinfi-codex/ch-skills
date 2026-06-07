@@ -45,7 +45,7 @@ ALPHA_DB_BACKEND=postgresql
 ALPHA_PG_URL=postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp
 ```
 
-数据库连接统一走 `scripts/_shared/db_core.py`（开发仓库中为 `shared/db_core.py`）。首次进入任意 Agent 环境时先运行 `python3 scripts/_shared/db_ping.py --alpha-schema`；源仓库开发态用 `python3 ../../shared/db_ping.py --alpha-schema`。如果不能使用 Unix socket，再把 `ALPHA_PG_URL` 改为 `postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data`。
+数据库连接统一走 `scripts/_shared/db_core.py`（开发仓库中为 `shared/data/db_core.py`）。首次进入任意 Agent 环境时先运行 `python3 scripts/_shared/db_ping.py --alpha-schema`；源仓库开发态用 `python3 ../../shared/data/db_ping.py --alpha-schema`。如果不能使用 Unix socket，再把 `ALPHA_PG_URL` 改为 `postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data`。
 
 运行脚本会先更新 `reference/market_data.csv`，并同步维护派生文件 `reference/market_data.json`，再生成情绪趋势：AKShare `stock_market_activity_legu()` 默认提供上涨、涨停、下跌、跌停、平盘、活跃度、情绪值、成交额等盘面情绪字段；搜狐涨跌停历史页仅在 AKShare 不可用或字段缺失时作为 fallback；Tushare `margin` 汇总 T-1 交易日融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。市场风格代理指数使用 Baostock `query_history_k_data_plus`，默认覆盖超大盘、沪深300、中证500、中证1000、国证2000、中证红利、300成长、300价值。因此环境中还需安装 `akshare` 和 `baostock`。
 

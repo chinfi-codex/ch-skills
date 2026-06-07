@@ -23,7 +23,7 @@ except ImportError:
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _BUNDLED_SHARED = _SCRIPT_DIR / "_shared"
-_DEV_SHARED = _SCRIPT_DIR.parents[2] / "shared"
+_DEV_SHARED = _SCRIPT_DIR.parents[2] / "shared" / "data"
 sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
 from db_core import (
     BACKEND,

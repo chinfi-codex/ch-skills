@@ -22,21 +22,26 @@ targets:
 rename: {}
 
 # 仓库级共享运行时代码会被打包到指定 skill 内，保证同步/发布后的 skill 自包含。
+# 按「通用能力」分组：data（数据库连接层 + schema + 文档）、html_report（报告渲染框架）。
 # skills 可写目标 skill 名，或源仓库相对路径；dest 必须是 skill 包内部相对路径。
-# 数据库型 skill 必须加入这里，才能在各 Agent 安装目录中获得 scripts/_shared/db_core.py
-# 与 scripts/_shared/db_ping.py。
+# 数据库型 skill 必须加入 data bundle，才能在各 Agent 安装目录中获得 scripts/_shared/db_core.py
+# 与 scripts/_shared/db_ping.py（dest 扁平到 _shared/ 根，保持 skill 脚本 `from db_core import` 不变）。
 shared:
   bundles:
-    - source: shared
+    # data 能力：连接层 db_core + 自检 db_ping + 契约 POSTGRESQL.md + 建表 init_alpha_data.sql
+    - source: shared/data
       dest: scripts/_shared
       skills:
         - ch-news-reporter
         - a-stock-daily-market-sense
+    # html 能力：报告渲染框架（Markdown→HTML + 内联图表）
     - source: shared/html_report
       dest: scripts/_shared/html_report
       skills:
         - a-stock-analyzer
         - chstock-usmarket-report
+        - ch-news-reporter
+        - a-stock-daily-market-sense
 
 # 排除规则（开发/评测产物，不同步到 Agent 安装目录）
 exclude:

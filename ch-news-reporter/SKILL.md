@@ -19,7 +19,7 @@ description: 当用户要求从金十、财联社、GitHub Trending、Product Hu
 export ALPHA_DB_BACKEND=postgresql
 export ALPHA_PG_URL="${ALPHA_PG_URL:-postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp}"
 python3 scripts/_shared/db_ping.py --alpha-schema   # 同步后的 skill 包
-# 源仓库开发态用: python3 ../shared/db_ping.py --alpha-schema
+# 源仓库开发态用: python3 ../shared/data/db_ping.py --alpha-schema
 python scripts/collect_news.py --date today
 ```
 

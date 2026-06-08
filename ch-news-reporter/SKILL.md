@@ -1,6 +1,6 @@
 ---
 name: ch-news-reporter
-description: 当用户要求从金十、财联社、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、宏观、地缘冲突或伊朗动态新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出 AI 日报、每日宏观日报、财经研究简报、热门产品观察、市场信号复盘、伊朗/中东局势动态或风险资产影响分析，或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写日报”“抓取新闻库做研究”“生成伊朗动态播报”“分析霍尔木兹/油价/黄金受局势影响”等多步骤任务；不用于单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
+description: 当用户要求从金十、财联社、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、宏观、地缘冲突或伊朗动态新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、伊朗/中东局势动态（含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“生成伊朗动态播报”“分析霍尔木兹/油价/黄金受局势影响”等多步骤任务；本 skill 只产出上述三类主题日报，不用于临时/零碎的新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
 ---
 
 # CH News Reporter
@@ -42,13 +42,13 @@ DB-first 的取数/回写脚本(`collect_news.py` / `prepare_report_data.py` / `
 
 - 用户要抓取或刷新“今天”的财经与 AI 新闻库。
 - 用户要把金十、财联社、GitHub Trending、RSS 汇总成统一数据表。
-- 用户要基于本地新闻库回答研究问题，如 AI Agent、算力、宏观风险、流动性、政策、产业链变化。
-- 用户要输出研究简报、日报素材、主题观察、市场信号复盘。
+- 用户要生成 AI 日报，跟踪模型能力、Agent、开源生态、端侧运行时、AI 资本与产品发布。
 - 用户要生成每日宏观日报，跟踪金十电报中的中国/美国经济数据、利率、汇率、大宗商品和风险资产价格信号。
 - 用户要输出伊朗/中东局势动态、停火窗口跟踪、霍尔木兹航运、油气价格和风险资产影响分析。
 
 不要使用本 skill 的场景：
 
+- 做 AI 日报 / 宏观日报 / 伊朗动态三类主题之外的临时、自由主题新闻检索或研究。
 - 只总结用户粘贴的一篇文章。
 - 只查询一个公开事实，不需要多信源采集。
 - 用户要求实时交易指令、买卖点或确定性预测。
@@ -146,26 +146,9 @@ python scripts/enrich_targets.py --targets-file selected_targets.json
 python scripts/prepare_report_data.py --profile ai_daily --date today --include-enrichments --format markdown
 ```
 
-### 4. 检索临时主题证据
+### 4. 研究分析
 
-根据用户问题先构建 2-5 组关键词，再查询新闻库。
-
-```bash
-python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 50 --format markdown
-```
-
-常用参数：
-
-- `--q`：FTS 检索词；为空时按时间返回。
-- `--source-type cls|jin10|github_trending|rss|product_hunt|hacker_news`：限制来源类型。
-- `--format markdown|json|csv`：输出格式。
-- `--date today|YYYY-MM-DD`：限制日期。
-
-这个入口用于临时研究问题；固定日报优先使用 `prepare_report_data.py`。
-
-### 5. 研究分析
-
-读取通用 `references/research_methodology.md`，或按报告 profile 读取：
+按报告 profile 读取对应方法论：
 
 - `references/reports/watchboard.md`：活动状态层通用机制（所有 `state_enabled` 的 profile 共用，先读这个）。
 - `references/reports/ai_daily/methodology.md`
@@ -191,15 +174,15 @@ python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 5
 - **市场定价信号**：Brent、天然气、黄金、美元、航运保险、通胀预期等可观察反应。
 - **路径判定与子分支**：当前处于 A 续期 / B 交战 / C 僵尸化 哪条路径，子分支为何，路径切换信号是否出现；路径与子分支概率调整必须回到当日证据。
 
-### 6. 输出报告
+### 5. 输出报告
 
-读取通用 `references/report_template.md`，或按报告 profile 读取：
+按报告 profile 读取对应模板：
 
 - `references/reports/ai_daily/template.md`
 - `references/reports/macro_daily/template.md`
 - `references/reports/iran_dynamic/template.md`
 
-默认输出中文研究简报。关键证据使用：
+默认输出对应主题的中文研究报告。关键证据使用：
 
 ```text
 时间 - 标题 [来源]
@@ -220,7 +203,7 @@ python scripts/query_news.py --date today --q "AI Agent 算力 融资" --limit 5
 
 `iran_dynamic` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含路径判定（A 续期 / B 交战 / C 僵尸化）、当前子分支、战争烈度、今日边际变化、**框架演进与跟踪项结算（逐条结算上一期 open 项）**、各方行动、能源与市场反应、下一关键节点倒计时、路径子分支概率今日变动和 24-72h 观察清单。
 
-### 7. 回写活动状态（watchboard）
+### 6. 回写活动状态（watchboard）
 
 `state_enabled` 的 profile（ai_daily / macro_daily / iran_dynamic）出完报告后,必须把今天的新 watchboard 存回去,供明天 carry-forward:
 
@@ -231,7 +214,7 @@ cat today_watchboard.json | python scripts/save_report_state.py \
 
 watchboard 的 JSON 结构(regime / tracking_items / next_nodes / falsifiers / frame)与各 profile 的 frame 字段见 `references/reports/watchboard.md` 与各自 methodology。脚本做结构校验(必填字段、frame 字段齐全、概率求和、**上一期 open 项有没有被漏结算**),报错就按提示补全再存——它只查结构,不评判分析内容。`--check-only` 可只验证不写。
 
-### 8. 按需生成 HTML（展示层）
+### 7. 按需生成 HTML（展示层）
 
 当用户要 HTML、网页、可视化或截图风格的日报时，先写好并核对 `reports/<profile>_<date>.md`，再把它渲染成一份自包含单页 HTML（AlphaVault 站点风格，图表不依赖外部 CDN，本地浏览器直接打开；另有 `--theme claude` 暖色风格）。HTML 只是展示层：**不新增任何研报判断，也不删减 Markdown 正文**——共享渲染器会做文本保全校验，缺字报警告不阻断。
 

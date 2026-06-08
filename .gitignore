@@ -41,3 +41,6 @@ ch-stock-skills/a-stock-daily-market-sense/reports/evidence_*
 ch-stock-skills/a-stock-daily-market-sense/reports/report_context_*.json
 ch-stock-skills/a-stock-daily-market-sense/reports/module_context_*/
 ch-news-reporter/reports/
+# 运行时残留：watchboard 状态 / enrichment targets，运行时自动重建，不入库
+ch-news-reporter/*watchboard.json
+ch-news-reporter/selected_targets.json

@@ -68,3 +68,7 @@ exclude:
     - "*_test.py"
     - .env
     - "*.pyc"
+    - .DS_Store
+    # ch-news-reporter 运行时残留:watchboard 状态、enrichment targets,运行时自动重建,不进发布包
+    - "*watchboard.json"
+    - selected_targets.json

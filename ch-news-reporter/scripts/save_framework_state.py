@@ -164,16 +164,6 @@ def validate(
             "framework.md 的 invalidation_triggers 命中，建议补"
         )
 
-    # 盲化可审计（governance.md §4/§9）：给了零基重估就必须是对象且留证据 id。
-    zero_based = payload.get("zero_based")
-    if not _is_empty(zero_based):
-        if not isinstance(zero_based, dict):
-            errors.append("zero_based 必须是对象（含 path_distribution 与 evidence_ids）")
-        elif _is_empty(zero_based.get("evidence_ids")):
-            errors.append(
-                "zero_based 缺 evidence_ids —— 盲推必须记录喂了哪些 items id，否则无法审计是否真盲化"
-            )
-
     # challenges 台账：id/statement/status 必填，id 唯一，status 合法。
     challenges = payload.get("challenges")
     if challenges is not None:

@@ -55,16 +55,16 @@ seed(冷启动种子) → active(在役,快思考每天用) → challenged(慢�
 
 ```
 1. 触发:prepare_report_data 在 packet 里亮灯(距上次 review N 天 / 触发器命中清单)
-2. 诊断:读盲化 fact stream(不看当前 watchboard),判 regime 稳定 / 漂移 / 质变
+2. 体检:拿最新事实,逐条对照当前框架契约,判 regime 稳定 / 漂移 / 质变
 3. 提案:质变时产出新 framework.md 草案 + 状态迁移计划
 4. 确认:人审批 → 替换 framework.md、升版本、迁移 report_state、回写 framework_state
 ```
 
-**盲化纪律(第 2 步的灵魂)**:诊断必须读**去结论的 fact stream**(`items` 原始快讯,剥掉 watchboard 写的 regime / headline / 判断措辞),并且在**不看当前 watchboard** 的独立上下文里做。否则"停火"叙事的惯性会让模型看不见 regime 已经变了——慢思考最该防的就是这个锚。零基重估在这里降级为**诊断探针**:盲推出的 path 分布若和当前 watchboard 持续大幅背离,本身就是"regime 可能在变"的信号之一。
+**体检要直接看 watchboard,别回避它(第 2 步的灵魂)**:框架失配的最强信号恰恰长在 watchboard 里——`sub_branch` 等自由字段被反复硬撑(承载本该属于别的 path / regime 的事实)、台账只涨不结、某 watchlist 维度连续多日零信息。所以体检的对照清单 = 当前 `framework.md` 的契约(`invalidation_triggers`、path 定义、watchlist)+ 最新事实 + 当前 watchboard 里的这些结构信号,三者并看。**客观性靠"对照写死的框架契约 + 结构事实"来保证,不靠"假装没看过判断"**——后者既不可靠也无法自证,还会把长在 watchboard 里的失配证据挡在门外。
 
 ## 5. regime 诊断:三档结论
 
-读 fact stream + 当前 `invalidation_triggers`,判一个:
+拿最新事实 + 当前 watchboard,对照 `invalidation_triggers` 与 watchlist,判一个:
 
 - **稳定**:regime 没变,框架继续用。不改任何东西,记一笔 review 通过。
 - **漂移**:regime 在边缘晃,但还没质变(如停火更脆但尚未破裂)。**这归框架内处理**——调 watchlist、动 actor_weights、加跟踪项,全走 watchboard,不动框架版本。
@@ -119,8 +119,7 @@ seed(冷启动种子) → active(在役,快思考每天用) → challenged(慢�
   "framework_version": "iran-v1-ceasefire",
   "regime_verdict": "质变",
   "triggers_hit": ["窗口期外成规模军事行动 + 报复链 ≥3 天"],
-  "zero_based": {"path_distribution": {"...": 0}, "evidence_ids": ["..."]},
-  "divergence": [{"dim": "probabilities.B", "watchboard": 25, "zero_based": 35, "verdict": "framework_ambiguity"}],
+  "assessment": {"regime_check": "对照 invalidation_triggers 与 watchlist 的体检发现", "watchlist_changes": ["+新增…", "-退役…"], "framework_gaps": ["path/维度装不下的事项"]},
   "proposal": {"new_version": "iran-v2-wartime", "migration_plan": {"migrate": [], "retire": [], "promote": []}},
   "challenges": [{"id": "FC-001", "statement": "...", "status": "open"}],
   "status": "proposed",

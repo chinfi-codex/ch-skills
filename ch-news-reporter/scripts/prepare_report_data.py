@@ -21,10 +21,12 @@ from db_adapter import (
     ensure_connectable as db_ensure_connectable,
     get_connection,
     get_enrichments_by_items as db_get_enrichments_by_items,
+    get_latest_framework_state as db_get_latest_framework_state,
     get_latest_report_state as db_get_latest_report_state,
     query_items as db_query_items,
     table_exists,
 )
+from framework_loader import load_framework
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -596,6 +598,52 @@ def load_prior_state(
     }
 
 
+def load_framework_review(
+    con: Any, profile_name: str, date_key: str | None, framework: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """Slow-thinking trigger lamp + open challenges for the packet (deterministic).
+
+    Reports how many days since the last framework review (>3 → due), the
+    framework's invalidation_triggers (for the model to check against today's
+    facts), the last verdict, and any still-open challenges the day must answer.
+    None when the profile has no framework.md yet (un-migrated).
+    """
+    if not framework:
+        return None
+    prior = db_get_latest_framework_state(con, profile_name, before_date_key=date_key)
+    days_since: int | None = None
+    last_review: str | None = None
+    last_verdict = None
+    open_challenges: list[dict[str, Any]] = []
+    if prior:
+        last_review = str(prior.get("review_date_key"))
+        payload = json_loads(str(prior.get("payload")), {})
+        last_verdict = payload.get("regime_verdict")
+        open_challenges = [
+            ch
+            for ch in (payload.get("challenges") or [])
+            if isinstance(ch, dict) and ch.get("status") == "open"
+        ]
+        if date_key and last_review:
+            try:
+                days_since = (
+                    datetime.strptime(date_key, "%Y-%m-%d")
+                    - datetime.strptime(last_review, "%Y-%m-%d")
+                ).days
+            except ValueError:
+                days_since = None
+    due = (prior is None) or (days_since is not None and days_since > 3)
+    reason = "首次 review(无上一期)" if prior is None else f"距上次 review {days_since} 天"
+    return {
+        "due": due,
+        "reason": reason,
+        "last_review_date": last_review,
+        "last_verdict": last_verdict,
+        "invalidation_triggers": framework.get("invalidation_triggers") or [],
+        "open_challenges": open_challenges,
+    }
+
+
 def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     profile = load_profile(Path(args.config), args.profile)
     date_key = resolve_date_key(args.date)
@@ -614,6 +662,12 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         prior_state = (
             load_prior_state(con, args.profile, date_key) if state_enabled else None
         )
+        framework = load_framework(args.profile) if state_enabled else None
+        framework_review = (
+            load_framework_review(con, args.profile, date_key, framework)
+            if state_enabled
+            else None
+        )
 
     for item in items:
         item["enrichments"] = enrichments.get(str(item["id"]), [])
@@ -627,6 +681,7 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         "coverage": coverage,
         "state_enabled": state_enabled,
         "prior_state": prior_state,
+        "framework_review": framework_review,
         "base_items_count": len(base_items),
         "items_count": len(items),
         "items": items,
@@ -799,6 +854,25 @@ def emit_markdown(packet: dict[str, Any]) -> None:
                 + json.dumps(watchboard, ensure_ascii=False, indent=2, default=str)
                 + "\n"
             )
+
+        fr = packet.get("framework_review")
+        if fr:
+            print("## Framework Review (slow-thinking)\n")
+            lamp = "🔴 DUE — 该跑一次框架体检" if fr.get("due") else "🟢 not due — 框架体检未到点"
+            print(f"- Trigger: {lamp}（{fr.get('reason')}；上次结论: {fr.get('last_verdict') or 'N/A'}）")
+            triggers = fr.get("invalidation_triggers") or []
+            if triggers:
+                print("- 对照下列 invalidation_triggers 与当日事实判 regime 是否失效(命中即评估框架换代,见 framework_governance.md):")
+                for trig in triggers:
+                    print(f"  - {trig}")
+            oc = fr.get("open_challenges") or []
+            if oc:
+                print(
+                    f"- 未决框架挑战 {len(oc)} 条 — 本期 watchboard 必须在 challenge_responses 逐条回应(accepted/rejected + 理由):"
+                )
+                for ch in oc:
+                    print(f"  - {ch.get('id')}: {ch.get('statement')}")
+            print()
 
     if packet.get("macro_market_signals"):
         signals = packet["macro_market_signals"]

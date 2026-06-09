@@ -33,6 +33,7 @@ import yaml
 from db_adapter import (
     ensure_connectable as db_ensure_connectable,
     get_connection,
+    get_latest_framework_state as db_get_latest_framework_state,
     get_latest_report_state as db_get_latest_report_state,
     init_news_schema,
     table_exists,
@@ -55,6 +56,8 @@ DEFAULT_SUM_TOL = 0.2
 # A probability bucket moving by at least this much (vs the prior watchboard)
 # counts as a framework move that must be explained in `frame_change`.
 FRAME_MOVE_EPS = 0.5
+# Valid responses to a framework-challenge raised by the slow-thinking layer.
+CHALLENGE_RESPONSE = {"accepted", "rejected", "pending"}
 
 
 def _is_empty(value: Any) -> bool:
@@ -148,7 +151,10 @@ def load_prior_state(con: Any, profile_name: str, date_key: str) -> dict[str, An
 
 
 def validate(
-    payload: Any, profile: dict[str, Any], prior: dict[str, Any] | None
+    payload: Any,
+    profile: dict[str, Any],
+    prior: dict[str, Any] | None,
+    framework_challenges: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Structural validation only — never judges analytical content."""
     errors: list[str] = []
@@ -283,17 +289,27 @@ def validate(
                             f"(tolerance ±{tol:g})"
                         )
 
-    # Silent-drop guard: every prior open item must be reconciled (appear by id).
+    # Silent-drop guard: every prior open item must be reconciled (appear by id),
+    # OR be explicitly accounted for by a framework_switch (migrate/retire/promote)
+    # on a changeover day — see framework_governance.md §7.
     if prior:
+        switch = payload.get("framework_switch") if isinstance(payload, dict) else None
+        switched_ids: set[str] = set()
+        if isinstance(switch, dict):
+            for field in ("migrated", "retired", "promoted"):
+                vals = switch.get(field)
+                if isinstance(vals, list):
+                    switched_ids.update(str(v) for v in vals)
         prior_open = [
             pid for pid, it in prior_items.items() if it.get("status") == "open"
         ]
         for pid in prior_open:
-            if pid not in seen_ids:
+            if pid not in seen_ids and pid not in switched_ids:
                 errors.append(
                     f"prior open tracking_item {pid} is missing from today's "
-                    "watchboard — reconcile it (confirm/dismiss/expire) or carry it "
-                    "forward as open"
+                    "watchboard — reconcile it (confirm/dismiss/expire), carry it "
+                    "forward as open, or account for it in framework_switch on a "
+                    "changeover day"
                 )
 
         # Framework-move intent: if path or any probability bucket moved vs the
@@ -322,7 +338,88 @@ def validate(
                     "（写明 path/概率/权重为何这么挪）"
                 )
 
+    # challenge_responses：framework_state 的未决框架挑战必须被本期 watchboard 逐条
+    # 回应（accepted/rejected/pending），与 tracking_item 的 silent-drop guard 同构。
+    # 格式校验与"有无未决挑战"无关，始终对存在的 challenge_responses 跑一遍。
+    open_challenge_ids = [
+        str(ch.get("id"))
+        for ch in (framework_challenges or [])
+        if isinstance(ch, dict) and ch.get("id")
+    ]
+    raw_responses = payload.get("challenge_responses")
+    responded: set[str] = set()
+    if raw_responses is not None:
+        if not isinstance(raw_responses, list):
+            errors.append("challenge_responses must be a list")
+        else:
+            for idx, resp in enumerate(raw_responses):
+                if not isinstance(resp, dict):
+                    errors.append(f"challenge_responses[{idx}] is not an object")
+                    continue
+                cid = resp.get("challenge_id")
+                if _is_empty(cid):
+                    errors.append(f"challenge_responses[{idx}] missing challenge_id")
+                    continue
+                if str(cid) in responded:
+                    errors.append(f"challenge_responses 重复 challenge_id: {cid}")
+                    continue
+                responded.add(str(cid))
+                if resp.get("response") not in CHALLENGE_RESPONSE:
+                    errors.append(
+                        f"challenge_response {cid} 的 response={resp.get('response')!r} "
+                        f"不在 {sorted(CHALLENGE_RESPONSE)}"
+                    )
+                if _is_empty(resp.get("note")):
+                    errors.append(
+                        f"challenge_response {cid} 缺 note（采纳怎么改 / 驳回凭什么 / pending 为何观察）"
+                    )
+    # 覆盖校验：每条未决挑战必须被回应（silent-drop 同构）。
+    for cid in open_challenge_ids:
+        if cid not in responded:
+            errors.append(
+                f"未决框架挑战 {cid} 未在 challenge_responses 回应 —— 慢思考的挑战"
+                "不能被无视，必须 accepted/rejected/pending 逐条回应"
+            )
+
+    # framework_switch：换代日的迁移留痕（基础格式校验；完整迁移覆盖校验待换代时补）。
+    switch = payload.get("framework_switch")
+    if not _is_empty(switch):
+        if not isinstance(switch, dict):
+            errors.append("framework_switch must be an object")
+        else:
+            for field in ("from", "to", "rationale"):
+                if _is_empty(switch.get(field)):
+                    errors.append(
+                        f"framework_switch 缺 {field}（换代须留痕：从哪版→哪版、为什么）"
+                    )
+            for field in ("migrated", "retired", "promoted"):
+                val = switch.get(field)
+                if val is not None and not isinstance(val, list):
+                    errors.append(f"framework_switch.{field} must be a list")
+
     return errors, warnings
+
+
+def _load_open_challenges(
+    con: Any, profile_name: str, date_key: str
+) -> list[dict[str, Any]]:
+    """Open framework-challenges from the latest review strictly before date_key.
+
+    Mirrors prepare_report_data's injection so the challenges the model was shown
+    in the packet are exactly the ones it must answer here in challenge_responses.
+    """
+    row = db_get_latest_framework_state(con, profile_name, before_date_key=date_key)
+    if not row:
+        return []
+    try:
+        payload = json.loads(str(row.get("payload") or "{}"))
+    except json.JSONDecodeError:
+        return []
+    return [
+        ch
+        for ch in (payload.get("challenges") or [])
+        if isinstance(ch, dict) and ch.get("status") == "open"
+    ]
 
 
 def main() -> int:
@@ -354,6 +451,12 @@ def main() -> int:
                 "or let SQLite init the schema first."
             )
         prior = load_prior_state(con, args.profile, date_key)
+        # Open framework-challenges the day must answer — only when this profile
+        # has a framework.md (same gate as prepare's injection), so save never
+        # demands a response to a challenge the packet never showed the model.
+        framework_challenges = (
+            _load_open_challenges(con, args.profile, date_key) if framework else []
+        )
 
         # Deterministic fields the script owns (not analytical judgement).
         if isinstance(payload, dict):
@@ -361,7 +464,7 @@ def main() -> int:
             if not payload.get("carried_from") and prior:
                 payload["carried_from"] = prior.get("state_date_key")
 
-        errors, warnings = validate(payload, profile, prior)
+        errors, warnings = validate(payload, profile, prior, framework_challenges)
         report: dict[str, Any] = {
             "profile": args.profile,
             "schema_source": schema_source,

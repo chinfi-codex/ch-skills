@@ -1113,6 +1113,13 @@ def print_summary(
             name: {"message": msg, "fetched_for_date": 0, "written": 0}
             for name, msg in errors.items()
         }
+        # 显著报警：失败的源不能只藏在 stdout JSON 里，否则会发出"看起来正常其实
+        # 缺数"的报告（违背 DB-first 不静默原则）。打到 stderr 让 cron/调用方看见。
+        print(
+            f"⚠️  collect_news: {len(errors)} 个信源采集失败 —— "
+            + "; ".join(f"{name}: {msg}" for name, msg in errors.items()),
+            file=sys.stderr,
+        )
     if skipped:
         summary["_skipped_present"] = skipped
     print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -1157,7 +1164,8 @@ def main() -> int:
                 written[name] = write_items(con, items, date_key)
 
     print_summary(results, written, errors, skipped=skipped)
-    return 0
+    # 非零退出码让 cron/调用方能检测"有信源失败"，而不是看 exit 0 以为一切正常。
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":

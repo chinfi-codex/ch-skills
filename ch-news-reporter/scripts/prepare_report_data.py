@@ -842,6 +842,18 @@ def emit_markdown(packet: dict[str, Any]) -> None:
                 if isinstance(item, dict) and item.get("status") == "open"
             ]
             print(f"- State date: {prior.get('state_date_key')}")
+            try:
+                gap = (
+                    datetime.strptime(str(packet.get("date_key")), "%Y-%m-%d")
+                    - datetime.strptime(str(prior.get("state_date_key")), "%Y-%m-%d")
+                ).days
+            except (ValueError, TypeError):
+                gap = None
+            if gap and gap > 1:
+                print(
+                    f"  ⚠️ 距上一期 watchboard {gap} 天，中间 {gap - 1} 天无状态 —— "
+                    "勿把数据空洞误读为局势平静"
+                )
             print(f"- Regime: {watchboard.get('regime')}")
             print(f"- Open tracking items to reconcile today: {len(open_items)}")
             for item in open_items:

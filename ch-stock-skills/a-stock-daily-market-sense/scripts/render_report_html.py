@@ -152,6 +152,11 @@ MARKET_SENSE_PILL_RULES = [
 ]
 
 HERO_KEYWORDS = "上证|创业板|科创50|国证2000|中证红利|半导体设备与材料|电力能源"
+MARKET_SENSE_EXTRA_CSS = """
+.kline-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) { .kline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .kline-grid { grid-template-columns: 1fr; } }
+"""
 
 
 # --------------------------------------------------------------------------- #
@@ -651,7 +656,7 @@ def build_job(args) -> RenderJob:
     index_kline_data = extract_index_kline_payload(evidence, evidence_path)
     stock_kline_data = extract_stock_kline_payload(evidence, evidence_path)
 
-    builder = HtmlReportBuilder(title=title, theme=args.theme)
+    builder = HtmlReportBuilder(title=title, theme=args.theme, extra_css=MARKET_SENSE_EXTRA_CSS)
     builder.add_decoration(PillDecoration(MARKET_SENSE_PILL_RULES))
     builder.add_decoration(HeroDecoration(
         heading_prefix="一句话盘面判断",

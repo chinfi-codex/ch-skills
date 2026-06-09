@@ -381,7 +381,7 @@ def validate(
                 "不能被无视，必须 accepted/rejected/pending 逐条回应"
             )
 
-    # framework_switch：换代日的迁移留痕（基础格式校验；完整迁移覆盖校验待换代时补）。
+    # framework_switch：换代日的迁移留痕 + 完整覆盖校验（见 framework_governance.md §7）。
     switch = payload.get("framework_switch")
     if not _is_empty(switch):
         if not isinstance(switch, dict):
@@ -392,10 +392,37 @@ def validate(
                     errors.append(
                         f"framework_switch 缺 {field}（换代须留痕：从哪版→哪版、为什么）"
                     )
+            switch_ids: dict[str, set[str]] = {}
             for field in ("migrated", "retired", "promoted"):
                 val = switch.get(field)
                 if val is not None and not isinstance(val, list):
                     errors.append(f"framework_switch.{field} must be a list")
+                    switch_ids[field] = set()
+                else:
+                    switch_ids[field] = {str(v) for v in (val or [])}
+            # 完整覆盖（须有上一期）：每个提及的 id 必须是上一期 open 项；retire 的
+            # 不应保留在新台账，migrate/promote 的须按原 id 在新台账落实。
+            if prior:
+                prior_open_ids = {
+                    pid for pid, it in prior_items.items() if it.get("status") == "open"
+                }
+                for sid in switch_ids["migrated"] | switch_ids["retired"] | switch_ids["promoted"]:
+                    if sid not in prior_open_ids:
+                        errors.append(
+                            f"framework_switch 提及的 {sid} 不是上一期 open 跟踪项"
+                        )
+                for rid in switch_ids["retired"]:
+                    if rid in seen_ids:
+                        errors.append(
+                            f"framework_switch.retired 的 {rid} 仍出现在 tracking_items"
+                            "（退役项不应保留）"
+                        )
+                for mid in switch_ids["migrated"] | switch_ids["promoted"]:
+                    if mid not in seen_ids:
+                        errors.append(
+                            f"framework_switch 的 {mid} 标为迁移/升级但未在新 "
+                            "tracking_items 出现（须保留原 id 落实迁移）"
+                        )
 
     return errors, warnings
 

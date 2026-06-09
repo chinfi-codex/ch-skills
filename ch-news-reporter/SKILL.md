@@ -150,16 +150,17 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 
 按报告 profile 读取对应方法论：
 
-- `references/reports/watchboard.md`：活动状态层通用机制（所有 `state_enabled` 的 profile 共用，先读这个）。
-- `references/reports/ai_daily/methodology.md`
+- `references/reports/<profile>/framework.md`：**当前分析框架（唯一可信源）**——frame schema、path/维度定义、watchlist、输出板块、写作要点、冷启动种子。**每个 `state_enabled` profile 先读这个。** 改框架/换 regime 也只改这个文件。
+- `references/reports/watchboard.md`：活动状态层通用机制（所有 `state_enabled` 的 profile 共用）。
+- `references/reports/ai_daily/methodology.md`（方法论常量：数据分层 / 输出边界 / 反例）
 - `references/reports/ai_daily/enrichment.md`：AI 日报 enrichment 子方法，包含 target 选择契约和解读方法。
-- `references/reports/macro_daily/methodology.md`
-- `references/reports/iran_dynamic/methodology.md`（自包含，已并入原 frame 的稳定内容，含冷启动种子）
+- `references/reports/macro_daily/methodology.md`（方法论常量：月度数据规则 / 结论约束）
+- `references/reports/iran_dynamic/methodology.md`（方法论常量：边际判定 / 证据处理 / 可信度 / 降级策略）
 - `references/reports/iran_dynamic/economic_impact_framework.md`
 
-根据问题选择财经、AI、产品观察、开源生态或地缘风险框架。`state_enabled` 的 profile 先读 `watchboard.md` 理解活动状态机制，再读各自 `methodology.md`，并逐条结算 packet 里 `prior_state` 的 open 跟踪项。`iran_dynamic` 的路径（A/B/C）、权重、信号清单现在都在 watchboard 里每日滚动，**不再有 frame 相位文件**；按 methodology"路径判定逻辑"用近 7-14 天证据现判，再按需要加载经济影响框架。
+根据问题选择财经、AI、产品观察、开源生态或地缘风险框架。`state_enabled` 的 profile **先读各自 `framework.md`（当前分析框架，唯一可信源）** 与 `watchboard.md`（活动状态机制），再读 `methodology.md`（方法论常量），并逐条结算 packet 里 `prior_state` 的 open 跟踪项。`iran_dynamic` 的路径（A/B/C）、权重、信号清单都在 `framework.md` 定义、在 watchboard 里每日滚动，**没有独立 frame 相位文件**；按 `framework.md` 的"path 判定逻辑"用近 7-14 天证据现判，再按需要加载经济影响框架。框架本身的换代（regime 质变时改 `framework.md`）是慢思考层 + 人在环的动作，不在日报流程里。
 
-`macro_daily` 必须优先读取 `references/reports/macro_daily/methodology.md`，并以 `macro_data_events` 判断当天是否有中国 CPI/PPI/社融/PMI 月度数据更新；没有事件时不引用旧月度数据做“今日更新”。
+`macro_daily` 必须优先读取 `references/reports/macro_daily/framework.md`（当前框架）与 `methodology.md`（方法论常量），并以 `macro_data_events` 判断当天是否有中国 CPI/PPI/社融/PMI 月度数据更新；没有事件时不引用旧月度数据做“今日更新”。
 
 分析时必须区分：
 
@@ -212,7 +213,7 @@ cat today_watchboard.json | python scripts/save_report_state.py \
     --profile iran_dynamic --date today --state-file -
 ```
 
-watchboard 的 JSON 结构(regime / tracking_items / next_nodes / falsifiers / frame)与各 profile 的 frame 字段见 `references/reports/watchboard.md` 与各自 methodology。脚本做结构校验(必填字段、frame 字段齐全、概率求和、**上一期 open 项有没有被漏结算**),报错就按提示补全再存——它只查结构,不评判分析内容。`--check-only` 可只验证不写。
+watchboard 的 JSON 结构(regime / tracking_items / next_nodes / falsifiers / frame)通用骨架见 `references/reports/watchboard.md`;各 profile 的 frame schema 见各自 `framework.md` 机器区(脚本即从这里读取校验规则,读不到才回退 `report_profiles.yaml`)。脚本做结构校验(必填字段、frame 字段齐全、概率求和、**上一期 open 项有没有被漏结算**),报错就按提示补全再存——它只查结构,不评判分析内容。`--check-only` 可只验证不写。
 
 ### 7. 按需生成 HTML（展示层）
 

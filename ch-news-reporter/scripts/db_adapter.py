@@ -152,6 +152,22 @@ def _init_sqlite_schema(conn: Any) -> None:
         "CREATE INDEX IF NOT EXISTS idx_report_state_profile_date "
         "ON report_state(profile, date_key)"
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS framework_state (
+            profile TEXT NOT NULL,
+            review_date_key TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (profile, review_date_key)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_framework_state_profile_date "
+        "ON framework_state(profile, review_date_key)"
+    )
 
 
 def _init_postgresql_schema(conn: Any) -> None:
@@ -547,6 +563,122 @@ def get_report_state(
         cur.execute(adapt_sql(sql), params)
     row = cur.fetchone()
     return _normalize_report_state_row(row) if row else None
+
+
+def get_report_state_series(
+    conn: Any,
+    profile: str,
+    start_date_key: Optional[str] = None,
+    end_date_key: Optional[str] = None,
+    limit: int = 400,
+) -> list[dict[str, Any]]:
+    """Return report_state rows for *profile* across a date range, oldest→newest.
+
+    The single-row getters above serve carry-forward (load day N-1 for day N).
+    The trace / visualisation layer and the slow-thinking state view instead need
+    the whole trajectory, so this returns the ordered series with inclusive,
+    both-optional date bounds.
+    """
+    if not table_exists(conn, "report_state"):
+        return []
+    ph = placeholder()
+    conditions = [f"profile = {ph}"]
+    params: list[Any] = [profile]
+    if start_date_key:
+        conditions.append(f"date_key >= {ph}")
+        params.append(start_date_key)
+    if end_date_key:
+        conditions.append(f"date_key <= {ph}")
+        params.append(end_date_key)
+    where_clause = " AND ".join(conditions)
+    sql = (
+        f"SELECT * FROM report_state WHERE {where_clause} "
+        f"ORDER BY date_key ASC LIMIT {ph}"
+    )
+    params.append(limit)
+    if BACKEND == Backend.SQLITE:
+        cur = conn.execute(sql, params)
+    else:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(adapt_sql(sql), params)
+    return [_normalize_report_state_row(row) for row in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Framework state / governance CRUD (slow-thinking layer)
+# ---------------------------------------------------------------------------
+# Sparse table: one row per framework review (not daily).  Mirrors report_state
+# so the read/write path is identical; framework.md stays the single source of
+# truth for the *current* framework, this is the governance audit log.
+_FRAMEWORK_STATE_STR_FIELDS = ("review_date_key", "created_at", "updated_at")
+
+
+def _normalize_framework_state_row(row: Any) -> dict[str, Any]:
+    """Coerce review_date_key/created_at/updated_at to str (mirror report_state)."""
+    data = row_to_dict(row)
+    for field in _FRAMEWORK_STATE_STR_FIELDS:
+        value = data.get(field)
+        if value is not None and not isinstance(value, str):
+            data[field] = str(value)
+    return data
+
+
+def write_framework_state(
+    conn: Any,
+    profile: str,
+    review_date_key: str,
+    payload_json: str,
+    now_iso: str,
+) -> None:
+    """Upsert one framework-governance review for (profile, review_date_key).
+
+    payload_json must already be a JSON string.  created_at is preserved on
+    update; only payload and updated_at change.
+    """
+    ph = placeholder()
+    sql = f"""
+        INSERT INTO framework_state (profile, review_date_key, payload, created_at, updated_at)
+        VALUES ({ph},{ph},{ph},{ph},{ph})
+        ON CONFLICT(profile, review_date_key) DO UPDATE SET
+            payload=excluded.payload,
+            updated_at=excluded.updated_at
+    """
+    params = (profile, review_date_key, payload_json, now_iso, now_iso)
+    if BACKEND == Backend.SQLITE:
+        conn.execute(sql, params)
+    else:
+        conn.cursor().execute(adapt_sql(sql), params)
+
+
+def get_latest_framework_state(
+    conn: Any, profile: str, before_date_key: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    """Return the most recent framework_state row for *profile*.
+
+    With *before_date_key*, only strictly-earlier reviews count (so a review on
+    day N loads the prior review, not its own).  None when table/row absent.
+    """
+    if not table_exists(conn, "framework_state"):
+        return None
+    ph = placeholder()
+    conditions = [f"profile = {ph}"]
+    params: list[Any] = [profile]
+    if before_date_key:
+        conditions.append(f"review_date_key < {ph}")
+        params.append(before_date_key)
+    where_clause = " AND ".join(conditions)
+    sql = (
+        f"SELECT * FROM framework_state WHERE {where_clause} "
+        f"ORDER BY review_date_key DESC LIMIT {ph}"
+    )
+    params.append(1)
+    if BACKEND == Backend.SQLITE:
+        cur = conn.execute(sql, params)
+    else:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(adapt_sql(sql), params)
+    row = cur.fetchone()
+    return _normalize_framework_state_row(row) if row else None
 
 
 # ---------------------------------------------------------------------------

@@ -10,15 +10,7 @@ profiles:
       - jin10
       - cls
     state_enabled: true
-    # watchboard frame 字段:AI 日报每天滚动跟踪的快变量
-    state_schema:
-      # 两条 agent 论点轴(取代扁平 hot_themes):每条都带"走到哪一档",因为"演进方向"
-      # 和"渗透率"本质是沿阶段移动,扁平 list 记不住档位。校验器只查顶层字段存在/非空/
-      # 是 list;下列对象内部结构是给模型看的填写约定,不强校验。
-      agent_eng_vectors: {type: list, required: true}   # Q1 工程演进矢量,至少 1 条。每项: {vector, stage: 实验|收敛中|事实标准, open_pain, side: lab|oss|both}
-      product_forms: {type: list}     # Q2 新产品形态与渗透。每项: {form, segment: 开发者|专业用户|大众|企业, penetration_stage: 萌芽|早期采用|主流化, usage_signal(真实使用≠star/votes)}
-      watch_companies: {type: list}   # 预期近期有动作的前沿实验室/厂商
-      watch_projects: {type: list}    # 待验证热度→趋势的开源项目
+    # frame schema 已迁入 references/reports/ai_daily/framework.md 机器区(唯一可信源)
     # 重点公司归类字典:Agent 读取 evidence packet 后用这个字典把当日新闻按公司归类
     # 到"模型发布 / 产品更新 / API & 定价 / 融资 & 政策"四类动作矩阵中。
     # 字典只供 Agent 阅读,不由 prepare_report_data.py 预先归类。
@@ -61,17 +53,8 @@ profiles:
     timezone: Asia/Shanghai
     sources:
       - jin10
-      - cls
-      - rss
     state_enabled: true
-    # watchboard frame 字段:伊朗动态每天滚动跟踪的快变量(取代旧 frame_*.md 离散相位)
-    state_schema:
-      path: {required: true, enum: [A, B, C]}   # A 续期 / B 交战 / C 僵尸化
-      sub_branch: {}                            # A-1/B-2/C-1 ...
-      intensity: {}                             # 烈度级别
-      actor_weights: {required: true, type: list}   # 行为体权重排序
-      signal_watchlist: {type: list}            # 当日核心信号清单(可增删)
-      probabilities: {type: map, sum: 100}      # A/B/C 概率,和=100
+    # frame schema 已迁入 references/reports/iran_dynamic/framework.md 机器区(唯一可信源)
 
   macro_daily:
     title: 每日宏观日报
@@ -81,12 +64,7 @@ profiles:
       - cls
       - rss
     state_enabled: true
-    # watchboard frame 字段:宏观日报每天滚动跟踪的快变量
-    state_schema:
-      swing_factor: {required: true}    # 当下流动性主驱动维度(利率/汇率/政策预期/风险偏好)
-      liquidity_bias: {enum: [收紧, 边际收紧, 中性, 边际宽松, 宽松]}
-      position_regime: {type: map}      # {纳指: 高/中/低, 上证: 高/中/低}
-      imminent_data_events: {type: list}    # 临近的 CPI/PPI/社融/PMI/非农/FOMC 带日期
+    # frame schema 已迁入 references/reports/macro_daily/framework.md 机器区(唯一可信源)
     macro_data: true
     macro_keywords:
       - 宏观

@@ -38,6 +38,7 @@ from db_adapter import (
     table_exists,
     write_report_state as db_write_report_state,
 )
+from framework_loader import load_framework
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -328,6 +329,14 @@ def main() -> int:
     args = parse_args()
     date_key = resolve_date_key(args.date)
     profile = load_profile(Path(args.config), args.profile)
+    # Framework single source of truth: a profile's framework.md machine region
+    # supersedes the legacy report_profiles.yaml state_schema; fall back to the
+    # YAML when no framework.md exists yet so un-migrated profiles keep working.
+    framework = load_framework(args.profile)
+    schema_source = "report_profiles.yaml:state_schema"
+    if framework and framework.get("frame_schema"):
+        profile = {**profile, "state_schema": framework["frame_schema"]}
+        schema_source = f"framework.md:{framework.get('framework_version')}"
     payload = read_state_payload(args.state_file)
 
     db_path = str(Path(args.db))
@@ -355,6 +364,7 @@ def main() -> int:
         errors, warnings = validate(payload, profile, prior)
         report: dict[str, Any] = {
             "profile": args.profile,
+            "schema_source": schema_source,
             "date_key": date_key,
             "carried_from": payload.get("carried_from") if isinstance(payload, dict) else None,
             "warnings": warnings,

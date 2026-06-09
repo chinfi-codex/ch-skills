@@ -213,3 +213,26 @@ CREATE TABLE IF NOT EXISTS report_state (
 
 CREATE INDEX IF NOT EXISTS idx_report_state_profile_date
     ON report_state(profile, date_key);
+
+
+-- -------------------------------------------------------------------------
+-- 12. Framework state / governance (ch-news-reporter, slow-thinking layer)
+-- -------------------------------------------------------------------------
+-- One framework-governance review per (profile, review_date_key).  Sparse —
+-- written only when the slow-thinking layer runs a review, not daily.  Holds
+-- the regime verdict, zero-based divergence, framework-change proposal and the
+-- framework-challenge ledger.  Written by scripts/save_framework_state.py.  The
+-- per-profile framework.md stays the single source of truth for the *current*
+-- framework definition; this table is the governance audit log.  payload is
+-- TEXT (JSON string) on both backends, mirroring report_state.
+CREATE TABLE IF NOT EXISTS framework_state (
+    profile         TEXT NOT NULL,
+    review_date_key DATE NOT NULL,
+    payload         TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (profile, review_date_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_framework_state_profile_date
+    ON framework_state(profile, review_date_key);

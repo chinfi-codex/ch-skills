@@ -109,6 +109,24 @@ python scripts/save_report_state.py --profile <profile> --date today \
 
 只出 warning(不阻塞)的:跟踪项缺 `expires_after`、profile 的 `state_enabled` 为假仍强存。
 
-## 7. 什么时候该改方法论而不是改 watchboard
+## 7. 什么时候该改框架（framework.md）而不是改 watchboard
 
-watchboard 承接日常漂移。但如果你发现**分析结构本身**要变了——比如老往台账里塞现有变量分类装不下的事项、或者 A/B/C 这套路径分类不够用——那是方法论该升级的信号。这时**不要硬塞进 watchboard**,而应提出修改本 profile 的 `methodology.md`(有人在环的慎重动作)。watchboard 在这里的作用是预警,不是自己把分析框架改了。
+watchboard 承接**框架内**的日常漂移（path 在 A/B/C 间移动、概率微调、台账增删）。但如果你发现**框架本身**要变了——老往台账里塞现有维度装不下的事项、或 A/B/C 这套路径分类对当前局势已经不够用、或 regime 发生质变（如停火转入持续战争）——那不是 watchboard 能承接的，而是**框架该换代**的信号。
+
+这时**不要硬塞进 watchboard**，应：
+
+- 把"框架装不下"的观察写成一条挑战交给慢思考层，而不是用 `sub_branch` 等自由字段硬撑（自由字段长期承载本该属于别的 path 的事实，正是框架失配的征兆）；
+- 框架级变更（改 `framework.md` 的 path 定义/维度/输出板块，乃至换整套框架版本）是**有人在环的慎重动作**，由慢思考层（见 `framework_governance.md`，建设中）诊断 + 提案、人确认后应用。
+
+watchboard 在这里的作用是**预警**（框架边缘反复撞墙就是 regime 在变的信号），不是自己把框架改了。框架的唯一可信源是各 profile 的 `framework.md`。
+
+## 8. 报告"本期变更"段的渲染约定（所有 state_enabled profile 通用）
+
+报告末尾的"本期变更（框架 × 跟踪合并）"段，是 watchboard 结构化字段的**渲染**——不是另写一遍判断：
+
+- **先填字段、再照着渲染本段**，别两头写出不一致。框架移动取自 `frame_change`，跟踪项动作取自各项 `update`（顺延）/ `resolution`（结算）。
+- 把本期相对上一期的变化**合并成一段**，框架与跟踪混编、按重要性排序，逐条 bullet。
+- **框架**（动了才写，未动写"沿用，N 项顺延"）：path / 概率 / 权重 / 各 profile 的 frame 维度怎么变——每条紧跟"为什么"（← `frame_change`）。
+- **跟踪项结算**：上一期每个 open 项必须出现（✅确认 / ❌证伪 / ⏸️顺延 / ⌛过期），不许遗漏（← `update` / `resolution`）。
+- **新开**：带稳定 id + 因为什么开（≥ 某证据共振 / 某节点临近）。
+- 各 profile 的具体字段名映射见各自 `framework.md` 的"各板块写作要点"。

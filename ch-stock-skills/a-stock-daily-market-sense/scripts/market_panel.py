@@ -211,15 +211,10 @@ def split_fields(fields: str) -> List[str]:
 
 
 def cache_file(endpoint: str, trade_date: str) -> Path:
-    if BACKEND == Backend.POSTGRESQL:
-        return CACHE_ROOT / endpoint / f"{trade_date}.parquet"
     return CACHE_ROOT / endpoint / f"{trade_date}.parquet"
 
 
 def cache_dataset_file(endpoint: str, key: str) -> Path:
-    if BACKEND == Backend.POSTGRESQL:
-        safe_key = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(key))
-        return CACHE_ROOT / endpoint / f"{safe_key}.parquet"
     safe_key = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(key))
     return CACHE_ROOT / endpoint / f"{safe_key}.parquet"
 
@@ -497,31 +492,6 @@ def fetch_by_trade_dates(
     return merged.drop_duplicates()
 
 
-def read_local_csv_cache(endpoint: str, key: str, required_fields: str) -> Optional[pd.DataFrame]:
-    path = CACHE_ROOT / endpoint / f"{key}.csv"
-    if not path.exists():
-        return None
-    try:
-        df = pd.read_csv(path, dtype={"ts_code": str, "trade_date": str})
-    except Exception as exc:
-        print(f"[warn] failed to read cache {path}: {exc}", file=sys.stderr)
-        return None
-    missing = [field for field in split_fields(required_fields) if field not in df.columns]
-    if missing:
-        print(f"[warn] ignoring stale cache {path}, missing fields: {','.join(missing)}", file=sys.stderr)
-        return None
-    return df
-
-
-def write_local_csv_cache(endpoint: str, key: str, df: pd.DataFrame) -> None:
-    path = CACHE_ROOT / endpoint / f"{key}.csv"
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(path, index=False, encoding="utf-8")
-    except Exception as exc:
-        print(f"[warn] failed to write cache {path}: {exc}", file=sys.stderr)
-
-
 def fetch_adj_factors_by_trade_dates(
     pro,
     trade_dates: Iterable[str],
@@ -530,56 +500,24 @@ def fetch_adj_factors_by_trade_dates(
     refresh_cache: bool = False,
     max_workers: int = 1,
 ) -> pd.DataFrame:
-    """Fetch Tushare adj_factor rows for qfq adjustment.
-
-    Stored in a local CSV cache even when the main backend is PostgreSQL because
-    the shared DB schema does not currently include an adj_factor table.
-    """
-    frames: List[pd.DataFrame] = []
-    dates = list(trade_dates)
-    misses: List[str] = []
-    for trade_date in dates:
-        cached = None if refresh_cache or not cache_enabled else read_local_csv_cache("adj_factor", trade_date, DEFAULT_ADJ_FACTOR_FIELDS)
-        if cached is not None and not cached.empty:
-            frames.append(cached)
-            continue
-        misses.append(trade_date)
-
-    def fetch_one(trade_date: str) -> pd.DataFrame:
-        try:
-            df = pro.adj_factor(trade_date=trade_date, fields=DEFAULT_ADJ_FACTOR_FIELDS)
-        except Exception as exc:
-            print(f"[warn] adj_factor failed for {trade_date}: {exc}", file=sys.stderr)
-            return pd.DataFrame()
-        if df is not None and not df.empty:
-            df["trade_date"] = df["trade_date"].astype(str)
-            df["ts_code"] = df["ts_code"].astype(str)
-            df["adj_factor"] = pd.to_numeric(df["adj_factor"], errors="coerce")
-            if cache_enabled:
-                write_local_csv_cache("adj_factor", trade_date, df)
-            result = df
-        else:
-            result = pd.DataFrame()
-        if sleep_seconds > 0:
-            time.sleep(sleep_seconds)
-        return result
-
-    worker_count = max(1, int(max_workers or 1))
-    if worker_count == 1 or len(misses) <= 1:
-        for trade_date in misses:
-            df = fetch_one(trade_date)
-            if df is not None and not df.empty:
-                frames.append(df)
-    else:
-        with ThreadPoolExecutor(max_workers=min(worker_count, len(misses))) as executor:
-            future_map = {executor.submit(fetch_one, trade_date): trade_date for trade_date in misses}
-            for future in as_completed(future_map):
-                df = future.result()
-                if df is not None and not df.empty:
-                    frames.append(df)
-    if not frames:
+    """Fetch Tushare adj_factor rows for qfq adjustment, PG-cached like daily."""
+    df = fetch_by_trade_dates(
+        pro,
+        "adj_factor",
+        trade_dates,
+        DEFAULT_ADJ_FACTOR_FIELDS,
+        sleep_seconds,
+        cache_enabled=cache_enabled,
+        refresh_cache=refresh_cache,
+        max_workers=max_workers,
+    )
+    if df is None or df.empty:
         return pd.DataFrame(columns=split_fields(DEFAULT_ADJ_FACTOR_FIELDS))
-    return pd.concat(frames, ignore_index=True).drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
+    df = df.copy()
+    df["trade_date"] = df["trade_date"].astype(str)
+    df["ts_code"] = df["ts_code"].astype(str)
+    df["adj_factor"] = pd.to_numeric(df["adj_factor"], errors="coerce")
+    return df.drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
 
 
 def apply_qfq_adjustment(daily: pd.DataFrame, adj_factors: pd.DataFrame, target_date: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:

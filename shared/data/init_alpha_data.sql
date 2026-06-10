@@ -120,6 +120,20 @@ CREATE TABLE IF NOT EXISTS stock_index_daily (
 
 
 -- -------------------------------------------------------------------------
+-- 5b. Adjustment factors (Tushare pro.adj_factor, for qfq price series)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS stock_adj_factor (
+    ts_code     TEXT NOT NULL,
+    trade_date  DATE NOT NULL,
+    adj_factor  DECIMAL(16,6),
+    PRIMARY KEY (ts_code, trade_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_adj_factor_date
+    ON stock_adj_factor(trade_date);
+
+
+-- -------------------------------------------------------------------------
 -- 6. Trade calendar (Tushare pro.trade_cal)
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS stock_trade_cal (

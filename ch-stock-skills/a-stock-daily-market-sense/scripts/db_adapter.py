@@ -47,6 +47,7 @@ ENDPOINT_TABLE = {
     "trade_cal": "stock_trade_cal",
     "stock_basic": "stock_basic",
     "margin": "stock_margin",
+    "adj_factor": "stock_adj_factor",
 }
 
 

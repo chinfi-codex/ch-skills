@@ -121,6 +121,90 @@ def test_compute_market_activity_from_daily():
 
 
 # --------------------------------------------------------------------------- #
+# Board-rule limit detection
+# --------------------------------------------------------------------------- #
+def test_classify_limit_pct():
+    assert mp.classify_limit_pct("600519.SH", "贵州茅台", "主板") == 0.10
+    assert mp.classify_limit_pct("000001.SZ", "平安银行", "主板") == 0.10
+    assert mp.classify_limit_pct("600000.SH", "ST某某", "主板") == 0.05
+    assert mp.classify_limit_pct("600000.SH", "*ST某某", "主板") == 0.05
+    assert mp.classify_limit_pct("300750.SZ", "宁德时代", "创业板") == 0.20
+    # 创业板 ST 仍是 20%
+    assert mp.classify_limit_pct("300001.SZ", "ST创业", "创业板") == 0.20
+    assert mp.classify_limit_pct("688981.SH", "中芯国际", "科创板") == 0.20
+    assert mp.classify_limit_pct("832000.BJ", "某北交", "北交所") == 0.30
+    # market 缺失时按代码前缀兜底
+    assert mp.classify_limit_pct("688001.SH", "某科创", "") == 0.20
+    assert mp.classify_limit_pct("430047.BJ", "某北交", "") == 0.30
+
+
+def test_exchange_round_to_fen_half_up():
+    # 10.05 × 1.1 = 11.055 → 交易所四舍五入到 11.06（二进制浮点下 11.055
+    # 实为 11.0549…，朴素 round 会得到 11.05）
+    series = pd.Series([10.05 * 1.1, 9.87 * 1.1, 10.0 * 1.1])
+    out = mp.exchange_round_to_fen(series).tolist()
+    assert out == [11.06, 10.86, 11.00]
+
+
+def test_compute_limit_flags_board_rules():
+    daily = pd.DataFrame({
+        # 主板涨停 / 创业板 +15% 非涨停 / 创业板 20% 涨停 / 主板 ST +5% 涨停
+        # / 北交所 +15% 非涨停 / 北交所 30% 涨停 / 主板 ST -5% 跌停 / 主板四舍五入边界
+        "ts_code": ["600000.SH", "300100.SZ", "300200.SZ", "600100.SH",
+                     "830000.BJ", "830001.BJ", "600200.SH", "600300.SH"],
+        "trade_date": ["20260609"] * 8,
+        "pre_close": [10.00, 10.00, 10.00, 10.00, 10.00, 10.00, 10.00, 10.05],
+        "close": [11.00, 11.50, 12.00, 10.50, 11.50, 13.00, 9.50, 11.06],
+    })
+    basic = pd.DataFrame({
+        "ts_code": ["600000.SH", "300100.SZ", "300200.SZ", "600100.SH",
+                     "830000.BJ", "830001.BJ", "600200.SH", "600300.SH"],
+        "name": ["甲", "乙", "丙", "ST丁", "戊", "己", "ST庚", "辛"],
+        "market": ["主板", "创业板", "创业板", "主板", "北交所", "北交所", "主板", "主板"],
+    })
+    flags = mp.compute_limit_flags(daily, basic).set_index("ts_code")
+    assert flags.loc["600000.SH", "is_limit_up"] == True  # noqa: E712
+    assert flags.loc["300100.SZ", "is_limit_up"] == False  # 创业板 +15% 不是涨停  # noqa: E712
+    assert flags.loc["300200.SZ", "is_limit_up"] == True   # 创业板 20cm 涨停  # noqa: E712
+    assert flags.loc["600100.SH", "is_limit_up"] == True   # ST +5% 涨停（旧近似漏掉）  # noqa: E712
+    assert flags.loc["830000.BJ", "is_limit_up"] == False  # 北交所 +15% 不是涨停  # noqa: E712
+    assert flags.loc["830001.BJ", "is_limit_up"] == True   # 北交所 30cm 涨停  # noqa: E712
+    assert flags.loc["600200.SH", "is_limit_down"] == True  # ST -5% 跌停  # noqa: E712
+    assert flags.loc["600300.SH", "is_limit_up"] == True   # 四舍五入边界 11.06  # noqa: E712
+
+
+def test_compute_limit_flags_st_dual_band():
+    # 退市整理期 ST 执行 10% 档：*ST阳光 20260609 实测 5.82 → 6.40 封板
+    daily = pd.DataFrame({
+        "ts_code": ["000608.SZ", "605081.SH", "600400.SH"],
+        "trade_date": ["20260609"] * 3,
+        "pre_close": [5.82, 0.40, 10.00],
+        "close": [6.40, 0.44, 10.50],
+    })
+    basic = pd.DataFrame({
+        "ts_code": ["000608.SZ", "605081.SH", "600400.SH"],
+        "name": ["*ST阳光", "*ST太和", "ST正常"],
+        "market": ["主板", "主板", "主板"],
+    })
+    flags = mp.compute_limit_flags(daily, basic).set_index("ts_code")
+    assert flags.loc["000608.SZ", "is_limit_up"] == True  # 10% 备档命中  # noqa: E712
+    assert flags.loc["605081.SH", "is_limit_up"] == True  # noqa: E712
+    assert flags.loc["600400.SH", "is_limit_up"] == True  # 5% 主档命中  # noqa: E712
+
+
+def test_count_limit_hits_prefers_flags():
+    frame = pd.DataFrame({
+        "pct_chg": [10.0, 15.0, 5.0],
+        "is_limit_up": [True, False, True],
+        "is_limit_down": [False, False, False],
+    })
+    up, down, detection = mp.count_limit_hits(frame)
+    assert (up, down, detection) == (2, 0, "board_rule_price_match")
+    up, down, detection = mp.count_limit_hits(frame[["pct_chg"]])
+    assert (up, down, detection) == (2, 0, "pct_chg_approx")
+
+
+# --------------------------------------------------------------------------- #
 # Classifiers
 # --------------------------------------------------------------------------- #
 def test_classifiers():
@@ -165,7 +249,9 @@ def test_build_money_effect_samples():
     codes = [item["ts_code"] for item in result["candidates"]]
     assert codes == ["B.SZ", "A.SZ"]
     assert summary["total_amount_100m_yuan"] == 8.0
-    assert summary["limit_up_approx_count"] == 1
+    # 合成帧没有 is_limit_up 列 → 退回 ±9.8% 近似口径
+    assert summary["limit_up_count"] == 1
+    assert summary["limit_detection"] == "pct_chg_approx"
     empty = mp.build_money_effect_samples(None, 7.0, 2.0, 10)
     assert empty["available"] is False
 

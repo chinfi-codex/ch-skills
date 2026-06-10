@@ -770,6 +770,20 @@ def merge_optional(panel: pd.DataFrame, other: pd.DataFrame, on: List[str]) -> p
     return panel.merge(other, on=on, how="left")
 
 
+def count_limit_hits(frame: pd.DataFrame) -> Tuple[int, int, str]:
+    """Count limit-up/down rows, preferring exact board-rule flags.
+
+    Frames that merged compute_limit_flags carry is_limit_up/is_limit_down;
+    without them fall back to the ±9.8% pct_chg approximation.
+    """
+    if {"is_limit_up", "is_limit_down"}.issubset(frame.columns):
+        up = int(frame["is_limit_up"].fillna(False).astype(bool).sum())
+        down = int(frame["is_limit_down"].fillna(False).astype(bool).sum())
+        return up, down, "board_rule_price_match"
+    pct = pd.to_numeric(frame["pct_chg"], errors="coerce") if "pct_chg" in frame.columns else pd.Series(dtype=float)
+    return int((pct >= 9.8).sum()), int((pct <= -9.8).sum()), "pct_chg_approx"
+
+
 def build_market_temperature(panel: pd.DataFrame, index_summary: Dict[str, Optional[float]]) -> Dict[str, Any]:
     total = int(len(panel))
     up = int((panel["pct_chg"] > 0).sum())
@@ -779,6 +793,7 @@ def build_market_temperature(panel: pd.DataFrame, index_summary: Dict[str, Optio
     up_amount = float(panel.loc[panel["pct_chg"] > 0, "amount"].sum(skipna=True))
     down_amount = float(panel.loc[panel["pct_chg"] < 0, "amount"].sum(skipna=True))
     top50_amount = float(panel.nlargest(min(50, total), "amount")["amount"].sum(skipna=True)) if total else 0.0
+    limit_up_count, limit_down_count, limit_detection = count_limit_hits(panel)
 
     return {
         "stock_count": total,
@@ -791,8 +806,9 @@ def build_market_temperature(panel: pd.DataFrame, index_summary: Dict[str, Optio
         "up_gt_5_count": int((panel["pct_chg"] >= 5).sum()),
         "down_lt_minus_3_count": int((panel["pct_chg"] <= -3).sum()),
         "down_lt_minus_5_count": int((panel["pct_chg"] <= -5).sum()),
-        "limit_up_approx_count": int((panel["pct_chg"] >= 9.8).sum()),
-        "limit_down_approx_count": int((panel["pct_chg"] <= -9.8).sum()),
+        "limit_up_count": limit_up_count,
+        "limit_down_count": limit_down_count,
+        "limit_detection": limit_detection,
         "total_amount": round(total_amount, 2),
         "total_amount_100m_yuan": round(total_amount / 100000, 2),
         "amount_unit": "thousand_yuan",
@@ -906,6 +922,93 @@ def safe_int(value: Any) -> Optional[int]:
         return None
 
 
+LIMIT_PCT_MAIN = 0.10
+LIMIT_PCT_MAIN_ST = 0.05
+LIMIT_PCT_GROWTH = 0.20
+LIMIT_PCT_BSE = 0.30
+
+
+def classify_limit_pct(ts_code: Any, name: Any, market: Any) -> float:
+    """Return the price-limit percentage for one stock by board rules.
+
+    主板 ±10%（ST/*ST ±5%）；创业板/科创板 ±20%（含 ST）；北交所 ±30%。
+    B 股按主板规则处理。新股上市初期的无涨跌幅阶段无需特判：那些交易日的
+    收盘价不会落在按本限幅计算出的涨跌停价上，自然不会被计入。
+    """
+    code = str(ts_code or "")
+    market_text = str(market or "")
+    if code.endswith(".BJ") or market_text == "北交所":
+        return LIMIT_PCT_BSE
+    if market_text in ("创业板", "科创板") or code.startswith(("300", "301", "302", "688", "689")):
+        return LIMIT_PCT_GROWTH
+    if "ST" in str(name or "").upper():
+        return LIMIT_PCT_MAIN_ST
+    return LIMIT_PCT_MAIN
+
+
+def exchange_round_to_fen(prices: pd.Series) -> pd.Series:
+    """涨跌停价按交易所口径四舍五入到分（half-up；epsilon 抵消二进制浮点误差）。"""
+    return (prices * 100 + 0.5 + 1e-7) // 1 / 100
+
+
+def compute_limit_flags(daily: pd.DataFrame, stock_basic: pd.DataFrame) -> pd.DataFrame:
+    """Exact per-(ts_code, trade_date) limit-up/down flags from raw daily bars.
+
+    交易所规则：涨/跌停价 = 前收盘 ×(1±板块限幅) 四舍五入到分，收盘价等于该价
+    即收盘封板（不含盘中触板回落）。必须用未复权的 close/pre_close——qfq 重标
+    价格后分位比对即失效，所以本函数要在 apply_qfq_adjustment 之前调用。
+    """
+    columns = ["ts_code", "trade_date", "limit_pct", "is_limit_up", "is_limit_down"]
+    if daily is None or daily.empty or not {"close", "pre_close"}.issubset(daily.columns):
+        return pd.DataFrame(columns=columns)
+
+    df = daily[["ts_code", "trade_date", "close", "pre_close"]].copy()
+    df["ts_code"] = df["ts_code"].astype(str)
+    df["trade_date"] = df["trade_date"].astype(str)
+    for column in ("close", "pre_close"):
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    name_map: Dict[str, str] = {}
+    market_map: Dict[str, str] = {}
+    if stock_basic is not None and not stock_basic.empty and "ts_code" in stock_basic.columns:
+        basics = stock_basic.copy()
+        basics["ts_code"] = basics["ts_code"].astype(str)
+        if "name" in basics.columns:
+            name_map = dict(zip(basics["ts_code"], basics["name"].fillna("")))
+        if "market" in basics.columns:
+            market_map = dict(zip(basics["ts_code"], basics["market"].fillna("")))
+
+    codes = df["ts_code"]
+    names = codes.map(name_map).fillna("").astype(str)
+    markets = codes.map(market_map).fillna("").astype(str)
+
+    # 向量化限幅映射，覆写顺序与 classify_limit_pct 的判定优先级一致：
+    # 默认主板 10% → ST 5% → 创业/科创 20%（含 ST）→ 北交所 30%。
+    limit_pct = pd.Series(LIMIT_PCT_MAIN, index=df.index)
+    limit_pct[names.str.upper().str.contains("ST", na=False)] = LIMIT_PCT_MAIN_ST
+    growth = markets.isin(["创业板", "科创板"]) | codes.str.startswith(("300", "301", "302", "688", "689"))
+    limit_pct[growth] = LIMIT_PCT_GROWTH
+    limit_pct[codes.str.endswith(".BJ") | markets.eq("北交所")] = LIMIT_PCT_BSE
+    df["limit_pct"] = limit_pct
+
+    up_price = exchange_round_to_fen(df["pre_close"] * (1 + limit_pct))
+    down_price = exchange_round_to_fen(df["pre_close"] * (1 - limit_pct))
+    valid = df["close"].notna() & df["pre_close"].notna() & (df["pre_close"] > 0)
+    df["is_limit_up"] = valid & (df["close"] - up_price).abs().lt(0.001)
+    df["is_limit_down"] = valid & (df["close"] - down_price).abs().lt(0.001)
+
+    # 主板 ST 双档判定：退市整理期等特殊阶段的 ST 股执行 10% 而非 5%
+    # （实测 20260609 的 *ST阳光/*ST太和 收盘精确封在 10% 档）。受 5% 限制
+    # 的股票价格物理上到不了 10% 档价，所以补判 10% 档不会误伤正常 ST。
+    st_main = limit_pct.eq(LIMIT_PCT_MAIN_ST)
+    if st_main.any():
+        alt_up = exchange_round_to_fen(df["pre_close"] * (1 + LIMIT_PCT_MAIN))
+        alt_down = exchange_round_to_fen(df["pre_close"] * (1 - LIMIT_PCT_MAIN))
+        df["is_limit_up"] = df["is_limit_up"] | (valid & st_main & (df["close"] - alt_up).abs().lt(0.001))
+        df["is_limit_down"] = df["is_limit_down"] | (valid & st_main & (df["close"] - alt_down).abs().lt(0.001))
+    return df[columns]
+
+
 def calc_market_sentiment(
     up: int,
     down: int,
@@ -954,12 +1057,13 @@ def calc_market_sentiment(
 
 
 def compute_market_activity_from_daily(
-    daily: pd.DataFrame, target_date: str
+    daily: pd.DataFrame, target_date: str, limit_flags: Optional[pd.DataFrame] = None
 ) -> Tuple[Dict[str, Any], List[str], Dict[str, Any]]:
     """Compute market activity from Tushare daily data (no external web scraping).
 
-    Derives up/down/flat/limit-up/limit-down counts from individual
-    stock pct_chg, then calculates sentiment via calc_market_sentiment.
+    Up/down/flat counts come from pct_chg sign; limit-up/down counts use the
+    exact board-rule flags when provided, falling back to the ±9.8% pct_chg
+    approximation only when flags are unavailable.
     """
     detail: Dict[str, Any] = {
         "source": "tushare.daily",
@@ -983,8 +1087,19 @@ def compute_market_activity_from_daily(
     up = int((day_df["pct_chg"] > 0).sum())
     down = int((day_df["pct_chg"] < 0).sum())
     flat = total - up - down
-    limit_up = int((day_df["pct_chg"] >= 9.8).sum())
-    limit_down = int((day_df["pct_chg"] <= -9.8).sum())
+    flags_day = (
+        limit_flags.loc[limit_flags["trade_date"].astype(str) == str(target_date)]
+        if limit_flags is not None and not limit_flags.empty
+        else None
+    )
+    if flags_day is not None and not flags_day.empty:
+        limit_up = int(flags_day["is_limit_up"].sum())
+        limit_down = int(flags_day["is_limit_down"].sum())
+        detail["limit_detection"] = "board_rule_price_match"
+    else:
+        limit_up = int((day_df["pct_chg"] >= 9.8).sum())
+        limit_down = int((day_df["pct_chg"] <= -9.8).sum())
+        detail["limit_detection"] = "pct_chg_approx"
     total_amount = float(day_df["amount"].sum(skipna=True))
 
     sentiment = calc_market_sentiment(up, down, flat, limit_up, limit_down)
@@ -1556,9 +1671,10 @@ def update_market_history(
     margin_net_buy_trade_date: Optional[str] = None,
     csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
     defer_write: bool = False,
+    limit_flags: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Any]:
     # Primary: compute from Tushare daily data (no external web scraping)
-    row, columns, detail = compute_market_activity_from_daily(daily, target_date)
+    row, columns, detail = compute_market_activity_from_daily(daily, target_date, limit_flags=limit_flags)
 
     # Fallback: sohu zdt history when Tushare daily is unavailable
     needs_sohu = not detail.get("available")
@@ -1623,6 +1739,7 @@ def update_market_history(
         "sohu_available": bool(sohu_detail.get("available")),
         "sohu_fallback_reason": sohu_detail.get("fallback_reason"),
         "sohu_filled_fields": sohu_filled_fields,
+        "limit_detection": detail.get("limit_detection"),
         "fallback_reason": fallback_reason,
         "market_turnover_rate": market_turnover_rate,
         "market_turnover_rate_unit": "percent",
@@ -1687,6 +1804,7 @@ def update_market_history_window(
     margin_net_buy_reason: Optional[str] = None,
     margin_net_buy_trade_date: Optional[str] = None,
     csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
+    limit_flags: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Any]:
     """Update target day and fill recent market-history gaps visible in charts."""
     ordered_trade_dates = sorted({str(date) for date in trade_dates if str(date) <= target_date})
@@ -1733,6 +1851,7 @@ def update_market_history_window(
             margin_net_buy_trade_date=row_margin_trade_date,
             csv_path=csv_path,
             defer_write=True,
+            limit_flags=limit_flags,
         )
         pending_row = result.pop("_market_history_row", None)
         pending_columns = result.pop("_market_history_columns", None)
@@ -1814,8 +1933,8 @@ def build_temperature_comparison(current: Dict[str, Any], previous: Dict[str, An
         "up_gt_5_count",
         "down_lt_minus_3_count",
         "down_lt_minus_5_count",
-        "limit_up_approx_count",
-        "limit_down_approx_count",
+        "limit_up_count",
+        "limit_down_count",
         "total_amount_100m_yuan",
         "up_amount_ratio",
         "down_amount_ratio",
@@ -3248,8 +3367,8 @@ def build_money_effect_samples(
         "median_ret_5d": _safe_median("ret_5d"),
         "median_rel_ret_5d": _safe_median("rel_ret_5d"),
         "median_amount_ratio_20d": _safe_median("amount_ratio_20d"),
-        "limit_up_approx_count": int((qualified["pct_chg"] >= 9.8).sum()),
     }
+    summary["limit_up_count"], _, summary["limit_detection"] = count_limit_hits(qualified)
 
     return {
         "available": True,
@@ -3353,8 +3472,8 @@ def build_volume_decline_samples(
         "max_amount_ratio_20d": round(float(qualified["amount_ratio_20d"].max()), 2),
         "median_ret_5d": _safe_median("ret_5d"),
         "median_drawdown_120_high": _safe_median("drawdown_120_high"),
-        "limit_down_approx_count": int((qualified["pct_chg"] <= -9.8).sum()),
     }
+    _, summary["limit_down_count"], summary["limit_detection"] = count_limit_hits(qualified)
 
     # Inject decline_intensity into the candidate dict so downstream rendering can use it.
     base_records = clean_candidates(qualified, sample_limit)
@@ -4359,6 +4478,8 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         "index_daily": [] if index_daily is not None and not index_daily.empty else [target_date],
     }
 
+    # 板制涨跌停判定必须在 qfq 之前用未复权价格做分位比对。
+    limit_flags = compute_limit_flags(daily, stock_basic)
     daily, price_adjustment = apply_qfq_adjustment(daily, adj_factors, target_date)
     timer.mark("qfq_adjustment")
 
@@ -4373,6 +4494,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         margin_net_buy=margin_net_buy,
         margin_net_buy_reason=margin_net_buy_reason,
         margin_net_buy_trade_date=margin_trade_date,
+        limit_flags=limit_flags,
     )
     timer.mark("market_history_update")
 
@@ -4405,6 +4527,10 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
     )
 
     panel = merge_optional(panel, basic, ["ts_code", "trade_date"])
+    limit_flag_columns = limit_flags[["ts_code", "trade_date", "is_limit_up", "is_limit_down"]] if not limit_flags.empty else pd.DataFrame()
+    panel = merge_optional(panel, limit_flag_columns, ["ts_code", "trade_date"])
+    if not previous_panel.empty:
+        previous_panel = merge_optional(previous_panel, limit_flag_columns, ["ts_code", "trade_date"])
 
     if not stock_basic.empty:
         panel = panel.merge(stock_basic, on="ts_code", how="left")
@@ -4446,6 +4572,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
     )
     candidate_panel = merge_optional(candidate_panel, basic, ["ts_code", "trade_date"])
     if not candidate_panel.empty:
+        candidate_panel = merge_optional(candidate_panel, limit_flag_columns, ["ts_code", "trade_date"])
         candidate_panel, _ = add_index_features(candidate_panel, index_daily)
     timer.mark("candidate_features")
 
@@ -4564,7 +4691,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "脚本有意不做主题归纳。",
             "不要把市场、行业或概念标签作为预设分组规则；主题应由模型基于证据和业务事实归纳。",
             "Tushare daily 的 amount 单位为千元；total_amount_100m_yuan 已换算为亿元。",
-            "limit_up_approx_count 和 limit_down_approx_count 是基于日涨跌幅阈值的近似统计。官方 limit_list_d 默认跳过以避免限流，需要时使用 --with-limit。",
+            "limit_up_count / limit_down_count 默认按板制规则精确判定：未复权前收盘 ×(1±板块限幅) 四舍五入到分后与收盘价比对（主板10%、ST 5%、创业/科创20%、北交所30%），limit_detection=board_rule_price_match；flags 不可用时退回 ±9.8% 近似（pct_chg_approx）。判定口径为收盘封板，不含盘中触板回落；官方 limit_list_d 仍可用 --with-limit 拉取对照。",
             "market_trend 只作为模块 1 证据：上证指数、创业板指数、科创50、Baostock 风格代理指数，以及 references/market_data.csv 的情绪趋势。",
             "amount_concentration 只衡量成交额集中度，不分配主题或行业。",
             "个股价格序列统一使用前复权口径：Tushare daily OHLC * adj_factor / 目标日前最新 adj_factor；成交额和成交量仍为原始口径。",

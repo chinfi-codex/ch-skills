@@ -48,7 +48,7 @@ ALPHA_PG_URL=postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp
 
 数据库连接统一走 `scripts/_shared/db_core.py`（开发仓库中为 `shared/data/db_core.py`）。首次进入任意 Agent 环境时先运行 `python3 scripts/_shared/db_ping.py --alpha-schema`；源仓库开发态用 `python3 ../../shared/data/db_ping.py --alpha-schema`。如果不能使用 Unix socket，再把 `ALPHA_PG_URL` 改为 `postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data`。
 
-运行脚本会先更新 `references/market_data.csv`，并同步维护派生文件 `references/market_data.json`，再生成情绪趋势：盘面情绪计数默认由 Tushare `daily` 直接计算；搜狐涨跌停历史页仅在主路径不可用时作为 fallback；Tushare `margin` 汇总 T-1 交易日融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。市场风格代理指数使用 Baostock `query_history_k_data_plus`，默认覆盖超大盘、沪深300、中证500、中证1000、国证2000、中证红利、300成长、300价值；历史数据缓存在 PG 的 `stock_index_daily` 表（以 bs_code 为 ts_code），每次运行只向 Baostock 增量取缺口，Baostock 不可用时直接用缓存窗口出摘要。个股日线、复权因子（`stock_adj_factor`）、daily_basic、交易日历同样全部缓存在 PG。因此环境中还需安装 `baostock`（`akshare` 为历史遗留可选依赖）。
+运行脚本会先更新 `references/market_data.csv`，并同步维护派生文件 `references/market_data.json`，再生成情绪趋势：盘面情绪计数默认由 Tushare `daily` 直接计算，其中涨跌停数按**板制规则精确判定**——未复权前收盘 ×(1±板块限幅) 四舍五入到分后与收盘价比对（主板 10%、主板 ST 5%、创业/科创 20%、北交所 30%），口径为收盘封板、不含盘中炸板，`limit_detection` 字段标注判定方式；搜狐涨跌停历史页仅在主路径不可用时作为 fallback；Tushare `margin` 汇总 T-1 交易日融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。市场风格代理指数使用 Baostock `query_history_k_data_plus`，默认覆盖超大盘、沪深300、中证500、中证1000、国证2000、中证红利、300成长、300价值；历史数据缓存在 PG 的 `stock_index_daily` 表（以 bs_code 为 ts_code），每次运行只向 Baostock 增量取缺口，Baostock 不可用时直接用缓存窗口出摘要。个股日线、复权因子（`stock_adj_factor`）、daily_basic、交易日历同样全部缓存在 PG。因此环境中还需安装 `baostock`（`akshare` 为历史遗留可选依赖）。
 
 基础命令（在 skill 根目录下执行）：
 

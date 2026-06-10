@@ -286,23 +286,30 @@ def _split_fields(fields: str) -> list[str]:
     return [f.strip() for f in fields.split(",") if f.strip()]
 
 
-def _normalize_db_date(value: Any) -> Any:
-    if value is None:
-        return value
-    try:
-        if pd.isna(value):
-            return value
-    except (TypeError, ValueError):
-        pass
-    raw = str(value).strip()
-    if not raw:
-        return raw
-    if len(raw) == 8 and raw.isdigit():
-        return raw
-    parsed = pd.to_datetime(raw, errors="coerce")
-    if pd.isna(parsed):
-        return raw
-    return parsed.strftime("%Y%m%d")
+def _normalize_date_series(series: "pd.Series") -> "pd.Series":
+    """Vectorised date normalisation to YYYYMMDD strings.
+
+    Semantics per value: None/NaN/"" unchanged, 8-digit strings pass through,
+    parseable dates become YYYYMMDD, unparseable strings stay as-is.
+    """
+    stripped = series.astype("string").str.strip()
+    filled = stripped.notna() & stripped.ne("")
+    eight_digit = filled & stripped.str.len().eq(8) & stripped.str.isdigit()
+    needs_parse = filled & ~eight_digit
+
+    result = series.astype(object).copy()
+    if eight_digit.any():
+        result[eight_digit] = stripped[eight_digit].astype(object)
+    if needs_parse.any():
+        parsed = pd.to_datetime(stripped[needs_parse], errors="coerce")
+        retry = parsed.isna()
+        if retry.any():
+            # Mixed-format stragglers are parsed per element only when the
+            # uniform vectorised pass fails for them.
+            parsed[retry] = pd.to_datetime(stripped[needs_parse][retry], errors="coerce", format="mixed")
+        formatted = parsed.dt.strftime("%Y%m%d")
+        result[needs_parse] = formatted.where(parsed.notna(), stripped[needs_parse]).astype(object)
+    return result
 
 
 def _normalize_date_columns(df: "pd.DataFrame") -> "pd.DataFrame":
@@ -310,5 +317,5 @@ def _normalize_date_columns(df: "pd.DataFrame") -> "pd.DataFrame":
         return df
     out = df.copy()
     for column in DATE_COLUMNS.intersection(out.columns):
-        out[column] = out[column].apply(_normalize_db_date)
+        out[column] = _normalize_date_series(out[column])
     return out

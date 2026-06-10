@@ -136,6 +136,23 @@ JRJ_LIMIT_UP_URL = "https://gateway.jrj.com/quot-dc/zdt/v1/record"
 SOHU_LIMIT_HISTORY_CACHE: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
 
+class StageTimer:
+    """Sequential stage timer for build_panel observability."""
+
+    def __init__(self) -> None:
+        self.timings: Dict[str, float] = {}
+        self._start = time.perf_counter()
+        self._last = self._start
+
+    def mark(self, name: str) -> None:
+        now = time.perf_counter()
+        self.timings[name] = round(now - self._last, 3)
+        self._last = now
+
+    def total(self) -> float:
+        return round(time.perf_counter() - self._start, 3)
+
+
 def get_tushare_token() -> str:
     """Read TUSHARE_TOKEN from the environment or cwd/.env."""
     token = os.environ.get("TUSHARE_TOKEN", "").strip()
@@ -411,15 +428,37 @@ def fetch_by_trade_dates(
 ) -> pd.DataFrame:
     frames: List[pd.DataFrame] = []
     api = getattr(pro, endpoint)
-    dates = list(trade_dates)
+    dates = [str(date) for date in trade_dates]
     misses: List[str] = []
-    for trade_date in dates:
-        if cache_enabled and not refresh_cache:
-            cached = read_cached_frame(endpoint, trade_date, fields)
-            if cached is not None:
+    if cache_enabled and not refresh_cache and BACKEND == Backend.POSTGRESQL and dates:
+        # One range query instead of one SELECT per trade date.
+        cached_dates: Set[str] = set()
+        try:
+            cached = read_dataset(
+                endpoint,
+                "",
+                fields,
+                date_column="trade_date",
+                start_date=min(dates),
+                end_date=max(dates),
+            )
+        except Exception as exc:
+            print(f"[warn] {endpoint} range read failed: {exc}", file=sys.stderr)
+            cached = None
+        if cached is not None and not cached.empty:
+            cached = cached.loc[cached["trade_date"].astype(str).isin(set(dates))]
+            if not cached.empty:
                 frames.append(cached)
-                continue
-        misses.append(trade_date)
+                cached_dates = set(cached["trade_date"].astype(str).unique())
+        misses = [trade_date for trade_date in dates if trade_date not in cached_dates]
+    else:
+        for trade_date in dates:
+            if cache_enabled and not refresh_cache:
+                cached = read_cached_frame(endpoint, trade_date, fields)
+                if cached is not None:
+                    frames.append(cached)
+                    continue
+            misses.append(trade_date)
 
     def fetch_one(trade_date: str) -> pd.DataFrame:
         try:
@@ -452,7 +491,10 @@ def fetch_by_trade_dates(
                     frames.append(df)
     if not frames:
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True).drop_duplicates()
+    merged = pd.concat(frames, ignore_index=True)
+    if {"ts_code", "trade_date"}.issubset(merged.columns):
+        return merged.drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
+    return merged.drop_duplicates()
 
 
 def read_local_csv_cache(endpoint: str, key: str, required_fields: str) -> Optional[pd.DataFrame]:
@@ -4191,6 +4233,7 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
+    timer = StageTimer()
     pro = get_pro()
     asof = normalize_date(args.asof)
     cache_enabled = not bool(args.no_cache)
@@ -4206,6 +4249,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
     )
     previous_trade_date = trade_dates[-2] if len(trade_dates) >= 2 else None
     margin_trade_date = previous_trade_date or target_date
+    timer.mark("trade_calendar")
 
     with ThreadPoolExecutor(max_workers=min(fetch_workers, 5)) as executor:
         daily_future = executor.submit(
@@ -4268,10 +4312,25 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         stock_basic = stock_basic_future.result()
         index_daily = index_daily_future.result()
         margin_net_buy, margin_net_buy_reason = margin_future.result()
+    timer.mark("fetch_parallel")
 
     if daily.empty:
         raise RuntimeError("daily returned no data for the requested window.")
+
+    requested_dates = set(trade_dates)
+    loaded_daily_dates = set(daily["trade_date"].astype(str).unique())
+    loaded_adj_dates = (
+        set(adj_factors["trade_date"].astype(str).unique()) if adj_factors is not None and not adj_factors.empty else set()
+    )
+    fetch_gaps = {
+        "daily": sorted(requested_dates - loaded_daily_dates),
+        "adj_factor": sorted(requested_dates - loaded_adj_dates),
+        "daily_basic": [] if basic is not None and not basic.empty else [target_date],
+        "index_daily": [] if index_daily is not None and not index_daily.empty else [target_date],
+    }
+
     daily, price_adjustment = apply_qfq_adjustment(daily, adj_factors, target_date)
+    timer.mark("qfq_adjustment")
 
     market_history_update = update_market_history_window(
         target_date,
@@ -4285,6 +4344,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         margin_net_buy_reason=margin_net_buy_reason,
         margin_net_buy_trade_date=margin_trade_date,
     )
+    timer.mark("market_history_update")
     market_trend = build_market_trend(
         pro,
         target_date,
@@ -4294,8 +4354,10 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         cache_enabled,
         args.refresh_cache,
     )
+    timer.mark("market_trend")
 
     screening_features = add_screening_features(daily)
+    timer.mark("screening_features")
     panel = screening_features.loc[screening_features["trade_date"] == target_date].copy()
     if panel.empty:
         raise RuntimeError(f"No daily rows for resolved trade date {target_date}.")
@@ -4348,6 +4410,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
     candidate_panel = merge_optional(candidate_panel, basic, ["ts_code", "trade_date"])
     if not candidate_panel.empty:
         candidate_panel, _ = add_index_features(candidate_panel, index_daily)
+    timer.mark("candidate_features")
 
     limit_df = pd.DataFrame()
     previous_limit_df = pd.DataFrame()
@@ -4388,6 +4451,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         capacity_amount_threshold_100m_yuan=args.capacity_amount_threshold,
         capacity_pct_chg_threshold=args.capacity_pct_threshold,
     )
+    timer.mark("modules")
     stock_kline_records = build_stock_kline_records(
         daily=daily,
         stock_basic=stock_basic,
@@ -4395,6 +4459,8 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         target_date=target_date,
         kline_days=args.index_kline_days,
     )
+    timer.mark("stock_klines")
+    timer.timings["total"] = timer.total()
     return {
         "metadata": {
             "asof_input": asof,
@@ -4420,6 +4486,8 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "cached_endpoints": ["daily", "daily_basic", "margin", "stock_basic", "trade_cal", "index_daily", "adj_factor"] if cache_enabled else [],
             "fetch_workers": fetch_workers,
             "future_data_allowed": bool(args.allow_future),
+            "stage_timings_seconds": timer.timings,
+            "fetch_gaps": fetch_gaps,
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         },
         "market_temperature": market_temperature,

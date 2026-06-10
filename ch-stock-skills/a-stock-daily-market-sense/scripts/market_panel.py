@@ -73,7 +73,7 @@ DEFAULT_STOCK_FIELDS = "ts_code,name,market,list_date"
 DEFAULT_INDEX_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 CACHE_ROOT = SKILL_ROOT / "data" / "cache"
-REFERENCE_ROOT = SKILL_ROOT / "reference"
+REFERENCE_ROOT = SKILL_ROOT / "references"
 DEFAULT_MARKET_HISTORY_CSV = REFERENCE_ROOT / "market_data.csv"
 DEFAULT_MARKET_HISTORY_JSON = REFERENCE_ROOT / "market_data.json"
 MARKET_HISTORY_COLUMNS = [
@@ -1093,7 +1093,7 @@ def write_market_history_json(
     csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
     json_path: Optional[Path] = None,
 ) -> Path:
-    """Write a clean JSON derivative of reference/market_data.csv for HTML charts."""
+    """Write a clean JSON derivative of references/market_data.csv for HTML charts."""
     if json_path is None:
         json_path = market_history_json_path(csv_path)
 
@@ -2843,7 +2843,7 @@ def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
             return {
                 "available": False,
                 "source": source,
-                "reason": "reference/market_data.csv not found",
+                "reason": "references/market_data.csv not found",
             }
 
         try:
@@ -4228,13 +4228,13 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
         "meta": {
             "metadata": metadata,
             "subagent_contract": {
-                "module1_market_trend": ["module1_market_trend.json", "reference/methodology/module1_trend.md", "reference/template/section1.md", "盘面趋势"],
-                "module2_concentration": ["module2_concentration.json", "reference/methodology/module2_concentration.md", "reference/template/section2.md", "成交额集中度"],
-                "module3_money_effect": ["module3_money_effect.json", "reference/methodology/module3_money_effect.md", "reference/template/section3.md", "赚钱效应与上涨主线"],
-                "module4_decline": ["module4_decline.json", "reference/methodology/module4_decline.md", "reference/template/section4.md", "爆量下跌风险"],
-                "module5_feature_groups": ["module5_feature_groups.json", "reference/methodology/module5_feature_groups.md", "reference/template/section5.md", "特征分组分析"],
+                "module1_market_trend": ["module1_market_trend.json", "references/methodology/module1_trend.md", "references/template/section1.md", "盘面趋势"],
+                "module2_concentration": ["module2_concentration.json", "references/methodology/module2_concentration.md", "references/template/section2.md", "成交额集中度"],
+                "module3_money_effect": ["module3_money_effect.json", "references/methodology/module3_money_effect.md", "references/template/section3.md", "赚钱效应与上涨主线"],
+                "module4_decline": ["module4_decline.json", "references/methodology/module4_decline.md", "references/template/section4.md", "爆量下跌风险"],
+                "module5_feature_groups": ["module5_feature_groups.json", "references/methodology/module5_feature_groups.md", "references/template/section5.md", "特征分组分析"],
             },
-            "aggregation_inputs": ["assembled_checks.json", "reference/methodology/output_discipline.md"],
+            "aggregation_inputs": ["assembled_checks.json", "references/methodology/output_discipline.md"],
         },
         "module1_market_trend": {
             "metadata": metadata,
@@ -4565,7 +4565,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "不要把市场、行业或概念标签作为预设分组规则；主题应由模型基于证据和业务事实归纳。",
             "Tushare daily 的 amount 单位为千元；total_amount_100m_yuan 已换算为亿元。",
             "limit_up_approx_count 和 limit_down_approx_count 是基于日涨跌幅阈值的近似统计。官方 limit_list_d 默认跳过以避免限流，需要时使用 --with-limit。",
-            "market_trend 只作为模块 1 证据：上证指数、创业板指数、科创50、Baostock 风格代理指数，以及 reference/market_data.csv 的情绪趋势。",
+            "market_trend 只作为模块 1 证据：上证指数、创业板指数、科创50、Baostock 风格代理指数，以及 references/market_data.csv 的情绪趋势。",
             "amount_concentration 只衡量成交额集中度，不分配主题或行业。",
             "个股价格序列统一使用前复权口径：Tushare daily OHLC * adj_factor / 目标日前最新 adj_factor；成交额和成交量仍为原始口径。",
             "指数 K 线来自 Tushare index_daily，不涉及个股复权口径。",

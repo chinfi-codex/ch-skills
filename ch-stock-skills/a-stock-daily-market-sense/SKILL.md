@@ -1,7 +1,7 @@
 ---
-name: tushare-daily-market-sense
+name: a-stock-daily-market-sense
 description: 基于 Tushare Pro A 股 daily 日线数据和 Baostock 风格指数生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板/科创50指数趋势、市场风格判断、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、容量上涨/科创板月线突破/10:30前涨停等特征分组分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
-version: 2.0.3
+version: 2.1.0
 ---
 
 # Tushare Daily Market Sense
@@ -21,19 +21,20 @@ version: 2.0.3
 ## 工作流程
 
 1. 确定交易日：解析“今天/最近”或具体日期，默认只使用 `D` 及以前数据；只有用户明确要求后验时才允许 `--allow-future`。
-2. 生成证据包：运行 `scripts/run_daily_panel.py`。脚本会直接调用数据管线，写出完整 evidence、轻量 `report_context` 和模块级 JSON。
+2. 生成证据包：运行 `scripts/run_daily_panel.py`。脚本会直接调用数据管线，写出完整 evidence、个股 K 线展示数据（`kline_YYYYMMDD.json`）和模块级 JSON。
 3. 选择撰写模式：
    - 有 subagent 编排能力时，主 agent 将 5 个模块 JSON 分发给 5 个 subagent 并行撰写。
    - 没有 subagent 能力时，按同样模块顺序单会话执行，每次只加载当前模块的 JSON、方法论和模板段。
-4. 聚合成稿：主 agent 读取 6 段输出、`assembled_checks.json` 与 `reference/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。默认不做外部收评校验、不搜索第三方行情综述、不在报告中加入“外部校验参考”；只有用户明确要求时才补充外部来源。
-5. 按需生成 HTML：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文；若同目录存在 `evidence_YYYYMMDD_utf8.json`，HTML 会自动读取其中的上证指数、创业板指数、科创50 120 日 K 线并插入指数趋势分析附近。
+4. 聚合成稿：主 agent 读取 6 段输出、`assembled_checks.json` 与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。默认不做外部收评校验、不搜索第三方行情综述、不在报告中加入“外部校验参考”；只有用户明确要求时才补充外部来源。
+5. 按需生成 HTML：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文；若同目录存在 `evidence_YYYYMMDD_utf8.json` 与 `kline_YYYYMMDD.json`，HTML 会自动读取指数 120 日 K 线与个股 K 线并插入对应正文附近。
 6. 证据包边界：`reports/evidence_YYYYMMDD_utf8.json` 是本 skill 的 Market Evidence Pack，只属于 skill 输出目录。即使在 AlphaVault 中写入趋势复盘，也不要把该证据包复制或登记为 `RAW/crawlers/` 来源；AlphaVault 侧只写最终趋势复盘 Markdown/HTML、索引和日志。
-7. 清理临时产物：确认 `reports/report_YYYYMMDD.md` 已写入并可读后，删除同日期的临时证据与上下文文件，只保留最终报告。若已按需生成 HTML，则同时保留 `reports/report_YYYYMMDD.html`。必须清理：
-   - `reports/evidence_YYYYMMDD_utf8.json`
-   - `reports/evidence_YYYYMMDD_utf8.stderr.log`
-   - `reports/report_context_YYYYMMDD.json`
-   - `reports/module_context_YYYYMMDD/`
-   不要删除 `reports/report_YYYYMMDD.md` 和已生成的 `reports/report_YYYYMMDD.html`，不要跨日期批量清理，除非用户明确要求。
+7. 清理临时产物：确认 `reports/report_YYYYMMDD.md`（及按需生成的 HTML）已写入并可读后，运行一条确定性清理命令，不要手工逐个删文件：
+
+   ```bash
+   python3 scripts/run_daily_panel.py --cleanup YYYYMMDD
+   ```
+
+   该命令删除同日期的 evidence、kline、stderr 日志、report_context 与 module_context 目录，永远不会碰 `report_YYYYMMDD.md` / `report_YYYYMMDD.html`。不要跨日期批量清理，除非用户明确要求。
 
 ## 数据获取
 
@@ -47,31 +48,30 @@ ALPHA_PG_URL=postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp
 
 数据库连接统一走 `scripts/_shared/db_core.py`（开发仓库中为 `shared/data/db_core.py`）。首次进入任意 Agent 环境时先运行 `python3 scripts/_shared/db_ping.py --alpha-schema`；源仓库开发态用 `python3 ../../shared/data/db_ping.py --alpha-schema`。如果不能使用 Unix socket，再把 `ALPHA_PG_URL` 改为 `postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data`。
 
-运行脚本会先更新 `reference/market_data.csv`，并同步维护派生文件 `reference/market_data.json`，再生成情绪趋势：AKShare `stock_market_activity_legu()` 默认提供上涨、涨停、下跌、跌停、平盘、活跃度、情绪值、成交额等盘面情绪字段；搜狐涨跌停历史页仅在 AKShare 不可用或字段缺失时作为 fallback；Tushare `margin` 汇总 T-1 交易日融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。市场风格代理指数使用 Baostock `query_history_k_data_plus`，默认覆盖超大盘、沪深300、中证500、中证1000、国证2000、中证红利、300成长、300价值。因此环境中还需安装 `akshare` 和 `baostock`。
+运行脚本会先更新 `references/market_data.csv`，并同步维护派生文件 `references/market_data.json`，再生成情绪趋势：盘面情绪计数默认由 Tushare `daily` 直接计算；搜狐涨跌停历史页仅在主路径不可用时作为 fallback；Tushare `margin` 汇总 T-1 交易日融资净买入，Tushare `daily` 与 `daily_basic.circ_mv` 计算流通市值加权的全市场换手率。市场风格代理指数使用 Baostock `query_history_k_data_plus`，默认覆盖超大盘、沪深300、中证500、中证1000、国证2000、中证红利、300成长、300价值；历史数据缓存在 PG 的 `stock_index_daily` 表（以 bs_code 为 ts_code），每次运行只向 Baostock 增量取缺口，Baostock 不可用时直接用缓存窗口出摘要。个股日线、复权因子（`stock_adj_factor`）、daily_basic、交易日历同样全部缓存在 PG。因此环境中还需安装 `baostock`（`akshare` 为历史遗留可选依赖）。
 
-基础命令：
+基础命令（在 skill 根目录下执行）：
 
-```powershell
-cd C:\Users\chenh\OneDrive\skills\stock-skills\a-stock-daily-market-sense
-python scripts\run_daily_panel.py --asof 20260429 --lookback 120 --market-trend-days 90 --index 000300.SH
+```bash
+python3 scripts/run_daily_panel.py --asof 20260429 --lookback 120 --market-trend-days 90 --index 000300.SH
 ```
 
 主要输出：
 
-- `reports/evidence_YYYYMMDD_utf8.json`：完整证据包。
-- `reports/report_context_YYYYMMDD.json`：兼容旧流程的轻量上下文。
+- `reports/evidence_YYYYMMDD_utf8.json`：完整证据包（紧凑 JSON，metadata 含 `stage_timings_seconds` 各阶段耗时与 `fetch_gaps` 各端点缺失交易日清单；任一端点缺日非空时必须在报告中显式说明）。
+- `reports/kline_YYYYMMDD.json`：个股 K 线展示层数据，只供 HTML 渲染使用，模型撰写不读取。
 - `reports/module_context_YYYYMMDD/`：供 subagent 分工的模块级 JSON。
-- `reference/market_data.json`：`market_data.csv` 的全量派生 JSON，按交易日升序保留所有列、清洗数值并提供 `series` 给 HTML 趋势图使用。
+- `references/market_data.json`：`market_data.csv` 的全量派生 JSON，按交易日升序保留所有列、清洗数值并提供 `series` 给 HTML 趋势图使用。
 
-这些文件中，evidence、report_context 和 module_context 是研报撰写过程中的临时产物。最终报告生成并核对后，应按工作流程第 7 步删除，只保留 `reports/report_YYYYMMDD.md`、按需生成的 `reports/report_YYYYMMDD.html`，以及长期维护的 `reference/market_data.csv` / `reference/market_data.json`。
+这些文件中，evidence、kline 和 module_context 是研报撰写过程中的临时产物。最终报告生成并核对后，按工作流程第 7 步用 `--cleanup` 一键删除，只保留 `reports/report_YYYYMMDD.md`、按需生成的 `reports/report_YYYYMMDD.html`，以及长期维护的 `references/market_data.csv` / `references/market_data.json`。
 
 HTML 输出命令：
 
-```powershell
-python scripts\render_report_html.py --input reports\report_20260429.md [--theme default|claude|print]
+```bash
+python3 scripts/render_report_html.py --input reports/report_20260429.md [--theme default|claude|print]
 ```
 
-默认输出 `reports/report_20260429.html`，并将 `reference/market_data.json` 内嵌到 HTML 中。本地浏览器可直接打开，图表不依赖外部 CDN。`--theme` 默认 `default`（AlphaVault 站点 / Google Material）；`--theme claude` 为 Claude.ai 暖色风格；`--theme print` 为黑白衬线、A4 友好，适合导出 PDF 或邮件附件。样式模板由仓库通用 `shared/html_report`（同步到 `scripts/_shared/html_report/`）提供，与 `a-stock-analyzer` 共用。
+默认输出 `reports/report_20260429.html`，并将 `references/market_data.json` 内嵌到 HTML 中。本地浏览器可直接打开，图表不依赖外部 CDN。`--theme` 默认 `default`（AlphaVault 站点 / Google Material）；`--theme claude` 为 Claude.ai 暖色风格；`--theme print` 为黑白衬线、A4 友好，适合导出 PDF 或邮件附件。样式模板由仓库通用 `shared/html_report`（同步到 `scripts/_shared/html_report/`）提供，与 `a-stock-analyzer` 共用。
 
 常用参数：
 
@@ -94,16 +94,16 @@ python scripts\render_report_html.py --input reports\report_20260429.md [--theme
 
 | 模块 | JSON | 方法论 | 模板 |
 |---|---|---|---|
-| 1 盘面趋势 | `module1_market_trend.json` | `reference/methodology/module1_trend.md` | `reference/template/section1.md` |
-| 2 集中度 | `module2_concentration.json` | `reference/methodology/module2_concentration.md` | `reference/template/section2.md` |
-| 3 赚钱效应 | `module3_money_effect.json` | `reference/methodology/module3_money_effect.md` | `reference/template/section3.md` |
-| 4 爆量下跌 | `module4_decline.json` | `reference/methodology/module4_decline.md` | `reference/template/section4.md` |
-| 5 特征分组 | `module5_feature_groups.json` | `reference/methodology/module5_feature_groups.md` | `reference/template/section5.md` |
+| 1 盘面趋势 | `module1_market_trend.json` | `references/methodology/module1_trend.md` | `references/template/section1.md` |
+| 2 集中度 | `module2_concentration.json` | `references/methodology/module2_concentration.md` | `references/template/section2.md` |
+| 3 赚钱效应 | `module3_money_effect.json` | `references/methodology/module3_money_effect.md` | `references/template/section3.md` |
+| 4 爆量下跌 | `module4_decline.json` | `references/methodology/module4_decline.md` | `references/template/section4.md` |
+| 5 特征分组 | `module5_feature_groups.json` | `references/methodology/module5_feature_groups.md` | `references/template/section5.md` |
 
 聚合 agent 额外读取：
 
 - `assembled_checks.json`：M3 赚钱效应池与 M4 爆量下跌池的确定性交叉检查。
-- `reference/methodology/output_discipline.md`：最终成稿纪律。
+- `references/methodology/output_discipline.md`：最终成稿纪律。
 
 Python 不调用 Anthropic API、不调用任何 LLM、不硬编码模型名。Codex、Claude Code 或其他通用 agent 的 subagent 编排能力负责并行撰写。
 
@@ -130,8 +130,8 @@ HTML 输出只改变呈现方式：必须保留 Markdown 研报中的所有文�
 
 执行：
 
-```powershell
-python scripts\run_daily_panel.py --asof 20260429
+```bash
+python3 scripts/run_daily_panel.py --asof 20260429
 ```
 
 然后按 subagent 契约加载 `reports/module_context_20260429/` 下的模块 JSON。若没有 subagent，就顺序加载每个模块的 JSON + 方法论 + 模板段，最后聚合为完整研报。

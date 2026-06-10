@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPT_ROOT.parent
-DEFAULT_MARKET_DATA = SKILL_ROOT / "reference" / "market_data.json"
+DEFAULT_MARKET_DATA = SKILL_ROOT / "references" / "market_data.json"
 INDEX_KLINE_DISPLAY_DAYS = 120
 
 _BUNDLED_SHARED = SCRIPT_ROOT / "_shared"

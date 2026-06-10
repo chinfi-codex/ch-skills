@@ -72,3 +72,9 @@ exclude:
     # ch-news-reporter 运行时残留:watchboard 状态、enrichment targets,运行时自动重建,不进发布包
     - "*watchboard.json"
     - selected_targets.json
+  # skill 根级排除：{skill 名: [根下目录名]}，只命中该 skill 根下的目录，
+  # 不误伤嵌套同名目录（如 ch-news-reporter/references/reports 仍正常同步）。
+  # 被排除目录在 Agent 目标端也不会被镜像删除，运行时产物得以保留。
+  skill_root_dirs:
+    a-stock-daily-market-sense:
+      - reports

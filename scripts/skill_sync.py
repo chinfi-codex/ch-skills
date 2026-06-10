@@ -318,6 +318,7 @@ def _mirror_robocopy(
     exclude_dirs: list[str],
     exclude_files: list[str],
     dry_run: bool = False,
+    root_exclude_dirs: list[str] | None = None,
 ) -> None:
     """Windows: 使用 robocopy 做镜像同步（删除目标端已移除文件）。"""
     if dry_run:
@@ -338,6 +339,9 @@ def _mirror_robocopy(
     ]
     for d in exclude_dirs:
         cmd.extend(["/XD", d])
+    # 根锚定排除：用绝对路径只命中 skill 根下的同名目录，不误伤嵌套同名目录。
+    for d in root_exclude_dirs or []:
+        cmd.extend(["/XD", str(src / d)])
     for f in exclude_files:
         cmd.extend(["/XF", f])
     result = subprocess.run(cmd, check=False)
@@ -351,6 +355,7 @@ def _mirror_rsync(
     exclude_dirs: list[str],
     exclude_files: list[str],
     dry_run: bool = False,
+    root_exclude_dirs: list[str] | None = None,
 ) -> None:
     """Unix-like: 使用 rsync 做镜像同步（删除目标端已移除文件）。"""
     if dry_run:
@@ -361,6 +366,10 @@ def _mirror_rsync(
     cmd = ["rsync", "-av", "--delete"]
     for e in exclude_dirs + exclude_files:
         cmd.append(f"--exclude={e}")
+    # 根锚定排除（前导 / 表示相对传输根）；被排除的目录在目标端也不会被
+    # --delete 清掉，Agent 运行时产物得以保留。
+    for e in root_exclude_dirs or []:
+        cmd.append(f"--exclude=/{e}")
     cmd.extend([str(src) + "/", str(dst) + "/"])
     subprocess.run(cmd, check=True)
 
@@ -371,12 +380,13 @@ def mirror(
     exclude_dirs: list[str],
     exclude_files: list[str],
     dry_run: bool = False,
+    root_exclude_dirs: list[str] | None = None,
 ) -> None:
     """跨平台镜像同步（删除目标端已移除文件）。"""
     if platform.system() == "Windows":
-        _mirror_robocopy(src, dst, exclude_dirs, exclude_files, dry_run)
+        _mirror_robocopy(src, dst, exclude_dirs, exclude_files, dry_run, root_exclude_dirs)
     else:
-        _mirror_rsync(src, dst, exclude_dirs, exclude_files, dry_run)
+        _mirror_rsync(src, dst, exclude_dirs, exclude_files, dry_run, root_exclude_dirs)
 
 
 def _create_junction(src: Path, dst: Path, dry_run: bool = False) -> None:
@@ -433,6 +443,8 @@ def run_sync(config: dict, mode: str = "copy", dry_run: bool = False) -> None:
     exclude = config.get("exclude", {})
     exclude_dirs = exclude.get("dirs", [])
     exclude_files = exclude.get("files", [])
+    # skill 根级排除：{skill 名: [根下目录名]}，只命中该 skill 根下的目录。
+    skill_root_dirs = exclude.get("skill_root_dirs", {}) or {}
     shared_bundles = config.get("shared", {}).get("bundles", [])
 
     skills = discover_skills(REPO_ROOT, rename)
@@ -461,7 +473,14 @@ def run_sync(config: dict, mode: str = "copy", dry_run: bool = False) -> None:
             if mode == "link":
                 link(skill_src, skill_dst, dry_run)
             else:
-                mirror(skill_src, skill_dst, exclude_dirs, exclude_files, dry_run)
+                mirror(
+                    skill_src,
+                    skill_dst,
+                    exclude_dirs,
+                    exclude_files,
+                    dry_run,
+                    root_exclude_dirs=skill_root_dirs.get(skill_name),
+                )
             bundle_shared_assets(
                 skill_name,
                 skill_src,

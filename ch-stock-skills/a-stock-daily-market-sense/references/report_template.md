@@ -8,7 +8,7 @@
 
 **📈 1. 盘面趋势**
 
-> 数据基础：`market_trend`。本模块看上证指数、创业板指数、科创50、`reference/market_data.csv` 情绪趋势，以及 Baostock 风格代理指数；不加入融资、创业板 PE、外围资产或新闻解释。
+> 数据基础：`market_trend`。本模块看上证指数、创业板指数、科创50、`references/market_data.csv` 情绪趋势，以及 Baostock 风格代理指数；不加入融资、创业板 PE、外围资产或新闻解释。
 
 **1.1 情绪趋势**
 

@@ -21,17 +21,20 @@ try:
 except ImportError:  # pragma: no cover - reported at runtime for local envs
     pd = None
 
+# 一次性迁移工具，存放在仓库级 scripts/（不随 skill 同步/发布）。
+# 依赖 skill 内的 db_adapter 与仓库级 shared/data 的 db_core。
 SCRIPT_DIR = Path(__file__).resolve().parent
-_BUNDLED_SHARED = SCRIPT_DIR / "_shared"
-_DEV_SHARED = SCRIPT_DIR.parents[2] / "shared" / "data"
-sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
+REPO_ROOT = SCRIPT_DIR.parent
+SKILL_SCRIPTS = REPO_ROOT / "ch-stock-skills" / "a-stock-daily-market-sense" / "scripts"
+sys.path.insert(0, str(REPO_ROOT / "shared" / "data"))
+sys.path.insert(0, str(SKILL_SCRIPTS))
 
 from db_adapter import ENDPOINT_TABLE, write_dataset, write_frame
 from db_core import get_connection
 
 
-DEFAULT_CACHE = SCRIPT_DIR.parent / "data" / "cache"
-DEFAULT_REFERENCE = SCRIPT_DIR.parent / "reference"
+DEFAULT_CACHE = SKILL_SCRIPTS.parent / "data" / "cache"
+DEFAULT_REFERENCE = SKILL_SCRIPTS.parent / "references"
 MARKET_HISTORY_COLUMNS = [
     "date",
     "rise",

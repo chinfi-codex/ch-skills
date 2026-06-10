@@ -50,6 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run market_panel.py safely and write UTF-8 evidence/context files."
     )
+    parser.add_argument(
+        "--cleanup",
+        default=None,
+        metavar="YYYYMMDD",
+        help="Delete intermediate artifacts (evidence/kline/stderr/context/module_context) for the date, keep report md/html, then exit.",
+    )
     parser.add_argument("--asof", default=None, help="Analysis date, YYYYMMDD or YYYY-MM-DD. Defaults to today.")
     parser.add_argument("--offset", type=int, default=0, help="Trading-day offset from asof.")
     parser.add_argument("--allow-future", action="store_true", help="Allow positive offset for post-hoc checks.")
@@ -136,11 +142,57 @@ def write_module_contexts(evidence: dict, module_dir: Path) -> None:
         )
 
 
+def cleanup_intermediates(reports_dir: Path, date: str) -> Dict[str, Any]:
+    """Deterministically remove intermediate artifacts for one date.
+
+    Final deliverables (report_YYYYMMDD.md / .html) are never touched.
+    """
+    date = market_panel.normalize_date(date)
+    removed: List[str] = []
+    missing: List[str] = []
+    candidates = [
+        reports_dir / f"evidence_{date}_utf8.json",
+        reports_dir / f"evidence_{date}_utf8.stderr.log",
+        reports_dir / f"kline_{date}.json",
+        reports_dir / f"report_context_{date}.json",
+    ]
+    for path in candidates:
+        if path.exists():
+            path.unlink()
+            removed.append(str(path))
+        else:
+            missing.append(str(path))
+    module_dir = reports_dir / f"module_context_{date}"
+    if module_dir.is_dir():
+        for child in sorted(module_dir.glob("*.json")):
+            child.unlink()
+            removed.append(str(child))
+        module_dir.rmdir()
+        removed.append(str(module_dir))
+    else:
+        missing.append(str(module_dir))
+    return {
+        "date": date,
+        "removed": removed,
+        "not_found": missing,
+        "kept": [
+            str(reports_dir / f"report_{date}.md"),
+            str(reports_dir / f"report_{date}.html"),
+        ],
+    }
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args, extra_args = parser.parse_known_args(argv)
 
     reports_dir = Path(args.reports_dir)
+
+    if args.cleanup:
+        result = cleanup_intermediates(reports_dir, args.cleanup)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     preliminary_evidence = Path(args.evidence_out) if args.evidence_out else reports_dir / f"{default_stem(args.asof)}.json"

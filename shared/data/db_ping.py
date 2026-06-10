@@ -23,6 +23,9 @@ ALPHA_SCHEMA_TABLES = [
     "stock_margin",
     "market_history",
     "reports",
+    "theme_registry",
+    "theme_daily_state",
+    "theme_market_day",
 ]
 
 

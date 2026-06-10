@@ -663,6 +663,41 @@ def add_arguments(parser) -> None:
         default=None,
         help="Stock kline JSON path. Defaults to sibling kline_YYYYMMDD.json; falls back to evidence stock_kline_records.",
     )
+    parser.add_argument(
+        "--lifecycle-days",
+        type=int,
+        default=22,
+        help="主线生命周期区块的交易日窗口宽度。",
+    )
+    parser.add_argument(
+        "--no-lifecycle",
+        action="store_true",
+        help="不注入主线生命周期区块（默认在 theme_daily_state 有数据时自动注入）。",
+    )
+
+
+def load_lifecycle_payload(input_path: Path, days: int) -> Optional[Dict[str, Any]]:
+    """Trailing lifecycle window for the report date, or None.
+
+    The block is optional display-layer data: any failure (no date in the
+    filename, DB unreachable, empty ledger) skips it without failing the
+    render.
+    """
+    m = re.search(r"(\d{4})-?(\d{2})-?(\d{2})", input_path.name)
+    if not m:
+        return None
+    asof = "-".join(m.groups())
+    try:
+        from theme_lifecycle import build_window_payload, get_connection
+
+        with get_connection() as conn:
+            payload = build_window_payload(conn, asof, days)
+    except (Exception, SystemExit) as exc:  # noqa: BLE001
+        print(f"[theme-lifecycle] 跳过生命周期区块：{exc}", file=sys.stderr)
+        return None
+    if not payload.get("themes"):
+        return None
+    return payload
 
 
 def build_job(args) -> RenderJob:
@@ -706,6 +741,12 @@ def build_job(args) -> RenderJob:
     ))
     builder.add_chart_hook(ChartHook(name="market-trends", payload=market_data, js=MARKET_TRENDS_JS))
 
+    lifecycle_payload = None if args.no_lifecycle else load_lifecycle_payload(input_path, args.lifecycle_days)
+    if lifecycle_payload:
+        from theme_lifecycle import HOOK_NAME, LIFECYCLE_JS_BODY
+
+        builder.add_chart_hook(ChartHook(name=HOOK_NAME, payload=lifecycle_payload, js=LIFECYCLE_JS_BODY))
+
     return RenderJob(
         markdown_text=markdown_text,
         builder=builder,
@@ -719,6 +760,7 @@ def build_job(args) -> RenderJob:
             },
             "stock_kline_records": len(stock_kline_data.get("by_ts_code") or {}),
             "records_available": (market_data.get("quality") or {}).get("records_available", 0),
+            "theme_lifecycle_themes": len(lifecycle_payload["themes"]) if lifecycle_payload else 0,
         },
     )
 

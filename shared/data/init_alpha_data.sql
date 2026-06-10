@@ -250,3 +250,50 @@ CREATE TABLE IF NOT EXISTS framework_state (
 
 CREATE INDEX IF NOT EXISTS idx_framework_state_profile_date
     ON framework_state(profile, review_date_key);
+
+
+-- -------------------------------------------------------------------------
+-- 13. Theme lifecycle (a-stock-daily-market-sense)
+-- -------------------------------------------------------------------------
+-- Cross-day lifecycle tracking for 上涨主线 identified in daily market-sense
+-- reports.  theme_registry holds canonical theme entities; daily ad-hoc theme
+-- names from each report's 主线判定 table are accumulated into aliases so the
+-- same economic theme maps to one theme_id across days.  theme_daily_state is
+-- one row per (trade_date, theme_id) with the model-judged lifecycle state;
+-- state transitions are validated by theme_lifecycle.py before insert.
+-- evidence quotes the report's 催化逻辑 so every cell is traceable back to
+-- the source review.  Markdown reports remain the narrative truth source;
+-- these tables are runtime series data only.
+CREATE TABLE IF NOT EXISTS theme_registry (
+    theme_id    TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    aliases     JSONB NOT NULL DEFAULT '[]',
+    overlay     TEXT,
+    status      TEXT NOT NULL DEFAULT 'active',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS theme_daily_state (
+    trade_date      DATE NOT NULL,
+    theme_id        TEXT NOT NULL REFERENCES theme_registry(theme_id),
+    raw_theme_name  TEXT,
+    stars           SMALLINT,
+    position        TEXT,
+    crowding        TEXT,
+    state           TEXT NOT NULL,
+    state_prev      TEXT,
+    evidence        TEXT,
+    members_sample  JSONB,
+    source_report   TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (trade_date, theme_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_theme_daily_state_theme
+    ON theme_daily_state(theme_id, trade_date);
+
+CREATE TABLE IF NOT EXISTS theme_market_day (
+    trade_date    DATE PRIMARY KEY,
+    market_state  TEXT NOT NULL,
+    note          TEXT
+);

@@ -155,6 +155,7 @@ def cleanup_intermediates(reports_dir: Path, date: str) -> Dict[str, Any]:
         reports_dir / f"evidence_{date}_utf8.stderr.log",
         reports_dir / f"kline_{date}.json",
         reports_dir / f"report_context_{date}.json",
+        reports_dir / f"lifecycle_{date}.json",
     ]
     for path in candidates:
         if path.exists():

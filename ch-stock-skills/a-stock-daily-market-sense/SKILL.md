@@ -26,15 +26,16 @@ version: 2.1.0
    - 有 subagent 编排能力时，主 agent 将 5 个模块 JSON 分发给 5 个 subagent 并行撰写。
    - 没有 subagent 能力时，按同样模块顺序单会话执行，每次只加载当前模块的 JSON、方法论和模板段。
 4. 聚合成稿：主 agent 读取 6 段输出、`assembled_checks.json` 与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。默认不做外部收评校验、不搜索第三方行情综述、不在报告中加入“外部校验参考”；只有用户明确要求时才补充外部来源。
-5. 按需生成 HTML：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文；若同目录存在 `evidence_YYYYMMDD_utf8.json` 与 `kline_YYYYMMDD.json`，HTML 会自动读取指数 120 日 K 线与个股 K 线并插入对应正文附近。
-6. 证据包边界：`reports/evidence_YYYYMMDD_utf8.json` 是本 skill 的 Market Evidence Pack，只属于 skill 输出目录。即使在 AlphaVault 中写入趋势复盘，也不要把该证据包复制或登记为 `RAW/crawlers/` 来源；AlphaVault 侧只写最终趋势复盘 Markdown/HTML、索引和日志。
-7. 清理临时产物：确认 `reports/report_YYYYMMDD.md`（及按需生成的 HTML）已写入并可读后，运行一条确定性清理命令，不要手工逐个删文件：
+5. 主线生命周期落库：报告定稿后，把当日主线判定沉淀进 PG 生命周期台账。先运行 `python3 scripts/theme_lifecycle.py context --asof YYYYMMDD` 取注册表、各主线近期状态与 watchlist；模型完成别名归一（当日临时主题名 → canonical theme_id）和生命周期状态判定（低位启动/在场候选/主线确认/高位分歧/退潮/修复/再聚焦/沉寂），写出 `reports/lifecycle_YYYYMMDD.json` 后运行 `python3 scripts/theme_lifecycle.py record --input reports/lifecycle_YYYYMMDD.json` 落库。脚本只做确定性校验（枚举、状态机转移合法性、theme_id 存在性），判断留给模型；输入格式、状态机与判定基准见 `references/theme_lifecycle.md`。
+6. 按需生成 HTML：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文；若同目录存在 `evidence_YYYYMMDD_utf8.json` 与 `kline_YYYYMMDD.json`，HTML 会自动读取指数 120 日 K 线与个股 K 线并插入对应正文附近。若 `theme_daily_state` 已有该日数据，HTML 还会在主线判定小节下方自动注入主线生命周期泳道图区块（近 22 个交易日，红 = 强势在场、绿 = 退潮、闪电 = 低位启动；`--lifecycle-days` 调窗口、`--no-lifecycle` 关闭）；区块只展示台账已落库数据，不新增判断。
+7. 证据包边界：`reports/evidence_YYYYMMDD_utf8.json` 是本 skill 的 Market Evidence Pack，只属于 skill 输出目录。即使在 AlphaVault 中写入趋势复盘，也不要把该证据包复制或登记为 `RAW/crawlers/` 来源；AlphaVault 侧只写最终趋势复盘 Markdown/HTML、索引和日志。生命周期台账同理：它是 skill 域运行时数据，归 PG 管，不进 AlphaVault 状态文件体系。
+8. 清理临时产物：确认 `reports/report_YYYYMMDD.md`（及按需生成的 HTML）已写入并可读后，运行一条确定性清理命令，不要手工逐个删文件：
 
    ```bash
    python3 scripts/run_daily_panel.py --cleanup YYYYMMDD
    ```
 
-   该命令删除同日期的 evidence、kline、stderr 日志、report_context 与 module_context 目录，永远不会碰 `report_YYYYMMDD.md` / `report_YYYYMMDD.html`。不要跨日期批量清理，除非用户明确要求。
+   该命令删除同日期的 evidence、kline、stderr 日志、lifecycle 输入、report_context 与 module_context 目录，永远不会碰 `report_YYYYMMDD.md` / `report_YYYYMMDD.html`（生命周期数据已持久化在 PG，不受清理影响）。不要跨日期批量清理，除非用户明确要求。
 
 ## 数据获取
 

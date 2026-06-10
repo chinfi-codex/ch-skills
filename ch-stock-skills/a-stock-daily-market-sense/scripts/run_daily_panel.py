@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--with-limit", action="store_true", help="Fetch official limit_list_d stats.")
     parser.add_argument("--reports-dir", default=str(DEFAULT_REPORTS_DIR), help="Directory for generated files.")
     parser.add_argument("--evidence-out", default=None, help="Full evidence JSON output path.")
-    parser.add_argument("--context-out", default=None, help="Compact report_context JSON output path.")
+    parser.add_argument("--context-out", default=None, help="Legacy compact report_context JSON path; written only when set.")
     parser.add_argument("--module-context-dir", default=None, help="Directory for module-level subagent JSON files.")
     parser.add_argument("--no-module-context", action="store_true", help="Skip module-level subagent JSON files.")
     parser.add_argument("--stderr-out", default=None, help="Stderr log output path.")
@@ -158,20 +158,32 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     resolved_date = evidence.get("metadata", {}).get("resolved_trade_date") or market_panel.normalize_date(args.asof)
     evidence_path = Path(args.evidence_out) if args.evidence_out else reports_dir / f"evidence_{resolved_date}_utf8.json"
-    context_path = Path(args.context_out) if args.context_out else reports_dir / f"report_context_{resolved_date}.json"
     if args.stderr_out is None:
         stderr_path = sibling_stderr_path(evidence_path)
         stderr_path.write_text(stderr_buffer.getvalue(), encoding="utf-8")
 
-    evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
-    report_context = market_panel.build_report_context(
-        evidence,
-        money_limit=args.money_context_limit,
-        decline_limit=args.decline_context_limit,
-        feature_limit=args.feature_context_limit,
-        amount_limit=args.amount_context_limit,
-    )
-    context_path.write_text(json.dumps(report_context, ensure_ascii=False, indent=2), encoding="utf-8")
+    # stock_kline_records is display-layer data for the HTML renderer only
+    # (historically ~half the evidence size); it ships as a sibling file so
+    # the evidence pack the model reads stays lean.
+    kline_payload = evidence.pop("stock_kline_records", None)
+    kline_path = reports_dir / f"kline_{resolved_date}.json"
+    if kline_payload is not None:
+        kline_path.write_text(json.dumps(kline_payload, ensure_ascii=False), encoding="utf-8")
+
+    evidence_path.write_text(json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
+
+    context_path = None
+    if args.context_out:
+        # Legacy compact context, emitted only on explicit request.
+        report_context = market_panel.build_report_context(
+            evidence,
+            money_limit=args.money_context_limit,
+            decline_limit=args.decline_context_limit,
+            feature_limit=args.feature_context_limit,
+            amount_limit=args.amount_context_limit,
+        )
+        context_path = Path(args.context_out)
+        context_path.write_text(json.dumps(report_context, ensure_ascii=False, indent=2), encoding="utf-8")
 
     module_context_dir = None
     if not args.no_module_context:
@@ -181,7 +193,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(json.dumps({
         "resolved_trade_date": resolved_date,
         "evidence": str(evidence_path),
-        "report_context": str(context_path),
+        "stock_klines": str(kline_path) if kline_payload is not None else None,
+        "report_context": str(context_path) if context_path else None,
         "module_context_dir": str(module_context_dir) if module_context_dir else None,
         "stderr": str(stderr_path),
     }, ensure_ascii=False, indent=2))

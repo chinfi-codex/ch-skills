@@ -1905,8 +1905,14 @@ def build_amount_concentration(
     df["trade_date"] = df["trade_date"].astype(str)
     df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
 
+    # Slice the full-market frame once per date instead of re-scanning all
+    # rows for every ratio request (current + previous + 10-day series).
+    frames_by_date: Dict[str, pd.DataFrame] = {str(date): frame for date, frame in df.groupby("trade_date")}
+
     def ratios_for_date(trade_date: str) -> Dict[str, Any]:
-        day = df.loc[df["trade_date"] == trade_date].copy()
+        day = frames_by_date.get(str(trade_date))
+        if day is None:
+            day = df.iloc[0:0]
         total = float(day["amount"].sum(skipna=True))
         result: Dict[str, Any] = {
             "trade_date": trade_date,
@@ -1921,7 +1927,7 @@ def build_amount_concentration(
     previous = ratios_for_date(previous_trade_date) if previous_trade_date else {}
 
     series: List[Dict[str, Any]] = []
-    for trade_date in sorted(df["trade_date"].unique())[-10:]:
+    for trade_date in sorted(frames_by_date.keys())[-10:]:
         series.append(ratios_for_date(trade_date))
 
     top50_values = [item.get("top50_amount_ratio") for item in series if item.get("top50_amount_ratio") is not None]
@@ -1937,7 +1943,7 @@ def build_amount_concentration(
         "series_length": len(series),
     }
 
-    day = df.loc[df["trade_date"] == target_date].copy()
+    day = frames_by_date.get(str(target_date), df.iloc[0:0]).copy()
     top_amount_samples = day.nlargest(min(20, len(day)), "amount")
     if sample_features is not None and not sample_features.empty and not top_amount_samples.empty:
         enriched = sample_features.copy()
@@ -2268,12 +2274,18 @@ def standardize_baostock_index_daily(raw: pd.DataFrame, config: Dict[str, Any]) 
 
 
 def build_market_style_index_summary(
-    raw: pd.DataFrame,
+    standardized: pd.DataFrame,
     config: Dict[str, Any],
     target_date: str,
     trend_days: int,
 ) -> Dict[str, Any]:
-    if raw is None or raw.empty:
+    """Summarize one style index from a standardized daily frame.
+
+    `standardized` must already carry trade_date (YYYYMMDD strings) plus the
+    usual OHLC/pct_chg/amount columns — either fresh from
+    standardize_baostock_index_daily or read back from the PG cache.
+    """
+    if standardized is None or standardized.empty:
         return {
             "available": False,
             "name": config.get("name"),
@@ -2283,16 +2295,11 @@ def build_market_style_index_summary(
             "reason": "baostock returned no data",
         }
 
-    df = standardize_baostock_index_daily(raw, config)
-    if df.empty:
-        return {
-            "available": False,
-            "name": config.get("name"),
-            "bs_code": config.get("bs_code"),
-            "style_role": config.get("style_role"),
-            "proxy_note": config.get("proxy_note"),
-            "reason": "baostock data could not be standardized",
-        }
+    df = standardized.copy()
+    df["trade_date"] = df["trade_date"].astype(str)
+    for column in ["open", "high", "low", "close", "pre_close", "pct_chg", "vol", "amount"]:
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
 
     df = df.loc[df["trade_date"] <= target_date].dropna(subset=["close"]).sort_values("trade_date")
     if df.empty:
@@ -2460,67 +2467,138 @@ def build_unavailable_market_style(reason: str, target_date: str, start_date: st
     }
 
 
-def fetch_market_style_from_baostock(target_date: str, start_date: str, trend_days: int) -> Dict[str, Any]:
-    if bs is None:
-        return build_unavailable_market_style("missing optional dependency: baostock", target_date, start_date)
+STYLE_INDEX_CACHE_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,amount"
 
+
+def read_cached_style_index(bs_code: str) -> Optional[pd.DataFrame]:
     try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            login = bs.login()
+        return read_cached_dataset("index_daily", bs_code, STYLE_INDEX_CACHE_FIELDS)
     except Exception as exc:
-        return build_unavailable_market_style(f"baostock login failed: {exc}", target_date, start_date)
+        print(f"[warn] style index cache read failed for {bs_code}: {exc}", file=sys.stderr)
+        return None
 
-    if getattr(login, "error_code", "0") != "0":
-        reason = getattr(login, "error_msg", "") or getattr(login, "error_code", "unknown")
-        return build_unavailable_market_style(f"baostock login failed: {reason}", target_date, start_date)
+
+def query_baostock_style_range(config: Dict[str, Any], fetch_start: str, fetch_end: str) -> pd.DataFrame:
+    """Fetch and standardize one Baostock style-index range. Caller owns the session."""
+    result = bs.query_history_k_data_plus(
+        config["bs_code"],
+        BAOSTOCK_STYLE_FIELDS,
+        start_date=ymd_to_dash_date(fetch_start),
+        end_date=ymd_to_dash_date(fetch_end),
+        frequency="d",
+        adjustflag="3",
+    )
+    if getattr(result, "error_code", "0") != "0":
+        reason = getattr(result, "error_msg", "") or getattr(result, "error_code", "unknown")
+        raise RuntimeError(f"baostock query failed: {reason}")
+    return standardize_baostock_index_daily(baostock_result_to_frame(result), config)
+
+
+def fetch_market_style_from_baostock(
+    target_date: str,
+    start_date: str,
+    trend_days: int,
+    cache_enabled: bool = True,
+    refresh_cache: bool = False,
+) -> Dict[str, Any]:
+    """Build style-index summaries, serving history from the PG cache.
+
+    Baostock is only dialled for edge ranges the stock_index_daily cache does
+    not cover (keyed by bs_code), with a single login session for all indexes.
+    When Baostock is unavailable the cached window still yields summaries.
+    """
+    cache_fields = split_fields(STYLE_INDEX_CACHE_FIELDS)
+    frames: Dict[str, pd.DataFrame] = {}
+    fetch_plan: Dict[str, List[Tuple[str, str]]] = {}
+    for key, config in MARKET_STYLE_INDEXES.items():
+        cached = None if refresh_cache or not cache_enabled else read_cached_style_index(config["bs_code"])
+        if cached is not None and not cached.empty:
+            cached = cached.copy()
+            cached["trade_date"] = cached["trade_date"].astype(str)
+            frames[key] = cached
+            ranges = missing_edge_ranges(cached, "trade_date", start_date, target_date)
+        else:
+            ranges = [(start_date, target_date)]
+        if ranges:
+            fetch_plan[key] = ranges
+
+    fetch_errors: Dict[str, str] = {}
+    if fetch_plan:
+        login_error: Optional[str] = None
+        if bs is None:
+            login_error = "missing optional dependency: baostock"
+        else:
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    login = bs.login()
+                if getattr(login, "error_code", "0") != "0":
+                    login_error = getattr(login, "error_msg", "") or getattr(login, "error_code", "unknown")
+                    login_error = f"baostock login failed: {login_error}"
+            except Exception as exc:
+                login_error = f"baostock login failed: {exc}"
+
+        if login_error:
+            fetch_errors = {key: login_error for key in fetch_plan}
+        else:
+            try:
+                for key, ranges in fetch_plan.items():
+                    config = MARKET_STYLE_INDEXES[key]
+                    fetched: List[pd.DataFrame] = []
+                    for fetch_start, fetch_end in ranges:
+                        try:
+                            frame = query_baostock_style_range(config, fetch_start, fetch_end)
+                        except Exception as exc:
+                            fetch_errors[key] = str(exc)
+                            continue
+                        if not frame.empty:
+                            fetched.append(frame)
+                        time.sleep(0.05)
+                    if not fetched:
+                        continue
+                    addition = pd.concat(fetched, ignore_index=True)
+                    addition["ts_code"] = config["bs_code"]
+                    keep = [column for column in cache_fields if column in addition.columns]
+                    addition = addition[keep]
+                    merged = pd.concat([frames[key][keep], addition], ignore_index=True) if key in frames else addition
+                    merged = (
+                        merged.drop_duplicates(subset=["trade_date"], keep="last")
+                        .sort_values("trade_date")
+                        .reset_index(drop=True)
+                    )
+                    frames[key] = merged
+                    if cache_enabled:
+                        try:
+                            write_cached_dataset("index_daily", config["bs_code"], merged)
+                        except Exception as exc:
+                            print(f"[warn] style index cache write failed for {config['bs_code']}: {exc}", file=sys.stderr)
+            finally:
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        bs.logout()
+                except Exception:
+                    pass
 
     summaries: Dict[str, Dict[str, Any]] = {}
-    try:
-        for key, config in MARKET_STYLE_INDEXES.items():
-            try:
-                result = bs.query_history_k_data_plus(
-                    config["bs_code"],
-                    BAOSTOCK_STYLE_FIELDS,
-                    start_date=ymd_to_dash_date(start_date),
-                    end_date=ymd_to_dash_date(target_date),
-                    frequency="d",
-                    adjustflag="3",
-                )
-                if getattr(result, "error_code", "0") != "0":
-                    reason = getattr(result, "error_msg", "") or getattr(result, "error_code", "unknown")
-                    summaries[key] = {
-                        "available": False,
-                        "name": config.get("name"),
-                        "bs_code": config.get("bs_code"),
-                        "style_role": config.get("style_role"),
-                        "proxy_note": config.get("proxy_note"),
-                        "reason": f"baostock query failed: {reason}",
-                    }
-                else:
-                    summaries[key] = build_market_style_index_summary(
-                        baostock_result_to_frame(result),
-                        config,
-                        target_date,
-                        trend_days,
-                    )
-            except Exception as exc:
-                summaries[key] = {
-                    "available": False,
-                    "name": config.get("name"),
-                    "bs_code": config.get("bs_code"),
-                    "style_role": config.get("style_role"),
-                    "proxy_note": config.get("proxy_note"),
-                    "reason": f"baostock query failed: {exc}",
-                }
-            time.sleep(0.05)
-    finally:
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                bs.logout()
-        except Exception:
-            pass
+    for key, config in MARKET_STYLE_INDEXES.items():
+        df = frames.get(key)
+        if df is None or df.empty:
+            summaries[key] = {
+                "available": False,
+                "name": config.get("name"),
+                "bs_code": config.get("bs_code"),
+                "style_role": config.get("style_role"),
+                "proxy_note": config.get("proxy_note"),
+                "reason": fetch_errors.get(key, "baostock returned no data"),
+            }
+            continue
+        summary = build_market_style_index_summary(df, config, target_date, trend_days)
+        if key in fetch_errors:
+            summary["fetch_warning"] = f"served from cache; latest fetch failed: {fetch_errors[key]}"
+        summaries[key] = summary
 
-    return build_market_style_summary(summaries, target_date, start_date)
+    style = build_market_style_summary(summaries, target_date, start_date)
+    style["source"] = "baostock.query_history_k_data_plus + stock_index_daily cache"
+    return style
 
 
 def collect_stock_kline_targets(*payloads: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -2588,10 +2666,11 @@ def build_stock_kline_records(
 
     name_lookup: Dict[str, str] = {}
     if stock_basic is not None and not stock_basic.empty and {"ts_code", "name"}.issubset(stock_basic.columns):
+        pairs = stock_basic[["ts_code", "name"]].dropna()
         name_lookup = {
-            str(row["ts_code"]): str(row["name"])
-            for _, row in stock_basic[["ts_code", "name"]].dropna().iterrows()
-            if str(row.get("ts_code") or "").strip()
+            str(ts_code): str(name)
+            for ts_code, name in zip(pairs["ts_code"], pairs["name"])
+            if str(ts_code or "").strip()
         }
 
     requested_names: Dict[str, str] = {}
@@ -2614,27 +2693,31 @@ def build_stock_kline_records(
     if not selected_codes:
         return empty_payload
 
-    df = daily.loc[daily["ts_code"].astype(str).isin(selected_codes)].copy()
+    df = daily.copy()
+    df["ts_code"] = df["ts_code"].astype(str)
+    df = df.loc[df["ts_code"].isin(selected_codes)]
     if df.empty:
         return empty_payload
 
-    df["trade_date"] = df["trade_date"].apply(lambda value: normalize_date(value) if not pd.isna(value) else "")
+    df = df.copy()
+    df["trade_date"] = df["trade_date"].astype(str)
     df = df.loc[(df["trade_date"] != "") & (df["trade_date"] <= target_date)].copy()
     numeric_cols = ["open", "high", "low", "close", "pct_chg", "vol", "amount"]
     for column in numeric_cols:
         if column in df.columns:
-            df[column] = pd.to_numeric(df[column], errors="coerce")
+            df[column] = pd.to_numeric(df[column], errors="coerce").round(4)
 
     by_ts_code: Dict[str, Any] = {}
     kline_cols = [col for col in ["trade_date", "open", "high", "low", "close", "pct_chg", "vol", "amount"] if col in df.columns]
+    frames_by_code: Dict[str, pd.DataFrame] = {str(code): frame for code, frame in df.groupby("ts_code")}
     for ts_code in selected_codes:
-        sub = df.loc[df["ts_code"].astype(str) == ts_code].sort_values("trade_date").dropna(subset=["close"])
+        sub = frames_by_code.get(ts_code)
+        if sub is None:
+            continue
+        sub = sub.sort_values("trade_date").dropna(subset=["close"])
         if sub.empty:
             continue
         kline_records = sub[kline_cols].tail(safe_kline_days).copy()
-        for column in kline_cols:
-            if column != "trade_date":
-                kline_records[column] = pd.to_numeric(kline_records[column], errors="coerce").round(4)
         name = requested_names.get(ts_code) or name_lookup.get(ts_code) or ts_code
         by_ts_code[ts_code] = {
             "available": True,
@@ -3021,6 +3104,8 @@ def build_market_trend(
         target_date=target_date,
         start_date=start_date,
         trend_days=safe_trend_days,
+        cache_enabled=cache_enabled,
+        refresh_cache=refresh_cache,
     )
 
     return {
@@ -3675,8 +3760,15 @@ def build_early_limit_up_1030_samples(
             "summary": {"candidate_count": 0},
         }
 
-    panel_by_ts = {str(row.get("ts_code")): row for _, row in panel.iterrows()} if panel is not None and not panel.empty else {}
-    basic_by_ts = {str(row.get("ts_code")): row for _, row in basic.iterrows()} if basic is not None and not basic.empty else {}
+    def frame_by_ts_code(df: Optional[pd.DataFrame]) -> Dict[str, Dict[str, Any]]:
+        if df is None or df.empty or "ts_code" not in df.columns:
+            return {}
+        indexed = df.copy()
+        indexed["ts_code"] = indexed["ts_code"].astype(str)
+        return indexed.set_index("ts_code", drop=False).to_dict(orient="index")
+
+    panel_by_ts = frame_by_ts_code(panel)
+    basic_by_ts = frame_by_ts_code(basic)
 
     candidates: List[Dict[str, Any]] = []
     for record in records:
@@ -4345,7 +4437,15 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         margin_net_buy_trade_date=margin_trade_date,
     )
     timer.mark("market_history_update")
-    market_trend = build_market_trend(
+
+    # market_trend is network-bound (Tushare index klines + Baostock styles) and
+    # independent of the pandas stages below, so it runs concurrently. It must
+    # start after update_market_history_window: its sentiment block reads the
+    # market_history rows written there.
+    market_trend_executor = ThreadPoolExecutor(max_workers=1)
+    market_trend_started = time.perf_counter()
+    market_trend_future = market_trend_executor.submit(
+        build_market_trend,
         pro,
         target_date,
         trade_dates,
@@ -4354,7 +4454,6 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         cache_enabled,
         args.refresh_cache,
     )
-    timer.mark("market_trend")
 
     screening_features = add_screening_features(daily)
     timer.mark("screening_features")
@@ -4460,6 +4559,13 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         kline_days=args.index_kline_days,
     )
     timer.mark("stock_klines")
+
+    try:
+        market_trend = market_trend_future.result()
+    finally:
+        market_trend_executor.shutdown(wait=False)
+    timer.mark("market_trend_join_wait")
+    timer.timings["market_trend_concurrent"] = round(time.perf_counter() - market_trend_started, 3)
     timer.timings["total"] = timer.total()
     return {
         "metadata": {

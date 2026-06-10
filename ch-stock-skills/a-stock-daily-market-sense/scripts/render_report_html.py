@@ -59,6 +59,13 @@ def default_evidence_path(input_path: Path) -> Optional[Path]:
     return input_path.with_name(f"evidence_{match.group(1)}_utf8.json")
 
 
+def default_kline_path(input_path: Path) -> Optional[Path]:
+    match = re.match(r"^report_(\d{8})$", input_path.stem)
+    if not match:
+        return None
+    return input_path.with_name(f"kline_{match.group(1)}.json")
+
+
 def load_evidence(path: Optional[Path]) -> dict:
     if path is None or not path.exists():
         return {
@@ -66,6 +73,15 @@ def load_evidence(path: Optional[Path]) -> dict:
             "market_trend": {"indices": {}},
         }
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_stock_klines(evidence: dict, kline_path: Optional[Path]) -> dict:
+    """Stock klines live in a sibling kline_YYYYMMDD.json; older evidence
+    files carried them inline under stock_kline_records."""
+    if kline_path is not None and kline_path.exists():
+        return json.loads(kline_path.read_text(encoding="utf-8"))
+    inline = evidence.get("stock_kline_records")
+    return inline if isinstance(inline, dict) else {}
 
 
 def extract_index_kline_payload(evidence: dict, source_path: Optional[Path]) -> Dict[str, Any]:
@@ -96,14 +112,14 @@ def extract_index_kline_payload(evidence: dict, source_path: Optional[Path]) -> 
     return payload
 
 
-def extract_stock_kline_payload(evidence: dict, source_path: Optional[Path]) -> Dict[str, Any]:
-    raw = evidence.get("stock_kline_records") or {}
+def extract_stock_kline_payload(raw: dict, source_path: Optional[Path], missing: bool = False) -> Dict[str, Any]:
+    raw = raw or {}
     by_ts_code = raw.get("by_ts_code") if isinstance(raw, dict) else {}
     name_to_ts_code = raw.get("name_to_ts_code") if isinstance(raw, dict) else {}
     payload: Dict[str, Any] = {
         "metadata": {
             "source": str(source_path) if source_path is not None else "",
-            "missing": bool((evidence.get("metadata") or {}).get("missing")),
+            "missing": missing,
             "kline_days_requested": (raw.get("metadata") or {}).get("kline_days_requested") if isinstance(raw, dict) else None,
             "price_adjustment": (raw.get("metadata") or {}).get("price_adjustment") if isinstance(raw, dict) else None,
         },
@@ -642,6 +658,11 @@ def add_arguments(parser) -> None:
         default=None,
         help="Evidence JSON path. Defaults to sibling evidence_YYYYMMDD_utf8.json when input is report_YYYYMMDD.md.",
     )
+    parser.add_argument(
+        "--stock-klines",
+        default=None,
+        help="Stock kline JSON path. Defaults to sibling kline_YYYYMMDD.json; falls back to evidence stock_kline_records.",
+    )
 
 
 def build_job(args) -> RenderJob:
@@ -649,12 +670,19 @@ def build_job(args) -> RenderJob:
     output_path = Path(args.output) if args.output else input_path.with_suffix(".html")
     market_data_path = Path(args.market_data)
     evidence_path = Path(args.evidence) if args.evidence else default_evidence_path(input_path)
+    kline_path = Path(args.stock_klines) if args.stock_klines else default_kline_path(input_path)
     markdown_text = input_path.read_text(encoding="utf-8")
     title = args.title or input_path.stem
     market_data = load_market_data(market_data_path)
     evidence = load_evidence(evidence_path)
     index_kline_data = extract_index_kline_payload(evidence, evidence_path)
-    stock_kline_data = extract_stock_kline_payload(evidence, evidence_path)
+    stock_klines_raw = load_stock_klines(evidence, kline_path)
+    stock_kline_source = kline_path if kline_path is not None and kline_path.exists() else evidence_path
+    stock_kline_data = extract_stock_kline_payload(
+        stock_klines_raw,
+        stock_kline_source,
+        missing=bool((evidence.get("metadata") or {}).get("missing")) and not stock_klines_raw,
+    )
 
     builder = HtmlReportBuilder(title=title, theme=args.theme, extra_css=MARKET_SENSE_EXTRA_CSS)
     builder.add_decoration(PillDecoration(MARKET_SENSE_PILL_RULES))

@@ -97,7 +97,8 @@
 # 窗口导出（HTML 区块 payload，调试用）
 python3 scripts/theme_lifecycle.py window --asof YYYYMMDD --days 22
 
-# 向既有报告 HTML 幂等注入区块（marker 注释包裹，可重复执行）
+# 向既有报告 HTML 幂等注入区块（marker 注释包裹，可重复执行；
+# 对已带原生 ChartHook 区块的新版页面自动跳过，并清除历史重复 marker 块）
 python3 scripts/theme_lifecycle.py inject --html <file.html> [--asof YYYY-MM-DD] [--days 22]
 
 # 解析历史复盘的主线判定表，生成回填草稿（归一与状态标注由模型完成后再 record）

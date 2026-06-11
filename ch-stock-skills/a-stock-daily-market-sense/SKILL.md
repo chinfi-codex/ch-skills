@@ -64,7 +64,7 @@ python3 scripts/run_daily_panel.py --asof 20260429 --lookback 120 --market-trend
 - `reports/module_context_YYYYMMDD/`：供 subagent 分工的模块级 JSON。
 - `references/market_data.json`：`market_data.csv` 的全量派生 JSON，按交易日升序保留所有列、清洗数值并提供 `series` 给 HTML 趋势图使用。
 
-这些文件中，evidence、kline 和 module_context 是研报撰写过程中的临时产物。最终报告生成并核对后，按工作流程第 7 步用 `--cleanup` 一键删除，只保留 `reports/report_YYYYMMDD.md`、按需生成的 `reports/report_YYYYMMDD.html`，以及长期维护的 `references/market_data.csv` / `references/market_data.json`。
+这些文件中，evidence、kline、lifecycle 输入和 module_context 是研报撰写过程中的临时产物。最终报告生成并核对后，按工作流程第 8 步用 `--cleanup` 一键删除，只保留 `reports/report_YYYYMMDD.md`、按需生成的 `reports/report_YYYYMMDD.html`，以及长期维护的 `references/market_data.csv` / `references/market_data.json`。
 
 HTML 输出命令：
 

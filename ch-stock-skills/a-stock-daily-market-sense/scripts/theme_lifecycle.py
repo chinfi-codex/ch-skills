@@ -30,10 +30,17 @@ from typing import Any, Optional
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 _BUNDLED_SHARED = SCRIPT_DIR / "_shared"
-_DEV_SHARED = SCRIPT_DIR.parents[2] / "shared" / "data"
-sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
+_DEV_SHARED_ROOT = SCRIPT_DIR.parents[2] / "shared"
+if _BUNDLED_SHARED.exists():
+    # 同步包内 db_core 平铺、html_report 包均在 scripts/_shared 下
+    sys.path.insert(0, str(_BUNDLED_SHARED))
+else:
+    # 开发仓库里 db_core 在 shared/data/，html_report 在 shared/
+    sys.path.insert(0, str(_DEV_SHARED_ROOT / "data"))
+    sys.path.insert(0, str(_DEV_SHARED_ROOT))
 
 from db_core import BACKEND, Backend, get_connection, placeholder  # noqa: E402
+from html_report.safe_json import safe_json_for_script  # noqa: E402
 
 STATES = ["低位启动", "在场候选", "主线确认", "高位分歧", "退潮", "修复", "再聚焦", "沉寂"]
 
@@ -672,11 +679,10 @@ LIFECYCLE_JS_BODY = r"""
 
 
 def render_block_script(payload: dict) -> str:
-    payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     return (
         MARKER_START
         + "\n<script>\n(function () {\n  const __payload = "
-        + payload_json
+        + safe_json_for_script(payload)
         + ";\n"
         + LIFECYCLE_JS_BODY
         + "\n})();\n</script>\n"
@@ -708,6 +714,21 @@ def cmd_inject(args: argparse.Namespace) -> int:
     block = render_block_script(payload)
     html = html_path.read_text(encoding="utf-8")
     marker_re = re.compile(re.escape(MARKER_START) + r".*?" + re.escape(MARKER_END), re.S)
+
+    # 新版渲染器经 ChartHook 原生携带区块；此类页面不再叠加 marker 注入，
+    # 已存在的重复 marker 块（如曾被旧版 inject 处理过）一并清除。
+    chart_data = re.search(r'<script id="chart-data"[^>]*>(.*?)</script>', html, re.S)
+    if chart_data and f'"{HOOK_NAME}"' in chart_data.group(1):
+        if marker_re.search(html):
+            new_html = marker_re.sub("", html)
+            if not args.dry_run:
+                html_path.write_text(new_html, encoding="utf-8")
+            _print_json({"ok": True, "file": str(html_path), "asof": payload["asof"],
+                         "action": "removed_duplicate_marker", "dry_run": bool(args.dry_run)})
+        else:
+            _print_json({"ok": True, "file": str(html_path), "asof": payload["asof"],
+                         "action": "skipped_native_hook", "dry_run": bool(args.dry_run)})
+        return 0
 
     if marker_re.search(html):
         new_html = marker_re.sub(lambda _m: block, html)

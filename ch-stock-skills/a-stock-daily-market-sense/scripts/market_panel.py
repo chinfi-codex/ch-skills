@@ -125,6 +125,28 @@ MARKET_STYLE_INDEXES = {
     "csi300_growth": {"name": "300成长", "bs_code": "sh.000918", "style_role": "成长"},
     "csi300_value": {"name": "300价值", "bs_code": "sh.000919", "style_role": "价值"},
 }
+INDEX_REGISTRY = tuple(
+    [
+        {
+            "key": key,
+            "name": config.get("name"),
+            "source": "tushare",
+            "roles": ["trend"],
+            "ts_code": config.get("ts_code"),
+        }
+        for key, config in MARKET_TREND_INDEXES.items()
+    ]
+    + [
+        {
+            "key": key,
+            "name": config.get("name"),
+            "source": "baostock",
+            "roles": ["style"],
+            "bs_code": config.get("bs_code"),
+        }
+        for key, config in MARKET_STYLE_INDEXES.items()
+    ]
+)
 BAOSTOCK_STYLE_FIELDS = "date,code,open,high,low,close,preclose,volume,amount,pctChg"
 BAOSTOCK_STYLE_SOURCE_URL = "https://www.baostock.com/mainContent?file=dataExplain.md"
 DEFAULT_INDEX_KLINE_DAYS = 120
@@ -2132,23 +2154,36 @@ def build_level(label: str, value: Any) -> Dict[str, Any]:
     return {"label": label, "value": round_optional(value, 2)}
 
 
-def build_index_trend_summary(
-    index_daily: pd.DataFrame,
-    index_name: str,
-    ts_code: str,
+def _unavailable_index_summary(
+    name: Any,
+    code_field: str,
+    code_value: Any,
+    reason: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    result = {
+        "available": False,
+        "name": name,
+        code_field: code_value,
+        "reason": reason,
+    }
+    if extra:
+        result.update(extra)
+    return result
+
+
+def _prepare_index_summary_frames(
+    daily: pd.DataFrame,
     target_date: str,
     trend_days: int,
-    kline_days: int = DEFAULT_INDEX_KLINE_DAYS,
-) -> Dict[str, Any]:
-    if index_daily is None or index_daily.empty:
-        return {
-            "available": False,
-            "name": index_name,
-            "ts_code": ts_code,
-            "reason": "index_daily returned no data",
-        }
+    kline_days: Optional[int] = None,
+) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], str]:
+    if daily is None or daily.empty:
+        return None, None, "index_daily returned no data"
 
-    df = index_daily.copy()
+    df = daily.copy()
+    if "trade_date" not in df.columns:
+        return None, None, "trade_date column missing"
     df["trade_date"] = df["trade_date"].astype(str)
     numeric_cols = ["open", "high", "low", "close", "pre_close", "change", "pct_chg", "vol", "amount"]
     for column in numeric_cols:
@@ -2157,16 +2192,15 @@ def build_index_trend_summary(
     df = df.loc[df["trade_date"] <= target_date].sort_values("trade_date")
     df = df.dropna(subset=["close"])
     if df.empty:
-        return {
-            "available": False,
-            "name": index_name,
-            "ts_code": ts_code,
-            "reason": "no rows on or before target date",
-        }
+        return None, None, "no rows on or before target date"
 
+    series_df = df.copy()
     safe_trend_days = max(20, int(trend_days))
-    safe_kline_days = max(20, int(kline_days))
-    df = df.tail(max(safe_trend_days, safe_kline_days, 60))
+    windows = [safe_trend_days, 60]
+    if kline_days is not None:
+        windows.append(max(20, int(kline_days)))
+    df = df.tail(max(windows)).copy()
+
     for period in (1, 5, 20, 60):
         df[f"ret_{period}d"] = pct_return(df["close"], period)
     for period in (5, 20, 60):
@@ -2181,11 +2215,39 @@ def build_index_trend_summary(
     else:
         df["liquidity_ratio_5d"] = None
         df["liquidity_ratio_20d"] = None
+    df["amount_ratio_20d"] = df["liquidity_ratio_20d"] if liquidity_col == "amount" else None
 
     df["high_20d"] = df["high"].rolling(20, min_periods=5).max() if "high" in df.columns else None
     df["low_20d"] = df["low"].rolling(20, min_periods=5).min() if "low" in df.columns else None
     df["high_60d"] = df["high"].rolling(60, min_periods=20).max() if "high" in df.columns else None
     df["low_60d"] = df["low"].rolling(60, min_periods=20).min() if "low" in df.columns else None
+    return df, series_df, ""
+
+
+def _build_close_series(df: pd.DataFrame, days: int = 90) -> Dict[str, Any]:
+    records = df[["trade_date", "close"]].copy()
+    records["close"] = pd.to_numeric(records["close"], errors="coerce")
+    records = records.dropna(subset=["close"]).sort_values("trade_date").tail(max(1, int(days)))
+    records["close"] = records["close"].round(2)
+    return {
+        "days": int(days),
+        "records": records.astype(object).where(pd.notnull(records), None).to_dict(orient="records"),
+    }
+
+
+def build_index_trend_summary(
+    index_daily: pd.DataFrame,
+    index_name: str,
+    ts_code: str,
+    target_date: str,
+    trend_days: int,
+    kline_days: int = DEFAULT_INDEX_KLINE_DAYS,
+) -> Dict[str, Any]:
+    safe_trend_days = max(20, int(trend_days))
+    safe_kline_days = max(20, int(kline_days))
+    df, _, reason = _prepare_index_summary_frames(index_daily, target_date, safe_trend_days, safe_kline_days)
+    if df is None:
+        return _unavailable_index_summary(index_name, "ts_code", ts_code, reason)
 
     latest = df.iloc[-1]
     ma5 = latest.get("ma5")
@@ -2342,45 +2404,16 @@ def build_market_style_index_summary(
     usual OHLC/pct_chg/amount columns — either fresh from
     standardize_baostock_index_daily or read back from the PG cache.
     """
-    if standardized is None or standardized.empty:
-        return {
-            "available": False,
-            "name": config.get("name"),
-            "bs_code": config.get("bs_code"),
-            "style_role": config.get("style_role"),
-            "proxy_note": config.get("proxy_note"),
-            "reason": "baostock returned no data",
-        }
-
-    df = standardized.copy()
-    df["trade_date"] = df["trade_date"].astype(str)
-    for column in ["open", "high", "low", "close", "pre_close", "pct_chg", "vol", "amount"]:
-        if column in df.columns:
-            df[column] = pd.to_numeric(df[column], errors="coerce")
-
-    df = df.loc[df["trade_date"] <= target_date].dropna(subset=["close"]).sort_values("trade_date")
-    if df.empty:
-        return {
-            "available": False,
-            "name": config.get("name"),
-            "bs_code": config.get("bs_code"),
-            "style_role": config.get("style_role"),
-            "proxy_note": config.get("proxy_note"),
-            "reason": "no rows on or before target date",
-        }
-
+    extra = {
+        "style_role": config.get("style_role"),
+        "proxy_note": config.get("proxy_note"),
+    }
     safe_trend_days = max(20, int(trend_days))
-    df = df.tail(max(safe_trend_days, 60)).copy()
-    for period in (1, 5, 20, 60):
-        df[f"ret_{period}d"] = pct_return(df["close"], period)
-    for period in (20, 60):
-        df[f"ma{period}"] = df["close"].rolling(period, min_periods=max(5, period // 2)).mean()
-
-    if "amount" in df.columns:
-        df["amount_ma20_prev"] = df["amount"].shift(1).rolling(20, min_periods=5).mean()
-        df["amount_ratio_20d"] = df["amount"] / df["amount_ma20_prev"].replace(0, pd.NA)
-    else:
-        df["amount_ratio_20d"] = None
+    df, series_df, reason = _prepare_index_summary_frames(standardized, target_date, safe_trend_days)
+    if df is None or series_df is None:
+        if standardized is None or standardized.empty:
+            reason = "baostock returned no data"
+        return _unavailable_index_summary(config.get("name"), "bs_code", config.get("bs_code"), reason, extra)
 
     latest = df.iloc[-1]
     close = latest.get("close")
@@ -2429,6 +2462,7 @@ def build_market_style_index_summary(
             latest.get("ret_20d"),
             latest.get("ret_60d"),
         ),
+        "series": _build_close_series(series_df, days=90),
     }
 
 

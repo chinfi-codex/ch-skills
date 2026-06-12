@@ -26,6 +26,7 @@ sys.path.insert(0, str(SKILL_ROOT.parents[1] / "shared" / "data"))
 
 import db_adapter
 import market_panel as mp
+import render_report_html as rrh
 import run_daily_panel as rdp
 
 
@@ -217,6 +218,136 @@ def test_classifiers():
     up3 = mp.count_consecutive_moves(pd.Series([1, 2, 3, 4]), "up")
     assert up3 == 3
     assert mp.count_consecutive_moves(pd.Series([4, 3, 2, 1]), "up") == 0
+
+
+# --------------------------------------------------------------------------- #
+# Index/style summary builders
+# --------------------------------------------------------------------------- #
+def _synthetic_index_daily(days: int = 100) -> pd.DataFrame:
+    start = datetime.date(2026, 1, 1)
+    rows = []
+    for idx in range(days):
+        close = 100.0 + idx
+        rows.append({
+            "trade_date": (start + datetime.timedelta(days=idx)).strftime("%Y%m%d"),
+            "open": close - 0.5,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "close": close,
+            "pre_close": close - 1.0,
+            "pct_chg": round(100.0 / (close - 1.0), 4),
+            "vol": 1000.0 + idx,
+            "amount": 100000000.0 + idx * 1000000.0,
+        })
+    rows.append({
+        "trade_date": "20260420",
+        "open": 1.0,
+        "high": 1.0,
+        "low": 1.0,
+        "close": 999.0,
+        "pre_close": 998.0,
+        "pct_chg": 1.0,
+        "vol": 1.0,
+        "amount": 1.0,
+    })
+    rows.append({
+        "trade_date": "20260315",
+        "open": 1.0,
+        "high": 1.0,
+        "low": 1.0,
+        "close": None,
+        "pre_close": 1.0,
+        "pct_chg": None,
+        "vol": 1.0,
+        "amount": 1.0,
+    })
+    return pd.DataFrame(rows)
+
+
+def test_build_market_style_index_summary_series_and_metrics():
+    df = _synthetic_index_daily(100)
+    summary = mp.build_market_style_index_summary(
+        df,
+        {"name": "测试风格", "bs_code": "sh.test", "style_role": "测试"},
+        "20260410",
+        20,
+    )
+    assert summary["available"] is True
+    assert summary["latest"]["close"] == 199.0
+    assert summary["returns"]["ret_5d"] == round((199.0 / 194.0 - 1.0) * 100.0, 2)
+    assert summary["returns"]["ret_20d"] == round((199.0 / 179.0 - 1.0) * 100.0, 2)
+    assert summary["moving_averages"]["ma20"] == round(sum(range(180, 200)) / 20, 2)
+    assert summary["moving_averages"]["ma60"] == round(sum(range(140, 200)) / 60, 2)
+    assert summary["series"]["days"] == 90
+    records = summary["series"]["records"]
+    assert len(records) == 90
+    assert records[0]["trade_date"] == "20260111"
+    assert records[-1] == {"trade_date": "20260410", "close": 199.0}
+    assert all(row["trade_date"] <= "20260410" for row in records)
+    assert all(isinstance(row["close"], float) and round(row["close"], 2) == row["close"] for row in records)
+    compact = mp.compact_market_style_index(summary)
+    assert "series" not in compact
+
+
+def test_unavailable_market_style_summary_has_no_series():
+    summary = mp.build_market_style_index_summary(
+        pd.DataFrame(),
+        {"name": "空风格", "bs_code": "sh.empty", "style_role": "测试"},
+        "20260410",
+        20,
+    )
+    assert summary["available"] is False
+    assert "series" not in summary
+
+
+def test_index_registry_covers_trend_and_style_sources():
+    registry = list(mp.INDEX_REGISTRY)
+    trend_keys = {item["key"] for item in registry if item["source"] == "tushare"}
+    style_keys = {item["key"] for item in registry if item["source"] == "baostock"}
+    assert trend_keys == set(mp.MARKET_TREND_INDEXES)
+    assert style_keys == set(mp.MARKET_STYLE_INDEXES)
+    assert all(item["roles"] == ["trend"] for item in registry if item["source"] == "tushare")
+    assert all(item["roles"] == ["style"] for item in registry if item["source"] == "baostock")
+    assert any(item["key"] == "csi300" and item["source"] == "baostock" and item["bs_code"] == "sh.000300" for item in registry)
+    if "csi300" in mp.MARKET_TREND_INDEXES:
+        assert any(item["key"] == "csi300" and item["source"] == "tushare" for item in registry)
+
+
+def test_extract_style_series_payload():
+    records = [{"trade_date": f"202601{day:02d}", "close": 100 + day} for day in range(1, 11)]
+    evidence = {
+        "market_trend": {
+            "market_style": {
+                "available": True,
+                "source": "baostock.query_history_k_data_plus + stock_index_daily cache",
+                "trade_date": "20260110",
+                "indices": {
+                    "mega_cap": {
+                        "available": True,
+                        "name": "超大盘",
+                        "style_role": "容量大盘",
+                        "series": {"days": 90, "records": records},
+                    },
+                    "csi300": {
+                        "available": True,
+                        "name": "沪深300",
+                        "style_role": "容量中枢",
+                        "series": {"days": 90, "records": records[-5:]},
+                    },
+                    "missing": {"available": True, "name": "缺序列"},
+                },
+            }
+        }
+    }
+    payload = rrh.extract_style_series_payload(evidence, display_days=6)
+    assert payload is not None
+    assert payload["display_days"] == 6
+    assert payload["window_start"] == "20260105"
+    assert payload["window_end"] == "20260110"
+    assert [item["key"] for item in payload["indices"]] == ["mega_cap", "csi300"]
+    assert len(payload["indices"][0]["records"]) == 6
+    assert rrh.extract_style_series_payload({}) is None
+    assert rrh.extract_style_series_payload({"market_trend": {"market_style": {"available": False}}}) is None
 
 
 # --------------------------------------------------------------------------- #

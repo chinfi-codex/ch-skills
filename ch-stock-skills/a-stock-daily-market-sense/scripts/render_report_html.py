@@ -149,6 +149,57 @@ def extract_stock_kline_payload(raw: dict, source_path: Optional[Path], missing:
     return payload
 
 
+def _clean_style_series_records(records: Any, display_days: int) -> List[Dict[str, Any]]:
+    cleaned: List[Dict[str, Any]] = []
+    if not isinstance(records, list):
+        return cleaned
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        trade_date = str(row.get("trade_date") or "").strip()
+        try:
+            close = float(row.get("close"))
+        except (TypeError, ValueError):
+            continue
+        if trade_date and close == close:
+            cleaned.append({"trade_date": trade_date, "close": round(close, 2)})
+    return sorted(cleaned, key=lambda item: item["trade_date"])[-display_days:]
+
+
+def extract_style_series_payload(evidence: dict, display_days: int = 60) -> Optional[Dict[str, Any]]:
+    style = ((evidence or {}).get("market_trend") or {}).get("market_style") or {}
+    if not isinstance(style, dict) or not style.get("available"):
+        return None
+    indices = style.get("indices") or {}
+    items: List[Dict[str, Any]] = []
+    all_dates: List[str] = []
+    for key, item in indices.items():
+        if not isinstance(item, dict) or not item.get("available"):
+            continue
+        series = item.get("series") or {}
+        records = _clean_style_series_records(series.get("records"), display_days)
+        if not records:
+            continue
+        all_dates.extend([records[0]["trade_date"], records[-1]["trade_date"]])
+        items.append({
+            "key": key,
+            "name": item.get("name"),
+            "style_role": item.get("style_role"),
+            "proxy_note": item.get("proxy_note"),
+            "records": records,
+        })
+    if not items:
+        return None
+    return {
+        "display_days": int(display_days),
+        "source": style.get("source") or "baostock",
+        "trade_date": style.get("trade_date"),
+        "window_start": min(all_dates) if all_dates else None,
+        "window_end": max(all_dates) if all_dates else None,
+        "indices": items,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Decorations: pill vocabulary + "一句话盘面判断" hero card (mechanism lives in
 # the shared package; here we only declare the market-sense-specific data).
@@ -170,6 +221,13 @@ MARKET_SENSE_PILL_RULES = [
 HERO_KEYWORDS = "上证|创业板|科创50|国证2000|中证红利|半导体设备与材料|电力能源"
 MARKET_SENSE_EXTRA_CSS = """
 .kline-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.style-compare-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 12px 0 22px; }
+.style-compare-card { min-width: 0; margin: 0; }
+.style-compare-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--muted); font-size: 12px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line-2); }
+.style-compare-legend span { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); }
+.style-compare-legend svg { width: 24px; height: 8px; overflow: visible; }
+.style-compare-note { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+@media (max-width: 900px) { .style-compare-grid { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .kline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .kline-grid { grid-template-columns: 1fr; } }
 """
@@ -477,6 +535,235 @@ function formatAmount(value) {
 
 
 # --------------------------------------------------------------------------- #
+# Market-style normalized comparison charts driven by evidence market_style.series.
+# --------------------------------------------------------------------------- #
+STYLE_COMPARE_JS = r"""
+const payload = __payload || {};
+const reportBody = document.getElementById("report-body");
+if (!reportBody) return;
+
+const styleItems = Array.isArray(payload.indices) ? payload.indices : [];
+if (!styleItems.length) return;
+
+const { svgEl, svgText } = CK;
+const formatDate = CK.fmt.date;
+const displayDays = Number(payload.display_days) || 60;
+const byKey = {};
+styleItems.forEach(item => { byKey[item.key] = item; });
+
+const chartDefs = [
+  {
+    title: "规模轴 · 归一化走势（60 日，起点=100）",
+    keys: ["mega_cap", "csi300", "csi500", "csi1000", "guozheng2000"],
+    footnoteKey: "guozheng2000",
+    styles: {
+      csi300: { color: "var(--blue)", width: 2.8, dash: "" },
+      guozheng2000: { color: "var(--neg)", width: 2.1, dash: "" },
+      csi500: { color: "var(--pos)", width: 2.0, dash: "9 5" },
+      csi1000: { color: "var(--orange)", width: 2.0, dash: "4 4" },
+      mega_cap: { color: "var(--ink-3)", width: 2.0, dash: "1 4" }
+    }
+  },
+  {
+    title: "成长 / 价值 / 红利 · 归一化走势（60 日，起点=100）",
+    keys: ["csi300_growth", "csi300_value", "csi_dividend"],
+    styles: {
+      csi300_growth: { color: "var(--violet)", width: 2.8, dash: "" },
+      csi300_value: { color: "var(--ink-3)", width: 2.0, dash: "9 5" },
+      csi_dividend: { color: "var(--orange)", width: 2.0, dash: "1 4" }
+    }
+  }
+];
+
+const charts = chartDefs.map(def => prepareChart(def)).filter(Boolean);
+if (!charts.length) return;
+
+const heading = CK.findHeading(reportBody, "市场风格", "h2, h3");
+if (!heading) return;
+
+const grid = document.createElement("div");
+grid.className = "style-compare-grid";
+charts.forEach(chart => grid.appendChild(buildChartCard(chart)));
+
+const table = CK.findNextTable(heading);
+if (table) {
+  table.after(grid);
+} else {
+  heading.after(grid);
+}
+
+function prepareChart(def) {
+  const series = def.keys.map(key => {
+    const item = byKey[key];
+    if (!item) return null;
+    const rows = normalizeRecords(item.records).slice(-displayDays);
+    if (!rows.length || !Number.isFinite(rows[0].close) || rows[0].close === 0) return null;
+    const base = rows[0].close;
+    const points = rows.map(row => ({
+      date: row.trade_date,
+      value: round2(row.close / base * 100)
+    })).filter(point => Number.isFinite(point.value));
+    if (!points.length) return null;
+    return {
+      key,
+      name: item.name || key,
+      styleRole: item.style_role || "",
+      proxyNote: item.proxy_note || "",
+      style: def.styles[key] || { color: "var(--blue)", width: 2, dash: "" },
+      points
+    };
+  }).filter(Boolean);
+  if (series.length < 2) return null;
+  const dates = Array.from(new Set(series.flatMap(item => item.points.map(point => point.date)))).sort();
+  return { def, series, dates };
+}
+
+function normalizeRecords(records) {
+  return (Array.isArray(records) ? records : [])
+    .map(row => ({
+      trade_date: String(row.trade_date || ""),
+      close: Number(row.close)
+    }))
+    .filter(row => row.trade_date && Number.isFinite(row.close))
+    .sort((a, b) => a.trade_date.localeCompare(b.trade_date));
+}
+
+function buildChartCard(chart) {
+  const start = chart.dates[0];
+  const end = chart.dates[chart.dates.length - 1];
+  const card = CK.card(
+    "chart-card style-compare-card",
+    chart.def.title,
+    `${formatDate(start)} 至 ${formatDate(end)} · 数据截至 ${formatDate(payload.trade_date || end)} · Baostock`
+  );
+  card.appendChild(drawNormalizedLines(chart, card));
+  card.appendChild(buildLineLegend(chart.series));
+  const footnote = chart.def.footnoteKey ? (byKey[chart.def.footnoteKey] || {}).proxy_note : "";
+  if (footnote) {
+    const note = document.createElement("div");
+    note.className = "style-compare-note";
+    note.textContent = footnote;
+    card.appendChild(note);
+  }
+  return card;
+}
+
+function drawNormalizedLines(chart, card) {
+  const width = 560;
+  const height = 280;
+  const pad = { left: 44, right: 18, top: 14, bottom: 30 };
+  const usableW = width - pad.left - pad.right;
+  const usableH = height - pad.top - pad.bottom;
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img" });
+  const allValues = chart.series.flatMap(item => item.points.map(point => point.value));
+  let min = Math.min(...allValues, 100);
+  let max = Math.max(...allValues, 100);
+  if (min === max) { min -= 1; max += 1; }
+  const span = max - min;
+  min -= span * 0.04;
+  max += span * 0.04;
+
+  const dateIndex = new Map(chart.dates.map((date, idx) => [date, idx]));
+  const x = date => pad.left + (chart.dates.length <= 1 ? usableW / 2 : dateIndex.get(date) / (chart.dates.length - 1) * usableW);
+  const y = value => pad.top + (max - value) / (max - min) * usableH;
+
+  for (let i = 0; i <= 4; i += 1) {
+    const value = min + (max - min) * (4 - i) / 4;
+    const gy = y(value);
+    svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: gy, y2: gy, class: "grid-line" }));
+    svg.appendChild(svgText(4, gy + 3, value.toFixed(1), "start", "var(--text-tertiary)"));
+  }
+  if (min <= 100 && max >= 100) {
+    svg.appendChild(svgEl("line", {
+      x1: pad.left, x2: width - pad.right, y1: y(100), y2: y(100),
+      class: "axis", "stroke-width": 1.8, opacity: 0.85
+    }));
+  }
+  svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: height - pad.bottom, y2: height - pad.bottom, class: "axis" }));
+
+  const tickDates = pickTicks(chart.dates, 6);
+  tickDates.forEach(date => {
+    const px = x(date);
+    svg.appendChild(svgEl("line", { x1: px, x2: px, y1: height - pad.bottom, y2: height - pad.bottom + 4, class: "axis" }));
+    svg.appendChild(svgText(px, height - 10, formatDate(date).slice(5), "middle", "var(--text-tertiary)", 10));
+  });
+
+  chart.series.forEach(item => {
+    const d = item.points.map((point, idx) => `${idx === 0 ? "M" : "L"} ${x(point.date).toFixed(2)} ${y(point.value).toFixed(2)}`).join(" ");
+    svg.appendChild(svgEl("path", {
+      d,
+      fill: "none",
+      stroke: item.style.color,
+      "stroke-width": item.style.width,
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
+      "stroke-dasharray": item.style.dash || ""
+    }));
+  });
+
+  const tooltip = CK.tooltip(card);
+  const hitWidth = Math.max(6, usableW / Math.max(chart.dates.length, 1));
+  chart.dates.forEach(date => {
+    const px = x(date);
+    const hit = svgEl("rect", {
+      x: (px - hitWidth / 2).toFixed(2),
+      y: pad.top,
+      width: hitWidth.toFixed(2),
+      height: usableH,
+      fill: "transparent",
+      stroke: "none",
+      style: "cursor:pointer"
+    });
+    hit.addEventListener("mouseenter", () => {
+      const rows = chart.series.map(item => {
+        const point = item.points.find(p => p.date === date);
+        return point ? `<div>${item.name}: <strong>${point.value.toFixed(1)}</strong></div>` : "";
+      }).filter(Boolean);
+      tooltip.innerHTML = [`<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${formatDate(date)}</div>`].concat(rows).join("");
+      tooltip.style.opacity = rows.length ? "1" : "0";
+    });
+    hit.addEventListener("mousemove", event => CK.moveTip(tooltip, card, event));
+    hit.addEventListener("mouseleave", () => { tooltip.style.opacity = "0"; });
+    svg.appendChild(hit);
+  });
+  return svg;
+}
+
+function buildLineLegend(series) {
+  const legend = document.createElement("div");
+  legend.className = "style-compare-legend";
+  series.forEach(item => {
+    const entry = document.createElement("span");
+    const icon = svgEl("svg", { viewBox: "0 0 24 8", "aria-hidden": "true" });
+    icon.appendChild(svgEl("line", {
+      x1: 1, x2: 23, y1: 4, y2: 4,
+      stroke: item.style.color,
+      "stroke-width": item.style.width,
+      "stroke-linecap": "round",
+      "stroke-dasharray": item.style.dash || ""
+    }));
+    entry.appendChild(icon);
+    entry.appendChild(document.createTextNode(item.name));
+    legend.appendChild(entry);
+  });
+  return legend;
+}
+
+function pickTicks(dates, count) {
+  if (dates.length <= count) return dates;
+  const out = [];
+  const last = dates.length - 1;
+  for (let i = 0; i < count; i += 1) {
+    out.push(dates[Math.round(i * last / (count - 1))]);
+  }
+  return Array.from(new Set(out));
+}
+
+function round2(value) { return Math.round(value * 100) / 100; }
+"""
+
+
+# --------------------------------------------------------------------------- #
 # Market-trend mini-chart panel driven by market_data.json.
 # --------------------------------------------------------------------------- #
 MARKET_TRENDS_JS = r"""
@@ -718,6 +1005,7 @@ def build_job(args) -> RenderJob:
         stock_kline_source,
         missing=bool((evidence.get("metadata") or {}).get("missing")) and not stock_klines_raw,
     )
+    style_series_payload = extract_style_series_payload(evidence)
 
     builder = HtmlReportBuilder(title=title, theme=args.theme, extra_css=MARKET_SENSE_EXTRA_CSS)
     builder.add_decoration(PillDecoration(MARKET_SENSE_PILL_RULES))
@@ -740,6 +1028,8 @@ def build_job(args) -> RenderJob:
         js=KLINE_CHARTS_JS,
     ))
     builder.add_chart_hook(ChartHook(name="market-trends", payload=market_data, js=MARKET_TRENDS_JS))
+    if style_series_payload:
+        builder.add_chart_hook(ChartHook(name="style-compare", payload=style_series_payload, js=STYLE_COMPARE_JS))
 
     lifecycle_payload = None if args.no_lifecycle else load_lifecycle_payload(input_path, args.lifecycle_days)
     if lifecycle_payload:
@@ -759,6 +1049,10 @@ def build_job(args) -> RenderJob:
                 for key, value in (index_kline_data.get("indices") or {}).items()
             },
             "stock_kline_records": len(stock_kline_data.get("by_ts_code") or {}),
+            "style_series_records": {
+                item["key"]: len(item.get("records") or [])
+                for item in (style_series_payload or {}).get("indices", [])
+            },
             "records_available": (market_data.get("quality") or {}).get("records_available", 0),
             "theme_lifecycle_themes": len(lifecycle_payload["themes"]) if lifecycle_payload else 0,
         },

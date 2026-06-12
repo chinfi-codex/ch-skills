@@ -37,7 +37,7 @@ SOURCE_ALIASES = {
     "ph": "product_hunt",
     "hn": "hacker_news",
 }
-MACRO_SOURCE_PRIORITY = {"jin10": 0, "cls": 1, "rss": 2}
+MACRO_SOURCE_PRIORITY = {"jin10": 0, "rss": 1}
 DEFAULT_MACRO_KEYWORDS = [
     "宏观",
     "经济数据",
@@ -504,7 +504,7 @@ def build_conditional_data_fetches(events: list[dict[str, Any]]) -> dict[str, An
         "china_monthly": {
             "triggered": True,
             "indicators": indicators,
-            "reason": "China monthly macro release event detected in Jin10/CLS/RSS evidence.",
+            "reason": "China monthly macro release event detected in Jin10/RSS evidence.",
             **payload,
         }
     }

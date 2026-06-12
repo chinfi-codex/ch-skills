@@ -8,7 +8,6 @@ profiles:
       - github_trending
       - rss
       - jin10
-      - cls
     state_enabled: true
     # frame schema 已迁入 references/reports/ai_daily/framework.md 机器区(唯一可信源)
     # 重点公司归类字典:Agent 读取 evidence packet 后用这个字典把当日新闻按公司归类
@@ -61,7 +60,6 @@ profiles:
     timezone: Asia/Shanghai
     sources:
       - jin10
-      - cls
       - rss
     state_enabled: true
     # frame schema 已迁入 references/reports/macro_daily/framework.md 机器区(唯一可信源)

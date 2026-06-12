@@ -1,6 +1,6 @@
 ---
 name: ch-news-reporter
-description: 当用户要求从金十、财联社、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、宏观、地缘冲突或伊朗动态新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、伊朗/中东局势动态（含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“生成伊朗动态播报”“分析霍尔木兹/油价/黄金受局势影响”等多步骤任务；本 skill 只产出上述三类主题日报，不用于临时/零碎的新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
+description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、宏观、地缘冲突或伊朗动态新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、伊朗/中东局势动态（含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“生成伊朗动态播报”“分析霍尔木兹/油价/黄金受局势影响”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述三类主题日报，不用于临时/零碎的新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
 ---
 
 # CH News Reporter
@@ -41,7 +41,7 @@ DB-first 的取数/回写脚本(`collect_news.py` / `prepare_report_data.py` / `
 使用本 skill 的典型场景：
 
 - 用户要抓取或刷新“今天”的财经与 AI 新闻库。
-- 用户要把金十、财联社、GitHub Trending、RSS 汇总成统一数据表。
+- 用户要把金十、GitHub Trending、Product Hunt、Hacker News、RSS 汇总成统一数据表。
 - 用户要生成 AI 日报，跟踪模型能力、Agent、开源生态、端侧运行时、AI 资本与产品发布。
 - 用户要生成每日宏观日报，跟踪金十电报中的中国/美国经济数据、利率、汇率、大宗商品和风险资产价格信号。
 - 用户要输出伊朗/中东局势动态、停火窗口跟踪、霍尔木兹航运、油气价格和风险资产影响分析。
@@ -70,7 +70,7 @@ python scripts/collect_news.py --date today --only-missing
 - `--date today` 或 `--date YYYY-MM-DD`：采集目标日期。
 - `--only-missing`：DB-first,只补库里当天缺失的源;已有的源跳过,不发请求。
 - `--min-rows N`:配合 `--only-missing`,行数达到 N 才算"已有"。默认 1(任意一条即视为已采)。RSS 这类多 feed 源容易"一条就算齐",想强制补全时把阈值调高。
-- `--source all|cls|jin10|github|rss|product_hunt|hacker_news`：限制采集来源，默认 `all`。
+- `--source all|jin10|github|rss|product_hunt|hacker_news`：限制采集来源，默认 `all`。
 - `--config config/sources.yaml`：RSS 配置文件。
 - `--db data/news_research.sqlite`：仅 SQLite fallback 使用的本地文件路径；PostgreSQL 模式下忽略。
 - `--limit N`：每个来源最多写入 N 条，适合调试。
@@ -78,7 +78,6 @@ python scripts/collect_news.py --date today --only-missing
 
 来源说明：
 
-- 财联社电报当前接口单次最多返回约 50 条。
 - 金十电报通过金十 MCP `list_flash` 接入，需要环境变量 `JIN10_AUTH_TOKEN`；脚本会尝试按 cursor 翻页，实际返回量取决于 MCP 服务。
 - RSS 只写入目标日期内有明确发布时间的条目；没有发布时间的 RSS 条目默认跳过。
 - GitHub Trending 会采集 daily 榜单，并补充 GitHub API 中的 repo 元数据。
@@ -104,7 +103,7 @@ evidence packet 现在还带两块新内容(DB-first 与活动状态):
 - `coverage`：本 profile 各期望源在库里当天的行数与缺失源清单。某源缺数时,报告里相应判断要降级标注"今日该源无数据"。
 - `prior_state`：`state_enabled` 的 profile(三个日报都已开启)会带上**最近一期 watchboard**(date < 今天)。markdown 输出里是 `## Prior Watchboard` 段,列出今天必须逐条结算的 open 跟踪项;冷启动(无上一期)时按各 profile methodology 的种子/默认构造第一份。机制见 `references/reports/watchboard.md`。
 
-`macro_daily` 会先从当天金十、财联社和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
+`macro_daily` 会先从当天金十和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
 
 - **基础行情**（金十/Stooq/AV）：Brent、WTI、黄金、天然气、USDCNH、纳指期货等。
 - **位置富数据**（Yahoo）：美国 10Y / 5Y 国债收益率、DXY、VIX、BTC，以及核心估值锚——纳斯达克综合（^IXIC）与上证指数（000001.SS）。每个标的额外计算 52 周高低、距 52 周高 %、YTD、20/60 日均线、`pct_vs_ma20`，作为"市场相对位置"判断依据。
@@ -250,7 +249,7 @@ python scripts/render_report_html.py -i reports/iran_dynamic_2026-06-04.md --wat
 核心字段：
 
 - `date_key`：Asia/Shanghai 日期，格式 `YYYY-MM-DD`。
-- `source_type`：`cls`、`jin10`、`github_trending`、`rss`、`product_hunt`、`hacker_news`。
+- `source_type`：`jin10`、`github_trending`、`rss`、`product_hunt`、`hacker_news`。
 - `source_name`：具体来源名称。
 - `published_at` / `fetched_at`：发布时间与抓取时间。
 - `title` / `content` / `url`：主要文本与链接。
@@ -273,7 +272,7 @@ python scripts/render_report_html.py -i reports/iran_dynamic_2026-06-04.md --wat
 
 `macro_daily` 的 evidence packet 会额外包含：
 
-- `macro_news_items`：按宏观关键词筛选后的金十、财联社、RSS 新闻。
+- `macro_news_items`：按宏观关键词筛选后的金十、RSS 新闻。
 - `macro_data_events`：从新闻中识别的 CPI/PPI/PCE/PMI/社融/非农/库存等数据事件。
 - `macro_market_signals`：价格证据。`data` 平铺所有标的；`groups` 按方法论分组：
   - `liquidity_rates_fx`：US10Y、US5Y、DXY、USDCNH

@@ -5,7 +5,7 @@
 #
 # AI 日报重点公司信源覆盖说明:
 #   有官方 RSS: OpenAI / Google AI / HuggingFace / NVIDIA / Microsoft AI
-#   无官方 RSS(由 Agent 通过 The Decoder / Juya / AI Hot / 金十 / 财联社等转述源 enrich):
+#   无官方 RSS(由 Agent 通过 The Decoder / Juya / AI Hot / 金十等转述源 enrich):
 #     Anthropic / Meta AI / Google DeepMind / Mistral
 #   中国厂商(均无英文官方 RSS,Kimi/智谱/Minimax/腾讯/阿里/字节/DeepSeek/百度): 同上,经第三方源 enrich
 
@@ -54,4 +54,3 @@ rss:
     url: https://www.sec.gov/news/pressreleases.rss
     category: finance
     enabled: true
-

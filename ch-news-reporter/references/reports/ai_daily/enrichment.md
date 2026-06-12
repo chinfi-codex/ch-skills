@@ -20,7 +20,7 @@ Agent 先阅读基础 evidence packet，再用本文件判断哪些对象值得�
 
 - 重点公司官方 RSS（OpenAI / Anthropic / Google AI / DeepMind / Meta AI / Mistral / HuggingFace / NVIDIA / Microsoft AI 等）中含模型版本号、产品功能名、API 端点、定价数值、融资金额或合作主体的条目。
 - 第三方媒体 RSS（The Decoder、Juya AI Daily、AI Hot 等）中转述重点公司动态的条目，enrich 以核对外链与原始公告。
-- 金十 / 财联社快讯中提到 OpenAI / Anthropic / Google / Meta / Kimi / 智谱 / Minimax / 腾讯 / 阿里 / 字节 / DeepSeek / 百度 等重点厂商的条目 —— 这是中国厂商动态主要的可观察入口，enrich 外链页面以拿到原始信息。
+- 金十快讯中提到 OpenAI / Anthropic / Google / Meta / Kimi / 智谱 / Minimax / 腾讯 / 阿里 / 字节 / DeepSeek / 百度 等重点厂商的条目 —— 这是中国厂商动态主要的可观察入口，enrich 外链页面以拿到原始信息。
 
 **跨引擎交叉验证优先：**
 

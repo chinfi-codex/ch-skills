@@ -4,7 +4,7 @@
 
 ## 目标
 
-当前 AI 产品的主形态是 **AI agents**，本日报以 agent 为主轴，把当日多信源（GitHub Trending / Product Hunt / Show HN / 前沿实验室 RSS / 金十·财联社电报）收敛成对两条主轴的判断——轴一工程演进（供给/能力侧）、轴二产品形态与渗透（需求/采用侧）。完整框架（双轴定义、双引擎四步、两轴综合）见 `framework.md`。
+当前 AI 产品的主形态是 **AI agents**，本日报以 agent 为主轴，把当日多信源（GitHub Trending / Product Hunt / Show HN / 前沿实验室 RSS / 金十电报）收敛成对两条主轴的判断——轴一工程演进（供给/能力侧）、轴二产品形态与渗透（需求/采用侧）。完整框架（双轴定义、双引擎四步、两轴综合）见 `framework.md`。
 
 ## 数据信息分层
 

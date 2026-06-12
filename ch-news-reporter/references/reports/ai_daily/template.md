@@ -1,7 +1,7 @@
 # AI 日报 | YYYY-MM-DD
 
 更新时间:HH:MM
-数据来源:GitHub Trending / Product Hunt / Hacker News / RSS(OpenAI / Anthropic / Google AI / Meta AI / DeepMind / HuggingFace / Mistral / NVIDIA / The Decoder / Juya / AI Hot 等)/ 金十电报 / 财联社
+数据来源:GitHub Trending / Product Hunt / Hacker News / RSS(OpenAI / Anthropic / Google AI / Meta AI / DeepMind / HuggingFace / Mistral / NVIDIA / The Decoder / Juya / AI Hot 等)/ 金十电报
 
 > 本报告以 agent 为主轴:**轴一 工程演进**(供给 / 能力)和**轴二 产品形态与渗透**(需求 / 采用)领衔,新项目雷达与公司矩阵作证据层支撑两轴。AI 大盘里与主轴无关的重大事件简要带过即可。
 

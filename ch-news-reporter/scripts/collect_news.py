@@ -36,7 +36,6 @@ from jin10_mcp import Jin10McpClient
 
 
 COLLECTOR_SOURCE_TYPE = {
-    "cls": "cls",
     "jin10": "jin10",
     "github": "github_trending",
     "rss": "rss",
@@ -53,7 +52,6 @@ def requested_collectors(source: str) -> set[str]:
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 DEFAULT_DB = Path("data/news_research.sqlite")
 DEFAULT_CONFIG = Path("config/sources.yaml")
-CLS_URL = "https://www.cls.cn/nodeapi/telegraphList"
 GITHUB_TRENDING_URL = "https://github.com/trending"
 PRODUCT_HUNT_GRAPHQL_URL = "https://api.producthunt.com/v2/api/graphql"
 HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
@@ -75,7 +73,7 @@ class NewsItem:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Collect Jin10, CLS, GitHub Trending, and RSS into SQLite."
+        description="Collect Jin10, GitHub Trending, Product Hunt, Hacker News, and RSS into SQLite."
     )
     parser.add_argument("--date", default="today", help="today or YYYY-MM-DD.")
     parser.add_argument(
@@ -90,7 +88,6 @@ def parse_args() -> argparse.Namespace:
         "--source",
         choices=[
             "all",
-            "cls",
             "jin10",
             "github",
             "rss",
@@ -278,14 +275,12 @@ def write_items(con: Any, items: list[NewsItem], date_key: str) -> int:
 
 def selected_source_types(source: str) -> list[str]:
     mapping = {
-        "cls": ["cls"],
         "jin10": ["jin10"],
         "github": ["github_trending"],
         "rss": ["rss"],
         "product_hunt": ["product_hunt"],
         "hacker_news": ["hacker_news"],
         "all": [
-            "cls",
             "jin10",
             "github_trending",
             "rss",
@@ -307,68 +302,6 @@ def delete_date_rows(con: Any, date_key: str, source_types: list[str]) -> int:
         cur = con.cursor()
         cur.execute(adapt_sql(sql), params)
     return cur.rowcount
-
-
-def build_cls_params(session: requests.Session, rn: int, timeout: int) -> dict[str, Any]:
-    current_time = int(time.time())
-    params: dict[str, Any] = {
-        "app": "CailianpressWeb",
-        "category": "",
-        "lastTime": current_time,
-        "last_time": current_time,
-        "os": "web",
-        "refresh_type": "1",
-        "rn": str(rn),
-        "sv": "7.7.5",
-    }
-    query = session.get(CLS_URL, params=params, timeout=timeout).url.split("?", 1)[1]
-    sha1 = hashlib.sha1(query.encode("utf-8")).hexdigest()
-    params["sign"] = hashlib.md5(sha1.encode("utf-8")).hexdigest()
-    return params
-
-
-def collect_cls(session: requests.Session, timeout: int, limit: int | None) -> list[NewsItem]:
-    params = build_cls_params(session, rn=max(limit or 2000, 2000), timeout=timeout)
-    response = session.get(
-        CLS_URL,
-        params=params,
-        headers={"Referer": "https://www.cls.cn/telegraph"},
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    records = response.json().get("data", {}).get("roll_data", [])
-    items: list[NewsItem] = []
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-        published = iso_in_shanghai(parse_any_datetime(record.get("ctime")))
-        subjects = record.get("subjects")
-        tags = [
-            str(tag.get("subject_name"))
-            for tag in subjects
-            if isinstance(tag, dict) and tag.get("subject_name")
-        ] if isinstance(subjects, list) else []
-        title = str(record.get("title") or record.get("content") or "").strip()
-        content = str(record.get("content") or record.get("title") or "").strip()
-        items.append(
-            NewsItem(
-                source_type="cls",
-                source_name="财联社电报",
-                published_at=published,
-                title=title,
-                content=content,
-                url=str(record.get("shareurl") or record.get("url") or ""),
-                tags=tags,
-                metadata={
-                    "level": record.get("level"),
-                    "reading_num": record.get("reading_num"),
-                },
-                raw=record,
-            )
-        )
-        if limit and len(items) >= limit:
-            break
-    return items
 
 
 def collect_jin10(
@@ -1075,7 +1008,6 @@ def collect_sources(
     errors: dict[str, str] = {}
 
     collectors = {
-        "cls": lambda: collect_cls(session, args.timeout, args.limit),
         "jin10": lambda: collect_jin10(session, args.timeout, args.limit),
         "github": lambda: collect_github_trending(session, args.timeout, args.limit),
         "rss": lambda: collect_rss(Path(args.config), args.timeout, args.limit),

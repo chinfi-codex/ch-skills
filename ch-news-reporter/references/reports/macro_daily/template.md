@@ -1,7 +1,7 @@
 # 每日宏观日报 | YYYY-MM-DD
 
 更新时间：HH:MM
-数据来源：金十电报 / 财联社 / RSS / Yahoo Finance / Tushare / Stooq
+数据来源：金十电报 / RSS / Yahoo Finance / Tushare / Stooq
 
 ## 一句话结论
 

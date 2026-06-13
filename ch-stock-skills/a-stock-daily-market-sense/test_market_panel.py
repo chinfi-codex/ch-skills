@@ -289,6 +289,20 @@ def test_build_market_style_index_summary_series_and_metrics():
     assert "series" not in compact
 
 
+def test_style_summary_zero_amount_denominator_guard():
+    df = _synthetic_index_daily(80)
+    df["amount"] = 0.0
+    summary = mp.build_market_style_index_summary(
+        df,
+        {"name": "零额", "bs_code": "sh.zero", "style_role": "测试"},
+        "20260410",
+        20,
+    )
+    assert summary["available"] is True
+    assert summary["volume_price"]["amount_ratio_20d"] is None
+    json.dumps(summary, allow_nan=False)
+
+
 def test_unavailable_market_style_summary_has_no_series():
     summary = mp.build_market_style_index_summary(
         pd.DataFrame(),
@@ -342,8 +356,8 @@ def test_extract_style_series_payload():
     payload = rrh.extract_style_series_payload(evidence, display_days=6)
     assert payload is not None
     assert payload["display_days"] == 6
-    assert payload["window_start"] == "20260105"
-    assert payload["window_end"] == "20260110"
+    assert payload["trade_date"] == "20260110"
+    assert "window_start" not in payload and "window_end" not in payload and "source" not in payload
     assert [item["key"] for item in payload["indices"]] == ["mega_cap", "csi300"]
     assert len(payload["indices"][0]["records"]) == 6
     assert rrh.extract_style_series_payload({}) is None

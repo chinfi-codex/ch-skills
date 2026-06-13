@@ -172,7 +172,6 @@ def extract_style_series_payload(evidence: dict, display_days: int = 60) -> Opti
         return None
     indices = style.get("indices") or {}
     items: List[Dict[str, Any]] = []
-    all_dates: List[str] = []
     for key, item in indices.items():
         if not isinstance(item, dict) or not item.get("available"):
             continue
@@ -180,7 +179,6 @@ def extract_style_series_payload(evidence: dict, display_days: int = 60) -> Opti
         records = _clean_style_series_records(series.get("records"), display_days)
         if not records:
             continue
-        all_dates.extend([records[0]["trade_date"], records[-1]["trade_date"]])
         items.append({
             "key": key,
             "name": item.get("name"),
@@ -192,10 +190,7 @@ def extract_style_series_payload(evidence: dict, display_days: int = 60) -> Opti
         return None
     return {
         "display_days": int(display_days),
-        "source": style.get("source") or "baostock",
         "trade_date": style.get("trade_date"),
-        "window_start": min(all_dates) if all_dates else None,
-        "window_end": max(all_dates) if all_dates else None,
         "indices": items,
     }
 
@@ -223,10 +218,10 @@ MARKET_SENSE_EXTRA_CSS = """
 .kline-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .style-compare-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 12px 0 22px; }
 .style-compare-card { min-width: 0; margin: 0; }
-.style-compare-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--muted); font-size: 12px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line-2); }
+.style-compare-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--ink-3); font-size: 12px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line-2); }
 .style-compare-legend span { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); }
 .style-compare-legend svg { width: 24px; height: 8px; overflow: visible; }
-.style-compare-note { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.style-compare-note { margin-top: 6px; color: var(--ink-3); font-size: 12px; line-height: 1.55; }
 @media (max-width: 900px) { .style-compare-grid { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .kline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .kline-grid { grid-template-columns: 1fr; } }
@@ -578,32 +573,63 @@ const chartDefs = [
 const charts = chartDefs.map(def => prepareChart(def)).filter(Boolean);
 if (!charts.length) return;
 
-const heading = CK.findHeading(reportBody, "市场风格", "h2, h3");
-if (!heading) return;
+const anchor = findStyleAnchor();
+if (!anchor) return;
 
 const grid = document.createElement("div");
 grid.className = "style-compare-grid";
 charts.forEach(chart => grid.appendChild(buildChartCard(chart)));
 
-const table = CK.findNextTable(heading);
-if (table) {
-  table.after(grid);
+if (anchor.table) {
+  anchor.table.after(grid);
 } else {
-  heading.after(grid);
+  anchor.element.after(grid);
+}
+
+/* Anchor on the 1.3 heading; reports written with bold pseudo-headings
+   (report_template.md style, <p><strong>1.3 市场风格</strong></p>) fall back to
+   that paragraph, with the sibling walk stopping at the next pseudo-heading. */
+function findStyleAnchor() {
+  const heading = CK.findHeading(reportBody, "市场风格", "h2, h3");
+  if (heading) return { element: heading, table: CK.findNextTable(heading) };
+  const strong = Array.from(reportBody.querySelectorAll("p > strong"))
+    .find(el => (el.textContent || "").includes("市场风格"));
+  if (!strong) return null;
+  const para = strong.closest("p");
+  let cur = para.nextElementSibling;
+  let table = null;
+  while (cur) {
+    if (cur.classList && cur.classList.contains("table-wrap")) { table = cur; break; }
+    if (/^H[234]$/.test(cur.tagName || "")) break;
+    if (cur.tagName === "P" && cur.firstElementChild && cur.firstElementChild.tagName === "STRONG") break;
+    cur = cur.nextElementSibling;
+  }
+  return { element: para, table };
 }
 
 function prepareChart(def) {
-  const series = def.keys.map(key => {
+  const sliced = def.keys.map(key => {
     const item = byKey[key];
     if (!item) return null;
     const rows = normalizeRecords(item.records).slice(-displayDays);
-    if (!rows.length || !Number.isFinite(rows[0].close) || rows[0].close === 0) return null;
-    const base = rows[0].close;
-    const points = rows.map(row => ({
+    return rows.length ? { item, key, rows } : null;
+  }).filter(Boolean);
+  if (sliced.length < 2) return null;
+  /* rebase every line of a chart from the latest common start date so the
+     lines stay comparable when one series is shorter than the window */
+  const commonStart = sliced.reduce(
+    (acc, entry) => (entry.rows[0].trade_date > acc ? entry.rows[0].trade_date : acc),
+    sliced[0].rows[0].trade_date
+  );
+  const series = sliced.map(({ item, key, rows }) => {
+    const trimmed = rows.filter(row => row.trade_date >= commonStart);
+    if (trimmed.length < 2 || !Number.isFinite(trimmed[0].close) || trimmed[0].close === 0) return null;
+    const base = trimmed[0].close;
+    const points = trimmed.map(row => ({
       date: row.trade_date,
       value: round2(row.close / base * 100)
     })).filter(point => Number.isFinite(point.value));
-    if (!points.length) return null;
+    if (points.length < 2) return null;
     return {
       key,
       name: item.name || key,

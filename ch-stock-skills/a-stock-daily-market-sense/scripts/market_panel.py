@@ -2177,6 +2177,7 @@ def _prepare_index_summary_frames(
     target_date: str,
     trend_days: int,
     kline_days: Optional[int] = None,
+    with_series: bool = False,
 ) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], str]:
     if daily is None or daily.empty:
         return None, None, "index_daily returned no data"
@@ -2194,7 +2195,7 @@ def _prepare_index_summary_frames(
     if df.empty:
         return None, None, "no rows on or before target date"
 
-    series_df = df.copy()
+    series_df = df[["trade_date", "close"]].copy() if with_series else None
     safe_trend_days = max(20, int(trend_days))
     windows = [safe_trend_days, 60]
     if kline_days is not None:
@@ -2208,8 +2209,8 @@ def _prepare_index_summary_frames(
 
     liquidity_col = "amount" if "amount" in df.columns and df["amount"].notna().any() else "vol"
     if liquidity_col in df.columns:
-        df["liquidity_ma5_prev"] = df[liquidity_col].shift(1).rolling(5, min_periods=3).mean()
-        df["liquidity_ma20_prev"] = df[liquidity_col].shift(1).rolling(20, min_periods=5).mean()
+        df["liquidity_ma5_prev"] = df[liquidity_col].shift(1).rolling(5, min_periods=3).mean().replace(0, pd.NA)
+        df["liquidity_ma20_prev"] = df[liquidity_col].shift(1).rolling(20, min_periods=5).mean().replace(0, pd.NA)
         df["liquidity_ratio_5d"] = df[liquidity_col] / df["liquidity_ma5_prev"]
         df["liquidity_ratio_20d"] = df[liquidity_col] / df["liquidity_ma20_prev"]
     else:
@@ -2409,7 +2410,7 @@ def build_market_style_index_summary(
         "proxy_note": config.get("proxy_note"),
     }
     safe_trend_days = max(20, int(trend_days))
-    df, series_df, reason = _prepare_index_summary_frames(standardized, target_date, safe_trend_days)
+    df, series_df, reason = _prepare_index_summary_frames(standardized, target_date, safe_trend_days, with_series=True)
     if df is None or series_df is None:
         if standardized is None or standardized.empty:
             reason = "baostock returned no data"

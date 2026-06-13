@@ -39,7 +39,7 @@ rss:
     category: ai
     enabled: true
   - name: Juya AI Daily
-    url: https://imjuya.github.io/juya-ai-daily/rss.xml
+    url: https://daily.juya.uk/rss.xml
     category: ai
     enabled: true
   - name: AI Hot

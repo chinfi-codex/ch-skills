@@ -23,7 +23,7 @@ import argparse
 import io
 import json
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -77,6 +77,21 @@ def _is_empty(value: Any) -> bool:
     if isinstance(value, (list, tuple, set, dict)):
         return len(value) == 0
     return False
+
+
+def _parse_date(value: Any) -> date | None:
+    """Parse a strict zero-padded YYYY-MM-DD string into a date, else None.
+
+    Expiry comparison goes through here so a non-standard string ("2026-6-1",
+    "2026/06/01", an ISO timestamp) or a non-string value can never slip through
+    a naive string `<=` and silently mis-judge whether an item has expired.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.strptime(value.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 
 def parse_args() -> argparse.Namespace:
@@ -194,68 +209,100 @@ def validate(
         raw_items = []
     items = raw_items or []
     seen_ids: set[str] = set()
-    # Prior watchboard, used by three carry-forward checks below: per-item
-    # "update" intent, the silent-drop guard, and the frame_change rationale.
     prior_wb = (prior or {}).get("watchboard") or {}
-    prior_items = {
-        str(it.get("id")): it
-        for it in (prior_wb.get("tracking_items") or [])
-        if isinstance(it, dict) and it.get("id")
-    }
-    for idx, item in enumerate(items):
+
+    # Flatten the prior watchboard — top-level items *and* their sub_items — into
+    # one id lookup. Downstream carry-forward checks (per-item update intent, the
+    # silent-drop guard, framework_switch coverage) then treat a sub-line exactly
+    # like a top-level item, so demoting a prior top-level item into a parent's
+    # sub_items counts as "reconciled, not vanished".
+    def _flatten(tracking: Any) -> dict[str, dict[str, Any]]:
+        flat: dict[str, dict[str, Any]] = {}
+
+        def _add(node: dict[str, Any]) -> None:
+            nid = str(node["id"])
+            existing = flat.get(nid)
+            if existing is not None:
+                warnings.append(
+                    f"prior watchboard 重复 tracking id {nid}（顶层/子项各一份）—— "
+                    "carry-forward 校验保留 open 的一侧；请清理历史数据里的重复 id"
+                )
+                # Keep the open side: a non-open node must not overwrite an open one.
+                if existing.get("status") == "open" and node.get("status") != "open":
+                    return
+            flat[nid] = node
+
+        for it in tracking or []:
+            if not isinstance(it, dict):
+                continue
+            if it.get("id"):
+                _add(it)
+            for s in it.get("sub_items") or []:
+                if isinstance(s, dict) and s.get("id"):
+                    _add(s)
+        return flat
+
+    prior_items = _flatten(prior_wb.get("tracking_items"))
+
+    # Per-item structural check, shared by top-level items and their sub_items. A
+    # parent ("母题") holds one open-budget slot; each sub_item keeps its own
+    # statement, status and — crucially — its own expires_after clock, so a quiet
+    # sub-line still expires on its own schedule and cannot ride the parent's
+    # renewals unnoticed.
+    def _check_item(item: Any, label: Any, is_sub: bool = False) -> None:
         if not isinstance(item, dict):
-            errors.append(f"tracking_items[{idx}] is not an object")
-            continue
+            errors.append(f"tracking_item {label} is not an object")
+            return
         tid = item.get("id")
         if not tid:
-            errors.append(f"tracking_items[{idx}] missing id")
+            errors.append(f"tracking_item {label} missing id")
         else:
-            if tid in seen_ids:
+            if str(tid) in seen_ids:
                 errors.append(f"duplicate tracking_item id: {tid}")
             seen_ids.add(str(tid))
-        label = item.get("id") or idx
+        lab = item.get("id") or label
         status = item.get("status")
         if status not in ALLOWED_STATUS:
             errors.append(
-                f"tracking_item {label} has invalid status "
+                f"tracking_item {lab} has invalid status "
                 f"{status!r} (allowed: {sorted(ALLOWED_STATUS)})"
             )
         for field in ITEM_REQUIRED:
             if _is_empty(item.get(field)):
-                errors.append(f"tracking_item {label} missing {field}")
-        # A settled item must record what happened; an open item leaves it null.
+                errors.append(f"tracking_item {lab} missing {field}")
         if status in SETTLED_STATUS and _is_empty(item.get("resolution")):
             errors.append(
-                f"tracking_item {label} is {status} but has no resolution — record "
+                f"tracking_item {lab} is {status} but has no resolution — record "
                 "what happened and which frame field it moved"
             )
-        # expires_after with teeth: an open item must carry a *future* expiry. A
-        # missing or already-past expiry on an open item (outside cold-start) is an
-        # error — settle it (confirm/dismiss/expire) or renew it to a future date
-        # with a reason in `update`. This is the main brake on endless "no news,
-        # carry forward" rollovers. Settled items need no expiry.
         exp = item.get("expires_after")
         is_open = status == "open"
         if _is_empty(exp):
             if is_open and prior:
                 errors.append(
-                    f"tracking_item {label} 仍 open 但缺 expires_after —— 给一个未来日期"
+                    f"tracking_item {lab} 仍 open 但缺 expires_after —— 给一个未来日期"
                     "（到期即复核），否则就地结算（confirmed/dismissed/expired）"
                 )
             else:
                 warnings.append(
-                    f"tracking_item {label} has no expires_after — set one to keep "
+                    f"tracking_item {lab} has no expires_after — set one to keep "
                     "the ledger from growing without bound"
                 )
-        elif is_open and prior and date_key and str(exp) <= date_key:
-            errors.append(
-                f"tracking_item {label} 仍 open 但 expires_after={exp} 已到期"
-                f"（≤ {date_key}）—— 必须结算（confirmed/dismissed/expired），或写明理由"
-                "并把 expires_after 续到未来日期，不许到期了还无脑顺延"
-            )
-        # Intent on carried-open items: if an item carried from the prior period
-        # stays open but its statement changed, that is a modification action and
-        # must say what moved and why (settled items use `resolution` instead).
+        elif is_open and prior and date_key:
+            # Parse to a real date before comparing — a naive string `<=` would
+            # silently mis-judge non-standard formats or non-string values.
+            exp_date = _parse_date(exp)
+            if exp_date is None:
+                errors.append(
+                    f"tracking_item {lab} 的 expires_after={exp!r} 不是合法的"
+                    " YYYY-MM-DD 日期，无法判断是否到期——请改成零填充的 YYYY-MM-DD"
+                )
+            elif exp_date <= _parse_date(date_key):
+                errors.append(
+                    f"tracking_item {lab} 仍 open 但 expires_after={exp} 已到期"
+                    f"（≤ {date_key}）—— 必须结算（confirmed/dismissed/expired），或写明理由"
+                    "并把 expires_after 续到未来日期，不许到期了还无脑顺延"
+                )
         prior_item = prior_items.get(str(tid)) if tid else None
         if (
             prior_item is not None
@@ -268,9 +315,23 @@ def validate(
                 item.get("update")
             ):
                 errors.append(
-                    f"tracking_item {label} 的 statement 较上一期有改动，但缺 'update'"
+                    f"tracking_item {lab} 的 statement 较上一期有改动，但缺 'update'"
                     "（写明今日对这条做了什么动作、为何仍 open）"
                 )
+        # sub_items: one level only (a sub cannot itself hold sub_items).
+        subs = item.get("sub_items")
+        if subs is not None:
+            if is_sub:
+                errors.append(
+                    f"tracking_item {lab} 是子项，不能再带 sub_items（只允许母题→子项一层）"
+                )
+            elif not isinstance(subs, list):
+                errors.append(f"tracking_item {lab} 的 sub_items 必须是 list")
+            else:
+                for sidx, sub in enumerate(subs):
+                    _check_item(sub, f"{lab}/sub[{sidx}]", is_sub=True)
+    for idx, item in enumerate(items):
+        _check_item(item, idx)
 
     # Open-item budget: a soft per-profile cap. Over budget never blocks a write;
     # it nudges the author to consolidate same-theme items or settle stale ones

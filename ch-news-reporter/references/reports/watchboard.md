@@ -68,7 +68,17 @@ watchboard 是一个 JSON 对象,通用骨架(所有 profile 一致):
 - `status`:`open`(在盯) / `confirmed`(兑现了) / `dismissed`(被证伪/不再相关) / `expired`(过期未动,待复核)。
 - `update`:**open 项的当日动作与意图**。如果这条从上一期 carry 过来、仍 `open`、但你改了 `statement`(说明它今天动了),就**必须**写 `update`:今天发生了什么、把哪个 frame 维度往哪推、为何还不结算——否则报错。statement 没改(纯顺延)时可省。它和 `resolution` 互补:`update` 管"仍 open 但有进展",`resolution` 管"已结算"。
 - `resolution`:结算时填——发生了什么、推动了什么(影响了哪个 frame 字段)。**status 一旦不是 `open`,resolution 必填**;空着会报错(逼你把"为什么结算"写下来,而不是悄悄改状态)。
-- `expires_after`:建议每条都给;缺了会出 warning(不阻塞),提醒你别让台账无限膨胀。
+- `expires_after`:**open 项必填、且必须是未来日期**(到期即触发结算,见下"控制台账规模");open 项缺失或已过期 `save_report_state.py` 直接报错(冷启动首期除外)。已结算项可省。
+- `sub_items`(可选):把一个跟踪项变成**母题**,收纳同一变量/路径下的多条子线。子项结构与顶层项相同(id / opened / statement / status / update|resolution / **独立 expires_after**),但**只允许一层**(子项不能再带 sub_items)。
+
+**母题与子项(sub_items)——既瘦顶层又不丢颗粒度:**
+
+同一谈判线、同一能源节点常裂成好几条独立事项,平铺成多个顶层 open 既挤预算、又让人看不清主线。把它们收进一个母题的 `sub_items`:
+
+- **母题占 1 个 open 预算名额**,子线不计入预算——这是"瘦顶层"的来源。
+- 但**每个子线保留自己的 `expires_after` 时钟和 status**:子线该到期就到期、该单独结算就单独结算,脚本对 open 子线一视同仁地查到期。子线**不会搭母题便车被掩盖**——这正是它和"糊成一条 statement"的本质区别,后者会丢掉子线的独立死活和独立时钟。
+- **降级即归并**:把一个顶层 open 项移进某母题的 `sub_items`,silent-drop guard 视作"已处理"(按 id 仍在、没消失),不报错。
+- 子线结算(转非 open)后,下一期可从 `sub_items` 移除,母题随之变薄。
 
 **铁律:每个 open 项每天都要被碰一次。** 确认、证伪、顺延、过期,四选一,不许凭空消失。`save_report_state.py` 会对照上一期的 open 项,任何在今天 watchboard 里彻底不见的 id 直接报错——这是防"悄悄忘了承诺"的兜底。
 
@@ -79,7 +89,7 @@ watchboard 是一个 JSON 对象,通用骨架(所有 profile 一致):
 1. **到期即了断(脚本 error 兜底)**:每个 open 项都要带 `expires_after`(未来日期)。一旦 `expires_after` 到期(≤ 今天)它还 open,今天就**必须**二选一——结算掉(confirmed/dismissed/expired),或写明"为什么还值得盯"并把 `expires_after` 续到更晚。到期了无脑顺延、或 open 项干脆不写 `expires_after`,`save_report_state.py` 直接报错(冷启动首期除外)。
 2. **open 预算(脚本 warning)**:每个 profile 有活跃 open 项软上限——`iran_dynamic` 12、`macro_daily` 8、`ai_daily` 10。超了脚本告警,要求先归并或了断、再开新项。预算不硬卡(事件密集日不该拒绝回写),但持续超标就是该精简的信号。
 3. **陈旧自动降级**:一个 open 项连续 3 期纯顺延(statement 没变、没有实质进展),第 4 期别再顺延——转 `expired`(待复核)或并入母题。连续"无新进展"本身就是它不该继续占用活跃名额的证据。
-4. **母题归并,别碎开**:开新项前先问"能不能挂到现有母题下"。同一变量/路径/维度的多条细项(几条都指向同一谈判线、同一能源节点)合并成一条带子项的 statement,用一个稳定 id 承载。粒度越碎,条数越容易爆炸。
+4. **母题归并,别碎开**:开新项前先问"能不能挂到现有母题下"。同一变量/路径/维度的多条细项(几条都指向同一谈判线、同一能源节点)收进一个母题的 `sub_items`(见上),母题占 1 个预算名额、子线各自保留独立 statement 与到期时钟——瘦了顶层又不丢颗粒度。**别把它们糊成一条 statement**,那会丢掉子线的独立死活。
 
 `expired` 是现成的出口:silent-drop guard 只盯上一期的 **open** 项,一条项一旦转成非 open,下一期就能从台账里自然移除、不再每天结算。所以"精简"不需要新机制,只需要及时把不再活跃的项推出 open。
 

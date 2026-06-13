@@ -1,10 +1,17 @@
 26q1/
 AGENTS.md
-eval.md
 eval/
 evals/
 **/eval/
 **/evals/
+
+# Agent 安装目录与本地缓存：运行时同步/缓存产物，canonical source 不入库
+.cache/
+.claude/
+.hermes/
+.kimi/
+.codex/
+.openclaw/
 
 .env
 .env.*

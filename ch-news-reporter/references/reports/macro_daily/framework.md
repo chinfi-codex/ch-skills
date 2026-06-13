@@ -91,6 +91,14 @@ output_sections: [一句话结论, 流动性总图, 市场相对位置, 今日3�
 - **后续观察**：即本期 watchboard 投影（`imminent_data_events` 的 open 项 + 关键价格位）。
 - **本期变更**：渲染约定见 `../watchboard.md`。
 
+### 台账维护（规模与归并）
+
+规模管控的通用四条（到期即了断、open 预算、陈旧降级、母题归并）见 `../watchboard.md`；本框架的落地口径：
+
+- **open 预算 8 条**。宏观活跃跟踪项主要是 `imminent_data_events`（临近的 CPI/PPI/社融/PMI/非农/FOMC），数据一旦公布就立刻结算（✅兑现 / ❌证伪），别让已公布的数据项还挂在 open。
+- **按"流动性维度"聚母题**：利率端 / 汇率端 / 风险偏好端 / 商品端各自一条主线，同维度的多个价格位、数据预期合并，不为每个价格位单开一项。
+- **价格位类观察项到期即砍**。"纳指能否站回 MA20""Brent 守 85"这类位置观察，触及或失效即结算；连续多日卡在原地、无新定价意义的，到期 `expired`。
+
 ### 冷启动
 
 首次无上一期时，按当日流动性三维度直接构造第一份 watchboard（`swing_factor` / `liquidity_bias` / `position_regime` 用今天证据现判，`imminent_data_events` 填临近带日期事件）。

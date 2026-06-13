@@ -72,7 +72,18 @@ watchboard 是一个 JSON 对象,通用骨架(所有 profile 一致):
 
 **铁律:每个 open 项每天都要被碰一次。** 确认、证伪、顺延、过期,四选一,不许凭空消失。`save_report_state.py` 会对照上一期的 open 项,任何在今天 watchboard 里彻底不见的 id 直接报错——这是防"悄悄忘了承诺"的兜底。
 
-控制台账规模:每条给 `expires_after`;长期不动的转 `expired` 待复核,别让台账无限膨胀。
+### 控制台账规模(防膨胀)
+
+台账只会越滚越长,除非主动"了断"比"顺延"更划算。四条规矩把顺延变贵、把了断和归并变便宜:
+
+1. **到期即了断(脚本 error 兜底)**:每个 open 项都要带 `expires_after`(未来日期)。一旦 `expires_after` 到期(≤ 今天)它还 open,今天就**必须**二选一——结算掉(confirmed/dismissed/expired),或写明"为什么还值得盯"并把 `expires_after` 续到更晚。到期了无脑顺延、或 open 项干脆不写 `expires_after`,`save_report_state.py` 直接报错(冷启动首期除外)。
+2. **open 预算(脚本 warning)**:每个 profile 有活跃 open 项软上限——`iran_dynamic` 12、`macro_daily` 8、`ai_daily` 10。超了脚本告警,要求先归并或了断、再开新项。预算不硬卡(事件密集日不该拒绝回写),但持续超标就是该精简的信号。
+3. **陈旧自动降级**:一个 open 项连续 3 期纯顺延(statement 没变、没有实质进展),第 4 期别再顺延——转 `expired`(待复核)或并入母题。连续"无新进展"本身就是它不该继续占用活跃名额的证据。
+4. **母题归并,别碎开**:开新项前先问"能不能挂到现有母题下"。同一变量/路径/维度的多条细项(几条都指向同一谈判线、同一能源节点)合并成一条带子项的 statement,用一个稳定 id 承载。粒度越碎,条数越容易爆炸。
+
+`expired` 是现成的出口:silent-drop guard 只盯上一期的 **open** 项,一条项一旦转成非 open,下一期就能从台账里自然移除、不再每天结算。所以"精简"不需要新机制,只需要及时把不再活跃的项推出 open。
+
+报告呈现也要消化臃肿:正文只逐条展开"今日有动作"的项(有进展/新开/结算),纯顺延的按主题聚合成一句话("path A 协议线 5 项均无新进展,顺延"),不要把十几条顺延平铺占满篇幅。
 
 ## 5. 怎么读上一期
 
@@ -106,8 +117,9 @@ python scripts/save_report_state.py --profile <profile> --date today \
 - `frame` 里 `required` 字段缺失或为空集(`[]` / `{}` 也算缺);概率类字段求和超出容差(默认 ±0.2,容一位小数舍入如 33.3×3=99.9,但 99.6/100.4 这类偏差会报错;可在 `report_profiles.yaml` 用 `sum_tol` 调整)。
 - 相对上一期 `path` 变了、或任一概率桶移动 ≥ 0.5,却没写 `frame_change`(框架挪了就得说为什么挪;冷启动无上一期时不要求)。
 - 上一期任一 `open` 跟踪项在今天 watchboard 里彻底消失(没结算也没顺延)。
+- 某 `open` 跟踪项的 `expires_after` 已到期(≤ 今天)或缺失,却仍标 `open`(冷启动首期除外)——到期即了断:结算掉,或写明理由并续到未来日期。
 
-只出 warning(不阻塞)的:跟踪项缺 `expires_after`、profile 的 `state_enabled` 为假仍强存。
+只出 warning(不阻塞)的:**非 open** 跟踪项缺 `expires_after`、**open 项数超过该 profile 预算**(iran 12 / macro 8 / ai 10)、profile 的 `state_enabled` 为假仍强存。
 
 ## 7. 什么时候该改框架（framework.md）而不是改 watchboard
 
@@ -127,6 +139,6 @@ watchboard 在这里的作用是**预警**（框架边缘反复撞墙就是 regi
 - **先填字段、再照着渲染本段**，别两头写出不一致。框架移动取自 `frame_change`，跟踪项动作取自各项 `update`（顺延）/ `resolution`（结算）。
 - 把本期相对上一期的变化**合并成一段**，框架与跟踪混编、按重要性排序，逐条 bullet。
 - **框架**（动了才写，未动写"沿用，N 项顺延"）：path / 概率 / 权重 / 各 profile 的 frame 维度怎么变——每条紧跟"为什么"（← `frame_change`）。
-- **跟踪项结算**：上一期每个 open 项必须出现（✅确认 / ❌证伪 / ⏸️顺延 / ⌛过期），不许遗漏（← `update` / `resolution`）。
+- **跟踪项结算**：上一期每个 open 项都要被处理（✅确认 / ❌证伪 / ⏸️顺延 / ⌛过期），不许遗漏——这是 watchboard **JSON 层**的铁律（由 silent-drop guard 校验）。报告**正文**里结算项逐条写、纯顺延项可按主题聚合成一句（见 §4「控制台账规模」末段），不必逐条平铺（← `update` / `resolution`）。
 - **新开**：带稳定 id + 因为什么开（≥ 某证据共振 / 某节点临近）。
 - 各 profile 的具体字段名映射见各自 `framework.md` 的"各板块写作要点"。

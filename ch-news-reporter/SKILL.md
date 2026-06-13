@@ -203,6 +203,15 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 
 `iran_dynamic` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含路径判定（A 续期 / B 交战 / C 僵尸化）、当前子分支、战争烈度、今日边际变化、**框架演进与跟踪项结算（逐条结算上一期 open 项）**、各方行动、能源与市场反应、下一关键节点倒计时、路径子分支概率今日变动和 24-72h 观察清单。
 
+### 5b. 简版输出（≤600 字，可选）
+
+当用户要“简版 / 精简 / 速览 / 短版 / 600 字以内”的日报时改读简版模板，**仅 `iran_dynamic` 与 `macro_daily` 提供简版**；`ai_daily` 不做简版，仍走完整版。
+
+- `references/reports/iran_dynamic/template_brief.md`
+- `references/reports/macro_daily/template_brief.md`
+
+简版只换展示密度，不换分析动作：采集、证据包、读 framework / methodology、读 `Prior Watchboard` 并逐条结算 open 项、第 6 步回写今天的 watchboard——全部照常跑。简版省掉的是正文的逐条铺开（不按国家板块罗列每条快讯、不画流动性总图与位置大表、不渲染完整「本期变更」段），但一句话结论 / 路径判定、今日边际变化、月度数据无更新明示、反向风险、不给交易建议这些方法论底线必须保留；正文压到 600 字内，跟踪项结算用一句话带过、明细留在 watchboard。文件名用 `reports/<profile>_<date>_brief.md`，与完整版并存不冲突，需要网页版时照常用 `render_report_html.py`（按前缀识别 profile）。
+
 ### 6. 回写活动状态（watchboard）
 
 `state_enabled` 的 profile（ai_daily / macro_daily / iran_dynamic）出完报告后,必须把今天的新 watchboard 存回去,供明天 carry-forward:
@@ -290,7 +299,7 @@ python scripts/render_report_html.py -i reports/iran_dynamic_2026-06-04.md --wat
 - 每个关键判断都要能回到数据表中的新闻或项目。
 - 对传闻、单源消息、未确认说法必须降级表述。
 - 财经内容避免直接给交易指令；AI 内容避免把 GitHub star 变化直接等同于商业成功。
-- 默认控制在 1500-2500 字；用户要求深度研究时可扩展。
+- 默认控制在 1500-2500 字；用户要求深度研究时可扩展。当用户要“简版 / 精简 / 速览 / 短版”时改走简版输出（见工作流程「5b. 简版输出」）：**仅 `iran_dynamic` / `macro_daily`，正文 ≤600 字**；`ai_daily` 不提供简版。
 
 ## 示例
 

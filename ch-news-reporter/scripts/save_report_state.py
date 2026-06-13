@@ -58,6 +58,10 @@ DEFAULT_SUM_TOL = 0.2
 FRAME_MOVE_EPS = 0.5
 # Valid responses to a framework-challenge raised by the slow-thinking layer.
 CHALLENGE_RESPONSE = {"accepted", "rejected", "pending"}
+# Soft cap on simultaneously-open tracking items per profile. Going over budget
+# is a warning (never blocks a write) that nudges consolidation or closure before
+# opening new items — the main lever against an ever-growing ledger.
+PROFILE_OPEN_BUDGET = {"iran_dynamic": 12, "macro_daily": 8, "ai_daily": 10}
 
 
 def _is_empty(value: Any) -> bool:
@@ -155,6 +159,8 @@ def validate(
     profile: dict[str, Any],
     prior: dict[str, Any] | None,
     framework_challenges: list[dict[str, Any]] | None = None,
+    date_key: str | None = None,
+    open_budget: int | None = None,
 ) -> tuple[list[str], list[str]]:
     """Structural validation only — never judges analytical content."""
     errors: list[str] = []
@@ -223,10 +229,29 @@ def validate(
                 f"tracking_item {label} is {status} but has no resolution — record "
                 "what happened and which frame field it moved"
             )
-        if _is_empty(item.get("expires_after")):
-            warnings.append(
-                f"tracking_item {label} has no expires_after — set one to keep the "
-                "ledger from growing without bound"
+        # expires_after with teeth: an open item must carry a *future* expiry. A
+        # missing or already-past expiry on an open item (outside cold-start) is an
+        # error — settle it (confirm/dismiss/expire) or renew it to a future date
+        # with a reason in `update`. This is the main brake on endless "no news,
+        # carry forward" rollovers. Settled items need no expiry.
+        exp = item.get("expires_after")
+        is_open = status == "open"
+        if _is_empty(exp):
+            if is_open and prior:
+                errors.append(
+                    f"tracking_item {label} 仍 open 但缺 expires_after —— 给一个未来日期"
+                    "（到期即复核），否则就地结算（confirmed/dismissed/expired）"
+                )
+            else:
+                warnings.append(
+                    f"tracking_item {label} has no expires_after — set one to keep "
+                    "the ledger from growing without bound"
+                )
+        elif is_open and prior and date_key and str(exp) <= date_key:
+            errors.append(
+                f"tracking_item {label} 仍 open 但 expires_after={exp} 已到期"
+                f"（≤ {date_key}）—— 必须结算（confirmed/dismissed/expired），或写明理由"
+                "并把 expires_after 续到未来日期，不许到期了还无脑顺延"
             )
         # Intent on carried-open items: if an item carried from the prior period
         # stays open but its statement changed, that is a modification action and
@@ -246,6 +271,19 @@ def validate(
                     f"tracking_item {label} 的 statement 较上一期有改动，但缺 'update'"
                     "（写明今日对这条做了什么动作、为何仍 open）"
                 )
+
+    # Open-item budget: a soft per-profile cap. Over budget never blocks a write;
+    # it nudges the author to consolidate same-theme items or settle stale ones
+    # before opening new ones.
+    if open_budget is not None:
+        open_count = sum(
+            1 for it in items if isinstance(it, dict) and it.get("status") == "open"
+        )
+        if open_count > open_budget:
+            warnings.append(
+                f"open 跟踪项 {open_count} 条 > 预算 {open_budget} —— 先归并同主题项"
+                "或了断陈旧项，再开新项，别让台账无限膨胀"
+            )
 
     nodes = payload.get("next_nodes")
     if nodes is not None and not isinstance(nodes, list):
@@ -491,7 +529,11 @@ def main() -> int:
             if not payload.get("carried_from") and prior:
                 payload["carried_from"] = prior.get("state_date_key")
 
-        errors, warnings = validate(payload, profile, prior, framework_challenges)
+        open_budget = PROFILE_OPEN_BUDGET.get(args.profile)
+        errors, warnings = validate(
+            payload, profile, prior, framework_challenges,
+            date_key=date_key, open_budget=open_budget,
+        )
         report: dict[str, Any] = {
             "profile": args.profile,
             "schema_source": schema_source,

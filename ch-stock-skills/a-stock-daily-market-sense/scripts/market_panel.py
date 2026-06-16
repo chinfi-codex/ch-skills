@@ -3659,6 +3659,8 @@ def attach_discount_after_high(
       - post_low_date / low_to_target_days：该最低点的日期，以及它距大涨日的交易日数
         （供"最低点须在大涨日前 N 日内"的新鲜度过滤使用）。
       - close_vs_prev_high：今日收盘 / 前高收盘价，仅作参考（反映现价是否仍在折价位）。
+      - monthly_ma10 / monthly_above_ma10：月线 10 月均线（月末收盘的 10 月 SMA）及
+        当前月收盘是否站上它，用作长期趋势过滤；月数不足 10 个则为 None。
 
     需要每只股的多日 close/low 序列，故输入 features（候选股多日特征帧），
     每只股返回 target 日对应的一组折扣证据。历史不足 lookback 个交易日者跳过
@@ -3708,6 +3710,22 @@ def attach_discount_after_high(
         low_to_target_days = recent_dates.index(last_date) - recent_dates.index(pl_date)
         target_rows = sub.loc[sub["trade_date"] == str(target_date)]
         target_close = safe_float(target_rows["close"].iloc[-1]) if not target_rows.empty else None
+        # 月线 10 月均线趋势过滤：把日线收盘按自然月取月末收盘，算 10 月 SMA，
+        # 看当前月收盘（= target 日收盘，当月最新）是否站在 10 月线之上。用 to_period
+        # 分组而非 resample("ME")，跨 pandas 版本稳。月数不足 10 个则判 None（不可评估）。
+        monthly_ma10 = None
+        monthly_above_ma10 = None
+        mser = sub.dropna(subset=["close"]).copy()
+        mser["_period"] = pd.to_datetime(mser["trade_date"], format="%Y%m%d", errors="coerce").dt.to_period("M")
+        mser = mser.dropna(subset=["_period"])
+        if not mser.empty:
+            month_close = mser.groupby("_period")["close"].last()
+            if len(month_close) >= 10:
+                ma10_val = safe_float(month_close.rolling(10).mean().iloc[-1])
+                latest_month_close = safe_float(month_close.iloc[-1])
+                if ma10_val is not None and ma10_val > 0 and latest_month_close is not None:
+                    monthly_ma10 = round(ma10_val, 2)
+                    monthly_above_ma10 = bool(latest_month_close >= ma10_val)
         result[str(ts_code)] = {
             "prev_high_close": round(ph_close, 2),
             "prev_high_date": ph_date,
@@ -3716,6 +3734,8 @@ def attach_discount_after_high(
             "low_to_target_days": int(low_to_target_days),
             "discount_after_high": round(post_low / ph_close, 4),
             "close_vs_prev_high": round(target_close / ph_close, 4) if target_close else None,
+            "monthly_ma10": monthly_ma10,
+            "monthly_above_ma10": monthly_above_ma10,
         }
     return result
 
@@ -3748,6 +3768,8 @@ def build_discount_relaunch_samples(
       - 调整期缩量：今日前 5 日均额 / 前 20 日均额 <= pre_contraction_max（默认 0.9）
       - 当日重新放量：amount_vs_prev5_ratio >= volume_expansion_min（默认 2.0），
         即当日量相对最近 5 日缩量期的倍数（不用 20 日均量，避免被前期放量潮抬高基准）
+      - 长期趋势：monthly_above_ma10 为真——当前月收盘站在月线 10 月均线之上
+        （月末收盘的 10 月 SMA），过滤掉长期趋势已破的折价股；月数不足 10 个无法评估者剔除
       - 排除北交所 / .BJ 与 ST/*ST；前高需可计算（历史不足者剔除）
 
     排序按成交额降序——放量启动背后的资金体量优先。折扣深度、现价相对前高位置
@@ -3762,9 +3784,11 @@ def build_discount_relaunch_samples(
         "low_to_target_days_max_inclusive": low_recency_days,
         "pre_volume_contraction_ratio_max_inclusive": pre_contraction_max,
         "amount_vs_prev5_ratio_min_inclusive": volume_expansion_min,
+        "monthly_above_ma10_required": True,
         "discount_def": f"前高之后最低价 / 前高收盘价；前高=最近{high_lookback}个交易日收盘价最高日；最低点须在大涨日前{low_recency_days}个交易日内",
         "volume_def": "放量=当日量 / 前5日均额（amount_vs_prev5_ratio），不用20日均量",
-        "exclude": "北交所/.BJ；ST/*ST；前高不可计算（历史不足或今日即收盘新高）",
+        "trend_def": "当前月收盘 ≥ 月线10月均线（月末收盘的10月SMA）",
+        "exclude": "北交所/.BJ；ST/*ST；前高不可计算（历史不足或今日即收盘新高）；月线在10月线之下或月数不足",
         "sample_limit": sample_limit,
         "sort_by": "成交额降序，其次涨幅降序",
         "amount_unit_note": "Tushare daily 的 amount 单位为千元，脚本内部已按亿元阈值换算。",
@@ -3783,7 +3807,7 @@ def build_discount_relaunch_samples(
         "pct_chg", "amount", "total_mv", "circ_mv", "close",
         "turnover_rate", "turnover_rate_f", "volume_ratio",
         "prev_high_close", "post_low", "discount_after_high", "close_vs_prev_high",
-        "low_to_target_days", "amount_ratio_20d", "pre_volume_contraction_ratio",
+        "low_to_target_days", "monthly_ma10", "amount_ratio_20d", "pre_volume_contraction_ratio",
         "amount_vs_prev5_ratio", "pre_ret_5d", "ret_5d", "ret_20d",
         "drawdown_120_high", "close_position_120d",
     ):
@@ -3814,6 +3838,12 @@ def build_discount_relaunch_samples(
         df["low_to_target_days"] if "low_to_target_days" in df.columns
         else pd.Series(float("nan"), index=df.index)
     )
+    # 月线在10月线之上：缺失/None（月数不足、无法评估）按 False 处理 → 剔除。
+    above_ma10 = (
+        df["monthly_above_ma10"].map(lambda v: v is True)
+        if "monthly_above_ma10" in df.columns
+        else pd.Series(False, index=df.index)
+    )
 
     qualified = df.loc[
         (total_mv_100m > market_cap_threshold_100m_yuan)
@@ -3825,6 +3855,7 @@ def build_discount_relaunch_samples(
         & (recency.fillna(99999) <= low_recency_days)
         & (contraction.fillna(999) <= pre_contraction_max)
         & (expansion.fillna(-999) >= volume_expansion_min)
+        & above_ma10
         & ~markets.eq("北交所")
         & ~ts_codes.str.endswith(".BJ")
         & ~names.str.upper().str.contains("ST", na=False)
@@ -3845,7 +3876,7 @@ def build_discount_relaunch_samples(
         f"涨幅>{pct_chg_threshold:g}%；自前高（最近{high_lookback}日收盘最高）最深回撤后折扣落在"
         f"{discount_min:g}~{discount_max:g}，且该最低点在大涨日前{low_recency_days:g}个交易日内（刚砸坑就反包）；"
         f"前5日均额≤前20日均额×{pre_contraction_max:g}（调整缩量），当日量≥前5日均额×{volume_expansion_min:g}"
-        f"（相对缩量期重新放量）；排除北交所与ST"
+        f"（相对缩量期重新放量）；且当前月收盘站上月线10月均线（长期趋势未破）；排除北交所与ST"
     )
 
     candidates: List[Dict[str, Any]] = []
@@ -3869,6 +3900,8 @@ def build_discount_relaunch_samples(
             "low_to_target_days": (int(row.get("low_to_target_days")) if pd.notna(row.get("low_to_target_days")) else None),
             "discount_after_high": round_optional(row.get("discount_after_high"), 4),
             "close_vs_prev_high": round_optional(row.get("close_vs_prev_high"), 4),
+            "monthly_ma10": round_optional(row.get("monthly_ma10"), 2),
+            "monthly_above_ma10": (bool(row.get("monthly_above_ma10")) if row.get("monthly_above_ma10") is not None and pd.notna(row.get("monthly_above_ma10")) else None),
             "close_position_120d": round_optional(row.get("close_position_120d"), 4),
             "amount_ratio_20d": round_optional(row.get("amount_ratio_20d"), 2),
             "pre_volume_contraction_ratio": round_optional(row.get("pre_volume_contraction_ratio"), 2),
@@ -4273,7 +4306,8 @@ def build_feature_group_analysis_samples(
         discount_panel = candidate_panel.copy()
         keys = discount_panel["ts_code"].astype(str)
         for field in ("prev_high_close", "prev_high_date", "post_low", "post_low_date",
-                      "low_to_target_days", "discount_after_high", "close_vs_prev_high"):
+                      "low_to_target_days", "discount_after_high", "close_vs_prev_high",
+                      "monthly_ma10", "monthly_above_ma10"):
             discount_panel[field] = keys.map(lambda code, f=field: (disc_map.get(code) or {}).get(f))
     discount_group = build_discount_relaunch_samples(
         discount_panel,
@@ -4467,6 +4501,8 @@ def build_report_context(
         "low_to_target_days",
         "discount_after_high",
         "close_vs_prev_high",
+        "monthly_ma10",
+        "monthly_above_ma10",
         "close_position_120d",
         "amount_ratio_20d",
         "pre_volume_contraction_ratio",
@@ -4773,10 +4809,10 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
     asof = normalize_date(args.asof)
     cache_enabled = not bool(args.no_cache)
     fetch_workers = max(1, int(getattr(args, "fetch_workers", 1) or 1))
-    # 折扣启动的"前高"需要回看 discount_high_lookback 个交易日，所以实际加载窗口
-    # 至少要覆盖它（留 20 日余量算前高之后的回撤）；其他模块只用近端数据，多出的
-    # 历史不改变其结果，仅让候选股的多日特征帧更长。
-    effective_lookback = max(args.lookback, int(getattr(args, "discount_high_lookback", 0) or 0) + 20)
+    # 折扣启动的"前高"需要回看 discount_high_lookback 个交易日，月线10月均线还需 ~11 个
+    # 自然月（≈230 交易日）的历史，所以实际加载窗口取二者上界并留余量（+50）。其他模块只用
+    # 近端数据，多出的历史不改变其结果，仅让候选股的多日特征帧更长。
+    effective_lookback = max(args.lookback, int(getattr(args, "discount_high_lookback", 0) or 0) + 50)
     target_date, trade_dates = fetch_trade_dates(
         pro,
         asof,
@@ -5099,7 +5135,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "市场风格代理指数来自 Baostock query_history_k_data_plus；amount 原始单位为元，amount_100m_yuan 已换算为亿元。Baostock 指数字典未见直接微盘指数，默认用国证2000代理小微盘风格。",
             "money_effect_samples 按涨幅和成交额阈值筛选，并按成交额排序，是每日赚钱效应和上涨主线分析的标准候选池。",
             "volume_decline_samples 按涨跌幅、20日放量倍数和成交额阈值筛选，并按爆量下跌强度（20日放量倍数 * 跌幅绝对值）排序。",
-            "feature_group_analysis_samples 是模块 5 的证据包：容量上涨、科创板120日新高且真实月K突破、10:30前涨停、折扣启动四组分别输出，并提供 overlap_hits 供模型做交叉命中上涨归因。折扣启动=市值>80亿、成交额>5亿、涨幅>7%、自前高（最近200日收盘最高）回撤折扣（前高之后最低价/前高收盘）落在0.6~0.85、且该最低点在大涨日前5个交易日内、调整缩量后当日相对前5日均额重新放量(≥2倍)。",
+            "feature_group_analysis_samples 是模块 5 的证据包：容量上涨、科创板120日新高且真实月K突破、10:30前涨停、折扣启动四组分别输出，并提供 overlap_hits 供模型做交叉命中上涨归因。折扣启动=市值>80亿、成交额>5亿、涨幅>7%、自前高（最近200日收盘最高）回撤折扣（前高之后最低价/前高收盘）落在0.6~0.85、且该最低点在大涨日前5个交易日内、调整缩量后当日相对前5日均额重新放量(≥2倍)、且当前月收盘站上月线10月均线。",
         ],
     }
 

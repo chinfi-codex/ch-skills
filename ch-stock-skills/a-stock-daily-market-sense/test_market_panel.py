@@ -474,6 +474,8 @@ def _synthetic_discount_panel() -> pd.DataFrame:
     ]
     frame = pd.DataFrame(rows)
     frame["low_to_target_days"] = 2
+    frame["monthly_above_ma10"] = True
+    frame["monthly_ma10"] = 1.0
     frame["trade_date"] = "20260609"
     return frame
 
@@ -513,6 +515,16 @@ def test_build_discount_relaunch_samples():
         volume_expansion_min=1.8, high_lookback=200, low_recency_days=5, sample_limit=10,
     )
     assert [c["ts_code"] for c in res_stale["candidates"]] == ["G.SZ"]  # H 因最低点过旧被剔除
+    # 月线跌破10月线（monthly_above_ma10=False/None）应被剔除
+    below = _synthetic_discount_panel()
+    below.loc[below["ts_code"] == "H.SZ", "monthly_above_ma10"] = False
+    below.loc[below["ts_code"] == "G.SZ", "monthly_above_ma10"] = None
+    res_below = mp.build_discount_relaunch_samples(
+        below, market_cap_threshold_100m_yuan=80.0, amount_threshold_100m_yuan=5.0,
+        pct_chg_threshold=7.0, discount_min=0.6, discount_max=0.85, pre_contraction_max=0.9,
+        volume_expansion_min=1.8, high_lookback=200, low_recency_days=5, sample_limit=10,
+    )
+    assert res_below["summary"]["candidate_count"] == 0  # 月线在10月线下/不可评估全部剔除
     # 折扣带边界与缩量/放量阈值同时收紧后命中清空
     none_hit = mp.build_discount_relaunch_samples(
         _synthetic_discount_panel(),
@@ -558,6 +570,25 @@ def test_attach_discount_after_high():
     assert z["low_to_target_days"] == 3  # 20260605 → 20260608 相隔 3 个交易日
     assert abs(z["discount_after_high"] - 0.6667) < 1e-4
     assert abs(z["close_vs_prev_high"] - 0.9) < 1e-4
+    # 仅 1 个自然月，月线 10 月均线无法评估 → None
+    assert z["monthly_above_ma10"] is None
+    assert z["monthly_ma10"] is None
+
+
+def test_attach_monthly_ma10():
+    # 每月一根（11 个自然月），构造一个有效的折扣形态以便进入结果
+    dates = ["20250815", "20250915", "20251015", "20251115", "20251215",
+             "20260115", "20260215", "20260315", "20260415", "20260515", "20260615"]
+    closes = [10.0, 12.0, 14.0, 16.0, 20.0, 13.0, 11.0, 12.0, 13.0, 14.0, 15.0]
+    lows = [c - 1.0 for c in closes]
+    feats = pd.DataFrame({"ts_code": ["MM.SZ"] * 11, "trade_date": dates, "close": closes, "low": lows})
+    out = mp.attach_discount_after_high(feats, "20260615", lookback=11)
+    m = out["MM.SZ"]
+    # 10 月均线 = 后 10 个月收盘均值 = mean(12,14,16,20,13,11,12,13,14,15) = 14.0；当前月收盘 15 ≥ 14 → True
+    assert m["monthly_ma10"] == 14.0
+    assert m["monthly_above_ma10"] is True
+    # 前高 20(20251215) 之后最低 low=10(20260215)
+    assert m["prev_high_close"] == 20.0 and m["post_low"] == 10.0
 
 
 def test_add_numeric_features_discount_volume_signals():

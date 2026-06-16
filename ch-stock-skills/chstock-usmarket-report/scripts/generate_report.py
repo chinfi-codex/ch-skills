@@ -209,7 +209,10 @@ def build_group_evidence(
     for group in config.get("groups", []):
         rows = []
         changes = []
-        for ticker in group.get("stocks", []):
+        # 组内去重：飞书同步偶尔把同一 ticker 写进同组两次（如 CRDO），
+        # 同票同组重复没有任何信息量，保序去重避免正文出现重复行。
+        group_tickers = list(dict.fromkeys(group.get("stocks", [])))
+        for ticker in group_tickers:
             snapshot = snapshots.get(ticker)
             rows.append({"ticker": ticker, "snapshot": snapshot})
             if snapshot:
@@ -219,7 +222,7 @@ def build_group_evidence(
             {
                 "name": group.get("name", ""),
                 "emoji": group.get("emoji", ""),
-                "tickers": group.get("stocks", []),
+                "tickers": group_tickers,
                 "stocks": rows,
                 "summary": {
                     "valid_count": len(changes),

@@ -417,6 +417,178 @@ def test_build_volume_decline_samples():
     assert result["candidates"][0]["decline_intensity"] == 20.0
 
 
+def _synthetic_discount_panel() -> pd.DataFrame:
+    # amount 单位千元（5亿=500000）；total_mv 单位万元（80亿=800000）。
+    # 直接提供 discount_after_high（前高之后最低价/前高收盘）列，函数据此筛选。
+    rows = [
+        # 通过：折扣0.80、缩量0.8、放量2.0、8亿、120亿、+9%
+        dict(ts_code="H.SZ", name="华", market="主板", pct_chg=9.0, amount=800000.0,
+             total_mv=1200000.0, circ_mv=1000000.0, close=80.0, prev_high_120d=100.0,
+             discount_after_high=0.80, amount_ratio_20d=2.0,
+             pre_volume_contraction_ratio=0.80, amount_vs_prev5_ratio=2.5, pre_ret_5d=-3.0),
+        # 通过：折扣0.75、缩量0.7、放量2.5、6亿、100亿、+8%
+        dict(ts_code="G.SZ", name="国", market="主板", pct_chg=8.0, amount=600000.0,
+             total_mv=1000000.0, circ_mv=800000.0, close=75.0, prev_high_120d=100.0,
+             discount_after_high=0.75, amount_ratio_20d=2.5,
+             pre_volume_contraction_ratio=0.70, amount_vs_prev5_ratio=3.0, pre_ret_5d=1.0),
+        # 折扣过高（0.95>0.85）→ 排除
+        dict(ts_code="I.SZ", name="壹", market="主板", pct_chg=8.0, amount=1000000.0,
+             total_mv=1500000.0, circ_mv=1200000.0, close=95.0, prev_high_120d=100.0,
+             discount_after_high=0.95, amount_ratio_20d=2.5,
+             pre_volume_contraction_ratio=0.70, amount_vs_prev5_ratio=3.0, pre_ret_5d=1.0),
+        # 折扣过低（0.50<0.6）→ 排除
+        dict(ts_code="J.SZ", name="积", market="主板", pct_chg=8.0, amount=1000000.0,
+             total_mv=1500000.0, circ_mv=1200000.0, close=50.0, prev_high_120d=100.0,
+             discount_after_high=0.50, amount_ratio_20d=2.5,
+             pre_volume_contraction_ratio=0.70, amount_vs_prev5_ratio=3.0, pre_ret_5d=1.0),
+        # 前面没缩量（1.2>0.9）→ 排除
+        dict(ts_code="K.SZ", name="科", market="主板", pct_chg=8.0, amount=700000.0,
+             total_mv=1100000.0, circ_mv=900000.0, close=70.0, prev_high_120d=100.0,
+             discount_after_high=0.70, amount_ratio_20d=2.5,
+             pre_volume_contraction_ratio=1.20, amount_vs_prev5_ratio=2.5, pre_ret_5d=1.0),
+        # 当日没放量（1.2<1.8）→ 排除
+        dict(ts_code="L.SZ", name="量", market="主板", pct_chg=8.0, amount=700000.0,
+             total_mv=1100000.0, circ_mv=900000.0, close=70.0, prev_high_120d=100.0,
+             discount_after_high=0.70, amount_ratio_20d=1.2,
+             pre_volume_contraction_ratio=0.70, amount_vs_prev5_ratio=1.3, pre_ret_5d=1.0),
+        # 市值不足（70亿<80亿）→ 排除
+        dict(ts_code="M.SZ", name="迷", market="主板", pct_chg=8.0, amount=700000.0,
+             total_mv=700000.0, circ_mv=600000.0, close=70.0, prev_high_120d=100.0,
+             discount_after_high=0.70, amount_ratio_20d=2.5,
+             pre_volume_contraction_ratio=0.70, amount_vs_prev5_ratio=2.5, pre_ret_5d=1.0),
+        # 成交额不足（4亿<5亿）→ 排除
+        dict(ts_code="O.SZ", name="欧", market="主板", pct_chg=8.0, amount=400000.0,
+             total_mv=1100000.0, circ_mv=900000.0, close=70.0, prev_high_120d=100.0,
+             discount_after_high=0.70, amount_ratio_20d=2.5,
+             pre_volume_contraction_ratio=0.70, amount_vs_prev5_ratio=2.5, pre_ret_5d=1.0),
+        # 涨幅不足（6%<7%）→ 排除
+        dict(ts_code="P.SZ", name="平", market="主板", pct_chg=6.0, amount=700000.0,
+             total_mv=1100000.0, circ_mv=900000.0, close=70.0, prev_high_120d=100.0,
+             discount_after_high=0.70, amount_ratio_20d=2.5,
+             pre_volume_contraction_ratio=0.70, amount_vs_prev5_ratio=2.5, pre_ret_5d=1.0),
+        # ST → 排除
+        dict(ts_code="N.SZ", name="*ST恩", market="主板", pct_chg=8.0, amount=700000.0,
+             total_mv=1100000.0, circ_mv=900000.0, close=70.0, prev_high_120d=100.0,
+             discount_after_high=0.70, amount_ratio_20d=2.5,
+             pre_volume_contraction_ratio=0.70, amount_vs_prev5_ratio=2.5, pre_ret_5d=1.0),
+    ]
+    frame = pd.DataFrame(rows)
+    frame["low_to_target_days"] = 2
+    frame["trade_date"] = "20260609"
+    return frame
+
+
+def test_build_discount_relaunch_samples():
+    result = mp.build_discount_relaunch_samples(
+        _synthetic_discount_panel(),
+        market_cap_threshold_100m_yuan=80.0,
+        amount_threshold_100m_yuan=5.0,
+        pct_chg_threshold=7.0,
+        discount_min=0.6,
+        discount_max=0.85,
+        pre_contraction_max=0.9,
+        volume_expansion_min=1.8,
+        high_lookback=200,
+        low_recency_days=5,
+        sample_limit=10,
+    )
+    assert result["available"] is True
+    codes = [item["ts_code"] for item in result["candidates"]]
+    # 只剩 H、G；按成交额降序 H(8亿) 在 G(6亿) 前
+    assert codes == ["H.SZ", "G.SZ"]
+    summary = result["summary"]
+    assert summary["candidate_count"] == 2
+    assert summary["total_amount_100m_yuan"] == 14.0
+    assert summary["median_discount_after_high"] == 0.775
+    head = result["candidates"][0]
+    assert head["total_mv_100m_yuan"] == 120.0
+    assert head["amount_100m_yuan"] == 8.0
+    assert head["discount_after_high"] == 0.8
+    # 最低点太旧（距大涨日 > 5 个交易日）应被剔除
+    stale = _synthetic_discount_panel()
+    stale.loc[stale["ts_code"] == "H.SZ", "low_to_target_days"] = 9
+    res_stale = mp.build_discount_relaunch_samples(
+        stale, market_cap_threshold_100m_yuan=80.0, amount_threshold_100m_yuan=5.0,
+        pct_chg_threshold=7.0, discount_min=0.6, discount_max=0.85, pre_contraction_max=0.9,
+        volume_expansion_min=1.8, high_lookback=200, low_recency_days=5, sample_limit=10,
+    )
+    assert [c["ts_code"] for c in res_stale["candidates"]] == ["G.SZ"]  # H 因最低点过旧被剔除
+    # 折扣带边界与缩量/放量阈值同时收紧后命中清空
+    none_hit = mp.build_discount_relaunch_samples(
+        _synthetic_discount_panel(),
+        market_cap_threshold_100m_yuan=80.0,
+        amount_threshold_100m_yuan=5.0,
+        pct_chg_threshold=7.0,
+        discount_min=0.6,
+        discount_max=0.72,
+        pre_contraction_max=0.9,
+        volume_expansion_min=1.8,
+        high_lookback=200,
+        low_recency_days=5,
+        sample_limit=10,
+    )
+    assert none_hit["available"] is True
+    assert none_hit["summary"]["candidate_count"] == 0
+    empty = mp.build_discount_relaunch_samples(
+        None, 80.0, 5.0, 7.0, 0.6, 0.85, 0.9, 1.8, 200, 5, 10
+    )
+    assert empty["available"] is False
+
+
+def test_attach_discount_after_high():
+    dates = [f"202606{day:02d}" for day in range(1, 9)]
+    rows = []
+    # Z：前高=20260602 收盘120，之后最低 low=80（20260605）→ 折扣 80/120=0.6667
+    z_close = [100.0, 120.0, 110.0, 90.0, 85.0, 95.0, 100.0, 108.0]
+    z_low = [98.0, 118.0, 105.0, 86.0, 80.0, 92.0, 98.0, 104.0]
+    # Y：收盘单调上行，最高即今日 → 无"前高之后"，应被跳过
+    y_close = [50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0]
+    y_low = [c - 2 for c in y_close]
+    for i, d in enumerate(dates):
+        rows.append(dict(ts_code="Z.SZ", trade_date=d, close=z_close[i], low=z_low[i]))
+        rows.append(dict(ts_code="Y.SZ", trade_date=d, close=y_close[i], low=y_low[i]))
+    features = pd.DataFrame(rows)
+    out = mp.attach_discount_after_high(features, "20260608", lookback=8)
+    assert "Y.SZ" not in out  # 今日即收盘新高，无回撤
+    z = out["Z.SZ"]
+    assert z["prev_high_close"] == 120.0
+    assert z["prev_high_date"] == "20260602"
+    assert z["post_low"] == 80.0
+    assert z["post_low_date"] == "20260605"
+    assert z["low_to_target_days"] == 3  # 20260605 → 20260608 相隔 3 个交易日
+    assert abs(z["discount_after_high"] - 0.6667) < 1e-4
+    assert abs(z["close_vs_prev_high"] - 0.9) < 1e-4
+
+
+def test_add_numeric_features_discount_volume_signals():
+    closes = [10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 11.0, 12.0]
+    amounts = [2000.0, 2000.0, 800.0, 800.0, 800.0, 800.0, 800.0, 3000.0]
+    dates = [f"202606{day:02d}" for day in range(1, 9)]
+    daily = pd.DataFrame({
+        "ts_code": ["Z.SZ"] * 8,
+        "trade_date": dates,
+        "open": closes,
+        "high": [c + 0.5 for c in closes],
+        "low": [c - 0.5 for c in closes],
+        "close": closes,
+        "pre_close": [closes[0]] + closes[:-1],
+        "change": [0.0] * 8,
+        "pct_chg": [0.0] * 8,
+        "vol": [a / 10 for a in amounts],
+        "amount": amounts,
+    })
+    features = mp.add_numeric_features(daily)
+    last = features.sort_values("trade_date").iloc[-1]
+    # 前20日均额=8000/7；前5日均额=800 → 缩量比=0.7
+    assert abs(float(last["pre_volume_contraction_ratio"]) - 0.7) < 1e-6
+    # 当日3000 / 前5日均额800 = 3.75
+    assert abs(float(last["amount_vs_prev5_ratio"]) - 3.75) < 1e-6
+    # 当日3000 / 前20日均额(8000/7) = 2.625
+    assert abs(float(last["amount_ratio_20d"]) - 2.625) < 1e-6
+    # 今日前5日涨幅 = close[t-1]/close[t-6]-1 = 11/10-1 = 10%
+    assert abs(float(last["pre_ret_5d"]) - 10.0) < 1e-6
+
+
 def test_amount_concentration_groupby_slicing():
     rows = []
     for date in ("20260608", "20260609"):

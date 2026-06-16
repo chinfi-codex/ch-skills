@@ -715,6 +715,14 @@ def add_numeric_features(daily: pd.DataFrame) -> pd.DataFrame:
     df["close_cv_10d"] = grouped["close"].transform(
         lambda s: s.rolling(10, min_periods=8).std() / s.rolling(10, min_periods=8).mean()
     )
+    # 折扣启动（discount-relaunch）量能特征：调整期缩量 → 当日重新放量。
+    # 前高折扣（前高之后最低价 / 前高收盘价）改由 attach_discount_after_high 按多日序列另算。
+    df["amount_ma5_prev"] = grouped["amount"].transform(
+        lambda s: s.shift(1).rolling(5, min_periods=3).mean()
+    )
+    df["pre_volume_contraction_ratio"] = df["amount_ma5_prev"] / df["amount_ma20_prev"]
+    df["amount_vs_prev5_ratio"] = df["amount"] / df["amount_ma5_prev"]
+    df["pre_ret_5d"] = (grouped["close"].transform(lambda s: s.shift(1) / s.shift(6)) - 1.0) * 100.0
     return df
 
 
@@ -3634,6 +3642,258 @@ def build_capacity_up_samples(
         },
     }
 
+
+def attach_discount_after_high(
+    features: pd.DataFrame,
+    target_date: str,
+    lookback: int,
+) -> Dict[str, Dict[str, Any]]:
+    """为每只候选股算"前高之后的回撤折扣"。
+
+    口径（用户定义）：
+      - 前高：最近 lookback 个交易日窗口内（含今日）**收盘价**最高的那一天，
+        取其收盘价为基准（前高收盘价）。若收盘最高日就是今日（今日创窗口内收盘新高），
+        则没有"前高之后"，该股不计入。
+      - 折扣 discount_after_high = 前高之后（前高日次日起至今日）出现的**最低价 low**
+        的最小值 / 前高收盘价。也就是从前高算起最深跌到了前高的几成。
+      - post_low_date / low_to_target_days：该最低点的日期，以及它距大涨日的交易日数
+        （供"最低点须在大涨日前 N 日内"的新鲜度过滤使用）。
+      - close_vs_prev_high：今日收盘 / 前高收盘价，仅作参考（反映现价是否仍在折价位）。
+
+    需要每只股的多日 close/low 序列，故输入 features（候选股多日特征帧），
+    每只股返回 target 日对应的一组折扣证据。历史不足者跳过。
+    """
+    result: Dict[str, Dict[str, Any]] = {}
+    if features is None or features.empty or "trade_date" not in features.columns:
+        return result
+
+    df = features.copy()
+    df["trade_date"] = df["trade_date"].astype(str)
+    for col in ("close", "low"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.loc[df["trade_date"] <= str(target_date)]
+    if df.empty or "close" not in df.columns or "low" not in df.columns:
+        return result
+
+    min_history = min(120, lookback)
+    for ts_code, sub in df.groupby("ts_code"):
+        sub = sub.sort_values("trade_date")
+        recent = sub.tail(lookback)
+        closes = recent["close"].dropna()
+        if len(closes) < min_history:
+            continue
+        ph_pos = closes.idxmax()
+        ph_date = str(recent.loc[ph_pos, "trade_date"])
+        ph_close = safe_float(recent.loc[ph_pos, "close"])
+        if ph_close is None or ph_close <= 0 or ph_date >= str(target_date):
+            continue  # 前高即今日（窗口内收盘新高）→ 无回撤可言，跳过
+        post = recent.loc[recent["trade_date"] > ph_date].copy()
+        post["low"] = pd.to_numeric(post["low"], errors="coerce")
+        post = post.dropna(subset=["low"])
+        if post.empty:
+            continue
+        pl_idx = post["low"].idxmin()
+        pl_date = str(post.loc[pl_idx, "trade_date"])
+        post_low = safe_float(post.loc[pl_idx, "low"])
+        if post_low is None or post_low <= 0:
+            continue
+        # 回撤最低点距大涨日的交易日数：在该股已加载的交易日序列里按位置相减。
+        recent_dates = recent["trade_date"].tolist()
+        last_date = recent_dates[-1]  # ≤ target 的最近交易日（活跃股即 target 当日）
+        low_to_target_days = recent_dates.index(last_date) - recent_dates.index(pl_date)
+        target_rows = sub.loc[sub["trade_date"] == str(target_date)]
+        target_close = safe_float(target_rows["close"].iloc[-1]) if not target_rows.empty else None
+        result[str(ts_code)] = {
+            "prev_high_close": round(ph_close, 2),
+            "prev_high_date": ph_date,
+            "post_low": round(post_low, 2),
+            "post_low_date": pl_date,
+            "low_to_target_days": int(low_to_target_days),
+            "discount_after_high": round(post_low / ph_close, 4),
+            "close_vs_prev_high": round(target_close / ph_close, 4) if target_close else None,
+        }
+    return result
+
+
+def build_discount_relaunch_samples(
+    panel: pd.DataFrame,
+    market_cap_threshold_100m_yuan: float,
+    amount_threshold_100m_yuan: float,
+    pct_chg_threshold: float,
+    discount_min: float,
+    discount_max: float,
+    pre_contraction_max: float,
+    volume_expansion_min: float,
+    high_lookback: int,
+    low_recency_days: int,
+    sample_limit: int,
+) -> Dict[str, Any]:
+    """折扣启动：自前高深度回撤过、调整期缩量、当日重新放量的中大盘上涨股。
+
+    硬性过滤（需同时满足）：
+      - 总市值 > market_cap_threshold_100m_yuan（默认 80 亿）
+      - 成交额 > amount_threshold_100m_yuan（默认 5 亿）
+      - 当日涨幅 > pct_chg_threshold（默认 7%）
+      - 前高折扣 discount_after_high = 前高之后最低价 / 前高收盘价，落在
+        (discount_min, discount_max) 折价带（默认 0.6~0.85，即自前高最深回撤 15%~40%）。
+        前高 = 最近 high_lookback 个交易日（默认 200）收盘价最高日，详见
+        attach_discount_after_high；折扣与下面的新鲜度列需由调用方预先附到 panel 上。
+      - 最低点新鲜度：回撤最低点距大涨日 low_to_target_days 在 1~low_recency_days 个交易日内
+        （默认 5）——即"刚砸出近期最低就放量反包"，排除几周/几个月前的旧坑。
+      - 调整期缩量：今日前 5 日均额 / 前 20 日均额 <= pre_contraction_max（默认 0.9）
+      - 当日重新放量：amount_vs_prev5_ratio >= volume_expansion_min（默认 2.0），
+        即当日量相对最近 5 日缩量期的倍数（不用 20 日均量，避免被前期放量潮抬高基准）
+      - 排除北交所 / .BJ 与 ST/*ST；前高需可计算（历史不足者剔除）
+
+    排序按成交额降序——放量启动背后的资金体量优先。折扣深度、现价相对前高位置
+    （close_vs_prev_high）、缩量比、放量倍数一并输出为证据，强弱与"是否真正调整
+    充分、现在是否仍折价"由模型判断，脚本不编码排序意见。
+    """
+    filter_criteria = {
+        "total_mv_100m_yuan_min_exclusive": market_cap_threshold_100m_yuan,
+        "amount_100m_yuan_min_exclusive": amount_threshold_100m_yuan,
+        "pct_chg_min_exclusive": pct_chg_threshold,
+        "discount_after_high_band_exclusive": [discount_min, discount_max],
+        "low_to_target_days_max_inclusive": low_recency_days,
+        "pre_volume_contraction_ratio_max_inclusive": pre_contraction_max,
+        "amount_vs_prev5_ratio_min_inclusive": volume_expansion_min,
+        "discount_def": f"前高之后最低价 / 前高收盘价；前高=最近{high_lookback}个交易日收盘价最高日；最低点须在大涨日前{low_recency_days}个交易日内",
+        "volume_def": "放量=当日量 / 前5日均额（amount_vs_prev5_ratio），不用20日均量",
+        "exclude": "北交所/.BJ；ST/*ST；前高不可计算（历史不足或今日即收盘新高）",
+        "sample_limit": sample_limit,
+        "sort_by": "成交额降序，其次涨幅降序",
+        "amount_unit_note": "Tushare daily 的 amount 单位为千元，脚本内部已按亿元阈值换算。",
+        "market_cap_unit_note": "Tushare daily_basic 的 total_mv 单位为万元，脚本内部已按亿元阈值换算。",
+    }
+    if panel is None or panel.empty:
+        return {
+            "available": False,
+            "filter_criteria": filter_criteria,
+            "candidates": [],
+            "summary": {"candidate_count": 0},
+        }
+
+    df = panel.copy()
+    for column in (
+        "pct_chg", "amount", "total_mv", "circ_mv", "close",
+        "turnover_rate", "turnover_rate_f", "volume_ratio",
+        "prev_high_close", "post_low", "discount_after_high", "close_vs_prev_high",
+        "low_to_target_days", "amount_ratio_20d", "pre_volume_contraction_ratio",
+        "amount_vs_prev5_ratio", "pre_ret_5d", "ret_5d", "ret_20d",
+        "drawdown_120_high", "close_position_120d",
+    ):
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    names = df["name"].fillna("").astype(str) if "name" in df.columns else pd.Series("", index=df.index)
+    markets = df["market"].fillna("").astype(str) if "market" in df.columns else pd.Series("", index=df.index)
+    ts_codes = df["ts_code"].fillna("").astype(str)
+    total_mv_100m = df["total_mv"] / 10000 if "total_mv" in df.columns else pd.Series(float("nan"), index=df.index)
+    amount_100m = df["amount"] / 100000 if "amount" in df.columns else pd.Series(float("nan"), index=df.index)
+
+    discount = (
+        df["discount_after_high"] if "discount_after_high" in df.columns
+        else pd.Series(float("nan"), index=df.index)
+    )
+    discount = pd.to_numeric(discount, errors="coerce")
+    contraction = (
+        df["pre_volume_contraction_ratio"] if "pre_volume_contraction_ratio" in df.columns
+        else pd.Series(float("nan"), index=df.index)
+    )
+    # 放量基准改为相对最近 5 日缩量期（amount_vs_prev5_ratio），不用 20 日均量。
+    expansion = (
+        df["amount_vs_prev5_ratio"] if "amount_vs_prev5_ratio" in df.columns
+        else pd.Series(float("nan"), index=df.index)
+    )
+    recency = (
+        df["low_to_target_days"] if "low_to_target_days" in df.columns
+        else pd.Series(float("nan"), index=df.index)
+    )
+
+    qualified = df.loc[
+        (total_mv_100m > market_cap_threshold_100m_yuan)
+        & (amount_100m > amount_threshold_100m_yuan)
+        & (df["pct_chg"].fillna(-999) > pct_chg_threshold)
+        & (discount > discount_min)
+        & (discount < discount_max)
+        & (recency.fillna(99999) >= 1)
+        & (recency.fillna(99999) <= low_recency_days)
+        & (contraction.fillna(999) <= pre_contraction_max)
+        & (expansion.fillna(-999) >= volume_expansion_min)
+        & ~markets.eq("北交所")
+        & ~ts_codes.str.endswith(".BJ")
+        & ~names.str.upper().str.contains("ST", na=False)
+    ].copy()
+
+    if qualified.empty:
+        return {
+            "available": True,
+            "filter_criteria": filter_criteria,
+            "candidates": [],
+            "summary": {"candidate_count": 0},
+        }
+
+    qualified = qualified.sort_values(["amount", "pct_chg"], ascending=[False, False]).head(sample_limit)
+
+    trigger_reason = (
+        f"总市值>{market_cap_threshold_100m_yuan:g}亿、成交额>{amount_threshold_100m_yuan:g}亿、"
+        f"涨幅>{pct_chg_threshold:g}%；自前高（最近{high_lookback}日收盘最高）最深回撤后折扣落在"
+        f"{discount_min:g}~{discount_max:g}，且该最低点在大涨日前{low_recency_days:g}个交易日内（刚砸坑就反包）；"
+        f"前5日均额≤前20日均额×{pre_contraction_max:g}（调整缩量），当日量≥前5日均额×{volume_expansion_min:g}"
+        f"（相对缩量期重新放量）；排除北交所与ST"
+    )
+
+    candidates: List[Dict[str, Any]] = []
+    for _, row in qualified.iterrows():
+        amount = safe_float(row.get("amount"))
+        total_mv = safe_float(row.get("total_mv"))
+        circ_mv = safe_float(row.get("circ_mv"))
+        candidates.append({
+            "ts_code": nullable_value(row.get("ts_code")),
+            "name": nullable_value(row.get("name")),
+            "market": nullable_value(row.get("market")),
+            "pct_chg": round_optional(row.get("pct_chg"), 2),
+            "amount_100m_yuan": round_optional(amount / 100000, 2) if amount is not None else None,
+            "total_mv_100m_yuan": round_optional(total_mv / 10000, 2) if total_mv is not None else None,
+            "circ_mv_100m_yuan": round_optional(circ_mv / 10000, 2) if circ_mv is not None else None,
+            "close": round_optional(row.get("close"), 2),
+            "prev_high_close": round_optional(row.get("prev_high_close"), 2),
+            "prev_high_date": nullable_value(row.get("prev_high_date")),
+            "post_low": round_optional(row.get("post_low"), 2),
+            "post_low_date": nullable_value(row.get("post_low_date")),
+            "low_to_target_days": (int(row.get("low_to_target_days")) if pd.notna(row.get("low_to_target_days")) else None),
+            "discount_after_high": round_optional(row.get("discount_after_high"), 4),
+            "close_vs_prev_high": round_optional(row.get("close_vs_prev_high"), 4),
+            "close_position_120d": round_optional(row.get("close_position_120d"), 4),
+            "amount_ratio_20d": round_optional(row.get("amount_ratio_20d"), 2),
+            "pre_volume_contraction_ratio": round_optional(row.get("pre_volume_contraction_ratio"), 2),
+            "amount_vs_prev5_ratio": round_optional(row.get("amount_vs_prev5_ratio"), 2),
+            "pre_ret_5d": round_optional(row.get("pre_ret_5d"), 2),
+            "ret_5d": round_optional(row.get("ret_5d"), 2),
+            "ret_20d": round_optional(row.get("ret_20d"), 2),
+            "turnover_rate": round_optional(row.get("turnover_rate"), 2),
+            "volume_ratio": round_optional(row.get("volume_ratio"), 2),
+            "trigger_reason": trigger_reason,
+        })
+
+    return {
+        "available": True,
+        "filter_criteria": filter_criteria,
+        "candidates": candidates,
+        "summary": {
+            "candidate_count": len(candidates),
+            "total_amount_100m_yuan": round(sum(float(item.get("amount_100m_yuan") or 0) for item in candidates), 2),
+            "median_pct_chg": round_optional(qualified["pct_chg"].median(), 2),
+            "median_discount_after_high": round_optional(qualified["discount_after_high"].median(), 4),
+            "median_total_mv_100m_yuan": (
+                round_optional((qualified["total_mv"] / 10000).median(), 2)
+                if "total_mv" in qualified.columns else None
+            ),
+        },
+    }
+
+
 def code_to_ts_code(code: Any) -> Optional[str]:
     code_str = str(code or "").strip()
     if not code_str:
@@ -3937,6 +4197,7 @@ def build_feature_group_overlaps(groups: Dict[str, Dict[str, Any]]) -> List[Dict
         "capacity_up": "容量上涨",
         "star_120_high_monthly_breakout": "科创板月线突破",
         "early_limit_up_1030": "10:30前涨停",
+        "discount_relaunch": "折扣启动",
     }
     by_code: Dict[str, Dict[str, Any]] = {}
     for group_key, payload in groups.items():
@@ -3975,11 +4236,21 @@ def build_feature_group_analysis_samples(
     features: pd.DataFrame,
     panel: pd.DataFrame,
     basic: pd.DataFrame,
+    candidate_panel: pd.DataFrame,
     target_date: str,
     sample_limit: int,
     capacity_market_cap_threshold_100m_yuan: float,
     capacity_amount_threshold_100m_yuan: float,
     capacity_pct_chg_threshold: float,
+    discount_market_cap_threshold_100m_yuan: float,
+    discount_amount_threshold_100m_yuan: float,
+    discount_pct_chg_threshold: float,
+    discount_min: float,
+    discount_max: float,
+    discount_pre_contraction_max: float,
+    discount_volume_expansion_min: float,
+    discount_high_lookback: int,
+    discount_low_recency_days: int,
 ) -> Dict[str, Any]:
     capacity_group = build_capacity_up_samples(
         panel,
@@ -3990,10 +4261,34 @@ def build_feature_group_analysis_samples(
     )
     star_group = build_star_monthly_breakout_samples(features, target_date, sample_limit)
     early_group = build_early_limit_up_1030_samples(target_date, panel, basic, sample_limit)
+    # 折扣启动需要 candidate_panel（候选池目标日切片，带 daily_basic 市值与量能特征），
+    # 折扣本身（前高之后最低价 / 前高收盘价）按多日序列在 features 上另算后附到该切片。
+    discount_panel = candidate_panel
+    if candidate_panel is not None and not candidate_panel.empty:
+        disc_map = attach_discount_after_high(features, target_date, discount_high_lookback)
+        discount_panel = candidate_panel.copy()
+        keys = discount_panel["ts_code"].astype(str)
+        for field in ("prev_high_close", "prev_high_date", "post_low", "post_low_date",
+                      "low_to_target_days", "discount_after_high", "close_vs_prev_high"):
+            discount_panel[field] = keys.map(lambda code, f=field: (disc_map.get(code) or {}).get(f))
+    discount_group = build_discount_relaunch_samples(
+        discount_panel,
+        market_cap_threshold_100m_yuan=discount_market_cap_threshold_100m_yuan,
+        amount_threshold_100m_yuan=discount_amount_threshold_100m_yuan,
+        pct_chg_threshold=discount_pct_chg_threshold,
+        discount_min=discount_min,
+        discount_max=discount_max,
+        pre_contraction_max=discount_pre_contraction_max,
+        volume_expansion_min=discount_volume_expansion_min,
+        high_lookback=discount_high_lookback,
+        low_recency_days=discount_low_recency_days,
+        sample_limit=sample_limit,
+    )
     groups = {
         "capacity_up": capacity_group,
         "star_120_high_monthly_breakout": star_group,
         "early_limit_up_1030": early_group,
+        "discount_relaunch": discount_group,
     }
     overlaps = build_feature_group_overlaps(groups)
     return {
@@ -4004,6 +4299,7 @@ def build_feature_group_analysis_samples(
             "capacity_up_count": len(capacity_group.get("candidates") or []),
             "star_120_high_monthly_breakout_count": len(star_group.get("candidates") or []),
             "early_limit_up_1030_count": len(early_group.get("candidates") or []),
+            "discount_relaunch_count": len(discount_group.get("candidates") or []),
             "overlap_hit_count": len(overlaps),
         },
         "model_responsibility": "脚本只提供分组命中和确定性量价证据；交叉命中上涨归因由模型基于证据包撰写，不在脚本中调用 LLM。",
@@ -4151,6 +4447,33 @@ def build_report_context(
         "open_times",
         "trigger_reason",
     ]
+    discount_fields = [
+        "ts_code",
+        "name",
+        "market",
+        "pct_chg",
+        "amount_100m_yuan",
+        "total_mv_100m_yuan",
+        "circ_mv_100m_yuan",
+        "close",
+        "prev_high_close",
+        "prev_high_date",
+        "post_low",
+        "post_low_date",
+        "low_to_target_days",
+        "discount_after_high",
+        "close_vs_prev_high",
+        "close_position_120d",
+        "amount_ratio_20d",
+        "pre_volume_contraction_ratio",
+        "amount_vs_prev5_ratio",
+        "pre_ret_5d",
+        "ret_5d",
+        "ret_20d",
+        "turnover_rate",
+        "volume_ratio",
+        "trigger_reason",
+    ]
     overlap_fields = [
         "ts_code",
         "name",
@@ -4261,6 +4584,15 @@ def build_report_context(
                         feature_limit,
                     ),
                 },
+                "discount_relaunch": {
+                    "filter_criteria": (feature_group_payload.get("discount_relaunch") or {}).get("filter_criteria"),
+                    "summary": (feature_group_payload.get("discount_relaunch") or {}).get("summary"),
+                    "candidates": compact_records(
+                        (feature_group_payload.get("discount_relaunch") or {}).get("candidates", []),
+                        discount_fields,
+                        feature_limit,
+                    ),
+                },
             },
             "overlap_hits": compact_records(feature_groups.get("overlap_hits", []), overlap_fields, feature_limit),
         },
@@ -4321,6 +4653,21 @@ def collect_candidate_codes(
             "ts_code",
         ].dropna().astype(str)
     )
+    # 折扣启动的粗筛只用 panel 现成的硬阈值（涨幅/成交额/市值），把候选股的完整历史
+    # 拉进 features；前高折扣与缩量→放量等多日条件在 build_discount_relaunch_samples 精筛。
+    amount_discount = args.discount_amount_threshold * 100000
+    market_cap_discount = args.discount_market_cap_threshold * 10000
+    discount_codes = set(
+        panel.loc[
+            (pd.to_numeric(panel["pct_chg"], errors="coerce").fillna(-999) > args.discount_pct_threshold)
+            & (pd.to_numeric(panel["amount"], errors="coerce").fillna(0) > amount_discount)
+            & (pd.to_numeric(panel_total_mv, errors="coerce").fillna(0) > market_cap_discount)
+            & ~panel_market.eq("北交所")
+            & ~panel_ts_codes.str.endswith(".BJ")
+            & ~panel_names.str.upper().str.contains("ST", na=False),
+            "ts_code",
+        ].dropna().astype(str)
+    )
     market = (
         screening_features["market"].fillna("").astype(str)
         if "market" in screening_features.columns
@@ -4333,7 +4680,7 @@ def collect_candidate_codes(
             "ts_code",
         ].dropna().astype(str)
     )
-    m5_codes = capacity_codes | star_codes
+    m5_codes = capacity_codes | star_codes | discount_codes
 
     return {
         "m2": m2_codes,
@@ -4422,10 +4769,14 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
     asof = normalize_date(args.asof)
     cache_enabled = not bool(args.no_cache)
     fetch_workers = max(1, int(getattr(args, "fetch_workers", 1) or 1))
+    # 折扣启动的"前高"需要回看 discount_high_lookback 个交易日，所以实际加载窗口
+    # 至少要覆盖它（留 20 日余量算前高之后的回撤）；其他模块只用近端数据，多出的
+    # 历史不改变其结果，仅让候选股的多日特征帧更长。
+    effective_lookback = max(args.lookback, int(getattr(args, "discount_high_lookback", 0) or 0) + 20)
     target_date, trade_dates = fetch_trade_dates(
         pro,
         asof,
-        args.lookback,
+        effective_lookback,
         args.offset,
         args.allow_future,
         cache_enabled=cache_enabled,
@@ -4644,11 +4995,21 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         features=features,
         panel=panel,
         basic=basic,
+        candidate_panel=candidate_panel,
         target_date=target_date,
         sample_limit=args.feature_sample_limit,
         capacity_market_cap_threshold_100m_yuan=args.capacity_market_cap_threshold,
         capacity_amount_threshold_100m_yuan=args.capacity_amount_threshold,
         capacity_pct_chg_threshold=args.capacity_pct_threshold,
+        discount_market_cap_threshold_100m_yuan=args.discount_market_cap_threshold,
+        discount_amount_threshold_100m_yuan=args.discount_amount_threshold,
+        discount_pct_chg_threshold=args.discount_pct_threshold,
+        discount_min=args.discount_min,
+        discount_max=args.discount_max,
+        discount_pre_contraction_max=args.discount_pre_contraction_max,
+        discount_volume_expansion_min=args.discount_volume_expansion_min,
+        discount_high_lookback=args.discount_high_lookback,
+        discount_low_recency_days=args.discount_low_recency_days,
     )
     timer.mark("modules")
     stock_kline_records = build_stock_kline_records(
@@ -4734,7 +5095,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "市场风格代理指数来自 Baostock query_history_k_data_plus；amount 原始单位为元，amount_100m_yuan 已换算为亿元。Baostock 指数字典未见直接微盘指数，默认用国证2000代理小微盘风格。",
             "money_effect_samples 按涨幅和成交额阈值筛选，并按成交额排序，是每日赚钱效应和上涨主线分析的标准候选池。",
             "volume_decline_samples 按涨跌幅、20日放量倍数和成交额阈值筛选，并按爆量下跌强度（20日放量倍数 * 跌幅绝对值）排序。",
-            "feature_group_analysis_samples 是模块 5 的证据包：容量上涨、科创板120日新高且真实月K突破、10:30前涨停三组分别输出，并提供 overlap_hits 供模型做交叉命中上涨归因。",
+            "feature_group_analysis_samples 是模块 5 的证据包：容量上涨、科创板120日新高且真实月K突破、10:30前涨停、折扣启动四组分别输出，并提供 overlap_hits 供模型做交叉命中上涨归因。折扣启动=市值>80亿、成交额>5亿、涨幅>7%、自前高（最近200日收盘最高）回撤折扣（前高之后最低价/前高收盘）落在0.6~0.85、且该最低点在大涨日前5个交易日内、调整缩量后当日相对前5日均额重新放量(≥2倍)。",
         ],
     }
 
@@ -4789,6 +5150,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
                        help="Capacity-up pool: minimum pct_chg in percent, exclusive (default 8.0).")
     panel.add_argument("--feature-sample-limit", type=int, default=60,
                        help="Module 5 feature-group max rows per subgroup (default 60).")
+
+    # Discount-relaunch (折扣启动) — module 5 feature-group subgroup.
+    panel.add_argument("--discount-market-cap-threshold", type=float, default=80.0,
+                       help="Discount-relaunch pool: minimum total market cap in 100m yuan, exclusive (default 80.0 == 80亿).")
+    panel.add_argument("--discount-amount-threshold", type=float, default=5.0,
+                       help="Discount-relaunch pool: minimum amount in 100m yuan, exclusive (default 5.0 == 5亿).")
+    panel.add_argument("--discount-pct-threshold", type=float, default=7.0,
+                       help="Discount-relaunch pool: minimum pct_chg in percent, exclusive (default 7.0).")
+    panel.add_argument("--discount-min", type=float, default=0.6,
+                       help="Discount-relaunch pool: lower bound of close/prev-120d-high discount band, exclusive (default 0.6).")
+    panel.add_argument("--discount-max", type=float, default=0.85,
+                       help="Discount-relaunch pool: upper bound of close/prev-120d-high discount band, exclusive (default 0.85).")
+    panel.add_argument("--discount-pre-contraction-max", type=float, default=0.9,
+                       help="Discount-relaunch pool: max prior-5d/prior-20d amount ratio for the adjustment-phase volume contraction (default 0.9).")
+    panel.add_argument("--discount-volume-expansion-min", type=float, default=2.0,
+                       help="Discount-relaunch pool: min amount_vs_prev5_ratio (today's amount vs the prior-5-day contraction-period average) for the relaunch-day volume expansion (default 2.0).")
+    panel.add_argument("--discount-high-lookback", type=int, default=200,
+                       help="Discount-relaunch pool: trading-day window for the prior high (close-based) used by the discount = post-high-low / prior-high-close (default 200).")
+    panel.add_argument("--discount-low-recency-days", type=int, default=5,
+                       help="Discount-relaunch pool: the post-high low must occur within this many trading days before the big-up day (default 5).")
 
     return parser
 

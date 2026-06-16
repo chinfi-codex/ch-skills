@@ -1,7 +1,7 @@
 ---
 name: a-stock-daily-market-sense
-description: 基于 Tushare Pro A 股 daily 日线数据和 Baostock 风格指数生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板/科创50指数趋势、市场风格判断、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、容量上涨/科创板月线突破/10:30前涨停等特征分组分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
-version: 2.1.0
+description: 基于 Tushare Pro A 股 daily 日线数据和 Baostock 风格指数生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板/科创50指数趋势、市场风格判断、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、容量上涨/科创板月线突破/10:30前涨停/折扣启动（自前高深度回撤、近5日刚见底、缩量后重新放量启动）等特征分组分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
+version: 2.2.0
 ---
 
 # Tushare Daily Market Sense
@@ -88,6 +88,15 @@ python3 scripts/render_report_html.py --input reports/report_20260429.md [--them
 | `--capacity-amount-threshold` | 容量上涨最低成交额，单位亿元，严格大于 | 5.0 |
 | `--capacity-pct-threshold` | 容量上涨最低当日涨幅，严格大于 | 8.0 |
 | `--feature-sample-limit` | 模块 5 每组最大样本数 | 60 |
+| `--discount-market-cap-threshold` | 折扣启动最低总市值，单位亿元，严格大于 | 80.0 |
+| `--discount-amount-threshold` | 折扣启动最低成交额，单位亿元，严格大于 | 5.0 |
+| `--discount-pct-threshold` | 折扣启动最低当日涨幅，严格大于 | 7.0 |
+| `--discount-min` | 折扣启动前高折扣下界（前高之后最低价/前高收盘价），严格大于 | 0.6 |
+| `--discount-max` | 折扣启动前高折扣上界，严格小于 | 0.85 |
+| `--discount-high-lookback` | 折扣启动"前高"回看交易日数（取该窗口内收盘价最高日） | 200 |
+| `--discount-low-recency-days` | 折扣启动回撤最低点须落在大涨日前几个交易日内（最低点新鲜度） | 5 |
+| `--discount-pre-contraction-max` | 折扣启动调整缩量上限（前5日均额/前20日均额） | 0.9 |
+| `--discount-volume-expansion-min` | 折扣启动当日重新放量下限（amount_vs_prev5_ratio，相对前5日缩量期） | 2.0 |
 
 ## Subagent 编排契约
 
@@ -123,7 +132,7 @@ Python 不调用 Anthropic API、不调用任何 LLM、不硬编码模型名。C
 
 禁止输出买卖建议。可以写“风险传导”“持续性待验证”“主线确认度”，不要写“买入/卖出/止损/目标价”。
 
-HTML 输出只改变呈现方式：必须保留 Markdown 研报中的所有文字、表格、引用和免责声明。`==...==` 高亮段落在 HTML 中渲染为浅蓝提示块；正文前可以增加 `market_data.json` 驱动的趋势图区域。若可读取同日期 evidence，HTML 可以在“指数趋势”正文附近插入上证指数、创业板指数、科创50 的 120 日 K 线图，并在图中展示成交金额柱；也可以在 3.3、5.2、5.3 股票明细表下方插入表内股票的 120 日 K 线图；若 evidence 含风格序列，还可以在“市场风格”表格下方插入两张 60 日归一化对比图（规模轴五线 / 成长价值红利三线，起点=100）。这些图表只展示 evidence 中已有的 OHLC、成交金额与风格指数收盘序列数据，不得新增与 Markdown 不一致的分析结论。
+HTML 输出只改变呈现方式：必须保留 Markdown 研报中的所有文字、表格、引用和免责声明。`==...==` 高亮段落在 HTML 中渲染为浅蓝提示块；正文前可以增加 `market_data.json` 驱动的趋势图区域。若可读取同日期 evidence，HTML 可以在“指数趋势”正文附近插入上证指数、创业板指数、科创50 的 120 日 K 线图，并在图中展示成交金额柱；也可以在 3.3、5.2、5.3、5.4 股票明细表下方插入表内股票的 120 日 K 线图；若 evidence 含风格序列，还可以在“市场风格”表格下方插入两张 60 日归一化对比图（规模轴五线 / 成长价值红利三线，起点=100）。这些图表只展示 evidence 中已有的 OHLC、成交金额与风格指数收盘序列数据，不得新增与 Markdown 不一致的分析结论。
 
 ## 示例
 

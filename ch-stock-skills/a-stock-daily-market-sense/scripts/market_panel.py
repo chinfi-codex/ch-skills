@@ -3661,7 +3661,8 @@ def attach_discount_after_high(
       - close_vs_prev_high：今日收盘 / 前高收盘价，仅作参考（反映现价是否仍在折价位）。
 
     需要每只股的多日 close/low 序列，故输入 features（候选股多日特征帧），
-    每只股返回 target 日对应的一组折扣证据。历史不足者跳过。
+    每只股返回 target 日对应的一组折扣证据。历史不足 lookback 个交易日者跳过
+    （次新股/长期停牌/缓存缺口——不构成完整的 200 日前高，不冒充折扣）。
     """
     result: Dict[str, Dict[str, Any]] = {}
     if features is None or features.empty or "trade_date" not in features.columns:
@@ -3676,12 +3677,15 @@ def attach_discount_after_high(
     if df.empty or "close" not in df.columns or "low" not in df.columns:
         return result
 
-    min_history = min(120, lookback)
     for ts_code, sub in df.groupby("ts_code"):
         sub = sub.sort_values("trade_date")
         recent = sub.tail(lookback)
+        # 必须有完整的 lookback 个交易日，"最近200日前高"才成立；历史不足者（次新股、
+        # 长期停牌、缓存/接口缺口）直接跳过，避免用更短窗口冒充 200 日折扣。
+        if len(recent) < lookback:
+            continue
         closes = recent["close"].dropna()
-        if len(closes) < min_history:
+        if closes.empty:
             continue
         ph_pos = closes.idxmax()
         ph_date = str(recent.loc[ph_pos, "trade_date"])

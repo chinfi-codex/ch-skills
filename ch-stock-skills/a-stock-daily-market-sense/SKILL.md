@@ -1,7 +1,7 @@
 ---
 name: a-stock-daily-market-sense
-description: 基于 Tushare Pro A 股 daily 日线数据和 Baostock 风格指数生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板/科创50指数趋势、市场风格判断、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、容量上涨/科创板月线突破/10:30前涨停/折扣启动（自前高深度回撤、近5日刚见底、缩量后重新放量、且月线站上10月线）等特征分组分析、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
-version: 2.2.0
+description: 基于 Tushare Pro A 股 daily 日线数据和 Baostock 风格指数生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板/科创50指数趋势、市场风格判断、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、容量上涨/科创板月线突破/10:30前涨停/折扣启动（自前高深度回撤、近5日刚见底、缩量后重新放量、且月线站上10月线）等特征分组分析、对你提出的某个特征分组做量化回溯/相对收益因子挖掘/找分组内叠加条件最优解（回测 T+1 进场、T+3/5/10 前向收益、相对板块匹配基准）、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
+version: 2.3.0
 ---
 
 # Tushare Daily Market Sense
@@ -36,6 +36,28 @@ version: 2.2.0
    ```
 
    该命令删除同日期的 evidence、kline、stderr 日志、lifecycle 输入、report_context 与 module_context 目录，永远不会碰 `report_YYYYMMDD.md` / `report_YYYYMMDD.html`（生命周期数据已持久化在 PG，不受清理影响）。不要跨日期批量清理，除非用户明确要求。
+
+## 特征因子挖掘（量化回溯 · 按需研究流程）
+
+这是独立于每日日报的一条研究线：**你提一个特征分组，skill 在分组之上做额外因子挖掘，给出分组内的"叠加条件最优解"**。不进日报，想挖时才跑。完整方法论、基准表、spec 格式、最优解选择 rubric 见 `references/methodology/factor_mining.md`。
+
+脑/手边界照旧：脚本 `scripts/factor_backtest.py` 只铺确定性证据（历史回放命中、6 格前向相对收益、因子分层、单/配对候选叠加条件 + 过拟合护栏标记），**不挑"最优解"、不下结论**；读证据、选叠加条件、写归因与 caveat 是模型的活。
+
+流程（两处人工，其余自动）：
+
+1. **你提分组**：内置组直接点名（如折扣启动）；新组用大白话给硬条件，模型译成 filter spec 给你确认。
+2. **脚本回放 + 回测 + 铺网格**：
+   ```bash
+   # 内置折扣启动（多日序列组，复用生产函数，语义同线上）
+   python3 scripts/factor_backtest.py --group discount_relaunch --min-n 15
+   # 自定义单日特征阈值组（含容量上涨式），用 spec
+   python3 scripts/factor_backtest.py --group custom --spec my_group.json
+   ```
+   产物：`reports/factor_mining_<group>_<asof>.json`（证据包，gitignore，跑完即临时）。
+3. **模型选最优叠加解**：读 JSON，按 reference §四 rubric（稳健优先于大 Δ、看 `oos_balance` 与中位数胜率、深度≤2、经济逻辑）选定叠加条件，写 `reports/factor_mining_<group>_<asof>.md`。
+4. **你决定要不要用**：当研究参考，或手动把叠加条件提级成分组生产阈值——脚本不替你改生产。
+
+口径要点：进场 T+1 开盘/尾盘 × 持有 T+3/T+5/T+10，后复权；相对收益挂**板块/市值匹配基准**（科创→科创50、创业→创业板指、主板按市值→沪深300/中证500/中证1000），沪深300 作宽基对照。脚本默认会把信号窗口缺失的 `daily_basic` 从 Tushare 回补入库（需 `TUSHARE_TOKEN`）。折扣启动要完整 200 日历史，信号只落在数据最近端、样本偏小——所以护栏与诚实 caveat 是骨架，结论按"单一环境证据扫描、非统计定论"来写。
 
 ## 数据获取
 

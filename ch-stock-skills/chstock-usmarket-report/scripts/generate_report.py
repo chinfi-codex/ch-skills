@@ -23,7 +23,7 @@ import yaml
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = ROOT_DIR / "assets" / "stock_pool.yaml"
-LOOKBACK_DAYS = 15
+HISTORY_DAYS = 260  # ≈ 52 周的交易日；够算 52 周位置 + 20 日均量 + 20 日趋势
 EVIDENCE_TYPE = "us_market_watchlist_evidence"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
 REQUEST_HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -69,11 +69,17 @@ def parse_report_date(value: Optional[str]) -> Optional[date]:
 
 
 def fetch_chart_history(ticker: str) -> list[Dict[str, Any]]:
-    """Fetch one month of daily chart history from Yahoo Finance."""
+    """Fetch one year of daily chart history from Yahoo Finance.
+
+    A year of history (vs the old one month) is what lets snapshots carry 52-week
+    position, drawdown-from-high, 20-day trend and a 20-day volume ratio — the
+    fields the sector money-effect rubric leans on. The call count is unchanged
+    (still one request per ticker); only the `range` widens.
+    """
     response = requests.get(
         YAHOO_CHART_URL.format(ticker=ticker),
         params={
-            "range": "1mo",
+            "range": "1y",
             "interval": "1d",
             "includePrePost": "false",
             "events": "div,splits",
@@ -110,7 +116,7 @@ def fetch_chart_history(ticker: str) -> list[Dict[str, Any]]:
 
     if len(rows) < 2:
         raise RuntimeError(f"{ticker} 历史行情不足。")
-    return rows[-LOOKBACK_DAYS:]
+    return rows[-HISTORY_DAYS:]
 
 
 def get_latest_completed_trading_day(
@@ -150,12 +156,62 @@ def resolve_target_row(
     return history[target_position], history[target_position - 1]
 
 
+def _return_pct(history: list[Dict[str, Any]], target_index: int, bars_back: int) -> Optional[float]:
+    """Return % from `bars_back` sessions ago to the target session (None if short)."""
+    if target_index < bars_back:
+        return None
+    base = float(history[target_index - bars_back]["close"])
+    if base == 0:
+        return None
+    cur = float(history[target_index]["close"])
+    return (cur - base) / base * 100
+
+
+def _position_in_range(
+    history: list[Dict[str, Any]], target_index: int, window: int = 252
+) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """Close's position within the trailing 52w close range + drawdown from that high.
+
+    Returns (position_0to1, drawdown_from_high_pct, high, low). Close-based, to
+    stay consistent with the rest of the snapshot (no intraday high/low).
+    """
+    start = max(0, target_index - window + 1)
+    closes = [float(r["close"]) for r in history[start : target_index + 1] if r.get("close")]
+    if len(closes) < 2:
+        return None, None, None, None
+    high, low, cur = max(closes), min(closes), closes[-1]
+    position = (cur - low) / (high - low) if high > low else None
+    drawdown = (cur - high) / high * 100 if high else None
+    return position, drawdown, high, low
+
+
+def _volume_ratio_20d(
+    history: list[Dict[str, Any]], target_index: int, window: int = 20
+) -> Optional[float]:
+    """Target session's volume vs the average of the prior `window` sessions (量比)."""
+    cur_vol = history[target_index].get("volume")
+    if not cur_vol:
+        return None
+    start = max(0, target_index - window)
+    prior = [r.get("volume") for r in history[start:target_index] if r.get("volume")]
+    if len(prior) < 5:
+        return None
+    avg = sum(prior) / len(prior)
+    return cur_vol / avg if avg else None
+
+
 def build_stock_snapshot(
     ticker: str,
     history: Optional[list[Dict[str, Any]]],
     report_date: Optional[date] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Build a deterministic price snapshot for one ticker."""
+    """Build a deterministic price snapshot for one ticker.
+
+    Beyond same-day change and the 5-day trend, the snapshot carries the
+    medium-term context the sector rubric reads: 20-day trend, 52-week position,
+    drawdown from the 52w high, and a 20-day volume ratio. Relative-to-QQQ excess
+    is injected later (see inject_relative_fields) once the benchmark is known.
+    """
     if not history:
         return None
     target_row, prev_row = resolve_target_row(history, report_date)
@@ -166,12 +222,11 @@ def build_stock_snapshot(
         return None
 
     change_pct = (close_price - prev_close) / prev_close * 100
-    five_day_trend = None
     target_index = history.index(target_row)
-    if target_index >= 4:
-        base_close = float(history[target_index - 4]["close"])
-        if base_close != 0:
-            five_day_trend = (close_price - base_close) / base_close * 100
+    five_day_trend = _return_pct(history, target_index, 4)
+    twenty_day_trend = _return_pct(history, target_index, 19)
+    position_52w, drawdown_high, high_52w, low_52w = _position_in_range(history, target_index)
+    vol_ratio = _volume_ratio_20d(history, target_index)
 
     return {
         "ticker": ticker,
@@ -180,8 +235,34 @@ def build_stock_snapshot(
         "prev_close": round(prev_close, 4),
         "change_pct": round(change_pct, 4),
         "five_day_trend_pct": round(five_day_trend, 4) if five_day_trend is not None else None,
+        "trend_20d_pct": round(twenty_day_trend, 4) if twenty_day_trend is not None else None,
+        "position_52w": round(position_52w, 4) if position_52w is not None else None,
+        "drawdown_from_high_pct": round(drawdown_high, 2) if drawdown_high is not None else None,
+        "high_52w": round(high_52w, 4) if high_52w is not None else None,
+        "low_52w": round(low_52w, 4) if low_52w is not None else None,
+        "vol_vs_20d": round(vol_ratio, 2) if vol_ratio is not None else None,
         "volume": target_row.get("volume"),
     }
+
+
+def inject_relative_fields(
+    snapshot: Optional[Dict[str, Any]], benchmark: Optional[Dict[str, Any]]
+) -> None:
+    """Add same-day and 5-day excess vs a benchmark (QQQ) to the snapshot in place.
+
+    A curated watchlist exists to beat the index, so the excess over QQQ is more
+    informative than the raw move — most names just echo the tape. Mutating in
+    place means the fields also flow into the group rows and abnormal buckets,
+    which reference the same snapshot dicts.
+    """
+    if not snapshot or not benchmark:
+        return
+    bench_1d = benchmark.get("change_pct")
+    if snapshot.get("change_pct") is not None and bench_1d is not None:
+        snapshot["vs_qqq_1d"] = round(snapshot["change_pct"] - bench_1d, 4)
+    bench_5d = benchmark.get("five_day_trend_pct")
+    if snapshot.get("five_day_trend_pct") is not None and bench_5d is not None:
+        snapshot["vs_qqq_5d"] = round(snapshot["five_day_trend_pct"] - bench_5d, 4)
 
 
 def collect_unique_tickers(config: Dict[str, Any]) -> list[str]:
@@ -304,9 +385,22 @@ def build_market_evidence(config: Dict[str, Any], report_date: Optional[date] = 
                     stock_snapshots[ticker] = None
                     errors[ticker] = str(exc)
 
+    # Excess vs QQQ, injected in place so it flows into groups + abnormal buckets.
+    qqq_snapshot = next(
+        (item["snapshot"] for item in index_snapshots if item["ticker"] == "QQQ"), None
+    )
+    for snapshot in stock_snapshots.values():
+        inject_relative_fields(snapshot, qqq_snapshot)
+
+    # Authoritative data date = the resolved trading session (QQQ snapshot), not the
+    # requested --date: a weekend/holiday/future date backfills to an earlier session,
+    # so the evidence must be labeled with the day the data actually came from (else the
+    # report header and the scan `date_aligned` check both compare against a stale date).
+    data_date = (qqq_snapshot or {}).get("trade_date") or resolved_date.isoformat()
+
     return {
         "type": EVIDENCE_TYPE,
-        "date": resolved_date.isoformat(),
+        "date": data_date,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "config_path": str(DEFAULT_CONFIG_PATH),
         "thresholds": config.get("thresholds", {}),
@@ -317,6 +411,57 @@ def build_market_evidence(config: Dict[str, Any], report_date: Optional[date] = 
             config.get("thresholds", {}),
             build_ticker_group_map(config),
         ),
+        "errors": errors,
+    }
+
+
+def build_enrich_evidence(
+    tickers: list[str],
+    report_date: Optional[date] = None,
+    benchmark_ticker: str = "QQQ",
+) -> Dict[str, Any]:
+    """Fetch a one-off ticker list (+ QQQ) and return enriched snapshots.
+
+    Used after the model has grouped the Nasdaq scan pool into themes: the scan
+    hits carry only a same-day snapshot, so the leading-theme members the model
+    wants to confirm get their 52w position / 20d trend / vol ratio / vs-QQQ
+    excess backfilled here. The script computes fields; it does not pick themes.
+    """
+    fetch_list = list(dict.fromkeys([benchmark_ticker] + [t for t in tickers]))
+    history_by_ticker: Dict[str, Optional[list[Dict[str, Any]]]] = {}
+    errors: Dict[str, str] = {}
+    for ticker in fetch_list:
+        try:
+            history_by_ticker[ticker] = fetch_chart_history(ticker)
+        except Exception as exc:
+            history_by_ticker[ticker] = None
+            errors[ticker] = str(exc)
+
+    if not any(history_by_ticker.values()):
+        raise RuntimeError("enrich：所有 ticker 的行情拉取都失败了。")
+
+    resolved_date = report_date or get_latest_completed_trading_day(history_by_ticker, benchmark_ticker)
+    benchmark_snapshot = build_stock_snapshot(
+        benchmark_ticker, history_by_ticker.get(benchmark_ticker), resolved_date
+    )
+
+    rows = []
+    for ticker in tickers:
+        snapshot = None
+        try:
+            snapshot = build_stock_snapshot(ticker, history_by_ticker.get(ticker), resolved_date)
+        except Exception as exc:
+            errors[ticker] = str(exc)
+        if snapshot:
+            inject_relative_fields(snapshot, benchmark_snapshot)
+        rows.append({"ticker": ticker, "snapshot": snapshot})
+
+    return {
+        "type": "us_enrich_evidence",
+        "date": resolved_date.isoformat(),
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "benchmark": {"ticker": benchmark_ticker, "snapshot": benchmark_snapshot},
+        "tickers": rows,
         "errors": errors,
     }
 
@@ -351,14 +496,17 @@ def maybe_sync_from_lark(config_path: str) -> Optional[str]:
 def maybe_scan_market(
     enabled: bool,
     min_change: float,
+    abnormal_pct: float,
+    min_dollar_volume_million: float,
     min_cap_billion: float,
     limit: int,
     evidence_date: Optional[str],
 ) -> Optional[Dict[str, Any]]:
-    """Optionally pull whole-market movers via scan_market.scan_movers.
+    """Optionally pull Nasdaq movers (money-first) via scan_market.scan_movers.
 
     Returns the scan evidence dict (with an extra `date_aligned` field) or None.
-    Failure is non-fatal: we log to stderr and skip.
+    The pool is Nasdaq-exchange filtered and ranked by dollar volume; the model
+    decides tech/theme downstream. Failure is non-fatal: log to stderr and skip.
     """
     if not enabled:
         return None
@@ -370,11 +518,13 @@ def maybe_scan_market(
     try:
         result = _scan(
             min_change_pct=min_change,
+            abnormal_pct=abnormal_pct,
+            min_dollar_volume_usd=min_dollar_volume_million * 1e6,
             min_market_cap_usd=min_cap_billion * 1e9,
             limit_per_side=limit,
         )
     except Exception as exc:
-        sys.stderr.write(f"[scan] 全市场扫描失败：{exc}\n")
+        sys.stderr.write(f"[scan] 纳斯达克异动扫描失败：{exc}\n")
         return None
     # Tag whether the scan window matches the report's date.
     scan_date = result.get("scan_date")
@@ -389,18 +539,38 @@ def main() -> None:
     parser.add_argument("--output", "-o", help="输出 JSON 文件路径")
     parser.add_argument("--json", "-j", action="store_true", help="兼容旧参数；当前默认总是输出 JSON")
     parser.add_argument("--no-sync", action="store_true", help="跳过从飞书表格同步配置")
-    parser.add_argument("--no-market-scan", action="store_true", help="跳过全市场 ±7% / 市值 ≥ $10B 扫描")
-    parser.add_argument("--scan-limit", type=int, default=20, help="全市场扫描每个方向最多保留几只，默认 20")
-    parser.add_argument("--scan-min-change", type=float, default=7.0, help="全市场扫描 |涨跌幅| 阈值，默认 7.0")
+    parser.add_argument(
+        "--enrich-tickers",
+        help="逗号分隔 ticker：只对这些票 + QQQ 取一年历史，回补 52周位置/20日趋势/量比/vs-QQQ，用于领先主题成员确认；不跑全量观察池",
+    )
+    parser.add_argument("--no-market-scan", action="store_true", help="跳过纳斯达克异动/赚钱效应扫描")
+    parser.add_argument("--scan-limit", type=int, default=60, help="纳斯达克扫描每个方向最多保留几只（按成交额排序后截断），默认 60")
+    parser.add_argument("--scan-min-change", type=float, default=3.0, help="纳斯达克扫描进池 |涨跌幅| 阈值，默认 3.0")
+    parser.add_argument("--scan-abnormal-pct", type=float, default=7.0, help="|涨跌幅| ≥ 此值标记为异动（触发联网核查），默认 7.0")
+    parser.add_argument("--scan-min-dollar-volume-million", type=float, default=50.0, help="纳斯达克扫描成交额下限（百万美元），默认 50（即 $50M）")
     parser.add_argument(
         "--scan-min-cap-billion",
         type=float,
-        default=10.0,
-        help="全市场扫描市值阈值（10亿美元为单位），默认 10（即 $10B）",
+        default=0.0,
+        help="纳斯达克扫描市值下限（10亿美元为单位），默认 0（靠成交额过滤，不靠市值，保留小盘新方向）",
     )
     args = parser.parse_args()
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+    # Enrich mode: a focused backfill for leading-theme members, not a full run.
+    if args.enrich_tickers:
+        tickers = [t.strip().upper() for t in args.enrich_tickers.split(",") if t.strip()]
+        enrich = build_enrich_evidence(tickers, parse_report_date(args.date))
+        content = json.dumps(enrich, ensure_ascii=False, indent=2, default=str)
+        if args.output:
+            output_path = Path(args.output).expanduser().resolve()
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(content, encoding="utf-8")
+            print(json.dumps({"status": "success", "output": str(output_path), "date": enrich["date"], "tickers": len(tickers)}, ensure_ascii=False))
+            return
+        print(content)
+        return
 
     sync_note: Optional[str] = None
     if not args.no_sync:
@@ -414,6 +584,8 @@ def main() -> None:
     market_wide = maybe_scan_market(
         enabled=not args.no_market_scan,
         min_change=args.scan_min_change,
+        abnormal_pct=args.scan_abnormal_pct,
+        min_dollar_volume_million=args.scan_min_dollar_volume_million,
         min_cap_billion=args.scan_min_cap_billion,
         limit=args.scan_limit,
         evidence_date=evidence.get("date"),

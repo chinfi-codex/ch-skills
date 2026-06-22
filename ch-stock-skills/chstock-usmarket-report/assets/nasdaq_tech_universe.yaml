@@ -1,0 +1,108 @@
+# 纳斯达克科技 universe —— curated 跟踪宇宙
+#
+# 用途：给板块赚钱效应引擎一个**稳定的广度分母**，并捞出"安静被买、没挤进当日
+# 涨幅榜 top-250"的票。开 `--scan-universe` 时才全量取数（重 pass，默认关）。
+#
+# ⚠️ 这里的 bucket 只是为了**批量取数 + 广度统计**的粗分类，不是主题。主题仍由
+#    模型读 ticker+name 当晚临时归纳（不套现成标签），见 references/sector_money_effect.md。
+# ⚠️ 以纳斯达克上市科技为主，但按 ticker 直取行情，故含少量关键的非 Nasdaq 科技
+#    （TSM/ANET/DELL/HPE 等）——它们是用户实际跟踪的同业，不靠 Nasdaq screener 进来。
+#
+# 维护：新 IPO（CRWV/NBIS 类）补进对应 bucket；退市/改名清掉。list-free 发现仍在跑，
+# 这份只是补"分母 + 安静票"，不必追求穷尽。
+
+buckets:
+  mega_tech:
+    - NVDA
+    - TSLA
+    - GOOGL
+    - META
+    - AMZN
+    - MSFT
+    - AAPL
+    - NFLX
+    - AVGO
+  semis_compute:
+    - AMD
+    - ARM
+    - QCOM
+    - MRVL
+    - ALAB
+    - INTC
+    - TXN
+    - ADI
+    - NXPI
+    - MCHP
+    - MPWR
+    - "ON"   # 必须加引号：YAML 会把裸 ON 解析成布尔 true
+    - GFS
+  semis_equipment:
+    - AMAT
+    - LRCX
+    - KLAC
+    - ASML
+    - ENTG
+    - MKSI
+    - ONTO
+    - ACLS
+    - FORM
+    - CAMT
+    - NVMI
+  semis_foundry:
+    - TSM
+    - UMC
+  memory_storage:
+    - MU
+    - SNDK
+    - WDC
+    - STX
+  interconnect_optical:
+    - CRDO
+    - LITE
+    - COHR
+    - AAOI
+    - FN
+    - POET
+    - VIAV
+  cloud_infra:
+    - CRWV
+    - NBIS
+    - APLD
+    - IREN
+    - CIFR
+    - WULF
+    - CORZ
+  software_app:
+    - NET
+    - DDOG
+    - SNOW
+    - PLTR
+    - CRWD
+    - NOW
+    - PANW
+    - ZS
+    - S
+    - FTNT
+    - MDB
+    - GTLB
+    - PATH
+    - BILL
+    - HUBS
+    - TEAM
+    - ADBE
+    - INTU
+    - FIG
+  networking:
+    - ANET
+    - CSCO
+    - CIEN
+  quantum:
+    - IONQ
+    - QBTS
+    - RGTI
+    - QUBT
+  ai_server:
+    - SMCI
+    - DELL
+    - HPE
+    - NTAP

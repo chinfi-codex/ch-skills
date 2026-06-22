@@ -13,6 +13,7 @@ import argparse
 import io
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -23,6 +24,7 @@ import yaml
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = ROOT_DIR / "assets" / "stock_pool.yaml"
+UNIVERSE_PATH = ROOT_DIR / "assets" / "nasdaq_tech_universe.yaml"
 HISTORY_DAYS = 260  # ≈ 52 周的交易日；够算 52 周位置 + 20 日均量 + 20 日趋势
 EVIDENCE_TYPE = "us_market_watchlist_evidence"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
@@ -466,6 +468,144 @@ def build_enrich_evidence(
     }
 
 
+def load_universe(path: str) -> Dict[str, list[str]]:
+    """Load the curated Nasdaq-tech universe (coarse buckets, not themes)."""
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.exists():
+        raise RuntimeError(f"universe 配置不存在：{resolved}")
+    data = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
+    cleaned: Dict[str, list[str]] = {}
+    for name, tickers in (data.get("buckets", {}) or {}).items():
+        items: list[str] = []
+        for ticker in tickers or []:
+            # YAML parses bare ON/NO/YES/OFF as booleans — catch it loudly so a
+            # mangled ticker fails the config rather than 404-ing as "True".
+            if isinstance(ticker, bool):
+                raise RuntimeError(
+                    f"universe bucket {name!r} 有被 YAML 当成布尔的 ticker（如裸 ON/NO/YES）；请加引号，例如 \"ON\"。"
+                )
+            items.append(str(ticker).strip().upper())
+        cleaned[name] = items
+    return cleaned
+
+
+def fetch_histories_concurrent(
+    tickers: list[str], workers: int = 8
+) -> tuple[Dict[str, Optional[list[Dict[str, Any]]]], Dict[str, str]]:
+    """Fetch many tickers' history in parallel (the universe scan is the big pass)."""
+    out: Dict[str, Optional[list[Dict[str, Any]]]] = {}
+    errors: Dict[str, str] = {}
+
+    def _one(ticker: str):
+        try:
+            return ticker, fetch_chart_history(ticker), None
+        except Exception as exc:  # noqa: BLE001 — per-ticker failure is non-fatal
+            return ticker, None, str(exc)
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        for ticker, history, err in pool.map(_one, tickers):
+            out[ticker] = history
+            if err:
+                errors[ticker] = err
+    return out, errors
+
+
+def _median(values: list[Optional[float]]) -> Optional[float]:
+    nums = sorted(v for v in values if v is not None)
+    if not nums:
+        return None
+    mid = len(nums) // 2
+    return nums[mid] if len(nums) % 2 else round((nums[mid - 1] + nums[mid]) / 2, 4)
+
+
+def build_universe_scan(
+    buckets: Dict[str, list[str]],
+    report_date: Optional[date] = None,
+    workers: int = 8,
+    min_mover_change: float = 3.0,
+    benchmark_ticker: str = "QQQ",
+) -> Dict[str, Any]:
+    """Fetch the whole curated universe and aggregate breadth + money by bucket.
+
+    This is the "stable denominator" the screener-only pool can't give: it sees
+    every tracked name, so quietly-bid names that never cracked the day_gainers
+    top-250 still surface here. Buckets are for breadth only — theme naming stays
+    the model's job. Heavy (one fetch per name), so it is opt-in (`--scan-universe`).
+    """
+    all_tickers = list(dict.fromkeys([benchmark_ticker] + [t for names in buckets.values() for t in names]))
+    history_by_ticker, errors = fetch_histories_concurrent(all_tickers, workers)
+    if not any(history_by_ticker.values()):
+        raise RuntimeError("universe scan：所有 ticker 的行情拉取都失败了。")
+
+    resolved_date = report_date or get_latest_completed_trading_day(history_by_ticker, benchmark_ticker)
+    benchmark = build_stock_snapshot(benchmark_ticker, history_by_ticker.get(benchmark_ticker), resolved_date)
+
+    snapshots: Dict[str, Optional[Dict[str, Any]]] = {}
+    for ticker in all_tickers:
+        if ticker == benchmark_ticker:
+            continue
+        snapshot = None
+        try:
+            snapshot = build_stock_snapshot(ticker, history_by_ticker.get(ticker), resolved_date)
+        except Exception as exc:  # noqa: BLE001
+            errors[ticker] = str(exc)
+        if snapshot:
+            inject_relative_fields(snapshot, benchmark)
+            vol = snapshot.get("volume")
+            snapshot["dollar_volume_million"] = (
+                round(snapshot["close"] * vol / 1e6, 1) if vol else None
+            )
+        snapshots[ticker] = snapshot
+
+    bucket_rows = []
+    movers = []
+    for name, tickers in buckets.items():
+        members = [snapshots.get(t) for t in dict.fromkeys(tickers) if snapshots.get(t)]
+        changes = [m["change_pct"] for m in members]
+        dollar_volume = round(sum(m.get("dollar_volume_million") or 0 for m in members), 1)
+        leaders = sorted(members, key=lambda m: m.get("dollar_volume_million") or 0, reverse=True)[:3]
+        bucket_rows.append(
+            {
+                "bucket": name,
+                "valid": len(members),
+                "up": sum(1 for c in changes if c > 0),
+                "down": sum(1 for c in changes if c < 0),
+                "dollar_volume_million": dollar_volume,
+                "median_change_pct": _median(changes),
+                "median_vs_qqq_5d": _median([m.get("vs_qqq_5d") for m in members]),
+                "leaders": [
+                    {"ticker": m["ticker"], "change_pct": m["change_pct"], "dollar_volume_million": m.get("dollar_volume_million")}
+                    for m in leaders
+                ],
+            }
+        )
+        for m in members:
+            if m["change_pct"] >= min_mover_change:
+                movers.append(
+                    {
+                        "ticker": m["ticker"],
+                        "bucket": name,
+                        "change_pct": m["change_pct"],
+                        "vs_qqq_1d": m.get("vs_qqq_1d"),
+                        "vs_qqq_5d": m.get("vs_qqq_5d"),
+                        "position_52w": m.get("position_52w"),
+                        "vol_vs_20d": m.get("vol_vs_20d"),
+                        "dollar_volume_million": m.get("dollar_volume_million"),
+                    }
+                )
+    movers.sort(key=lambda x: x.get("dollar_volume_million") or 0, reverse=True)
+
+    return {
+        "type": "us_nasdaq_universe_scan",
+        "date": (benchmark or {}).get("trade_date") or resolved_date.isoformat(),
+        "min_mover_change_pct": min_mover_change,
+        "benchmark": {"ticker": benchmark_ticker, "snapshot": benchmark},
+        "buckets": bucket_rows,
+        "movers": movers,
+        "errors": errors,
+    }
+
+
 def maybe_sync_from_lark(config_path: str) -> Optional[str]:
     """Try to sync the yaml from the configured Lark sheet. Return note or None.
 
@@ -544,6 +684,9 @@ def main() -> None:
         help="逗号分隔 ticker：只对这些票 + QQQ 取一年历史，回补 52周位置/20日趋势/量比/vs-QQQ，用于领先主题成员确认；不跑全量观察池",
     )
     parser.add_argument("--no-market-scan", action="store_true", help="跳过纳斯达克异动/赚钱效应扫描")
+    parser.add_argument("--scan-universe", action="store_true", help="额外扫 curated 纳指科技 universe（重 pass，给广度分母 + 捞安静被买的票），默认关")
+    parser.add_argument("--universe-path", default=str(UNIVERSE_PATH), help="universe 配置路径")
+    parser.add_argument("--universe-workers", type=int, default=8, help="universe 扫描并发取数线程数，默认 8")
     parser.add_argument("--scan-limit", type=int, default=60, help="纳斯达克扫描每个方向最多保留几只（按成交额排序后截断），默认 60")
     parser.add_argument("--scan-min-change", type=float, default=3.0, help="纳斯达克扫描进池 |涨跌幅| 阈值，默认 3.0")
     parser.add_argument("--scan-abnormal-pct", type=float, default=7.0, help="|涨跌幅| ≥ 此值标记为异动（触发联网核查），默认 7.0")
@@ -592,6 +735,16 @@ def main() -> None:
     )
     if market_wide is not None:
         evidence["market_wide_movers"] = market_wide
+
+    if args.scan_universe:
+        try:
+            buckets = load_universe(args.universe_path)
+            evidence["universe_scan"] = build_universe_scan(
+                buckets, parse_report_date(args.date), workers=args.universe_workers
+            )
+        except Exception as exc:  # noqa: BLE001 — universe scan is opt-in and non-fatal
+            sys.stderr.write(f"[universe] 扫描失败，跳过：{exc}\n")
+
     content = json.dumps(evidence, ensure_ascii=False, indent=2, default=str)
 
     if args.output:

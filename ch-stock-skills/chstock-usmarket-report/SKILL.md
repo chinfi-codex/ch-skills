@@ -63,13 +63,21 @@ QQQ 用四个数读，不与个股做扩散度对比、不做风格判断：
 2. 按主题 **dollar-volume 占比**定"钱在哪"，占比是第一门槛。
 3. **两遍走法**：Pass 1 按占比锁定领先 2–3 个候选主题；Pass 2 对其成员跑 `--enrich-tickers` 拿 52周位置 / 量比 / vs-QQQ，再按 **★ rubric**（★★★ / ★★ / ★）评级，并判位置（高位趋势 / 低位启动）、拥挤度、领导股 / 弹性股。
 
+### 3b. 板块广度与轮动（可选 · curated universe）
+
+赚钱效应池只看当晚涨幅榜，**看不到钱从哪个方向流出**。开 `--scan-universe` 会扫 `assets/nasdaq_tech_universe.yaml` 这份 curated 纳指科技宇宙，给一个稳定的广度分母，evidence 里多出 `universe_scan`：
+
+- **轮动**：哪个 bucket 普涨（up≫down、中位 vs-QQQ 为正）、哪个在失血（down≫up、中位 vs-QQQ 为负）。例：某夜 semis_compute 12/12 普涨、software_app 9 涨 10 跌，就是"钱从软件切到半导体"——这是只看涨幅榜永远看不到的一面。
+- **捞安静票**：`universe_scan.movers` 是宇宙内涨 ≥3% 的票，含没挤进涨幅榜 top-250 的"安静被买"名字，是新方向挖掘的补充输入。
+- bucket 只是取数 / 广度的粗分类，**不是主题**——主题仍按 §3 由模型当晚归纳。证据不足或没开 `--scan-universe` 时，本层略过、不强行写轮动。
+
 ### 4. 板块亏钱效应
 
 取 `market_wide_movers.drops`（同样 Nasdaq 过滤 + 成交额降序），模型剔非科技后按主题归纳，回答"今晚哪个纳指科技方向在爆量下跌"。和赚钱效应对照：若某主题既有强势成员又有成员进跌池，写"主题内部分歧"。
 
 ### 5. 池外新方向主动挖掘 → `references/new_direction_mining.md`
 
-读 `references/new_direction_mining.md` 执行。纲要：任何今晚有赚钱效应、但观察池覆盖不到 / 不全的主题，按**三档**（新主题缺口 / 主题内龙头缺口 / 邻接个股补充）给纳入建议；每条都要过 dollar-volume 下限、`--enrich-tickers` 确认、WebSearch 核查催化，区分一日脉冲 vs 多日持续，措辞只到"建议纳入观察"。
+读 `references/new_direction_mining.md` 执行。纲要：任何今晚有赚钱效应、但观察池覆盖不到 / 不全的主题，按**三档**（新主题缺口 / 主题内龙头缺口 / 邻接个股补充）给纳入建议；每条都要过 dollar-volume 下限、`--enrich-tickers` 确认、WebSearch 核查催化，区分一日脉冲 vs 多日持续，措辞只到"建议纳入观察"。**"多日持续"靠跨日台账查证**（见 §7 与 `references/cross_day_ledger.md`）：连续 ≥2–3 晚在赚钱效应池 = 强候选，单晚先观察。
 
 ### 6. 异动联网核查（±7%，WebSearch / WebFetch）
 
@@ -87,14 +95,15 @@ QQQ 用四个数读，不与个股做扩散度对比、不做风格判断：
 ## 工作流程
 
 1. **确认日期 + 配置**：用户给日期就用，否则脚本默认最近交易日。检查 `assets/stock_pool.yaml` 的 `groups`，要加票提示改 yaml（或飞书）重跑。
-2. **取证据包**：在 skill 目录下 `python scripts/generate_report.py`（可加 `--date YYYY-MM-DD --output outputs/us-YYYY-MM-DD.json`）。默认顺带做纳斯达克扫描；要跳过加 `--no-market-scan`。
+2. **取证据包**：在 skill 目录下 `python scripts/generate_report.py`（可加 `--date YYYY-MM-DD --output outputs/us-YYYY-MM-DD.json`）。默认顺带做纳斯达克扫描；要跳过加 `--no-market-scan`；要看板块广度 / 轮动加 `--scan-universe`（重 pass，§3b）。
 3. **写大盘 + 观察池明细**：QQQ 四数读；每组一张表列全部成员（含 vs-QQQ + 信号）。空组（`valid_count=0`）整组省略，不写占位行。
 4. **板块赚钱效应**（§3 + `references/sector_money_effect.md`）：剔非科技 → 归纳主题 → dollar-volume 占比排序 → 对领先主题成员 `--enrich-tickers` 回补 → ★ 评级 + 位置 + 拥挤 + 领导/弹性股。
 5. **板块亏钱效应**（§4）：drops 池剔非科技 → 按主题归纳。
 6. **池外新方向挖掘**（§5 + `references/new_direction_mining.md`）：三档 + enrich 确认 + WebSearch。
 7. **异动核查**（§6）：对所有 ★ 票按优先级 WebSearch，把查询、来源、关键事实记成可追溯引用。
 8. **校验 + 落稿**：每个数字结论能在 evidence 找到出处；每条催化能找到搜索来源；`errors` 失败 ticker 末尾透明披露。产出最终 Markdown。
-9. **HTML 派生**（用户要求时）：Markdown 定稿后 `python scripts/render_report_html.py --input <report.md> --evidence <evidence.json>`；renderer 默认剥离 YAML frontmatter，只做浏览层、不反向改写正文。
+9. **跨日台账落库**（`references/cross_day_ledger.md`）：日报定稿后 `python scripts/theme_ledger.py context --asof YYYY-MM-DD` 取注册表 + 近期状态 + watchlist；模型写 `outputs/lifecycle_YYYYMMDD.json`（临时主题名 → canonical theme_id 归一 + 六态判定），再 `python scripts/theme_ledger.py record --input outputs/lifecycle_YYYYMMDD.json` 落库。台账让新方向票标注首现 / 连续 N 晚 / 已建议待跟踪，也给主线老化与建议闭环提供依据。
+10. **HTML 派生**（用户要求时）：Markdown 定稿后 `python scripts/render_report_html.py --input <report.md> --evidence <evidence.json>`；renderer 默认剥离 YAML frontmatter，只做浏览层、不反向改写正文。
 
 ## 数据获取（脚本抓手）
 
@@ -108,6 +117,7 @@ python scripts/generate_report.py --date 2026-06-18 --output outputs/us-2026-06-
 python scripts/generate_report.py --no-sync                       # 跳过飞书同步（离线）
 python scripts/generate_report.py --no-market-scan                # 跳过纳斯达克扫描
 python scripts/generate_report.py --scan-min-dollar-volume-million 100   # 抬高成交额下限（更聚焦）
+python scripts/generate_report.py --scan-universe                 # 额外扫 curated 纳指科技 universe（广度/轮动，重 pass）
 # 领先主题成员回补（Pass 2）：只对这些票 + QQQ 取一年历史，算 52周位置/量比/vs-QQQ
 python scripts/generate_report.py --enrich-tickers "ALAB,CRDO,AAOI" --output outputs/enrich.json
 ```
@@ -126,6 +136,17 @@ python scripts/scan_market.py --output outputs/nasdaq-scan.json
 ```
 
 由 `generate_report.py` 默认调用，结果挂在 evidence 的 `market_wide_movers`（键名保留以兼容 HTML 渲染器）。
+
+### `scripts/theme_ledger.py`（跨日台账，确定性、无 LLM）
+
+每晚把主题判定 + 新方向候选沉淀成跨日序列，区分一夜脉冲 vs 多日趋势、给建议闭环。脑 / 手分工同 DMS 的 `theme_lifecycle.py`：脚本提供上下文、校验六态状态机、归一别名、落库；状态判定与主题命名归一由模型完成。完整契约见 `references/cross_day_ledger.md`。
+
+```bash
+python scripts/theme_ledger.py context --asof 2026-06-18           # 取注册表 + 近期状态 + watchlist
+python scripts/theme_ledger.py record --input outputs/lifecycle_20260618.json   # 校验并落库
+```
+
+存储默认 `~/.usmarket-ledger/`（`USMARKET_LEDGER_DIR` 可覆盖），在版本库与 skill_sync 之外，所有 agent 副本共用一份。
 
 ### `scripts/sync_from_lark.py`
 
@@ -147,6 +168,7 @@ python scripts/render_report_html.py --input reports/us-2026-06-18.md --theme pr
 - `groups`：每组成员快照 + `summary{valid_count,up_count,down_count,avg_change_pct}`（summary 仅弱参考，正文以个股为主）
 - `abnormal_moves.rises/.drops`：观察池内 ±7% 票
 - `market_wide_movers`（除非 `--no-market-scan`）：`type=us_nasdaq_movers_evidence`、`scan_date` / `date_aligned`、`market_states`（扫描时的盘口状态集合，正常应为 `["CLOSED"]` 或 `["POST"]`；若含 `REGULAR` 说明在盘中跑、成交额是半日口径，正文须提示"盘中扫描、dollar-volume 为不完整口径"）、`thresholds`、`screener_raw_counts`、`exchange_breakdown`（Nasdaq vs other，透明披露过滤力度）、`rises` / `drops`（每项含 `dollar_volume` / `dollar_volume_million` / `is_abnormal` / `market_cap_billion` / `exchange` / `full_exchange_name` / `market_state`）、`errors`
+- `universe_scan`（仅 `--scan-universe`）：`type=us_nasdaq_universe_scan`、`date`、`benchmark`(QQQ)、`buckets`（每个含 `valid/up/down/dollar_volume_million/median_change_pct/median_vs_qqq_5d/leaders`，读板块广度与轮动）、`movers`（宇宙内涨 ≥3% 的票，按成交额降序，含 `vs_qqq` / `position_52w` / `vol_vs_20d`，捞安静被买的名字）、`errors`
 - `errors`：观察池 ticker 拉取失败清单
 
 依赖：`pip install requests pyyaml`。联网检索由模型在第 7 步用 WebSearch / WebFetch 完成，不在脚本内。

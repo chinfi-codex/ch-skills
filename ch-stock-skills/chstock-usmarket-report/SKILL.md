@@ -1,6 +1,6 @@
 ---
 name: chstock-usmarket-report
-description: 当用户要求复盘昨晚/昨夜美股、查看纳斯达克科技观察池表现、看池内每只票涨跌明细、判断纳指(QQQ)大盘走势、分析今晚纳斯达克科技板块的赚钱效应在哪个方向/哪个主题在承载资金(按成交额 dollar-volume)、识别纳指科技异动票(±7%)并联网查催化、或要求在现有观察池之外主动挖掘新方向/新主题并给纳入建议、回看指定 YYYY-MM-DD 美股交易日、把美股日报导出 HTML/网页时使用此 skill。本 skill 把跟踪范围收敛到纳斯达克科技：以纳指100(QQQ)为唯一大盘锚(不引入 SPY/DIA/IWM 风格四象限)；报告由三层组成——观察池逐股明细 + 纳指科技板块赚钱效应主线(模型按业务事实临时归纳主题、按 dollar-volume 占比定主线、不套 ETF/GICS 现成标签) + 池外新方向主动挖掘建议；异动只在纳指科技范围内提取，任何异动票/新方向票都必须 WebSearch 核查催化后再写入。脚本只输出确定性证据(Nasdaq 过滤、成交额计算、52周位置/量比/vs-QQQ)，是否属于科技、归属哪个主题、主线评级、归因与建议由模型完成。不用于盘中实时监控、个股深度基本面研究、目标价或买卖建议；不覆盖港股、A股、加密货币，以及黄金/航空/金融等非科技板块。
+description: 当用户要求复盘昨晚/昨夜美股、查看纳斯达克科技观察池表现、看池内每只票涨跌明细、判断纳指(QQQ)大盘走势、分析今晚纳斯达克科技板块的赚钱效应在哪个方向/哪个主题在承载资金(按成交额 dollar-volume)、识别纳指科技异动票(±7%)并联网查催化、或要求在现有观察池之外主动挖掘新方向/新主题并给纳入建议、回看指定 YYYY-MM-DD 美股交易日、把美股日报导出 HTML/网页时使用此 skill。本 skill 把跟踪范围收敛到纳斯达克科技：以纳指100(QQQ)为唯一大盘锚(不引入 SPY/DIA/IWM 风格四象限)；报告由三层组成——观察池逐股明细 + 纳指科技板块赚钱效应主线(模型按业务事实临时归纳主题、按 dollar-volume 占比定主线、不套 ETF/GICS 现成标签) + 池外新方向主动挖掘建议；异动只在纳指科技范围内提取，任何异动票/新方向票都必须联网核查催化（Tavily 优先）后再写入。脚本只输出确定性证据(Nasdaq 过滤、成交额计算、52周位置/量比/vs-QQQ)，是否属于科技、归属哪个主题、主线评级、归因与建议由模型完成。不用于盘中实时监控、个股深度基本面研究、目标价或买卖建议；不覆盖港股、A股、加密货币，以及黄金/航空/金融等非科技板块。
 ---
 
 # 纳斯达克科技观察池日报
@@ -21,7 +21,7 @@ description: 当用户要求复盘昨晚/昨夜美股、查看纳斯达克科技
 - 货币 USD，不做汇率换算；成交额（dollar-volume）= 收盘价 × 当日成交股数。
 - **脑 / 手边界**：脚本只做确定性的事——Nasdaq 交易所过滤、成交额计算、52周位置 / 量比 / vs-QQQ 派生、按成交额排序。**"是不是科技、归哪个主题、主线几星、要不要建议纳入"全部由模型判断**。Nasdaq 过滤是交易所级（确定性），不等于科技；池里会混入钢铁 / 生科 / 防务等 Nasdaq 非科技股，模型读 `ticker + name` 剔除。
 - **全市场扫描只覆盖最近收盘日**（Yahoo 预设 screener 不支持历史回溯）。若 `--date` 指向更早交易日，evidence 里 `market_wide_movers.date_aligned=false`，此时板块赚钱效应 / 新方向段写明"扫描仅支持最近收盘日，本次回看不展示该层"或跳过。
-- 异动票 / 新方向票的催化来自 WebSearch 公开结果，必须**带出处与日期**，查不到写"未检索到明确催化"。
+- 异动票 / 新方向票的催化来自联网检索（**Tavily 优先**，命令见领域方法论 §6）公开结果，必须**带出处与日期**，查不到写"未检索到明确催化"。
 
 ## 领域方法论
 
@@ -77,16 +77,27 @@ QQQ 用四个数读，不与个股做扩散度对比、不做风格判断：
 
 ### 5. 池外新方向主动挖掘 → `references/new_direction_mining.md`
 
-读 `references/new_direction_mining.md` 执行。纲要：任何今晚有赚钱效应、但观察池覆盖不到 / 不全的主题，按**三档**（新主题缺口 / 主题内龙头缺口 / 邻接个股补充）给纳入建议；每条都要过 dollar-volume 下限、`--enrich-tickers` 确认、WebSearch 核查催化，区分一日脉冲 vs 多日持续，措辞只到"建议纳入观察"。**"多日持续"靠跨日台账查证**（见 §7 与 `references/cross_day_ledger.md`）：连续 ≥2–3 晚在赚钱效应池 = 强候选，单晚先观察。
+读 `references/new_direction_mining.md` 执行。纲要：任何今晚有赚钱效应、但观察池覆盖不到 / 不全的主题，按**三档**（新主题缺口 / 主题内龙头缺口 / 邻接个股补充）给纳入建议；每条都要过 dollar-volume 下限、`--enrich-tickers` 确认、联网核查催化（Tavily 优先，见 §6），区分一日脉冲 vs 多日持续，措辞只到"建议纳入观察"。**"多日持续"靠跨日台账查证**（见 §7 与 `references/cross_day_ledger.md`）：连续 ≥2–3 晚在赚钱效应池 = 强候选，单晚先观察。
 
-### 6. 异动联网核查（±7%，WebSearch / WebFetch）
+### 6. 异动联网核查（±7%，Tavily 优先）
 
-异动不单独成段，而是**内生在第 3 / 4 / 5 层里**：任何 `is_abnormal=true`（\|当日\| ≥ 7%）的票——无论它在赚钱主题、亏钱主题还是新方向——都标 `★` 并附一行联网核查。核查流程：
+异动不单独成段，而是**内生在第 3 / 4 / 5 层里**：任何 `is_abnormal=true`（\|当日\| ≥ 7%）的票——无论它在赚钱主题、亏钱主题还是新方向——都标 `★` 并附一行联网核查。
 
-1. **查询 1（事件类）**：`{ticker} stock news {YYYY-MM-DD}` 或 `{ticker} {YYYY-MM-DD} catalyst`。
+**联网工具：Tavily 为主路径，WebSearch / WebFetch 仅作兜底。** 经验上 WebFetch 常报 "Unable to verify if domain … is safe to fetch"、WebSearch 直接返回 0 结果——这通常不是目标站反爬，而是部分网络（含本机 HTTPS 代理）下 Claude 的域名安全预检（要连 claude.ai）与 WebSearch 服务不可达，请求根本没碰到目标站。Tavily 是直连第三方检索 API，绕开这一层，所以默认走它。命令（路径已封装，canonical 仓库与同步副本通用）：
+
+```bash
+python scripts/web_search.py "ALAB stock news 2026-06-18" --topic news --days 7
+python scripts/web_search.py "Credo CRDO catalyst 2026-06-18" --topic news --days 7 --max-results 8
+```
+
+返回 JSON（`results[].title / url / published_date / content`，已按相关度排序）；需 `TAVILY_API_KEY`（已在 `~/.zshrc` 导出，并回退仓库根 `.env`）。只有 Tavily 报错或查不到时，才退回 WebSearch / WebFetch。
+
+核查流程（查询模板对 Tavily / WebSearch 通用）：
+
+1. **查询 1（事件类）**：`{ticker} stock news {YYYY-MM-DD}` 或 `{ticker} {YYYY-MM-DD} catalyst`，建议加 `--topic news --days 7`。
 2. **查询 2（财报 / 指引）**：临近财报窗口加查 `{ticker} earnings guidance {YYYY-MM-DD}`。
 3. **查询 3（中文补充，可选）**：`{中文名} 异动 原因 {日期}`。
-4. 综合 1–3 提炼一句**带来源**的解释（"据 Reuters {日期} 报道……"）；找不到写"未检索到当日明确催化（已搜索 news / earnings / 中文异动），暂列待核查"。
+4. 综合 1–3 提炼一句**带来源**的解释（"据 Reuters {日期} 报道……"，来源取 `results[].url` 域名 + `published_date`）；找不到写"未检索到当日明确催化（已搜索 news / earnings / 中文异动），暂列待核查"。
 
 **禁止**：基于价格方向反推事件（"跌 8% 大概率财报 miss"）；编造分析师评级；引用未真实出现在搜索结果里的标题。
 
@@ -99,8 +110,8 @@ QQQ 用四个数读，不与个股做扩散度对比、不做风格判断：
 3. **写大盘 + 观察池明细**：QQQ 四数读；每组一张表列全部成员（含 vs-QQQ + 信号）。空组（`valid_count=0`）整组省略，不写占位行。
 4. **板块赚钱效应**（§3 + `references/sector_money_effect.md`）：剔非科技 → 归纳主题 → dollar-volume 占比排序 → 对领先主题成员 `--enrich-tickers` 回补 → ★ 评级 + 位置 + 拥挤 + 领导/弹性股。
 5. **板块亏钱效应**（§4）：drops 池剔非科技 → 按主题归纳。
-6. **池外新方向挖掘**（§5 + `references/new_direction_mining.md`）：三档 + enrich 确认 + WebSearch。
-7. **异动核查**（§6）：对所有 ★ 票按优先级 WebSearch，把查询、来源、关键事实记成可追溯引用。
+6. **池外新方向挖掘**（§5 + `references/new_direction_mining.md`）：三档 + enrich 确认 + 联网核查（Tavily，`python scripts/web_search.py`）。
+7. **异动核查**（§6）：对所有 ★ 票按优先级用 Tavily（`python scripts/web_search.py`，WebSearch 兜底）核查，把查询、来源、关键事实记成可追溯引用。
 8. **校验 + 落稿**：每个数字结论能在 evidence 找到出处；每条催化能找到搜索来源；`errors` 失败 ticker 末尾透明披露。产出最终 Markdown。
 9. **跨日台账落库**（`references/cross_day_ledger.md`）：日报定稿后 `python scripts/theme_ledger.py context --asof YYYY-MM-DD` 取注册表 + 近期状态 + watchlist；模型写 `outputs/lifecycle_YYYYMMDD.json`（临时主题名 → canonical theme_id 归一 + 六态判定），再 `python scripts/theme_ledger.py record --input outputs/lifecycle_YYYYMMDD.json` 落库。台账让新方向票标注首现 / 连续 N 晚 / 已建议待跟踪，也给主线老化与建议闭环提供依据。
 10. **HTML 派生**（用户要求时）：Markdown 定稿后 `python scripts/render_report_html.py --input <report.md> --evidence <evidence.json>`；renderer 默认剥离 YAML frontmatter，只做浏览层、不反向改写正文。
@@ -171,7 +182,7 @@ python scripts/render_report_html.py --input reports/us-2026-06-18.md --theme pr
 - `universe_scan`（仅 `--scan-universe`）：`type=us_nasdaq_universe_scan`、`date`、`benchmark`(QQQ)、`buckets`（每个含 `valid/up/down/dollar_volume_million/median_change_pct/median_vs_qqq_5d/leaders`，读板块广度与轮动）、`movers`（宇宙内涨 ≥3% 的票，按成交额降序，含 `vs_qqq` / `position_52w` / `vol_vs_20d`，捞安静被买的名字）、`errors`
 - `errors`：观察池 ticker 拉取失败清单
 
-依赖：`pip install requests pyyaml`。联网检索由模型在第 7 步用 WebSearch / WebFetch 完成，不在脚本内。
+依赖：`pip install requests pyyaml`。联网检索由模型在第 6/7 步用 `python scripts/web_search.py`（Tavily，需 `TAVILY_API_KEY`）完成，WebSearch / WebFetch 兜底；检索是原子取数（脚本不下结论），归因判断仍由模型做。
 
 ## 输出规范
 
@@ -225,13 +236,13 @@ python scripts/render_report_html.py --input reports/us-2026-06-18.md --theme pr
 （每组一段，列全部成员；valid_count=0 的空组整组省略，不写占位行。每票可在行后注"属今晚 X 主题"。）
 
 ## 池外新方向（主动挖掘建议）
-[按三档（新主题缺口 / 龙头缺口 / 邻接补充）列；每条：主题 + 代表票 + dollar-volume/vs-QQQ/位置证据 + WebSearch 催化 + 一句纳入理由。无则写"今晚无池外新方向，赚钱效应都落在已覆盖主题内"。]
+[按三档（新主题缺口 / 龙头缺口 / 邻接补充）列；每条：主题 + 代表票 + dollar-volume/vs-QQQ/位置证据 + 联网催化（Tavily） + 一句纳入理由。无则写"今晚无池外新方向，赚钱效应都落在已覆盖主题内"。]
 
 ## 后续核查
 [观察池异动（必收）+ 新方向强候选（建议）+ 观察池里逆 5 日方向且 |当日|≥3% 的票]
 
 ---
-数据日期：YYYY-MM-DD（美东）｜来源：Yahoo Finance chart + screener + WebSearch（催化）
+数据日期：YYYY-MM-DD（美东）｜来源：Yahoo Finance chart + screener + Tavily/WebSearch（催化）
 纳斯达克扫描：scan_date=YYYY-MM-DD，date_aligned={true/false}，gainers/losers Nasdaq 入池 {a}/{b}
 联网核查：已查 {n} 只 / 未查 {m} 只（列未查清单）
 拉取失败：<errors 或"无">
@@ -256,7 +267,7 @@ HTML 输出规则：
 - 只在用户要求 HTML / 可浏览页面 / Site 派生层 / 本地归档时生成；普通日报只交 Markdown。
 - HTML 必须从已定稿 Markdown 渲染，不让 renderer 代写正文，也不作为 Wiki 真相源。
 - 带 YAML frontmatter 默认剥离后渲染；`==...==` 渲染为浅蓝提示块。
-- HTML 图表只读 evidence 已有的价格 / 成交额 / 位置字段；催化仍以正文 WebSearch 来源为准。
+- HTML 图表只读 evidence 已有的价格 / 成交额 / 位置字段；催化仍以正文联网检索（Tavily/WebSearch）来源为准。
 
 ## 示例
 
@@ -272,7 +283,7 @@ python scripts/generate_report.py --output outputs/us-2026-06-18.json
 #   1) market_wide_movers.rises → 剔非科技(STLD/LEGN/KTOS…) → 归纳主题 → 按 dollar-volume 占比排序
 #   2) 领先主题成员回补：python scripts/generate_report.py --enrich-tickers "ALAB,CRDO,…"
 #   3) ★ rubric 评级 + 位置 + 拥挤 + 领导/弹性股
-#   4) 对比观察池覆盖 → 三档挖新方向 → 对 ★/新方向票 WebSearch 核查催化
+#   4) 对比观察池覆盖 → 三档挖新方向 → 对 ★/新方向票用 Tavily(python scripts/web_search.py) 核查催化
 # Markdown 定稿后，如用户要求 HTML：
 #   python scripts/render_report_html.py --input reports/us-2026-06-18.md --evidence outputs/us-2026-06-18.json
 ```

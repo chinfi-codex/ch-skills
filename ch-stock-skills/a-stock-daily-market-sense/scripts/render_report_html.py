@@ -353,7 +353,12 @@ function findStockData(name) {
   return stockByCode[tsCode] || null;
 }
 
-function normalizeStockName(value) { return String(value || "").replace(/\s+/g, "").trim(); }
+function normalizeStockName(value) {
+  return String(value || "")
+    .replace(/\s+/g, "")
+    .replace(/[（(]\d{6}\.(?:SH|SZ|BJ)[)）]/g, "")
+    .trim();
+}
 
 function normalizeRows(records) {
   return (Array.isArray(records) ? records : [])

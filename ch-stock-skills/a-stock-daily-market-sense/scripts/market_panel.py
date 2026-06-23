@@ -2216,6 +2216,7 @@ def _prepare_index_summary_frames(
         df[f"ma{period}"] = df["close"].rolling(period, min_periods=max(3, period // 2)).mean()
 
     liquidity_col = "amount" if "amount" in df.columns and df["amount"].notna().any() else "vol"
+    df.attrs["liquidity_col"] = liquidity_col
     if liquidity_col in df.columns:
         df["liquidity_ma5_prev"] = df[liquidity_col].shift(1).rolling(5, min_periods=3).mean().replace(0, pd.NA)
         df["liquidity_ma20_prev"] = df[liquidity_col].shift(1).rolling(20, min_periods=5).mean().replace(0, pd.NA)
@@ -2309,7 +2310,7 @@ def build_index_trend_summary(
             "ma_alignment_hint": classify_ma_alignment(close, ma5, ma20, ma60),
         },
         "volume_price": {
-            "liquidity_field": liquidity_col if liquidity_col in df.columns else None,
+            "liquidity_field": df.attrs.get("liquidity_col"),
             "liquidity_ratio_5d": round_optional(latest.get("liquidity_ratio_5d"), 2),
             "liquidity_ratio_20d": round_optional(latest.get("liquidity_ratio_20d"), 2),
             "price_volume_state_hint": classify_price_volume_state(ret_1d, latest.get("liquidity_ratio_20d")),

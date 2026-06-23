@@ -1,0 +1,37 @@
+/* explainer.css —— conceptkit 组件的配色皮肤（.ck 作用域 + --ck-* 主题变量）。
+   颜色编码类别、暗色自适应；伪 3D 用透明度差表达体积，不做真实光照。 */
+:root{
+  --ck-bg:#ffffff; --ck-bg2:#f1efe8; --ck-line:rgba(0,0,0,.15);
+  --ck-tx:#1a1a1a; --ck-tx2:#5f5e5a; --ck-info-bg:#E6F1FB; --ck-info-tx:#185FA5;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --ck-bg:#1d1d1b; --ck-bg2:#2c2c2a; --ck-line:rgba(255,255,255,.18);
+    --ck-tx:#ececec; --ck-tx2:#b4b2a9; --ck-info-bg:#0C447C; --ck-info-tx:#9FC3F0;
+  }
+}
+.ck{display:block;width:100%}
+.ck text{font-family:-apple-system,system-ui,"PingFang SC","Microsoft YaHei",sans-serif}
+.ck .t{fill:var(--ck-tx);font-size:13px}
+.ck .ts{fill:var(--ck-tx2);font-size:11px}
+.ck .ts2{fill:var(--ck-tx2);font-size:14px}
+.ck .ti{fill:var(--ck-info-tx);font-size:12px}
+
+.ck .fc{fill:var(--ck-info-bg)} .ck .fc-top{fill:var(--ck-info-bg);opacity:.8} .ck .fc-side{fill:var(--ck-info-bg);opacity:.55}
+.ck .bc{fill:var(--ck-bg2)} .ck .bc-top{fill:var(--ck-bg2);opacity:.8} .ck .bc-side{fill:var(--ck-bg2);opacity:.55}
+.ck .gpu{fill:var(--ck-bg2);stroke:var(--ck-line);stroke-width:.5} .ck .gpu-top,.ck .gpu-side{fill:var(--ck-bg2);opacity:.7}
+
+.ck .track{fill:var(--ck-bg2)}
+.ck .bar-fill,.ck .bar-new{fill:var(--ck-info-bg)}
+.ck .bar-old{fill:var(--ck-tx2);opacity:.5}
+.ck .chan{fill:var(--ck-info-bg)}
+.ck .tsv,.ck .flow{stroke:var(--ck-info-tx);stroke-width:2;fill:none}
+.ck .axis{stroke:var(--ck-line);stroke-width:1.5}
+
+.ck .col{fill:var(--ck-bg2)}
+.ck .col-hl{fill:var(--ck-info-bg);stroke:var(--ck-info-tx);stroke-width:1}
+.ck .dot{fill:var(--ck-bg2);stroke:var(--ck-line)}
+.ck .dot-cur{fill:var(--ck-info-bg);stroke:var(--ck-info-tx);stroke-width:1.5}
+.ck .chip,.ck .pill{fill:var(--ck-bg2)}
+.ck .chip-hl,.ck .pill-hl{fill:var(--ck-info-bg)}
+.ck .card{fill:var(--ck-bg2)}

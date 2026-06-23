@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HBM · 怎么做到的</title>
+<style>
+:root{
+  --bg:#ffffff; --bg2:#f1efe8; --line:rgba(0,0,0,.15);
+  --tx:#1a1a1a; --tx2:#5f5e5a; --info-bg:#E6F1FB; --info-tx:#185FA5;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#1d1d1b; --bg2:#2c2c2a; --line:rgba(255,255,255,.18);
+    --tx:#ececec; --tx2:#b4b2a9; --info-bg:#0C447C; --info-tx:#9FC3F0; }
+}
+html,body{margin:0;background:var(--bg)}
+.stage{display:flex;justify-content:center;padding:8px}
+.scene text{font-family:-apple-system,system-ui,"PingFang SC","Microsoft YaHei",sans-serif}
+.scene .t{fill:var(--tx);font-size:13px}
+.scene .ts{fill:var(--tx2);font-size:11px}
+.scene .ti{fill:var(--info-tx);font-size:11px}
+.scene .fc{fill:var(--info-bg)}
+.scene .fc-top{fill:var(--info-bg);opacity:.8}
+.scene .fc-side{fill:var(--info-bg);opacity:.55}
+.scene .bc{fill:var(--bg2)}
+.scene .bc-top{fill:var(--bg2);opacity:.8}
+.scene .bc-side{fill:var(--bg2);opacity:.55}
+.scene .gpu-f{fill:var(--bg2);stroke:var(--line);stroke-width:.5}
+.scene .gpu-t,.scene .gpu-s{fill:var(--bg2);opacity:.7}
+.scene .track{fill:var(--bg2)}
+.scene .bar-fill{fill:var(--info-bg)}
+.scene .tsv,.scene .flow{stroke:var(--info-tx);stroke-width:2}
+</style>
+</head>
+<body>
+<div class="stage">
+<svg class="scene" id="scene" width="680" height="300" viewBox="0 0 680 300" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>HBM 怎么做到的</title>
+<desc>多层 DRAM 用 TSV 垂直堆叠在逻辑基片上，经数据通道把带宽输送给 GPU。</desc>
+<text class="t" x="40" y="30">HBM · 怎么做到的</text>
+<text class="ts" x="182" y="30">动效示意 · 伪 3D</text>
+
+<g class="die d-base">
+  <polygon class="bc-side" points="260,198 276,189 276,211 260,220"/>
+  <polygon class="bc-top" points="110,198 260,198 276,189 126,189"/>
+  <rect class="bc" x="110" y="198" width="150" height="22" rx="3"/>
+</g>
+<g class="die d1">
+  <polygon class="fc-side" points="260,172 276,163 276,185 260,194"/>
+  <polygon class="fc-top" points="110,172 260,172 276,163 126,163"/>
+  <rect class="fc" x="110" y="172" width="150" height="22" rx="3"/>
+</g>
+<g class="die d2">
+  <polygon class="fc-side" points="260,146 276,137 276,159 260,168"/>
+  <polygon class="fc-top" points="110,146 260,146 276,137 126,137"/>
+  <rect class="fc" x="110" y="146" width="150" height="22" rx="3"/>
+</g>
+<g class="die d3">
+  <polygon class="fc-side" points="260,120 276,111 276,133 260,142"/>
+  <polygon class="fc-top" points="110,120 260,120 276,111 126,111"/>
+  <rect class="fc" x="110" y="120" width="150" height="22" rx="3"/>
+</g>
+<g class="die d4">
+  <polygon class="fc-side" points="260,94 276,85 276,107 260,116"/>
+  <polygon class="fc-top" points="110,94 260,94 276,85 126,85"/>
+  <rect class="fc" x="110" y="94" width="150" height="22" rx="3"/>
+  <text class="ti" x="185" y="108" text-anchor="middle">DRAM die ×8</text>
+</g>
+
+<line class="tsv" x1="150" y1="94" x2="150" y2="220"/>
+<line class="tsv" x1="215" y1="94" x2="215" y2="220"/>
+<text class="ts" x="104" y="160" text-anchor="end">TSV</text>
+<text class="ts" x="185" y="212" text-anchor="middle">base die · 基片</text>
+
+<g>
+  <polygon class="gpu-t" points="430,96 550,96 566,87 446,87"/>
+  <polygon class="gpu-s" points="550,96 566,87 566,207 550,216"/>
+  <rect class="gpu-f" x="430" y="96" width="120" height="120" rx="4"/>
+  <text class="t" x="490" y="150" text-anchor="middle">GPU</text>
+  <text class="ts" x="490" y="170" text-anchor="middle">算力主芯片</text>
+</g>
+
+<rect class="chan" x="282" y="142" width="146" height="32" rx="4" fill="var(--info-bg)"/>
+<text class="ts" x="355" y="136" text-anchor="middle">数据流 → 带宽</text>
+<line class="flow" x1="286" y1="150" x2="424" y2="150"/>
+<line class="flow" x1="286" y1="158" x2="424" y2="158"/>
+<line class="flow" x1="286" y1="166" x2="424" y2="166"/>
+
+<text class="ts" x="110" y="246">有效带宽</text>
+<rect class="track" x="110" y="252" width="260" height="12" rx="6"/>
+<rect class="bar-fill" x="110" y="252" width="260" height="12" rx="6"/>
+<text class="ti" x="378" y="262">→ 一个量级</text>
+</svg>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script>
+(function(){
+  function build(){
+    var dies  = gsap.utils.toArray('#scene .die');
+    var tsvs  = gsap.utils.toArray('#scene .tsv');
+    var flows = gsap.utils.toArray('#scene .flow');
+
+    gsap.set(tsvs,  {strokeDasharray:130, strokeDashoffset:130});
+    gsap.set(flows, {strokeDasharray:'7 7', opacity:0});
+    gsap.set('#scene .chan',     {opacity:0});
+    gsap.set('#scene .bar-fill', {scaleX:0, transformOrigin:'0% 50%'});
+
+    // 有限、可 seek 的时间轴；编排对应 motion_spec 的六类动效语法。
+    var tl = gsap.timeline({paused:true, defaults:{ease:'power2.out'}});
+    tl.from(dies, {y:-30, opacity:0, duration:0.55, stagger:0.4}, 0.2);                 // introduce：逐层堆叠
+    tl.to(tsvs,   {strokeDashoffset:0, duration:0.6, ease:'power1.out'}, 2.4);          // reveal：TSV 画通
+    tl.to('#scene .chan', {opacity:0.30, duration:0.5}, 2.9);                            // introduce：通道点亮
+    tl.to(flows,  {opacity:1, duration:0.4}, 3.1);
+    tl.to(flows,  {strokeDashoffset:'-=140', duration:2.6, ease:'none'}, 3.1);           // flow：数据流动
+    tl.to('#scene .bar-fill', {scaleX:1, duration:0.9, ease:'power2.out'}, 3.1);         // contrast：带宽拉满
+
+    // 视频导出契约：暴露有限时间轴 + ready 标志（capture_video.py 依赖）。
+    window.__tl = tl;
+    window.__sceneReady = true;
+
+    // 可达性：reduced-motion 直接落静态末帧，不播放。
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) { tl.progress(1); }
+    else { tl.repeat(-1).repeatDelay(0.8).play(); }
+  }
+  if (window.gsap) build();
+  else window.addEventListener('load', build);
+})();
+</script>
+</body>
+</html>

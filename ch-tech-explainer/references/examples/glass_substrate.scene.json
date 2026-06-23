@@ -1,0 +1,100 @@
+{
+  "concept": "玻璃基板",
+  "archetype": "材料 / 工艺替代",
+  "elevator": "AI 大芯片越做越大，旧的有机基板和硅中介撞到物理极限；玻璃凭平整、可做大、热匹配好来接棒，难点全在怎么在玻璃上钻孔不裂。",
+  "scenes": [
+    {
+      "role": "是什么",
+      "title": "玻璃基板是什么",
+      "voiceover": "基板是承载芯片、把成千上万根线接出去的底座。玻璃基板就是把这个底座的材料，从有机树脂换成玻璃。",
+      "captions": [{ "t": 0.4, "text": "芯片的底座，换成玻璃" }],
+      "duration": 3.0,
+      "visual": {
+        "component": "concept_card",
+        "spec": {
+          "title": "玻璃基板 = 把芯片底座换成玻璃",
+          "analogy": "基板是承载芯片、把上万根线接出去的底座；玻璃基板就是把这块底座的材料从有机树脂换成玻璃。",
+          "chip": "一句话：更平、更大、更匹配的底座"
+        }
+      }
+    },
+    {
+      "role": "为什么是现在",
+      "title": "大芯片撞上旧基板的极限",
+      "voiceover": "芯片越拼越大，有机基板在大尺寸下会翘曲、互联密度也到顶；玻璃够平、能做大板，正好接住先进封装这波需求。",
+      "captions": [{ "t": 0.2, "text": "翘曲 · 密度到顶" }, { "t": 2.0, "text": "玻璃接棒" }],
+      "duration": 4.0,
+      "visual": {
+        "component": "breakwall",
+        "spec": { "driver": "芯片越拼越大", "wall": "有机基板翘曲 / 到顶", "solution": "玻璃基板接棒", "note": "卡的是平整度与可做面积" }
+      }
+    },
+    {
+      "role": "凭什么更好",
+      "title": "玻璃凭物性破极限",
+      "voiceover": "玻璃比有机基板更平整、能做更大面板、热膨胀也更接近硅——这三样正是大芯片封装最缺的。",
+      "captions": [{ "t": 0.3, "text": "示意对比" }],
+      "duration": 4.0,
+      "visual": {
+        "component": "compare_bars",
+        "spec": {
+          "title": "玻璃凭什么破极限（vs 有机基板，示意）",
+          "bars": [
+            { "label": "平整度", "value": 1.0, "valueText": "更平", "kind": "new" },
+            { "label": "可做面积", "value": 0.95, "valueText": "更大板", "kind": "new" },
+            { "label": "有机基板", "value": 0.45, "valueText": "翘曲 / 受限", "kind": "old" }
+          ]
+        }
+      }
+    },
+    {
+      "role": "卡点在哪",
+      "title": "难在玻璃上钻孔不裂",
+      "voiceover": "玻璃脆，要在玻璃上钻出成千上万个微孔再镀铜、还得防裂——这道全新工艺的良率，就是壁垒和弹性所在。",
+      "captions": [{ "t": 0.4, "text": "TGV 钻孔 · 防裂 · 良率" }],
+      "duration": 3.5,
+      "visual": {
+        "component": "concept_card",
+        "spec": {
+          "title": "难点：在玻璃上钻孔(TGV)不裂",
+          "analogy": "玻璃脆，却要在上面钻上万个微孔、再镀铜导通、还得防裂；谁能把良率做稳，谁就拿住壁垒。",
+          "chip": "难点 = 壁垒 = 弹性"
+        }
+      }
+    },
+    {
+      "role": "谁吃到肉",
+      "title": "弹性在能稳定量产 TGV 的环节",
+      "voiceover": "上游是玻璃材料和钻孔、镀铜设备；中游是玻璃基板厂的良率爬坡，弹性最大；下游是 AI 大芯片的先进封装。",
+      "captions": [{ "t": 1.6, "text": "良率即弹性" }],
+      "duration": 4.0,
+      "visual": {
+        "component": "supply_chain",
+        "spec": {
+          "title": "谁吃到肉（产业链增量）",
+          "nodes": [
+            { "tier": "上游", "label": "玻璃材料 · 激光钻孔 / 镀铜设备", "note": "材料 / 设备" },
+            { "tier": "中游", "label": "玻璃基板厂（TGV 良率爬坡）", "note": "弹性最大", "highlight": true },
+            { "tier": "下游", "label": "AI 大芯片先进封装", "note": "应用" }
+          ]
+        }
+      }
+    },
+    {
+      "role": "怎么追踪",
+      "title": "盯试产、良率、认证",
+      "voiceover": "路线从样品到小批、再到量产；要盯各家试产进度、TGV 良率和大客户认证，风险是良率迟迟做不上去。",
+      "captions": [{ "t": 0.2, "text": "样品 → 小批 → 量产" }],
+      "duration": 4.0,
+      "visual": {
+        "component": "timeline",
+        "spec": {
+          "title": "怎么追踪",
+          "milestones": [{ "label": "样品" }, { "label": "小批试产", "current": true }, { "label": "量产" }],
+          "signals": ["盯：试产进度", "盯：TGV 良率", "盯：大客户认证", "险：良率上不去"]
+        }
+      }
+    }
+  ],
+  "sources": ["示例稿：用于演示「材料 / 工艺替代」型骨架；正式产出须联网核验玻璃基板各环节事实并标注出处。"]
+}

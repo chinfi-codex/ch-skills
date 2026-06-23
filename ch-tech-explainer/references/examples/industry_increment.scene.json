@@ -1,0 +1,74 @@
+{
+  "concept": "AI 服务器的产业链增量",
+  "archetype": "价值流 / 产业链增量",
+  "elevator": "别背“上游材料、中游制造、下游应用”——只问一件事：这一波 AI 服务器里，每个环节多出来的钱从哪来、哪段弹性最大。",
+  "scenes": [
+    {
+      "role": "怎么看",
+      "title": "增量怎么看",
+      "voiceover": "看产业链增量不是背环节名词，而是逐环节问一句：这次多出来的钱，是来自新设备、更贵的新材料、单价提升，还是渗透率从零起步？",
+      "captions": [{ "t": 0.4, "text": "增量来源 × 弹性排序" }],
+      "duration": 3.5,
+      "visual": {
+        "component": "concept_card",
+        "spec": {
+          "title": "增量 = 逐环节问“多出来的钱从哪来”",
+          "analogy": "不背“上游中游下游”，只问每个环节这次的增量来自：新设备？更贵的新材料？单价提升？还是渗透率从零起步？",
+          "chip": "增量来源 × 弹性排序"
+        }
+      }
+    },
+    {
+      "role": "增量地图",
+      "title": "每个环节的增量来源",
+      "voiceover": "上游的增量来自更贵的算力芯片和 HBM；中游的增量来自先进封装这道新工艺；下游整机则是量大、但单位利润薄。",
+      "captions": [{ "t": 1.6, "text": "增量集中在中游新工艺" }],
+      "duration": 4.0,
+      "visual": {
+        "component": "supply_chain",
+        "spec": {
+          "title": "增量地图（钱多在哪）",
+          "nodes": [
+            { "tier": "上游", "label": "算力芯片 · HBM · 高速接口", "note": "ASP 大幅提升" },
+            { "tier": "中游", "label": "先进封装 / 高速 PCB / 连接器", "note": "新工艺 = 增量核心", "highlight": true },
+            { "tier": "下游", "label": "服务器整机代工", "note": "量大利薄" }
+          ]
+        }
+      }
+    },
+    {
+      "role": "弹性排序",
+      "title": "哪段弹性最大",
+      "voiceover": "按增量幅度排序：先进封装和 HBM 这类新工艺弹性最大，连接器和高速 PCB 靠单价提升居中，整机代工量大但弹性最小。",
+      "captions": [{ "t": 0.3, "text": "增量幅度示意" }],
+      "duration": 4.0,
+      "visual": {
+        "component": "compare_bars",
+        "spec": {
+          "title": "哪段弹性最大（增量幅度示意）",
+          "bars": [
+            { "label": "先进封装 / HBM", "value": 1.0, "valueText": "弹性最大", "kind": "new" },
+            { "label": "连接器 / 高速 PCB", "value": 0.55, "valueText": "ASP 提升", "kind": "new" },
+            { "label": "服务器整机代工", "value": 0.28, "valueText": "量大利薄", "kind": "old" }
+          ]
+        }
+      }
+    },
+    {
+      "role": "怎么追踪",
+      "title": "盯订单、稼动、认证",
+      "voiceover": "节奏看从备货到放量；要盯封装产能稼动率、HBM 与高速材料的订单能见度，风险是某一环节产能集中释放后杀价。",
+      "captions": [{ "t": 0.2, "text": "备货 → 放量" }],
+      "duration": 4.0,
+      "visual": {
+        "component": "timeline",
+        "spec": {
+          "title": "怎么追踪",
+          "milestones": [{ "label": "备货" }, { "label": "放量", "current": true }, { "label": "渗透提升" }],
+          "signals": ["盯：封装稼动率", "盯：HBM 订单能见度", "盯：高速材料拉货", "险：产能集中释放杀价"]
+        }
+      }
+    }
+  ],
+  "sources": ["示例稿：用于演示「价值流 / 产业链增量」型——是什么 / 机理压成背景，锚点（增量来源 + 弹性排序）放大为主体。正式产出须联网核验并标注出处。"]
+}

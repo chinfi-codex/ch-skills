@@ -20,6 +20,8 @@ Agent 先阅读基础 evidence packet，再用本文件判断哪些对象值得�
 
 - 重点公司官方 RSS（OpenAI / Anthropic / Google AI / DeepMind / Meta AI / Mistral / HuggingFace / NVIDIA / Microsoft AI 等）中含模型版本号、产品功能名、API 端点、定价数值、融资金额或合作主体的条目。
 - 第三方媒体 RSS（The Decoder、Juya AI Daily、AI Hot 等）中转述重点公司动态的条目，enrich 以核对外链与原始公告。
+- 独立分析 / Newsletter（Stratechery、Latent Space、Interconnects、One Useful Thing、Import AI、Ben's Bites、TLDR AI、The Neuron、Daniel Miessler、Simon Willison 等）：属"观点与解读"二级信号，不是厂商一手事实。当其点名某模型 / 产品 / 融资且能落到某条轴时，enrich 全文以取其论据与反方观点；结论按 methodology 降级为"信号 / 推断"，厂商动态仍以官方源核对。"被谁集中讨论"本身是有效的注意力信号，但不能据此单独判定矢量收敛。
+- 创作者 / YouTube（`YouTube · ...`，仅标题 + 描述、无字幕）：仅当标题透出"新模型上手实测、论文速览、新发布解读"等可核查动作时作注意力信号；需要正文时用 `article_url` enrich 抓视频页 meta。不要把视频标题当作已确认事实。
 - 金十快讯中提到 OpenAI / Anthropic / Google / Meta / Kimi / 智谱 / Minimax / 腾讯 / 阿里 / 字节 / DeepSeek / 百度 等重点厂商的条目 —— 这是中国厂商动态主要的可观察入口，enrich 外链页面以拿到原始信息。
 
 **跨引擎交叉验证优先：**

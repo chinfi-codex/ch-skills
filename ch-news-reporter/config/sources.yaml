@@ -8,6 +8,17 @@
 #   无官方 RSS(由 Agent 通过 The Decoder / Juya / AI Hot / 金十等转述源 enrich):
 #     Anthropic / Meta AI / Google DeepMind / Mistral
 #   中国厂商(均无英文官方 RSS,Kimi/智谱/Minimax/腾讯/阿里/字节/DeepSeek/百度): 同上,经第三方源 enrich
+#
+# AI 日报二级信号层(观点/解读,非厂商一手;均为带每条发布时间的可抓取 RSS):
+#   独立分析 / Newsletter: Ben's Bites / TLDR AI / Import AI(Jack Clark)/ The Neuron /
+#     Latent Space / Interconnects(Nathan Lambert)/ One Useful Thing(Ethan Mollick)/
+#     Unsupervised Learning(Daniel Miessler)/ Stratechery(Ben Thompson)/ Simon Willison
+#   创作者 / YouTube(channel feed,仅标题+描述,无字幕): AI Explained / Matthew Berman /
+#     Two Minute Papers / Yannic Kilcher / 3Blue1Brown / Fireship
+#
+# 已核实但本 skill 抓不到(不入下表,需 enrich/浏览器兜底):
+#   The Rundown AI、Superhuman AI —— beehiiv RSS token 仅客户端注入,SSR HTML 取不到
+#   The Batch(Andrew Ng) —— rss.xml 上游持续返回 HTTP 500
 
 rss:
   - name: OpenAI Blog
@@ -31,7 +42,8 @@ rss:
     category: ai
     enabled: true
   - name: Microsoft AI Blog
-    url: https://blogs.microsoft.com/ai/feed/
+    # 旧 blogs.microsoft.com/ai/feed/ 已 410 Gone；切换到官方 AI 主题源 news.microsoft.com
+    url: https://news.microsoft.com/source/topics/ai/feed/
     category: ai
     enabled: true
   - name: The Decoder
@@ -46,6 +58,79 @@ rss:
     url: https://aihot.virxact.com/feed/all.xml
     category: ai
     enabled: true
+
+  # --- 独立分析 / Newsletter 层(二级信号:观点与解读,非厂商官方一手) ---
+  #   均为可直接抓取、带每条发布时间的全文/摘要 RSS,满足 collect_rss 入库前提。
+  #   按 ai_daily methodology:结论性内容降级为"信号/推断",厂商动态以官方源为准。
+  - name: Ben's Bites
+    url: https://www.bensbites.com/feed
+    category: ai
+    enabled: true
+  - name: TLDR AI
+    url: https://tldr.tech/api/rss/ai
+    category: ai
+    enabled: true
+  - name: Import AI (Jack Clark)
+    url: https://jack-clark.net/feed/
+    category: ai
+    enabled: true
+  - name: The Neuron
+    url: https://rss.beehiiv.com/feeds/N4eCstxvgX.xml
+    category: ai
+    enabled: true
+  - name: Latent Space
+    url: https://www.latent.space/feed
+    category: ai
+    enabled: true
+  - name: Interconnects (Nathan Lambert)
+    url: https://www.interconnects.ai/feed
+    category: ai
+    enabled: true
+  - name: One Useful Thing (Ethan Mollick)
+    url: https://www.oneusefulthing.org/feed
+    category: ai
+    enabled: true
+  - name: Unsupervised Learning (Daniel Miessler)
+    url: https://danielmiessler.com/feed
+    category: ai
+    enabled: true
+  - name: Stratechery (Ben Thompson)
+    url: https://stratechery.com/feed/
+    category: ai
+    enabled: true
+  - name: Simon Willison's Weblog
+    url: https://simonwillison.net/atom/everything/
+    category: ai
+    enabled: true
+
+  # --- 创作者 / YouTube 层(channel feed:仅标题+描述+链接,无字幕正文) ---
+  #   评测/解读类视频标题透出"新模型上手、论文速览"时作为注意力信号;需要正文时
+  #   由 Agent 走 enrich(article_url)抓视频页 meta。feed = videos.xml?channel_id=UC...
+  - name: YouTube · AI Explained
+    url: https://www.youtube.com/feeds/videos.xml?channel_id=UCNJ1Ymd5yFuUPtn21xtRbbw
+    category: ai
+    enabled: true
+  - name: YouTube · Matthew Berman
+    url: https://www.youtube.com/feeds/videos.xml?channel_id=UCawZsQWqfGSbCI5yjkdVkTA
+    category: ai
+    enabled: true
+  - name: YouTube · Two Minute Papers
+    url: https://www.youtube.com/feeds/videos.xml?channel_id=UCbfYPyITQ-7l4upoX8nvctg
+    category: ai
+    enabled: true
+  - name: YouTube · Yannic Kilcher
+    url: https://www.youtube.com/feeds/videos.xml?channel_id=UCZHmQk67mSJgfCCTn7xBfew
+    category: ai
+    enabled: true
+  - name: YouTube · 3Blue1Brown
+    url: https://www.youtube.com/feeds/videos.xml?channel_id=UCYO_jab_esuFRV4b17AJtAw
+    category: ai
+    enabled: true
+  - name: YouTube · Fireship
+    url: https://www.youtube.com/feeds/videos.xml?channel_id=UCsBjURrPoezykLs9EqgamOA
+    category: ai
+    enabled: true
+
   - name: Federal Reserve Press Releases
     url: https://www.federalreserve.gov/feeds/press_all.xml
     category: finance

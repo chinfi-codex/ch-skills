@@ -37,13 +37,15 @@
         }, at);
         break;
 
-      case 'reveal': // 渐进披露：能描边的元素走线，其它淡入
+      case 'reveal': // 渐进披露：只对描边几何(line/polyline/path)走线，填充图形改淡入(跨浏览器一致)
         t.forEach(function (el) {
-          var drew = false;
-          if (el.getTotalLength) {
-            try { var L = el.getTotalLength(); if (L > 0) { gsap.set(el, { strokeDasharray: L, strokeDashoffset: L }); drew = true; } } catch (e) {}
+          var tag = (el.tagName || '').toLowerCase();
+          var L = 0;
+          if ((tag === 'line' || tag === 'polyline' || tag === 'path') && el.getTotalLength) {
+            try { L = el.getTotalLength(); } catch (e) { L = 0; }
           }
-          if (!drew) gsap.set(el, { opacity: 0 });
+          if (L > 0) gsap.set(el, { strokeDasharray: L, strokeDashoffset: L });
+          else gsap.set(el, { opacity: 0 });
         });
         tl.to(t, { strokeDashoffset: 0, opacity: 1, duration: dur, ease: ease, stagger: stagger }, at);
         break;
@@ -52,9 +54,18 @@
         tl.to(t, { scale: b.scale || 1.06, duration: dur * 0.5, ease: 'sine.inOut', transformOrigin: b.origin || '50% 50%', yoyo: true, repeat: 1 }, at);
         break;
 
-      case 'contrast': // 对比 / 量化：横向生长（条形）
-        gsap.set(t, { scaleX: 0, transformOrigin: '0% 50%' });
-        tl.to(t, { scaleX: 1, duration: dur, ease: ease, stagger: stagger }, at);
+      case 'contrast': // 对比 / 量化：横向生长。矩形改用 width 属性补间(避开 SVG transform-origin 的跨浏览器坑)，其它回退 scaleX
+        var rects = t.filter(function (el) { return (el.tagName || '').toLowerCase() === 'rect'; });
+        var others = t.filter(function (el) { return (el.tagName || '').toLowerCase() !== 'rect'; });
+        rects.forEach(function (el, i) {
+          var w = parseFloat(el.getAttribute('width')) || 0;
+          gsap.set(el, { attr: { width: 0 } });
+          tl.to(el, { duration: dur, ease: ease, attr: { width: w } }, at + i * stagger);
+        });
+        if (others.length) {
+          gsap.set(others, { scaleX: 0, transformOrigin: '0% 50%' });
+          tl.to(others, { scaleX: 1, duration: dur, ease: ease, stagger: stagger }, at);
+        }
         break;
 
       case 'transform': // 形变：位移 / 缩放到目标态

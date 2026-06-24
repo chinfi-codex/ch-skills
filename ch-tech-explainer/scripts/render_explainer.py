@@ -177,31 +177,34 @@ def figure_html(idx: int, r: dict) -> str:
             f'{vo}</figure>')
 
 
-def insert_figures(html_text: str, resolved: list) -> str:
-    """把每镜 figure 插到锚点小节标题之后(命中不到的追到正文末，并 warn)。从右往左插，索引不漂移。"""
+def insert_figures(html_text: str, resolved: list):
+    """把每镜 figure 插到锚点小节标题之后；命中不到的追到正文末。返回 (html, 未命中镜号列表)。
+    从右往左插，索引不漂移；命中多个标题会 warn 并用第一个。"""
     heads = [(m.end(), _norm(m.group(1))) for m in _HEADING_RE.finditer(html_text)]
     by_pos: dict = {}
+    tail: list = []
     unmatched: list = []
     for idx, r in enumerate(resolved):
         fig = figure_html(idx, r)
         key = _norm(r.get("anchor") or r.get("title") or "")
-        pos = next((end for end, txt in heads if key and key in txt), None)
-        if pos is None:
-            unmatched.append((idx, fig))
+        hits = [end for end, txt in heads if key and key in txt] if key else []
+        if not hits:
+            unmatched.append(idx)
+            tail.append(fig)
             print(f"warning: 第 {idx} 镜 anchor「{r.get('anchor') or r.get('title')}」未命中任何小节标题，"
                   f"已追加到正文末尾。", file=sys.stderr)
         else:
-            by_pos.setdefault(pos, []).append(fig)
+            if len(hits) > 1:
+                print(f"warning: 第 {idx} 镜 anchor「{r.get('anchor') or r.get('title')}」命中 {len(hits)} 个小节标题，"
+                      f"用了第一个；建议把 anchor 写得更唯一。", file=sys.stderr)
+            by_pos.setdefault(hits[0], []).append(fig)
     for pos in sorted(by_pos, reverse=True):
         html_text = html_text[:pos] + "".join(by_pos[pos]) + html_text[pos:]
-    if unmatched:
+    if tail:
         close = html_text.find("</section>", html_text.find('id="report-body"'))
-        block = "".join(fig for _, fig in unmatched)
-        if close != -1:
-            html_text = html_text[:close] + block + html_text[close:]
-        else:
-            html_text += block
-    return html_text
+        block = "".join(tail)
+        html_text = (html_text[:close] + block + html_text[close:]) if close != -1 else html_text + block
+    return html_text, unmatched
 
 
 def main() -> int:
@@ -225,20 +228,20 @@ def main() -> int:
 
     resolved = resolve_scenes(scenes)
     beats_all = [r.get("beats", []) for r in resolved]
+    has_anim = any(beats_all)  # 没有任何 beats 就别内联 72KB GSAP
 
-    gsap = _read(ASSETS / "vendor" / "gsap.min.js")
-    motionkit = _read(KIT_DIR / "motionkit.js")
     explainer_css = _read(ASSETS / "explainer.css")
-
     builder = HtmlReportBuilder(
         title=title, theme=args.theme, meta_text=args.meta,
         extra_css=explainer_css + "\n" + CK_BRIDGE,
+        font_links=(args.theme == "default"),  # claude / print 用系统字体 → 不发远程字体 link，真离线
     )
-    # 只内联动画所需：GSAP + motionkit + 每镜 beats + hydration（conceptkit 不再进浏览器，图已服务端渲染）。
-    builder.add_ui_decoration(gsap)
-    builder.add_ui_decoration(motionkit)
-    builder.add_ui_decoration("window.__SCENE_BEATS = " + safe_js_json(beats_all) + ";")
-    builder.add_ui_decoration(HYDRATE)
+    # 图已服务端渲染；仅当有动画(beats)时才内联 GSAP + motionkit + 每镜 beats + hydration。
+    if has_anim:
+        builder.add_ui_decoration(_read(ASSETS / "vendor" / "gsap.min.js"))
+        builder.add_ui_decoration(_read(KIT_DIR / "motionkit.js"))
+        builder.add_ui_decoration("window.__SCENE_BEATS = " + safe_js_json(beats_all) + ";")
+        builder.add_ui_decoration(HYDRATE)
 
     try:
         html_text = builder.render(md, validate=True)
@@ -248,11 +251,14 @@ def main() -> int:
         print(f"warning: {exc}", file=sys.stderr)
         html_text = builder.render(md, validate=False)
 
-    html_text = insert_figures(html_text, resolved)
+    html_text, unmatched = insert_figures(html_text, resolved)
+    if unmatched and args.strict:
+        sys.exit(f"✗ 有 {len(unmatched)} 镜 anchor 未命中小节标题(镜号 {unmatched})；--strict 下中止。")
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html_text, encoding="utf-8")
-    print(json.dumps({"output": str(out), "theme": args.theme, "scenes": len(scenes)},
+    print(json.dumps({"output": str(out), "theme": args.theme, "scenes": len(scenes),
+                      "animated": has_anim, "unmatched": len(unmatched)},
                      ensure_ascii=False, indent=2))
     return 0
 

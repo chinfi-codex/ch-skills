@@ -115,6 +115,7 @@ class HtmlReportBuilder:
         extra_css: str = "",
         extra_head: str = "",
         lang: str = "zh-CN",
+        font_links: bool = True,
     ) -> None:
         self.title = title
         self.theme = theme
@@ -122,6 +123,9 @@ class HtmlReportBuilder:
         self.extra_css = extra_css
         self.extra_head = extra_head
         self.lang = lang
+        # Themes that use system fonts (claude=system+Georgia, print=serif) can drop the
+        # remote Google Fonts <link>s for a truly offline, self-contained page.
+        self.font_links = font_links
         self._theme_css = _load_theme_css(theme)
         self._hooks: List[ChartHook] = []
         self._ui_decorations: List[str] = []
@@ -169,13 +173,14 @@ class HtmlReportBuilder:
                 '    </div>\n    '
             )
 
+        font_block = _FONT_LINKS if self.font_links else ""
         out = f"""<!doctype html>
 <html lang="{self.lang}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{escaped_title}</title>
-  {_FONT_LINKS}
+  {font_block}
   <style>
 {self._theme_css}
 {self.extra_css}

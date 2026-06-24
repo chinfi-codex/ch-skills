@@ -56,6 +56,29 @@ td .num-neg, .summary-card .summary-body .num-neg, .metric-value.neg, .bar-value
 .nd-card .chart-title { font-size: 13px; }
 .nd-card .chart-subtitle { color: var(--ink-4); font-size: 11px; }
 .nd-card .nd-body { margin-top: 6px; font-size: 12px; color: var(--ink-2); line-height: 1.5; }
+/* 观察池总览热力墙：一格=代码+当日涨幅，绿涨红跌、色深=幅度大，★=±7% 异动 */
+.pool-heatmap .ph-band + .ph-band { border-top: 1px solid var(--line-2, #eef1f5); margin-top: 12px; padding-top: 12px; }
+.pool-heatmap .ph-head { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 8px; flex-wrap: wrap; }
+.pool-heatmap .ph-name { font-size: 13px; font-weight: 600; color: var(--ink-1, #1e293b); }
+.pool-heatmap .ph-breadth { font-size: 11px; color: var(--ink-4, #94a3b8); }
+.pool-heatmap .ph-breadth .num-pos { color: var(--pos); }
+.pool-heatmap .ph-breadth .num-neg { color: var(--neg); }
+.pool-heatmap .ph-tiles { display: flex; flex-wrap: wrap; gap: 6px; }
+.ph-tile { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 86px; height: 50px; border-radius: 7px; font-family: var(--font-mono, monospace); line-height: 1.2; }
+.ph-tile .ph-tkr { font-size: 13px; font-weight: 600; }
+.ph-tile .ph-pct { font-size: 11.5px; margin-top: 2px; }
+.ph-tile .ph-star { position: absolute; top: 2px; right: 5px; font-size: 10px; }
+.ph-tile.ph-na { background: var(--surface-2, #f1f5f9); color: var(--ink-4, #94a3b8); }
+.ph-tile.u1 { background: color-mix(in srgb, var(--pos) 14%, var(--surface, #fff)); color: var(--pos); }
+.ph-tile.u2 { background: color-mix(in srgb, var(--pos) 34%, var(--surface, #fff)); color: var(--ink-1, #1e293b); }
+.ph-tile.u3 { background: color-mix(in srgb, var(--pos) 58%, var(--surface, #fff)); color: var(--ink-1, #1e293b); }
+.ph-tile.u4 { background: color-mix(in srgb, var(--pos) 82%, var(--surface, #fff)); color: #fff; }
+.ph-tile.u5 { background: var(--pos); color: #fff; }
+.ph-tile.d1 { background: color-mix(in srgb, var(--neg) 14%, var(--surface, #fff)); color: var(--neg); }
+.ph-tile.d2 { background: color-mix(in srgb, var(--neg) 34%, var(--surface, #fff)); color: var(--ink-1, #1e293b); }
+.ph-tile.d3 { background: color-mix(in srgb, var(--neg) 58%, var(--surface, #fff)); color: var(--ink-1, #1e293b); }
+.ph-tile.d4 { background: color-mix(in srgb, var(--neg) 82%, var(--surface, #fff)); color: #fff; }
+.ph-tile.d5 { background: var(--neg); color: #fff; }
 """
 
 
@@ -198,11 +221,79 @@ function insertSectorCharts() {
 }
 
 function insertPoolCharts() {
+  const heatmap = poolHeatmapCard(data.groups, data.pool_relative);
   const rel = poolRelativeCard(data.pool_relative);
-  if (!rel) return;
-  const grid = CK.grid("chart-grid");
-  grid.appendChild(rel);
-  CK.insertAfter(root, ["观察池个股明细", "观察池"], grid);
+  if (!heatmap && !rel) return;
+  const frag = document.createDocumentFragment();
+  if (heatmap) frag.appendChild(heatmap);
+  if (rel) {
+    const grid = CK.grid("chart-grid");
+    grid.appendChild(rel);
+    frag.appendChild(grid);
+  }
+  CK.insertAfter(root, ["观察池个股明细", "观察池"], frag);
+}
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+}
+
+/* one unified wall: pool tiles grouped by 分组, color = same-day change%, ★=±7% */
+function poolHeatmapCard(groups, poolRelative) {
+  const rows = (Array.isArray(poolRelative) ? poolRelative : []).filter(r => r && r.ticker);
+  if (!rows.length) return null;
+
+  const byGroup = new Map();
+  rows.forEach(r => {
+    const g = r.group_names || "其他";
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(r);
+  });
+  const summaryByName = new Map((groups || []).map(g => [g.name, g]));
+  const order = (groups || []).map(g => g.name).filter(n => byGroup.has(n));
+  byGroup.forEach((_, g) => { if (!order.includes(g)) order.push(g); });
+
+  const c = CK.card("pool-heatmap chart-card", "观察池总览 · 热力墙",
+    "每格=代码+当日涨幅 · 绿涨红跌、色深=幅度大 · ★=±7% 异动（详见各票核查）");
+  order.forEach(name => {
+    const members = byGroup.get(name).slice()
+      .sort((a, b) => (CK.num(b.change_pct) == null ? -Infinity : CK.num(b.change_pct))
+                     - (CK.num(a.change_pct) == null ? -Infinity : CK.num(a.change_pct)));
+    const band = document.createElement("div");
+    band.className = "ph-band";
+
+    const head = document.createElement("div");
+    head.className = "ph-head";
+    const sm = summaryByName.get(name) || {};
+    const up = sm.up_count, down = sm.down_count;
+    const breadth = (up != null || down != null) ? `${up || 0} 涨 ${down || 0} 跌` : "";
+    const avg = CK.num(sm.avg_change_pct);
+    const avgHtml = Number.isFinite(avg)
+      ? ` · 均 <span class="${avg >= 0 ? "num-pos" : "num-neg"}">${fmtPct(avg)}</span>` : "";
+    head.innerHTML = `<span class="ph-name">${escapeHtml(name)}</span>`
+      + `<span class="ph-breadth">${breadth}${avgHtml}</span>`;
+    band.appendChild(head);
+
+    const tiles = document.createElement("div");
+    tiles.className = "ph-tiles";
+    members.forEach(m => tiles.appendChild(poolTile(m)));
+    band.appendChild(tiles);
+    c.appendChild(band);
+  });
+  return c;
+}
+
+function poolTile(m) {
+  const v = CK.num(m.change_pct);
+  const a = Number.isFinite(v) ? Math.abs(v) : 0;
+  const lvl = !Number.isFinite(v) ? 0 : a < 1 ? 1 : a < 3 ? 2 : a < 5 ? 3 : a < 7 ? 4 : 5;
+  const dir = (v || 0) >= 0 ? "u" : "d";
+  const tile = document.createElement("div");
+  tile.className = `ph-tile ${Number.isFinite(v) ? dir + lvl : "ph-na"}`;
+  tile.innerHTML = (a >= 7 ? `<span class="ph-star">★</span>` : "")
+    + `<span class="ph-tkr">${escapeHtml(m.ticker)}</span>`
+    + `<span class="ph-pct">${fmtPct(v)}</span>`;
+  return tile;
 }
 
 function insertNewDirections() {

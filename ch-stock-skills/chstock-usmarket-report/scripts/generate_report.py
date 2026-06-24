@@ -26,6 +26,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = ROOT_DIR / "assets" / "stock_pool.yaml"
 UNIVERSE_PATH = ROOT_DIR / "assets" / "nasdaq_tech_universe.yaml"
 HISTORY_DAYS = 260  # ≈ 52 周的交易日；够算 52 周位置 + 20 日均量 + 20 日趋势
+QQQ_KLINE_DAYS = 120  # 嵌入证据包的 QQQ K 线展示窗口（HTML 头部蜡烛图）
 EVIDENCE_TYPE = "us_market_watchlist_evidence"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
 REQUEST_HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -99,8 +100,15 @@ def fetch_chart_history(ticker: str) -> list[Dict[str, Any]]:
     chart = result[0]
     timestamps = chart.get("timestamp") or []
     quote = ((chart.get("indicators") or {}).get("quote") or [{}])[0]
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
     closes = quote.get("close") or []
     volumes = quote.get("volume") or []
+
+    def _at(seq: list, i: int) -> Optional[float]:
+        value = seq[i] if i < len(seq) else None
+        return float(value) if value is not None else None
 
     rows: list[Dict[str, Any]] = []
     for index, timestamp in enumerate(timestamps):
@@ -111,6 +119,9 @@ def fetch_chart_history(ticker: str) -> list[Dict[str, Any]]:
         rows.append(
             {
                 "date": datetime.utcfromtimestamp(timestamp).date(),
+                "open": _at(opens, index),
+                "high": _at(highs, index),
+                "low": _at(lows, index),
                 "close": float(close_value),
                 "volume": int(volume_value) if volume_value is not None else None,
             }
@@ -267,6 +278,35 @@ def inject_relative_fields(
         snapshot["vs_qqq_5d"] = round(snapshot["five_day_trend_pct"] - bench_5d, 4)
 
 
+def build_kline_records(history: list[Dict[str, Any]], days: int = QQQ_KLINE_DAYS) -> list[Dict[str, Any]]:
+    """Last `days` OHLCV rows for a candlestick chart (the HTML header QQQ K-line).
+
+    `amount` is close × shares (the dollar-volume proxy the kit's volume panel
+    draws); `pct_chg` is day-over-day so the tooltip can show it.
+    """
+    records: list[Dict[str, Any]] = []
+    prev_close: Optional[float] = None
+    for row in history:
+        close = row.get("close")
+        vol = row.get("volume")
+        pct = ((close - prev_close) / prev_close * 100) if (prev_close and close is not None) else None
+        records.append(
+            {
+                "trade_date": row["date"].isoformat(),
+                "open": round(row["open"], 4) if row.get("open") is not None else None,
+                "high": round(row["high"], 4) if row.get("high") is not None else None,
+                "low": round(row["low"], 4) if row.get("low") is not None else None,
+                "close": round(close, 4) if close is not None else None,
+                "pct_chg": round(pct, 4) if pct is not None else None,
+                "amount": round(close * vol, 2) if (close is not None and vol) else None,
+                "vol": vol,
+            }
+        )
+        if close is not None:
+            prev_close = close
+    return records[-days:] if days else records
+
+
 def collect_unique_tickers(config: Dict[str, Any]) -> list[str]:
     tickers: list[str] = []
     for index_item in config.get("indices", []):
@@ -375,7 +415,12 @@ def build_market_evidence(config: Dict[str, Any], report_date: Optional[date] = 
         snapshot = build_stock_snapshot(index_item["ticker"], history_by_ticker.get(index_item["ticker"]), resolved_date)
         if snapshot:
             snapshot["name"] = index_item.get("name", index_item["ticker"])
-        index_snapshots.append({"ticker": index_item["ticker"], "snapshot": snapshot})
+        entry = {"ticker": index_item["ticker"], "snapshot": snapshot}
+        index_history = history_by_ticker.get(index_item["ticker"])
+        if index_history:
+            entry["kline_records"] = build_kline_records(index_history, QQQ_KLINE_DAYS)
+            entry["kline_days_requested"] = QQQ_KLINE_DAYS
+        index_snapshots.append(entry)
 
     stock_snapshots: Dict[str, Optional[Dict[str, Any]]] = {}
     for group in config.get("groups", []):

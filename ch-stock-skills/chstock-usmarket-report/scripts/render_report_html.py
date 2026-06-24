@@ -78,34 +78,114 @@ const pct0 = v => Number.isFinite(CK.num(v)) ? Math.round(CK.num(v) * 100) + "%"
 const ratX = v => Number.isFinite(CK.num(v)) ? CK.num(v).toFixed(1) + "x" : "—";
 const stars = n => "★".repeat(Math.max(0, Math.min(3, n || 0)));
 
-insertOverview();
+insertQqqKline();
 insertSectorCharts();
 insertPoolCharts();
 insertNewDirections();
 
-function insertOverview() {
-  const qqq = data.index || {};
-  const stats = data.stats || {};
-  const top = (data.themes || []).slice().sort((a, b) => (b.dollar_vol_share || 0) - (a.dollar_vol_share || 0))[0];
-  const grid = CK.metricGrid([
-    {
-      title: "QQQ",
-      value: fmtPct(CK.num(qqq.change_pct)),
-      subtitle: `52周位置 ${pct0(qqq.position_52w)} · 量比 ${ratX(qqq.vol_vs_20d)}`,
-      signValue: CK.num(qqq.change_pct)
-    },
-    {
-      title: "观察池",
-      value: `${stats.up_count || 0}/${stats.valid_count || 0}`,
-      subtitle: `上涨 / 有效 · 异动 ${stats.watchlist_abnormal_count || 0} 只`
-    },
-    {
-      title: "今晚主线",
-      value: top ? (stars(top.stars) || "—") : "—",
-      subtitle: top ? `${top.name} · ${pct0(top.dollar_vol_share)}` : "无确认主线 / 未落台账"
+function insertQqqKline() {
+  const k = data.qqq_kline || {};
+  const rows = normalizeRows(k.records).slice(-(k.days_requested || 120));
+  if (rows.length < 2) return;
+  const card = buildKlineCard(rows, k.name || "QQQ", k.days_requested || rows.length);
+  CK.insertAfter(root, ["大盘", "QQQ"], card);
+}
+
+function normalizeRows(records) {
+  return (Array.isArray(records) ? records : [])
+    .map(r => ({
+      trade_date: String(r.trade_date || ""),
+      open: CK.num(r.open), high: CK.num(r.high), low: CK.num(r.low), close: CK.num(r.close),
+      pct_chg: CK.num(r.pct_chg), amount: CK.num(r.amount), vol: CK.num(r.vol)
+    }))
+    .filter(r => r.trade_date && [r.open, r.high, r.low, r.close].every(Number.isFinite))
+    .sort((a, b) => a.trade_date.localeCompare(b.trade_date));
+}
+
+function buildKlineCard(rows, name, displayDays) {
+  const card = CK.card("kline-card", `${name} ${rows.length}日K线`, null);
+  card.style.position = "relative";
+  const first = rows[0], last = rows[rows.length - 1];
+  const sub = document.createElement("div");
+  sub.className = "chart-subtitle";
+  sub.textContent = `${CK.fmt.date(first.trade_date)} 至 ${CK.fmt.date(last.trade_date)} · ${rows.length}/${displayDays} 个交易日`;
+  card.appendChild(sub);
+  card.appendChild(drawKline(rows, card));
+  card.appendChild(CK.legend([["K线", "var(--neg)"], ["MA20", "var(--blue)"], ["MA60", "var(--orange)"], ["成交额", "rgba(100,116,139,0.55)"]]));
+  return card;
+}
+
+function drawKline(rows, card) {
+  const { svgEl, svgText } = CK;
+  const enriched = rows.map((row, idx) => ({ ...row, idx, ma20: rollingAverage(rows, idx, 20), ma60: rollingAverage(rows, idx, 60) }));
+  const width = 760, height = 300;
+  const pad = { left: 52, right: 14, top: 12, bottom: 22 };
+  const usableW = width - pad.left - pad.right;
+  const amountPanelH = 52, panelGap = 14;
+  const priceH = height - pad.top - pad.bottom - amountPanelH - panelGap;
+  const amountTop = pad.top + priceH + panelGap, amountBottom = amountTop + amountPanelH;
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img" });
+  const allPrices = enriched.flatMap(r => [r.high, r.low, r.ma20, r.ma60]).filter(Number.isFinite);
+  let min = Math.min(...allPrices), max = Math.max(...allPrices);
+  if (min === max) { min -= 1; max += 1; }
+  const span = max - min; min -= span * 0.05; max += span * 0.05;
+  const x = idx => pad.left + (enriched.length <= 1 ? usableW / 2 : idx / (enriched.length - 1) * usableW);
+  const y = price => pad.top + (max - price) / (max - min) * priceH;
+  const candleWidth = Math.max(2, Math.min(7, usableW / Math.max(enriched.length, 1) * 0.62));
+  const amounts = enriched.map(r => r.amount).filter(v => Number.isFinite(v) && v > 0);
+  const maxAmount = amounts.length ? Math.max(...amounts) : 1;
+  const amountY = v => amountBottom - (v / maxAmount) * amountPanelH;
+  for (let i = 0; i <= 4; i += 1) { const gy = pad.top + priceH * i / 4; svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: gy, y2: gy, class: "grid-line" })); }
+  svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: pad.top + priceH, y2: pad.top + priceH, class: "axis" }));
+  svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: amountBottom, y2: amountBottom, class: "axis" }));
+  const tip = CK.tooltip(card);
+  enriched.forEach(row => {
+    const px = x(row.idx); const up = row.close >= row.open; const cls = up ? "kline-candle-up" : "kline-candle-down";
+    if (Number.isFinite(row.amount) && row.amount > 0) {
+      const barTop = amountY(row.amount);
+      svg.appendChild(svgEl("rect", { x: (px - candleWidth / 2).toFixed(2), y: barTop.toFixed(2), width: candleWidth.toFixed(2), height: Math.max(1, amountBottom - barTop).toFixed(2), class: `amount-bar ${up ? "amount-bar-up" : "amount-bar-down"}`, rx: 1 }));
     }
-  ]);
-  CK.insertAfter(root, ["大盘", "QQQ"], grid);
+    const bodyTop = y(Math.max(row.open, row.close)), bodyBottom = y(Math.min(row.open, row.close));
+    svg.appendChild(svgEl("line", { x1: px.toFixed(2), x2: px.toFixed(2), y1: y(row.high).toFixed(2), y2: y(row.low).toFixed(2), class: `kline-wick ${cls}` }));
+    svg.appendChild(svgEl("rect", { x: (px - candleWidth / 2).toFixed(2), y: bodyTop.toFixed(2), width: candleWidth.toFixed(2), height: Math.max(1, bodyBottom - bodyTop).toFixed(2), class: cls, rx: 1, opacity: 0.88 }));
+    const hit = svgEl("rect", { x: (px - Math.max(candleWidth, 4) / 2).toFixed(2), y: pad.top, width: Math.max(candleWidth, 4).toFixed(2), height: amountBottom - pad.top, fill: "transparent", stroke: "none", style: "cursor:pointer" });
+    hit.addEventListener("mouseenter", () => {
+      tip.innerHTML = [
+        `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${CK.fmt.date(row.trade_date)}</div>`,
+        `<div>开 ${klinePrice(row.open)} 高 ${klinePrice(row.high)}</div>`,
+        `<div>低 ${klinePrice(row.low)} 收 ${klinePrice(row.close)}</div>`,
+        `<div>${fmtPct(row.pct_chg)} · 成交额 ${klineAmount(row.amount)}</div>`
+      ].join("");
+      tip.style.opacity = "1";
+    });
+    hit.addEventListener("mousemove", e => CK.moveTip(tip, card, e));
+    hit.addEventListener("mouseleave", () => { tip.style.opacity = "0"; });
+    svg.appendChild(hit);
+  });
+  drawMaLine("ma20", "var(--blue)"); drawMaLine("ma60", "var(--orange)");
+  svg.appendChild(svgText(4, pad.top + 4, klinePrice(max), "start", "var(--text-tertiary)"));
+  svg.appendChild(svgText(4, pad.top + priceH, klinePrice(min), "start", "var(--text-tertiary)"));
+  svg.appendChild(svgText(4, amountTop + 12, klineAmount(maxAmount), "start", "var(--text-tertiary)"));
+  return svg;
+  function drawMaLine(key, color) {
+    const pts = enriched.filter(r => Number.isFinite(r[key]));
+    if (!pts.length) return;
+    const d = pts.map((r, i) => `${i === 0 ? "M" : "L"} ${x(r.idx).toFixed(2)} ${y(r[key]).toFixed(2)}`).join(" ");
+    svg.appendChild(svgEl("path", { d, class: "ma-line", style: `stroke: ${color}` }));
+  }
+}
+
+function rollingAverage(rows, idx, w) {
+  if (idx + 1 < w) return null;
+  const slice = rows.slice(idx - w + 1, idx + 1).map(r => r.close).filter(Number.isFinite);
+  return slice.length === w ? slice.reduce((s, v) => s + v, 0) / w : null;
+}
+function klinePrice(v) { return Number.isFinite(v) ? "$" + v.toFixed(2) : "—"; }
+function klineAmount(v) {
+  if (!Number.isFinite(v)) return "—";
+  if (v >= 1e9) return "$" + (v / 1e9).toFixed(1) + "B";
+  if (v >= 1e6) return "$" + (v / 1e6).toFixed(0) + "M";
+  return "$" + v.toFixed(0);
 }
 
 function insertSectorCharts() {
@@ -330,12 +410,20 @@ def extract_chart_payload(
         }
 
     qqq: Optional[Dict[str, Any]] = None
+    qqq_kline: Optional[Dict[str, Any]] = None
     for item in evidence.get("indices") or []:
         if not isinstance(item, dict):
             continue
         ticker = item.get("ticker") or ((item.get("snapshot") or {}).get("ticker"))
         if str(ticker).upper() == "QQQ":
             qqq = compact_snapshot("QQQ", item.get("snapshot"), name=(item.get("snapshot") or {}).get("name"))
+            records = item.get("kline_records") or []
+            if records:
+                qqq_kline = {
+                    "records": records,
+                    "name": (item.get("snapshot") or {}).get("name") or "QQQ",
+                    "days_requested": item.get("kline_days_requested"),
+                }
             break
 
     groups: List[Dict[str, Any]] = []
@@ -406,6 +494,7 @@ def extract_chart_payload(
             "generated_at": evidence.get("generated_at"),
         },
         "index": qqq or {},
+        "qqq_kline": qqq_kline,
         "stats": {
             "valid_count": valid_count,
             "up_count": up_count,

@@ -178,7 +178,7 @@ python scripts/render_report_html.py --input reports/us-2026-06-18.md --theme pr
 - `indices`：仅 QQQ（含全部派生字段）
 - `groups`：每组成员快照 + `summary{valid_count,up_count,down_count,avg_change_pct}`（summary 仅弱参考，正文以个股为主）
 - `abnormal_moves.rises/.drops`：观察池内 ±7% 票
-- `market_wide_movers`（除非 `--no-market-scan`）：`type=us_nasdaq_movers_evidence`、`scan_date` / `date_aligned`、`market_states`（扫描时的盘口状态集合，正常应为 `["CLOSED"]` 或 `["POST"]`；若含 `REGULAR` 说明在盘中跑、成交额是半日口径，正文须提示"盘中扫描、dollar-volume 为不完整口径"）、`thresholds`、`screener_raw_counts`、`exchange_breakdown`（Nasdaq vs other，透明披露过滤力度）、`rises` / `drops`（每项含 `dollar_volume` / `dollar_volume_million` / `is_abnormal` / `market_cap_billion` / `exchange` / `full_exchange_name` / `market_state`）、`errors`
+- `market_wide_movers`（除非 `--no-market-scan`）：`type=us_nasdaq_movers_evidence`、`scan_date` / `date_aligned`、`market_states`（扫描时的盘口状态集合，正常应为 `["CLOSED"]` 或 `["POST"]`；若含 `REGULAR` 说明在盘中跑、成交额是半日口径，正文须提示"盘中扫描、dollar-volume 为不完整口径"）、`thresholds`、`rises` / `drops`（每项含 `dollar_volume` / `dollar_volume_million` / `is_abnormal` / `market_cap_billion` / `exchange` / `full_exchange_name` / `market_state`）、`errors`
 - `universe_scan`（仅 `--scan-universe`）：`type=us_nasdaq_universe_scan`、`date`、`benchmark`(QQQ)、`buckets`（每个含 `valid/up/down/dollar_volume_million/median_change_pct/median_vs_qqq_5d/leaders`，读板块广度与轮动）、`movers`（宇宙内涨 ≥3% 的票，按成交额降序，含 `vs_qqq` / `position_52w` / `vol_vs_20d`，捞安静被买的名字）、`errors`
 - `errors`：观察池 ticker 拉取失败清单
 
@@ -211,7 +211,6 @@ python scripts/render_report_html.py --input reports/us-2026-06-18.md --theme pr
 
 ## 大盘（QQQ）
 [当日 + 5/20 日趋势 + 52周位置 + 量能；2–3 句。==大盘判断== 高亮收尾]
-> 全市场广度：纳斯达克 gainers/losers 原始 {N}/{M} 条，过 Nasdaq+成交额 后入池 {a}/{b}；钱集中在 $100B+ 巨头还是扩散到中盘，一句话。
 
 ## 板块赚钱效应（纳指科技）
 > 数据基础：market_wide_movers.rises（Nasdaq 过滤 + 成交额降序），剔非科技后按业务事实归纳主题。
@@ -243,7 +242,7 @@ python scripts/render_report_html.py --input reports/us-2026-06-18.md --theme pr
 
 ---
 数据日期：YYYY-MM-DD（美东）｜来源：Yahoo Finance chart + screener + Tavily/WebSearch（催化）
-纳斯达克扫描：scan_date=YYYY-MM-DD，date_aligned={true/false}，gainers/losers Nasdaq 入池 {a}/{b}
+纳斯达克扫描：scan_date=YYYY-MM-DD，date_aligned={true/false}
 联网核查：已查 {n} 只 / 未查 {m} 只（列未查清单）
 拉取失败：<errors 或"无">
 仅供研究记录，不构成投资建议。

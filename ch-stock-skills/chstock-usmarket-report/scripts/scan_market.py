@@ -148,12 +148,6 @@ def filter_and_sort(
     return matched[:limit]
 
 
-def count_nasdaq(quotes: List[Dict[str, Any]], allowed: Set[str]) -> Dict[str, int]:
-    """How many raw screener hits survived the Nasdaq-exchange gate (transparency)."""
-    nas = sum(1 for q in quotes if is_nasdaq(q.get("exchange"), q.get("fullExchangeName"), allowed))
-    return {"nasdaq": nas, "other": len(quotes) - nas}
-
-
 def scan_movers(
     min_change_pct: float = DEFAULT_MIN_CHANGE_PCT,
     abnormal_pct: float = DEFAULT_ABNORMAL_PCT,
@@ -211,15 +205,6 @@ def scan_movers(
             "min_market_cap_usd": min_market_cap_usd,
             "limit_per_side": limit_per_side,
             "nasdaq_exchanges": sorted(allowed),
-        },
-        "screener_raw_counts": {
-            "day_gainers": len(gainers),
-            "day_losers": len(losers),
-        },
-        # How many raw hits were Nasdaq vs other — shows the exchange filter's bite.
-        "exchange_breakdown": {
-            "gainers": count_nasdaq(gainers, allowed),
-            "losers": count_nasdaq(losers, allowed),
         },
         "rises": rises,
         "drops": drops,

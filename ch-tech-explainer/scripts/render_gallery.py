@@ -40,7 +40,8 @@ body{margin:0;background:var(--ck-bg);color:var(--ck-tx);
 
 BOOTSTRAP_JS = """
 function renderAll(){
-  if(!window.CKIT||!window.MK||!window.gsap){return;}
+  if(!window.CKIT){return;}
+  var states=[];
   (DATA.scenes||[]).forEach(function(sc,idx){
     var comp=CKIT[(sc.visual||{}).component];
     var host=document.getElementById('vis-'+idx);
@@ -48,12 +49,20 @@ function renderAll(){
     var spec=(sc.visual||{}).spec||{};
     var vb=typeof comp.viewBox==='function'?comp.viewBox(spec):comp.viewBox;
     host.innerHTML='<svg class="ck" viewBox="'+vb+'" width="100%" role="img"><title>'+(sc.title||'')+'</title>'+comp.svg(spec)+'</svg>';
-    var beats=sc.beats||comp.beats(spec);
-    var tl=MK.buildTimeline(window.gsap,host.querySelector('svg'),beats);
-    if(!MK.prefersReduce()){tl.repeat(-1).repeatDelay(1.2).play();}
+    states.push({host:host, beats:(sc.beats||comp.beats(spec)), tl:null, vis:false});
   });
+  // 图已渲（静态末帧）。仅在有 GSAP 且非 reduced-motion 时按视口播放，离屏/隐藏暂停，不在后台空转。
+  if(!window.MK||!window.gsap||MK.prefersReduce()||!('IntersectionObserver' in window)){return;}
+  function ensure(st){ if(st.tl)return st.tl; try{st.tl=MK.buildTimeline(window.gsap,st.host.querySelector('svg'),st.beats);}catch(e){st.tl=null;} return st.tl; }
+  var io=new IntersectionObserver(function(es){es.forEach(function(e){
+    var st=e.target.__st; if(!st)return; st.vis=e.isIntersecting;
+    if(e.isIntersecting){ var tl=ensure(st); if(tl&&!document.hidden)tl.repeat(-1).repeatDelay(1.2).play(); }
+    else if(st.tl){st.tl.pause();}
+  });},{threshold:0.25});
+  states.forEach(function(st){st.host.__st=st;io.observe(st.host);});
+  document.addEventListener('visibilitychange',function(){states.forEach(function(st){if(!st.tl)return; if(document.hidden)st.tl.pause(); else if(st.vis)st.tl.play();});});
 }
-if(window.gsap)renderAll();else window.addEventListener('load',renderAll);
+if(window.CKIT)renderAll();else window.addEventListener('load',renderAll);
 """
 
 

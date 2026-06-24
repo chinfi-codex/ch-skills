@@ -42,6 +42,7 @@ shared:
         - chstock-usmarket-report
         - ch-news-reporter
         - a-stock-daily-market-sense
+        - ch-tech-explainer
     # web_search 能力：Tavily 联网检索（WebFetch/WebSearch 在部分网络下不可达时的主路径）
     - source: shared/web_search
       dest: scripts/_shared/web_search

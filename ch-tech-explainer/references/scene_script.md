@@ -1,6 +1,6 @@
 # 分镜脚本(scene script)
 
-拆解结果的中间产物。**图集和视频是它的两种保真度**——同一份脚本，图集渲静态聚焦画面，视频按 beats 播放并配音。
+拆解结果的中间产物，和**文字稿(article.md)**配套：文字稿是默认网页的正文骨架(按理解顺序分小节)，分镜负责每镜的画面 + 动效，靠 `anchor` 挂到文字稿对应小节。**默认图文网页和按需视频是同一份脚本的两种保真度**——网页把动画内联进正文、reduced-motion 落末帧即静态图，视频按 beats 播放并配音。
 
 ## 数据结构
 
@@ -9,12 +9,13 @@
 每个 scene：
 
 - `id`
-- `role`：这一镜在拆解里的角色，**由概念形状决定，不是固定模块名**(如 痛点 / 机理 / 对比 / 增量 / 节奏)。
+- `role`：这一镜在拆解里的角色，**由概念形状决定，不是固定模块名**(如 痛点 / 机理 / 对比 / 增量 / 节奏)。渲染时作为画面上方的小角标。
 - `title`
-- `voiceover`：口播稿(认知基线、讲课不带货、≤2 句)。
-- `captions`：`[{t, text}]` 屏幕字幕，与口播 / beats 对齐。
-- `visual`：`{ component, spec, render }`。`component` 选 conceptkit 组件或 `"custom"`(手绘 SVG)，`render` 如 `"svg+gsap"`。
-- `beats`：`[{at, target, action, …}]`，`action` 取自 `motion_spec` 六类语法。**编排是脑，GSAP 是手。**
+- `anchor`：**默认图文网页用**——这一镜挂到文字稿哪个小节(填该小节标题的可识别子串；归一化后子串匹配 h2/h3/h4，命中不到则追到文末)。缺省时回退用 `title` 匹配。
+- `voiceover`：口播稿(认知基线、讲课不带货、≤2 句)。图文网页里作为画面下的串场文字，视频里作为配音底稿。
+- `captions`：`[{t, text}]` 屏幕字幕，与口播 / beats 对齐(视频用)。
+- `visual`：`{ component, spec, svg, viewBox, render }`。`component` 选 conceptkit 组件(用 `spec`)；或 `"custom"` 手绘——此时给 `svg`(SVG 内层标记字符串，类名走 `.ck` / `--ck-*` 皮肤词汇)+ `viewBox`(如 `"0 0 680 300"`)。`render` 如 `"svg+gsap"`。
+- `beats`：`[{at, target, action, …}]`，`action` 取自 `motion_spec` 六类语法；`target` 是相对该镜 SVG 的选择器。**编排是脑，GSAP 是手。**
 - `duration`：有限秒数，必须可 seek(供视频逐帧导出)。
 
 样例(HBM「机理」镜)见 `examples/hbm.md`，对应可运行画面见 `examples/hbm_scene.html`。

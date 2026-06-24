@@ -57,6 +57,8 @@ python scripts/md_to_pushplus.py 报告.md --channel mail
 
 脚本内置纯标准库的 Markdown→HTML 渲染（标题、段落、有序/无序列表、引用、表格、代码块、行内 `code`/**粗体**/*斜体*/链接），并套一层有节制的内联样式。
 
+输入若是 Obsidian / Jekyll 笔记，开头的 YAML frontmatter（`--- ... ---` 元数据块）会被自动剥离，不会渲染进正文；若正文没有 `# 一级标题`，会用 frontmatter 里的 `title:` 兜底作推送标题。
+
 为什么用内联样式：PushPlus 的微信渠道会过滤掉 `<style>` 块和外链 CSS，只有写在元素 `style=""` 上的样式才可能保留。所以渲染刻意把样式内联，**在微信里表格/标题会降级但结构依然可读，在网页/邮件渠道里则完整呈现**。无需引入第三方 Markdown 库或图表框架。
 
 ## 常见失败

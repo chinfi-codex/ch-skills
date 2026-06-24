@@ -22,6 +22,9 @@ id_ed25519
 
 __pycache__/
 *.py[cod]
+# shared bundle 同步生成物：唯一源是 shared/，同步脚本会把它 copy 进各 skill 的
+# scripts/_shared/（本应只出现在 Agent 安装目录）。canonical source 不入库，避免重复与漂移。
+**/scripts/_shared/
 private-butler/
 health-butler/health.db
 health-butler/profile.json

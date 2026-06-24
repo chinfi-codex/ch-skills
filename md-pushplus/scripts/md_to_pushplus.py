@@ -241,11 +241,34 @@ def send_pushplus(token: str, title: str, content: str, *,
         return json.loads(resp.read().decode("utf-8"))
 
 
-def derive_title(md: str, fallback: str) -> str:
+def strip_frontmatter(md: str) -> "tuple[dict, str]":
+    """剥离 Obsidian / Jekyll 风格的 YAML frontmatter（文件开头 --- ... ---）。
+    返回 (元数据字典, 去掉 frontmatter 的正文)。只做轻量 key: value 解析，
+    不引第三方 YAML 库——元数据本就不进推送正文，够用即可。"""
+    if not md.startswith("---"):
+        return {}, md
+    lines = md.splitlines()
+    if lines[0].strip() != "---":
+        return {}, md
+    for i in range(1, len(lines)):
+        if lines[i].strip() in ("---", "..."):
+            meta: dict = {}
+            for raw in lines[1:i]:
+                m = re.match(r"^([A-Za-z0-9_\-]+)\s*:\s*(.*)$", raw)
+                if m:
+                    meta[m.group(1)] = m.group(2).strip().strip("'\"")
+            body = "\n".join(lines[i + 1:]).lstrip("\n")
+            return meta, body
+    return {}, md
+
+
+def derive_title(md: str, meta: dict, fallback: str) -> str:
     for line in md.splitlines():
         m = re.match(r"^#\s+(.+)$", line.strip())
         if m:
             return m.group(1).strip()[:100]
+    if meta.get("title"):
+        return meta["title"][:100]
     return fallback
 
 
@@ -267,9 +290,10 @@ def main() -> int:
         print(f"ERROR: file not found: {md_path}", file=sys.stderr)
         return 2
     md_text = md_path.read_text(encoding="utf-8")
+    meta, body = strip_frontmatter(md_text)
 
-    title = args.title or derive_title(md_text, md_path.stem)
-    content = wrap_html(render_markdown(md_text))
+    title = args.title or derive_title(body, meta, md_path.stem)
+    content = wrap_html(render_markdown(body))
 
     if args.save_html:
         Path(args.save_html).write_text(content, encoding="utf-8")

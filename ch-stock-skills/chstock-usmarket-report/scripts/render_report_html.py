@@ -56,6 +56,11 @@ td .num-neg, .summary-card .summary-body .num-neg, .metric-value.neg, .bar-value
 .nd-card .chart-title { font-size: 13px; }
 .nd-card .chart-subtitle { color: var(--ink-4); font-size: 11px; }
 .nd-card .nd-body { margin-top: 6px; font-size: 12px; color: var(--ink-2); line-height: 1.5; }
+/* 大段之间的视觉分隔：每个一级小节(h3)上方加全宽细线 + 左侧强调短条 + 更大留白 */
+.report h3 { margin: 40px 0 14px; padding-top: 22px; border-top: 1.5px solid var(--line-1, #d9d3c4); position: relative; }
+.report h3::before { content: ""; position: absolute; top: -1.5px; left: 0; width: 46px; height: 1.5px; background: var(--accent, #b07a52); }
+.report h3:first-of-type { border-top: none; padding-top: 4px; margin-top: 18px; }
+.report h3:first-of-type::before { display: none; }
 /* 观察池总览热力墙：一格=代码+当日涨幅，绿涨红跌、色深=幅度大，★=±7% 异动 */
 .pool-heatmap .ph-band + .ph-band { border-top: 1px solid var(--line-2, #eef1f5); margin-top: 12px; padding-top: 12px; }
 .pool-heatmap .ph-head { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 8px; flex-wrap: wrap; }
@@ -64,10 +69,11 @@ td .num-neg, .summary-card .summary-body .num-neg, .metric-value.neg, .bar-value
 .pool-heatmap .ph-breadth .num-pos { color: var(--pos); }
 .pool-heatmap .ph-breadth .num-neg { color: var(--neg); }
 .pool-heatmap .ph-tiles { display: flex; flex-wrap: wrap; gap: 6px; }
-.ph-tile { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 86px; height: 50px; border-radius: 7px; font-family: var(--font-mono, monospace); line-height: 1.2; }
+.ph-tile { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 86px; height: 50px; border-radius: 7px; font-family: var(--font-mono, monospace); line-height: 1.2; cursor: default; }
 .ph-tile .ph-tkr { font-size: 13px; font-weight: 600; }
 .ph-tile .ph-pct { font-size: 11.5px; margin-top: 2px; }
 .ph-tile .ph-star { position: absolute; top: 2px; right: 5px; font-size: 10px; }
+.ph-tile .ph-plus { position: absolute; top: 1px; left: 5px; font-size: 11px; opacity: 0.85; }
 .ph-tile.ph-na { background: var(--surface-2, #f1f5f9); color: var(--ink-4, #94a3b8); }
 .ph-tile.u1 { background: color-mix(in srgb, var(--pos) 14%, var(--surface, #fff)); color: var(--pos); }
 .ph-tile.u2 { background: color-mix(in srgb, var(--pos) 34%, var(--surface, #fff)); color: var(--ink-1, #1e293b); }
@@ -232,6 +238,23 @@ function insertPoolCharts() {
     frag.appendChild(grid);
   }
   CK.insertAfter(root, ["观察池个股明细", "观察池"], frag);
+  if (heatmap) removePoolTables();
+}
+
+/* 墙 + tooltip 已承载逐股明细，HTML 里删掉墙下面那几张分组明细表（每组点评保留）。
+   Markdown 正文不动——表格仍是真相源，这里只清浏览层的冗余。 */
+function removePoolTables() {
+  const heading = CK.findHeading(root, ["观察池个股明细", "观察池"]);
+  if (!heading) return;
+  const level = Number((/^H([1-6])$/.exec(heading.tagName || "") || [])[1]) || 3;
+  let cur = heading.nextElementSibling;
+  while (cur) {
+    const hm = /^H([1-6])$/.exec(cur.tagName || "");
+    if (hm && Number(hm[1]) <= level) break;
+    const next = cur.nextElementSibling;
+    if (cur.classList && cur.classList.contains("table-wrap")) cur.remove();
+    cur = next;
+  }
 }
 
 function escapeHtml(s) {
@@ -254,7 +277,8 @@ function poolHeatmapCard(groups, poolRelative) {
   byGroup.forEach((_, g) => { if (!order.includes(g)) order.push(g); });
 
   const c = CK.card("pool-heatmap chart-card", "观察池总览 · 热力墙",
-    "每格=代码+当日涨幅 · 绿涨红跌、色深=幅度大 · ★=±7% 异动（详见各票核查）");
+    "每格=代码+当日涨幅 · 绿涨红跌、色深=幅度 · 悬停看 收盘/vs-QQQ/5日/52周/量比 · ＋=跑赢QQQ · ★=±7%异动");
+  const tip = CK.tooltip(c);
   order.forEach(name => {
     const members = byGroup.get(name).slice()
       .sort((a, b) => (CK.num(b.change_pct) == null ? -Infinity : CK.num(b.change_pct))
@@ -276,24 +300,50 @@ function poolHeatmapCard(groups, poolRelative) {
 
     const tiles = document.createElement("div");
     tiles.className = "ph-tiles";
-    members.forEach(m => tiles.appendChild(poolTile(m)));
+    members.forEach(m => tiles.appendChild(poolTile(m, tip, c)));
     band.appendChild(tiles);
     c.appendChild(band);
   });
   return c;
 }
 
-function poolTile(m) {
+function poolTile(m, tip, card) {
   const v = CK.num(m.change_pct);
   const a = Number.isFinite(v) ? Math.abs(v) : 0;
   const lvl = !Number.isFinite(v) ? 0 : a < 1 ? 1 : a < 3 ? 2 : a < 5 ? 3 : a < 7 ? 4 : 5;
   const dir = (v || 0) >= 0 ? "u" : "d";
+  const beat = CK.num(m.vs_qqq_1d);
   const tile = document.createElement("div");
   tile.className = `ph-tile ${Number.isFinite(v) ? dir + lvl : "ph-na"}`;
   tile.innerHTML = (a >= 7 ? `<span class="ph-star">★</span>` : "")
+    + (Number.isFinite(beat) && beat > 0 ? `<span class="ph-plus">＋</span>` : "")
     + `<span class="ph-tkr">${escapeHtml(m.ticker)}</span>`
     + `<span class="ph-pct">${fmtPct(v)}</span>`;
+  if (tip) {
+    tile.addEventListener("mouseenter", () => { tip.innerHTML = poolTipHtml(m); tip.style.opacity = "1"; });
+    tile.addEventListener("mousemove", e => CK.moveTip(tip, card, e));
+    tile.addEventListener("mouseleave", () => { tip.style.opacity = "0"; });
+  }
   return tile;
+}
+
+/* hover detail = the columns the per-group table used to carry */
+function poolTipHtml(m) {
+  const v = CK.num(m.change_pct), d5 = CK.num(m.five_day_trend_pct), vq = CK.num(m.vs_qqq_1d);
+  const p = CK.num(m.position_52w), vr = CK.num(m.vol_vs_20d), close = CK.num(m.close);
+  const sig = (Number.isFinite(v) ? (v >= 0 ? "↑" : "↓") : "")
+    + (Number.isFinite(d5) ? (d5 >= 0 ? "↑" : "↓") : "")
+    + (Number.isFinite(vq) && vq > 0 ? "＋" : "")
+    + (Number.isFinite(v) && Math.abs(v) >= 7 ? "★" : "");
+  const row = (k, val) => `<div style="display:flex;justify-content:space-between;gap:16px;margin-top:1px"><span style="color:#94a3b8">${k}</span><span>${val}</span></div>`;
+  const signed = x => Number.isFinite(x) ? (x > 0 ? "+" : "") + x.toFixed(2) : "—";
+  return `<div style="font-weight:600;margin-bottom:3px">${escapeHtml(m.ticker)} <span style="color:#cbd5e1;font-weight:400">${sig}</span></div>`
+    + row("收盘", Number.isFinite(close) ? "$" + close.toFixed(2) : "—")
+    + row("当日", fmtPct(v))
+    + row("vs QQQ", signed(vq))
+    + row("5 日", fmtPct(d5))
+    + row("52周位置", Number.isFinite(p) ? p.toFixed(2) : "—")
+    + row("量比", Number.isFinite(vr) ? vr.toFixed(2) + "x" : "—");
 }
 
 function insertNewDirections() {

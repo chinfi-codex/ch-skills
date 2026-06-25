@@ -363,7 +363,11 @@ def build_ticker_group_map(config: Dict[str, Any]) -> Dict[str, list[str]]:
     for group in config.get("groups", []):
         name = group.get("name", "")
         for ticker in group.get("stocks", []):
-            mapping.setdefault(ticker, []).append(name)
+            names = mapping.setdefault(ticker, [])
+            # 飞书同步偶尔把同一 ticker 在同组写两遍（如 CRDO）；同组去重避免
+            # 异动 / 归属渲染成 "AI硬件 / AI硬件"，但保留跨组成员（不同组都留）。
+            if name not in names:
+                names.append(name)
     return mapping
 
 

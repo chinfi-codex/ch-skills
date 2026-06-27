@@ -1,6 +1,7 @@
 profiles:
   ai_daily:
     title: AI 日报
+    reference_dir: ai_daily
     timezone: Asia/Shanghai
     sources:
       - product_hunt
@@ -8,7 +9,11 @@ profiles:
       - github_trending
       - rss
       - jin10
+    rss_categories: [ai]
     state_enabled: true
+    open_budget: 10
+    render:
+      pill_set: ai
     # frame schema 已迁入 references/reports/ai_daily/framework.md 机器区(唯一可信源)
     # 重点公司归类字典:Agent 读取 evidence packet 后用这个字典把当日新闻按公司归类
     # 到"模型发布 / 产品更新 / API & 定价 / 融资 & 政策"四类动作矩阵中。
@@ -47,21 +52,76 @@ profiles:
         百度:
           keywords: [文心, 文心一言, ERNIE, Wenxin, 百度AI]
 
-  iran_dynamic:
-    title: 美以伊动态播报
-    timezone: Asia/Shanghai
-    sources:
-      - jin10
-    state_enabled: true
-    # frame schema 已迁入 references/reports/iran_dynamic/framework.md 机器区(唯一可信源)
-
-  macro_daily:
-    title: 每日宏观日报
+  geopolitical_daily:
+    title: 地缘日报
+    reference_dir: geopolitical_daily
     timezone: Asia/Shanghai
     sources:
       - jin10
       - rss
+    rss_categories: [geopolitics]
+    keyword_filter_sources: [jin10]
+    item_keywords:
+      - 地缘
+      - 冲突
+      - 战争
+      - 军事
+      - 国防
+      - 部队
+      - 军队
+      - 导弹
+      - 空袭
+      - 袭击
+      - 炮击
+      - 停火
+      - 谈判
+      - 制裁
+      - 军援
+      - 北约
+      - 联合国
+      - 乌克兰
+      - 俄罗斯
+      - 以色列
+      - 伊朗
+      - 加沙
+      - 黎巴嫩
+      - 胡塞
+      - 红海
+      - 霍尔木兹
+      - 台海
+      - 台湾
+      - 朝鲜
+      - 韩国
+      - 印度
+      - 巴基斯坦
+      - 恐怖分子
+      - 航运
+      - 油轮
+      - OPEC
     state_enabled: true
+    open_budget: 12
+    render:
+      pill_set: geopolitical
+      probability_chart: true
+      probability_labels:
+        - {key: A, label: A 局部缓和}
+        - {key: B, label: B 可控摩擦}
+        - {key: C, label: C 扩散升级}
+        - {key: D, label: D 系统冲击}
+    # frame schema 已迁入 references/reports/geopolitical_daily/framework.md 机器区(唯一可信源)
+
+  macro_daily:
+    title: 每日宏观日报
+    reference_dir: macro_daily
+    timezone: Asia/Shanghai
+    sources:
+      - jin10
+      - rss
+    rss_categories: [finance, geopolitics]
+    state_enabled: true
+    open_budget: 8
+    render:
+      pill_set: macro
     # frame schema 已迁入 references/reports/macro_daily/framework.md 机器区(唯一可信源)
     macro_data: true
     macro_keywords:

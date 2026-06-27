@@ -1,6 +1,6 @@
 # Watchboard:活动状态层通用机制
 
-> 所有 `state_enabled` 的 report profile(`iran_dynamic` / `macro_daily` / `ai_daily`)共用本机制。
+> 所有 `state_enabled` 的 report profile（见 `config/report_profiles.yaml`）共用本机制。
 > 各 profile 的 `methodology.md` 只声明自己的 frame 字段,机制本身在这里读一次即可。
 
 ## 1. watchboard 是什么
@@ -42,7 +42,7 @@ watchboard 是一个 JSON 对象,通用骨架(所有 profile 一致):
 
 - `regime`:自由字符串,不是枚举。局势/格局换挡时你直接改这个标签,不需要换文件。
 - `falsifiers`:**必须认真填**。每天写下"什么证据会推翻今天的判断",逼自己留反向通道,别锚定昨天。
-- `frame`:profile 特有的快变量(伊朗的 path/权重/信号清单、宏观的 swing_factor/位置档位、AI 的工程演进矢量/产品形态),字段清单和约束写在该 profile 的 `methodology.md` 与 `report_profiles.yaml` 的 `state_schema`。
+- `frame`:profile 特有的快变量(如地缘日报的 path/区域/传导渠道、宏观的 swing_factor/位置档位、AI 的工程演进矢量/产品形态),字段清单和约束写在该 profile 的 `framework.md` 机器区。
 - `frame_change`:**框架移动的意图**。只要相对上一期 `path` 变了、或任一概率桶移动 ≥ 0.5,就**必须**写明为什么这么挪(可以是一句话,也可以是按 path/概率/权重分条的 map)——否则 `save_report_state.py` 报错。框架没动时可省略。这是把"概率为什么从 45 挪到 40"从散文里捞出来、焊进状态的字段;冷启动(无上一期)不要求。
 - `as_of` / `carried_from` 你不填时脚本会按日期自动补,但建议你显式写清。
 
@@ -87,7 +87,7 @@ watchboard 是一个 JSON 对象,通用骨架(所有 profile 一致):
 台账只会越滚越长,除非主动"了断"比"顺延"更划算。四条规矩把顺延变贵、把了断和归并变便宜:
 
 1. **到期即了断(脚本 error 兜底)**:每个 open 项都要带 `expires_after`(未来日期)。一旦 `expires_after` 到期(≤ 今天)它还 open,今天就**必须**二选一——结算掉(confirmed/dismissed/expired),或写明"为什么还值得盯"并把 `expires_after` 续到更晚。到期了无脑顺延、或 open 项干脆不写 `expires_after`,`save_report_state.py` 直接报错(冷启动首期除外)。
-2. **open 预算(脚本 warning)**:每个 profile 有活跃 open 项软上限——`iran_dynamic` 12、`macro_daily` 8、`ai_daily` 10。超了脚本告警,要求先归并或了断、再开新项。预算不硬卡(事件密集日不该拒绝回写),但持续超标就是该精简的信号。
+2. **open 预算(脚本 warning)**:每个 profile 的活跃 open 项软上限写在 `config/report_profiles.yaml` 的 `open_budget`。超了脚本告警,要求先归并或了断、再开新项。预算不硬卡(事件密集日不该拒绝回写),但持续超标就是该精简的信号。
 3. **陈旧自动降级**:一个 open 项连续 3 期纯顺延(statement 没变、没有实质进展),第 4 期别再顺延——转 `expired`(待复核)或并入母题。连续"无新进展"本身就是它不该继续占用活跃名额的证据。
 4. **母题归并,别碎开**:开新项前先问"能不能挂到现有母题下"。同一变量/路径/维度的多条细项(几条都指向同一谈判线、同一能源节点)收进一个母题的 `sub_items`(见上),母题占 1 个预算名额、子线各自保留独立 statement 与到期时钟——瘦了顶层又不丢颗粒度。**别把它们糊成一条 statement**,那会丢掉子线的独立死活。
 
@@ -129,11 +129,11 @@ python scripts/save_report_state.py --profile <profile> --date today \
 - 上一期任一 `open` 跟踪项在今天 watchboard 里彻底消失(没结算也没顺延)。
 - 某 `open` 跟踪项的 `expires_after` 已到期(≤ 今天)或缺失,却仍标 `open`(冷启动首期除外)——到期即了断:结算掉,或写明理由并续到未来日期。
 
-只出 warning(不阻塞)的:**非 open** 跟踪项缺 `expires_after`、**open 项数超过该 profile 预算**(iran 12 / macro 8 / ai 10)、profile 的 `state_enabled` 为假仍强存。
+只出 warning(不阻塞)的:**非 open** 跟踪项缺 `expires_after`、**open 项数超过该 profile 在 config 中的预算**、profile 的 `state_enabled` 为假仍强存。
 
 ## 7. 什么时候该改框架（framework.md）而不是改 watchboard
 
-watchboard 承接**框架内**的日常漂移（path 在 A/B/C 间移动、概率微调、台账增删）。但如果你发现**框架本身**要变了——老往台账里塞现有维度装不下的事项、或 A/B/C 这套路径分类对当前局势已经不够用、或 regime 发生质变（如停火转入持续战争）——那不是 watchboard 能承接的，而是**框架该换代**的信号。
+watchboard 承接**框架内**的日常漂移（path 在本 profile 的枚举内移动、概率微调、台账增删）。但如果你发现**框架本身**要变了——老往台账里塞现有维度装不下的事项、或当前 path 分类对局势已经不够用、或 regime 发生质变——那不是 watchboard 能承接的，而是**框架该换代**的信号。
 
 这时**不要硬塞进 watchboard**，应：
 

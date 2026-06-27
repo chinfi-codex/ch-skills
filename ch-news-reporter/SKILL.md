@@ -1,6 +1,6 @@
 ---
 name: ch-news-reporter
-description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、宏观、地缘冲突或伊朗动态新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、伊朗/中东局势动态（含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“生成伊朗动态播报”“分析霍尔木兹/油价/黄金受局势影响”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述三类主题日报，不用于临时/零碎的新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
+description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、宏观或全球地缘风险新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、地缘日报（覆盖中东、俄乌、台海、朝鲜半岛、红海/航运、能源通道、制裁、联盟与大国博弈，含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“生成今天地缘日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“分析红海/霍尔木兹/俄乌/台海/制裁对油价、航运和风险资产的影响”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述三类主题日报，不用于临时/零碎的新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
 ---
 
 # CH News Reporter
@@ -44,11 +44,11 @@ DB-first 的取数/回写脚本(`collect_news.py` / `prepare_report_data.py` / `
 - 用户要把金十、GitHub Trending、Product Hunt、Hacker News、RSS 汇总成统一数据表。
 - 用户要生成 AI 日报，跟踪模型能力、Agent、开源生态、端侧运行时、AI 资本与产品发布。
 - 用户要生成每日宏观日报，跟踪金十电报中的中国/美国经济数据、利率、汇率、大宗商品和风险资产价格信号。
-- 用户要输出伊朗/中东局势动态、停火窗口跟踪、霍尔木兹航运、油气价格和风险资产影响分析。
+- 用户要输出地缘日报，覆盖全球主要地缘冲突、能源与航运通道、制裁、联盟行动和风险资产传导。
 
 不要使用本 skill 的场景：
 
-- 做 AI 日报 / 宏观日报 / 伊朗动态三类主题之外的临时、自由主题新闻检索或研究。
+- 做 AI 日报 / 宏观日报 / 地缘日报三类主题之外的临时、自由主题新闻检索或研究。
 - 只总结用户粘贴的一篇文章。
 - 只查询一个公开事实，不需要多信源采集。
 - 用户要求实时交易指令、买卖点或确定性预测。
@@ -94,7 +94,7 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --format j
 
 常用参数：
 
-- `--profile ai_daily|iran_dynamic|macro_daily`：报告画像；信源配置在 `config/report_profiles.yaml`。
+- `--profile ai_daily|geopolitical_daily|macro_daily`：报告画像；信源、RSS 类别、关键词过滤、状态预算、reference 目录和渲染配置在 `config/report_profiles.yaml`。
 - `--include-enrichments`：把 `enrichments` 表里的二次加工结果拼回证据包。
 - `--format json|markdown`：JSON 适合 Agent 继续处理，Markdown 适合人工核查。
 
@@ -103,7 +103,7 @@ evidence packet 现在还带两块新内容(DB-first 与活动状态):
 - `coverage`：本 profile 各期望源在库里当天的行数与缺失源清单。某源缺数时,报告里相应判断要降级标注"今日该源无数据"。
 - `prior_state`：`state_enabled` 的 profile(三个日报都已开启)会带上**最近一期 watchboard**(date < 今天)。markdown 输出里是 `## Prior Watchboard` 段,列出今天必须逐条结算的 open 跟踪项;冷启动(无上一期)时按各 profile methodology 的种子/默认构造第一份。机制见 `references/reports/watchboard.md`。
 
-`macro_daily` 会先从当天金十和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
+`prepare_report_data.py` 会按 profile 的 `rss_categories` 过滤 RSS，避免地缘 RSS 污染 AI 日报。`macro_daily` 会先从当天金十和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
 
 - **基础行情**（金十/Stooq/AV）：Brent、WTI、黄金、天然气、USDCNH、纳指期货等。
 - **位置富数据**（Yahoo）：美国 10Y / 5Y 国债收益率、DXY、VIX、BTC，以及核心估值锚——纳斯达克综合（^IXIC）与上证指数（000001.SS）。每个标的额外计算 52 周高低、距 52 周高 %、YTD、20/60 日均线、`pct_vs_ma20`，作为"市场相对位置"判断依据。
@@ -154,10 +154,10 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 - `references/reports/ai_daily/methodology.md`（方法论常量：数据分层 / 输出边界 / 反例）
 - `references/reports/ai_daily/enrichment.md`：AI 日报 enrichment 子方法，包含 target 选择契约和解读方法。
 - `references/reports/macro_daily/methodology.md`（方法论常量：月度数据规则 / 结论约束）
-- `references/reports/iran_dynamic/methodology.md`（方法论常量：边际判定 / 证据处理 / 可信度 / 降级策略）
-- `references/reports/iran_dynamic/economic_impact_framework.md`
+- `references/reports/geopolitical_daily/methodology.md`（方法论常量：边际判定 / 证据处理 / 可信度 / 降级策略）
+- `references/reports/geopolitical_daily/cross_asset_impact_framework.md`
 
-根据问题选择财经、AI、产品观察、开源生态或地缘风险框架。`state_enabled` 的 profile **先读各自 `framework.md`（当前分析框架，唯一可信源）** 与 `watchboard.md`（活动状态机制），再读 `methodology.md`（方法论常量），并逐条结算 packet 里 `prior_state` 的 open 跟踪项。`iran_dynamic` 的路径（A/B/C）、权重、信号清单都在 `framework.md` 定义、在 watchboard 里每日滚动，**没有独立 frame 相位文件**；按 `framework.md` 的"path 判定逻辑"用近 7-14 天证据现判，再按需要加载经济影响框架。框架本身的换代（regime 质变时改 `framework.md`）是慢思考层 + 人在环的动作，不在日报流程里。
+根据问题选择财经、AI、产品观察、开源生态或地缘风险框架。`state_enabled` 的 profile **先读各自 `framework.md`（当前分析框架，唯一可信源）** 与 `watchboard.md`（活动状态机制），再读 `methodology.md`（方法论常量），并逐条结算 packet 里 `prior_state` 的 open 跟踪项。`geopolitical_daily` 的路径（A/B/C/D）、区域主线、行为体权重、传导渠道和信号清单都在 `framework.md` 定义、在 watchboard 里每日滚动，**没有独立 frame 相位文件**；按 `framework.md` 的 path 判定逻辑用近 7-14 天证据现判，再按需要加载跨资产传导框架。框架本身的换代（regime 质变时改 `framework.md`）是慢思考层 + 人在环的动作，不在日报流程里。
 
 `macro_daily` 必须优先读取 `references/reports/macro_daily/framework.md`（当前框架）与 `methodology.md`（方法论常量），并以 `macro_data_events` 判断当天是否有中国 CPI/PPI/社融/PMI 月度数据更新；没有事件时不引用旧月度数据做“今日更新”。
 
@@ -167,12 +167,12 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 - **市场/产业信号**：价格、政策、融资、产品发布、开源热度、供需关系等可观察变化。
 - **模型推断**：基于证据链的判断，必须说明不确定性和可能反例。
 
-`iran_dynamic` 还必须区分：
+`geopolitical_daily` 还必须区分：
 
-- **合规层事实**：直接军事行动、代理人行动、核活动、航运/扫雷进展。
-- **行为体压力变量**：美国、以色列、伊朗、代理人网络各自向打破僵局或续谈方向移动（权重：以色列 > 伊朗内部 > 美国）。
-- **市场定价信号**：Brent、天然气、黄金、美元、航运保险、通胀预期等可观察反应。
-- **路径判定与子分支**：当前处于 A 续期 / B 交战 / C 僵尸化 哪条路径，子分支为何，路径切换信号是否出现；路径与子分支概率调整必须回到当日证据。
+- **事实层**：军事行动、外交/调解、制裁、军援、核活动、航运/能源设施、联盟声明。
+- **行为体压力变量**：主要国家、联盟、国际组织、代理人网络各自的能力、动机和约束是否改变。
+- **市场定价信号**：Brent、天然气、黄金、美元、美债、VIX、航运保险、通胀预期等可观察反应。
+- **路径判定与子分支**：当前处于 A 局部缓和 / B 可控摩擦 / C 扩散升级 / D 系统冲击哪条路径，子分支为何，路径切换信号是否出现；概率调整必须回到当日证据。
 
 ### 5. 输出报告
 
@@ -180,7 +180,7 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 
 - `references/reports/ai_daily/template.md`
 - `references/reports/macro_daily/template.md`
-- `references/reports/iran_dynamic/template.md`
+- `references/reports/geopolitical_daily/template.md`
 
 默认输出对应主题的中文研究报告。关键证据使用：
 
@@ -201,27 +201,34 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 7. 反向场景与风险（流动性方向 vs 市场位置是否矛盾、何种证据会推翻判断）
 8. 后续观察（24-72h 关键数据/会议/价格位）
 
-`iran_dynamic` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含路径判定（A 续期 / B 交战 / C 僵尸化）、当前子分支、战争烈度、今日边际变化、**框架演进与跟踪项结算（逐条结算上一期 open 项）**、各方行动、能源与市场反应、下一关键节点倒计时、路径子分支概率今日变动和 24-72h 观察清单。
+`geopolitical_daily` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含路径判定（A 局部缓和 / B 可控摩擦 / C 扩散升级 / D 系统冲击）、当前子分支、烈度、今日边际变化、**框架演进与跟踪项结算（逐条结算上一期 open 项）**、区域主线、能源/航运/市场反应、下一关键节点倒计时、路径概率今日变动和 24-72h 观察清单。
 
 ### 5b. 简版输出（≤600 字，可选）
 
-当用户要“简版 / 精简 / 速览 / 短版 / 600 字以内”的日报时改读简版模板，**仅 `iran_dynamic` 与 `macro_daily` 提供简版**；`ai_daily` 不做简版，仍走完整版。
+当用户要“简版 / 精简 / 速览 / 短版 / 600 字以内”的日报时改读简版模板，**仅 `geopolitical_daily` 与 `macro_daily` 提供简版**；`ai_daily` 不做简版，仍走完整版。
 
-- `references/reports/iran_dynamic/template_brief.md`
+- `references/reports/geopolitical_daily/template_brief.md`
 - `references/reports/macro_daily/template_brief.md`
 
 简版只换展示密度，不换分析动作：采集、证据包、读 framework / methodology、读 `Prior Watchboard` 并逐条结算 open 项、第 6 步回写今天的 watchboard——全部照常跑。简版省掉的是正文的逐条铺开（不按国家板块罗列每条快讯、不画流动性总图与位置大表、不渲染完整「本期变更」段），但一句话结论 / 路径判定、今日边际变化、月度数据无更新明示、反向风险、不给交易建议这些方法论底线必须保留；正文压到 600 字内，跟踪项结算用一句话带过、明细留在 watchboard。文件名用 `reports/<profile>_<date>_brief.md`，与完整版并存不冲突，需要网页版时照常用 `render_report_html.py`（按前缀识别 profile）。
 
 ### 6. 回写活动状态（watchboard）
 
-`state_enabled` 的 profile（ai_daily / macro_daily / iran_dynamic）出完报告后,必须把今天的新 watchboard 存回去,供明天 carry-forward:
+`state_enabled` 的 profile（ai_daily / macro_daily / geopolitical_daily）出完报告后,必须把今天的新 watchboard 存回去,供明天 carry-forward:
 
 ```bash
 cat today_watchboard.json | python scripts/save_report_state.py \
-    --profile iran_dynamic --date today --state-file -
+    --profile geopolitical_daily --date today --state-file -
 ```
 
 watchboard 的 JSON 结构(regime / tracking_items / next_nodes / falsifiers / frame)通用骨架见 `references/reports/watchboard.md`;各 profile 的 frame schema 见各自 `framework.md` 机器区(脚本即从这里读取校验规则,读不到才回退 `report_profiles.yaml`)。脚本做结构校验(必填字段、frame 字段齐全、概率求和、**上一期 open 项有没有被漏结算**),报错就按提示补全再存——它只查结构,不评判分析内容。`--check-only` 可只验证不写。
+
+若 profile 重命名，需要先迁移历史状态，避免 watchboard 冷启动断链。迁移脚本会检查同日期冲突，冲突时停止且不覆盖：
+
+```bash
+python scripts/migrate_profile_state.py --from-profile iran_dynamic --to-profile geopolitical_daily --check-only
+python scripts/migrate_profile_state.py --from-profile iran_dynamic --to-profile geopolitical_daily
+```
 
 ### 7. 按需生成 HTML（展示层）
 
@@ -229,7 +236,7 @@ watchboard 的 JSON 结构(regime / tracking_items / next_nodes / falsifiers / f
 
 ```bash
 python scripts/render_report_html.py -i reports/macro_daily_2026-05-19.md
-# 默认输出同名 .html；profile 从文件名前缀自动识别（ai_daily / macro_daily / iran_dynamic）
+# 默认输出同名 .html；profile 从文件名前缀自动识别（ai_daily / macro_daily / geopolitical_daily）
 ```
 
 三个 profile 通用的处理：
@@ -238,10 +245,10 @@ python scripts/render_report_html.py -i reports/macro_daily_2026-05-19.md
 - 表格里的 +/- 数值、涨跌方向自动染色；非加粗的分类格（如宏观日报「性质」列的"数据事件/政策表态"）渲染成彩色 pill。
 - `--theme print` 出黑白衬线、A4 友好版，适合导出 PDF 或邮件附件；文件名非标准前缀时用 `--profile` 手动指定。
 
-`iran_dynamic` 额外能画**路径概率图**（A 续期 / B 交战 / C 僵尸化 的概率条），把当天 watchboard 传进来即可：
+`geopolitical_daily` 的渲染配置启用**路径概率图**（A/B/C/D 的概率条），把当天 watchboard 传进来即可：
 
 ```bash
-python scripts/render_report_html.py -i reports/iran_dynamic_2026-06-04.md --watchboard today_watchboard.json
+python scripts/render_report_html.py -i reports/geopolitical_daily_2026-06-04.md --watchboard today_watchboard.json
 ```
 
 渲染框架来自仓库通用 `shared/html_report`（随 `shared` bundle 同步到 `scripts/_shared/html_report/`），与 A 股各 skill 共用同一套主题与图表工具；新增样式主题只需在该目录 `themes/` 下放一个 CSS 文件。
@@ -299,7 +306,7 @@ python scripts/render_report_html.py -i reports/iran_dynamic_2026-06-04.md --wat
 - 每个关键判断都要能回到数据表中的新闻或项目。
 - 对传闻、单源消息、未确认说法必须降级表述。
 - 财经内容避免直接给交易指令；AI 内容避免把 GitHub star 变化直接等同于商业成功。
-- 默认控制在 1500-2500 字；用户要求深度研究时可扩展。当用户要“简版 / 精简 / 速览 / 短版”时改走简版输出（见工作流程「5b. 简版输出」）：**仅 `iran_dynamic` / `macro_daily`，正文 ≤600 字**；`ai_daily` 不提供简版。
+- 默认控制在 1500-2500 字；用户要求深度研究时可扩展。当用户要“简版 / 精简 / 速览 / 短版”时改走简版输出（见工作流程「5b. 简版输出」）：**仅 `geopolitical_daily` / `macro_daily`，正文 ≤600 字**；`ai_daily` 不提供简版。
 
 ## 示例
 
@@ -362,12 +369,12 @@ python scripts/prepare_report_data.py --profile macro_daily --date today --forma
 - 金十优先的宏观新闻与数据事件；中国 CPI/PPI/社融/PMI 无更新时明确写"无新增月度数据事件"。
 - 反向场景与 24-72h 后续观察清单。
 
-### 伊朗动态播报
+### 地缘日报
 
 用户：
 
 ```text
-生成今天的伊朗动态播报，重点看霍尔木兹、油价和以色列独立行动风险。
+生成今天的地缘日报，重点看红海/霍尔木兹、俄乌、台海、制裁和油价/航运传导。
 ```
 
 执行：
@@ -376,7 +383,7 @@ python scripts/prepare_report_data.py --profile macro_daily --date today --forma
 export ALPHA_DB_BACKEND=postgresql
 export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data"
 python scripts/collect_news.py --date today --source all --only-missing
-python scripts/prepare_report_data.py --profile iran_dynamic --date today --format markdown
+python scripts/prepare_report_data.py --profile geopolitical_daily --date today --format markdown
 ```
 
 宏观行情(Brent / 黄金 / 天然气 / USD-CNH / 美债 / BTC / 纳指期货)可通过本 skill 的 `macro_monitor.py` 取数,作为风险资产证据补充:
@@ -388,18 +395,18 @@ python scripts/macro_monitor.py market
 加载：
 
 - `references/reports/watchboard.md`（活动状态机制）
-- `references/reports/iran_dynamic/methodology.md`（含冷启动种子）
-- `references/reports/iran_dynamic/economic_impact_framework.md`
-- `references/reports/iran_dynamic/template.md`
+- `references/reports/geopolitical_daily/methodology.md`（含冷启动种子）
+- `references/reports/geopolitical_daily/cross_asset_impact_framework.md`
+- `references/reports/geopolitical_daily/template.md`
 
 输出应包含：
 
-- 当前阶段路径判定（A 续期 / B 交战 / C 僵尸化）与子分支。
-- 战争烈度级别与趋势箭头。
+- 当前路径判定（A 局部缓和 / B 可控摩擦 / C 扩散升级 / D 系统冲击）与子分支。
+- 全球地缘烈度级别与趋势。
 - 今日边际变化（1-3 条；按 methodology"边际变化判定"三条线筛选）。
 - 框架演进与跟踪项结算：逐条结算上一期 open 跟踪项，写清新开 / 关闭与框架微调。
-- 美国、以色列、伊朗的核心行动（emoji 内嵌升级/缓和性质，不再独立板块）。
-- 能源节点状态 + 价格变动 + 传导评估（统一为"能源与市场反应"）。
-- 路径子分支概率今日变动、下一关键节点倒计时、24-72h 观察清单。
+- 中东、俄乌、台海、朝鲜半岛、制裁/联盟等区域主线中真正有边际变化的部分。
+- 能源、航运、制裁、避险资产与风险资产的传导评估。
+- 路径概率今日变动、下一关键节点倒计时、24-72h 观察清单。
 
 出完报告后用 `save_report_state.py` 回写今天的 watchboard，供明天 carry-forward。

@@ -12,10 +12,10 @@ truth for the *current* framework; this table is only the governance audit log.
 Usage:
     # read review JSON from stdin
     cat review.json | python scripts/save_framework_state.py \
-        --profile iran_dynamic --date today --state-file -
+        --profile geopolitical_daily --date today --state-file -
 
     # validate only, do not write
-    python scripts/save_framework_state.py --profile iran_dynamic --date today \
+    python scripts/save_framework_state.py --profile geopolitical_daily --date today \
         --state-file review.json --check-only
 """
 
@@ -39,10 +39,12 @@ from db_adapter import (
     write_framework_state as db_write_framework_state,
 )
 from framework_loader import load_framework
+from profile_config import DEFAULT_PROFILE_CONFIG, load_profile
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 DEFAULT_DB = Path("data/news_research.sqlite")
+DEFAULT_CONFIG = DEFAULT_PROFILE_CONFIG
 
 # regime 诊断三档（framework_governance.md §5）。
 VERDICT_VALUES = {"稳定", "漂移", "质变"}
@@ -68,7 +70,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Persist/validate a framework-governance review into framework_state."
     )
-    parser.add_argument("--profile", required=True, help="Profile name, e.g. iran_dynamic.")
+    parser.add_argument("--profile", required=True, help="Profile name from config/report_profiles.yaml.")
     parser.add_argument("--date", default="today", help="today or YYYY-MM-DD (review date).")
     parser.add_argument(
         "--state-file",
@@ -76,6 +78,9 @@ def parse_args() -> argparse.Namespace:
         help="Path to review JSON, or '-' to read from stdin.",
     )
     parser.add_argument("--db", default=str(DEFAULT_DB), help="SQLite database path.")
+    parser.add_argument(
+        "--config", default=str(DEFAULT_CONFIG), help="Report profiles YAML path."
+    )
     parser.add_argument(
         "--check-only",
         action="store_true",
@@ -212,7 +217,8 @@ def validate(
 def main() -> int:
     args = parse_args()
     date_key = resolve_date_key(args.date)
-    framework = load_framework(args.profile)
+    load_profile(args.profile, Path(args.config))
+    framework = load_framework(args.profile, config_path=Path(args.config))
     payload = read_payload(args.state_file)
 
     db_path = str(Path(args.db))

@@ -10,7 +10,7 @@ with the model that authored the payload.
 Usage:
     # read JSON watchboard from stdin
     cat watchboard.json | python scripts/save_report_state.py \
-        --profile iran_dynamic --date today --state-file -
+        --profile geopolitical_daily --date today --state-file -
 
     # validate only, do not write
     python scripts/save_report_state.py --profile ai_daily --date 2026-06-02 \
@@ -28,8 +28,6 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import yaml
-
 from db_adapter import (
     ensure_connectable as db_ensure_connectable,
     get_connection,
@@ -40,11 +38,12 @@ from db_adapter import (
     write_report_state as db_write_report_state,
 )
 from framework_loader import load_framework
+from profile_config import DEFAULT_PROFILE_CONFIG, load_profile, open_budget
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 DEFAULT_DB = Path("data/news_research.sqlite")
-DEFAULT_CONFIG = Path("config/report_profiles.yaml")
+DEFAULT_CONFIG = DEFAULT_PROFILE_CONFIG
 ALLOWED_STATUS = {"open", "confirmed", "dismissed", "expired"}
 SETTLED_STATUS = {"confirmed", "dismissed", "expired"}
 ENVELOPE_REQUIRED = ["as_of", "regime", "tracking_items", "next_nodes"]
@@ -58,10 +57,6 @@ DEFAULT_SUM_TOL = 0.2
 FRAME_MOVE_EPS = 0.5
 # Valid responses to a framework-challenge raised by the slow-thinking layer.
 CHALLENGE_RESPONSE = {"accepted", "rejected", "pending"}
-# Soft cap on simultaneously-open tracking items per profile. Going over budget
-# is a warning (never blocks a write) that nudges consolidation or closure before
-# opening new items — the main lever against an ever-growing ledger.
-PROFILE_OPEN_BUDGET = {"iran_dynamic": 12, "macro_daily": 8, "ai_daily": 10}
 
 
 def _is_empty(value: Any) -> bool:
@@ -98,7 +93,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Persist/validate a watchboard payload into report_state."
     )
-    parser.add_argument("--profile", required=True, help="Profile name, e.g. iran_dynamic.")
+    parser.add_argument("--profile", required=True, help="Profile name from config/report_profiles.yaml.")
     parser.add_argument("--date", default="today", help="today or YYYY-MM-DD.")
     parser.add_argument(
         "--state-file",
@@ -128,18 +123,6 @@ def resolve_date_key(value: str) -> str:
         return datetime.strptime(value, "%Y-%m-%d").strftime("%Y-%m-%d")
     except ValueError as exc:
         raise SystemExit("--date must be 'today' or YYYY-MM-DD") from exc
-
-
-def load_profile(config_path: Path, profile_name: str) -> dict[str, Any]:
-    if not config_path.exists():
-        raise SystemExit(f"Profile config does not exist: {config_path}")
-    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    profiles = payload.get("profiles") or {}
-    profile = profiles.get(profile_name)
-    if not isinstance(profile, dict):
-        available = ", ".join(sorted(profiles)) or "(none)"
-        raise SystemExit(f"Unknown profile '{profile_name}'. Available: {available}")
-    return profile
 
 
 def read_state_payload(state_file: str) -> Any:
@@ -551,11 +534,11 @@ def _load_open_challenges(
 def main() -> int:
     args = parse_args()
     date_key = resolve_date_key(args.date)
-    profile = load_profile(Path(args.config), args.profile)
+    profile = load_profile(args.profile, Path(args.config))
     # Framework single source of truth: a profile's framework.md machine region
     # supersedes the legacy report_profiles.yaml state_schema; fall back to the
     # YAML when no framework.md exists yet so un-migrated profiles keep working.
-    framework = load_framework(args.profile)
+    framework = load_framework(args.profile, config_path=Path(args.config))
     schema_source = "report_profiles.yaml:state_schema"
     if framework and framework.get("frame_schema"):
         profile = {**profile, "state_schema": framework["frame_schema"]}
@@ -590,10 +573,10 @@ def main() -> int:
             if not payload.get("carried_from") and prior:
                 payload["carried_from"] = prior.get("state_date_key")
 
-        open_budget = PROFILE_OPEN_BUDGET.get(args.profile)
+        budget = open_budget(profile)
         errors, warnings = validate(
             payload, profile, prior, framework_challenges,
-            date_key=date_key, open_budget=open_budget,
+            date_key=date_key, open_budget=budget,
         )
         report: dict[str, Any] = {
             "profile": args.profile,

@@ -139,3 +139,39 @@ rss:
     url: https://www.sec.gov/news/pressreleases.rss
     category: finance
     enabled: true
+
+  # --- 地缘 / 安全 / 制裁 / 航运层 ---
+  #   地缘日报使用这些源补足金十之外的政策、安全与区域冲突信息。
+  #   结论仍以 Agent 在 methodology 中做可信度分层，不把单源报道直接当结论。
+  - name: Reuters World News
+    url: https://feeds.reuters.com/reuters/worldNews
+    category: geopolitics
+    enabled: true
+  - name: Reuters Politics News
+    url: https://feeds.reuters.com/Reuters/PoliticsNews
+    category: geopolitics
+    enabled: true
+  - name: AP Top News
+    url: https://feeds.apnews.com/apnews/topnews
+    category: geopolitics
+    enabled: true
+  - name: UN News
+    url: https://news.un.org/feed/subscribe/en/news/all/rss.xml
+    category: geopolitics
+    enabled: true
+  - name: NATO News
+    url: https://www.nato.int/cps/en/natohq/rss.xml
+    category: geopolitics
+    enabled: true
+  - name: US Treasury Press Releases
+    url: https://home.treasury.gov/news/press-releases/rss
+    category: geopolitics
+    enabled: true
+  - name: OFAC Recent Actions
+    url: https://ofac.treasury.gov/recent-actions.xml
+    category: geopolitics
+    enabled: true
+  - name: Maritime Executive
+    url: https://www.maritime-executive.com/rss
+    category: geopolitics
+    enabled: true

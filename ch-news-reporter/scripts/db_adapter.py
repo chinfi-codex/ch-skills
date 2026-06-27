@@ -327,7 +327,7 @@ def query_items(
     date_key: Optional[str] = None,
     source: Optional[str] = None,
     source_type: Optional[str] = None,
-    limit: int = 1000,
+    limit: Optional[int] = 1000,
     order_by: str = "published_at DESC",
 ) -> list[dict[str, Any]]:
     """Query items with optional keyword search, date filter, source filter."""
@@ -362,8 +362,10 @@ def query_items(
             params.append(query_tokens)
 
     where_clause = " AND ".join(conditions) if conditions else "1=1"
-    sql = f"SELECT * FROM items WHERE {where_clause} ORDER BY {order_by} LIMIT {ph}"
-    params.append(limit)
+    sql = f"SELECT * FROM items WHERE {where_clause} ORDER BY {order_by}"
+    if limit is not None:
+        sql += f" LIMIT {ph}"
+        params.append(limit)
 
     if BACKEND == Backend.SQLITE:
         cur = conn.execute(sql, params)

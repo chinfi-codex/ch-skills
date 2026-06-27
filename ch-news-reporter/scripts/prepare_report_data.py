@@ -14,8 +14,6 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 from zoneinfo import ZoneInfo
 
-import yaml
-
 from db_adapter import (
     count_items_by_source as db_count_items_by_source,
     ensure_connectable as db_ensure_connectable,
@@ -27,16 +25,18 @@ from db_adapter import (
     table_exists,
 )
 from framework_loader import load_framework
+from profile_config import (
+    DEFAULT_PROFILE_CONFIG,
+    load_profile,
+    profile_sources,
+    reference_dir,
+    rss_categories,
+)
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 DEFAULT_DB = Path("data/news_research.sqlite")
-DEFAULT_CONFIG = Path("config/report_profiles.yaml")
-SOURCE_ALIASES = {
-    "github": "github_trending",
-    "ph": "product_hunt",
-    "hn": "hacker_news",
-}
+DEFAULT_CONFIG = DEFAULT_PROFILE_CONFIG
 MACRO_SOURCE_PRIORITY = {"jin10": 0, "rss": 1}
 DEFAULT_MACRO_KEYWORDS = [
     "宏观",
@@ -158,27 +158,6 @@ def resolve_date_key(value: str) -> str | None:
         raise SystemExit("--date must be 'today', 'all', or YYYY-MM-DD") from exc
 
 
-def load_profile(config_path: Path, profile_name: str) -> dict[str, Any]:
-    if not config_path.exists():
-        raise SystemExit(f"Profile config does not exist: {config_path}")
-    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    profiles = payload.get("profiles") or {}
-    profile = profiles.get(profile_name)
-    if not isinstance(profile, dict):
-        available = ", ".join(sorted(profiles)) or "(none)"
-        raise SystemExit(f"Unknown profile '{profile_name}'. Available: {available}")
-    return profile
-
-
-def normalize_source(source: str) -> str:
-    return SOURCE_ALIASES.get(source, source)
-
-
-def profile_sources(profile: dict[str, Any]) -> list[str]:
-    sources = profile.get("sources") or []
-    return [normalize_source(str(source)) for source in sources]
-
-
 def json_loads(value: str | None, fallback: Any) -> Any:
     if not value:
         return fallback
@@ -220,6 +199,39 @@ def query_items(
             limit=limit,
             order_by=order_by,
         )
+    return normalize_item_rows(raw_rows)
+
+
+def query_coverage_items(
+    con: Any,
+    profile: dict[str, Any],
+    date_key: str | None,
+) -> list[dict[str, Any]]:
+    sources = profile_sources(profile)
+    order_by = "COALESCE(published_at, fetched_at) DESC"
+    if sources:
+        raw_rows: list[dict[str, Any]] = []
+        for source_type in sources:
+            raw_rows.extend(
+                db_query_items(
+                    con,
+                    date_key=date_key,
+                    source_type=source_type,
+                    limit=None,
+                    order_by=order_by,
+                )
+            )
+    else:
+        raw_rows = db_query_items(
+            con,
+            date_key=date_key,
+            limit=None,
+            order_by=order_by,
+        )
+    return normalize_item_rows(raw_rows)
+
+
+def normalize_item_rows(raw_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for item in raw_rows:
         item["tags"] = json_loads(item.pop("tags_json", None), [])
@@ -344,6 +356,22 @@ def contains_any(text: str, keywords: list[str]) -> bool:
     return any(keyword.lower() in lowered for keyword in keywords if keyword)
 
 
+def profile_item_keywords(profile: dict[str, Any]) -> list[str]:
+    configured = profile.get("item_keywords") or []
+    if not isinstance(configured, list):
+        raise SystemExit(f"profile {profile.get('_name') or '?'} item_keywords must be a list")
+    return [str(keyword) for keyword in configured if str(keyword).strip()]
+
+
+def profile_keyword_filter_sources(profile: dict[str, Any]) -> set[str]:
+    configured = profile.get("keyword_filter_sources") or []
+    if not isinstance(configured, list):
+        raise SystemExit(
+            f"profile {profile.get('_name') or '?'} keyword_filter_sources must be a list"
+        )
+    return {str(source) for source in configured if str(source).strip()}
+
+
 def macro_keyword_hits(text: str, keywords: list[str]) -> list[str]:
     lowered = text.lower()
     return [keyword for keyword in keywords if keyword and keyword.lower() in lowered]
@@ -377,6 +405,23 @@ def macro_rank_key(item: dict[str, Any]) -> tuple[Any, ...]:
 def apply_profile_filters(
     items: list[dict[str, Any]], profile: dict[str, Any]
 ) -> list[dict[str, Any]]:
+    categories = rss_categories(profile)
+    if categories:
+        items = [
+            item
+            for item in items
+            if item.get("source_type") != "rss"
+            or str((item.get("metadata") or {}).get("category") or "") in categories
+        ]
+    item_keywords = profile_item_keywords(profile)
+    keyword_sources = profile_keyword_filter_sources(profile)
+    if item_keywords and keyword_sources:
+        items = [
+            item
+            for item in items
+            if str(item.get("source_type") or "") not in keyword_sources
+            or contains_any(item_search_text(item), item_keywords)
+        ]
     if not profile.get("macro_data"):
         return items
     keywords = profile_macro_keywords(profile)
@@ -583,6 +628,45 @@ def build_coverage(
     }
 
 
+def apply_profile_coverage_filters(
+    coverage: dict[str, Any],
+    base_items: list[dict[str, Any]],
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    """Adjust source coverage for deterministic profile-side filters."""
+    categories = rss_categories(profile)
+    by_source = coverage.get("by_source")
+    if not isinstance(by_source, dict):
+        return coverage
+    if not categories or "rss" not in by_source:
+        categories = set()
+    if categories and "rss" in by_source:
+        rss_count = sum(
+            1
+            for item in base_items
+            if item.get("source_type") == "rss"
+            and str((item.get("metadata") or {}).get("category") or "") in categories
+        )
+        by_source["rss"] = rss_count
+        coverage.setdefault("profile_filters", {})["rss_categories"] = sorted(categories)
+    item_keywords = profile_item_keywords(profile)
+    keyword_sources = profile_keyword_filter_sources(profile)
+    if item_keywords and keyword_sources:
+        for source in keyword_sources:
+            if source in by_source:
+                by_source[source] = sum(
+                    1
+                    for item in base_items
+                    if item.get("source_type") == source
+                    and contains_any(item_search_text(item), item_keywords)
+                )
+        coverage.setdefault("profile_filters", {})["keyword_filter_sources"] = sorted(keyword_sources)
+    missing = [source for source, count in by_source.items() if int(count or 0) == 0]
+    coverage["missing"] = missing
+    coverage["all_present"] = not missing
+    return coverage
+
+
 def load_prior_state(
     con: Any, profile_name: str, date_key: str | None
 ) -> dict[str, Any] | None:
@@ -645,7 +729,7 @@ def load_framework_review(
 
 
 def build_packet(args: argparse.Namespace) -> dict[str, Any]:
-    profile = load_profile(Path(args.config), args.profile)
+    profile = load_profile(args.profile, Path(args.config))
     date_key = resolve_date_key(args.date)
     state_enabled = bool(profile.get("state_enabled"))
     db_path = str(Path(args.db))
@@ -653,16 +737,25 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     with get_connection(db_path) as con:
         base_items = query_items(con, profile, date_key, args.limit)
         items = apply_profile_filters(base_items, profile)
+        coverage_items = query_coverage_items(con, profile, date_key)
         enrichments = (
             query_enrichments(con, [str(item["id"]) for item in items])
             if args.include_enrichments
             else {}
         )
-        coverage = build_coverage(con, profile, date_key)
+        coverage = apply_profile_coverage_filters(
+            build_coverage(con, profile, date_key),
+            coverage_items,
+            profile,
+        )
         prior_state = (
             load_prior_state(con, args.profile, date_key) if state_enabled else None
         )
-        framework = load_framework(args.profile) if state_enabled else None
+        framework = (
+            load_framework(args.profile, config_path=Path(args.config))
+            if state_enabled
+            else None
+        )
         framework_review = (
             load_framework_review(con, args.profile, date_key, framework)
             if state_enabled
@@ -675,6 +768,7 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     packet = {
         "profile": args.profile,
         "profile_title": profile.get("title") or args.profile,
+        "reference_dir": reference_dir(args.profile, profile),
         "date_key": date_key or "all",
         "generated_at": now_iso(),
         "sources": profile_sources(profile),

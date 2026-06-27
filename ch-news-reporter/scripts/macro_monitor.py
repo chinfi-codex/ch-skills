@@ -267,7 +267,7 @@ def fetch_yahoo_chart(
     return {
         "symbol": symbol,
         "close": round(last_close, 4),
-        # `value` alias keeps existing consumers (iran_dynamic, downstream
+        # `value` alias keeps existing consumers (geopolitical_daily, downstream
         # report templates) reading US_TREASURY_10Y.value unchanged.
         "value": round(last_close, 4),
         "previous_close": round(float(prev_close), 4) if prev_close else None,

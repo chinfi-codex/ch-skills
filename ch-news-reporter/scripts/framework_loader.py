@@ -25,16 +25,27 @@ from typing import Any, Optional
 
 import yaml
 
+from profile_config import DEFAULT_PROFILE_CONFIG, load_profile, reference_dir
+
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _REFERENCES = _SCRIPT_DIR.parent / "references" / "reports"
 
 _YAML_BLOCK = re.compile(r"```yaml\s*\n(.*?)\n```", re.DOTALL)
 
 
-def framework_path(profile: str, base: Optional[Path] = None) -> Path:
+def framework_path(
+    profile: str,
+    base: Optional[Path] = None,
+    config_path: Path | str = DEFAULT_PROFILE_CONFIG,
+) -> Path:
     """Path to a profile's framework.md (references/reports/<profile>/framework.md)."""
     root = base or _REFERENCES
-    return root / profile / "framework.md"
+    try:
+        profile_config = load_profile(profile, config_path)
+        ref_dir = reference_dir(profile, profile_config)
+    except SystemExit:
+        ref_dir = profile
+    return root / ref_dir / "framework.md"
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -63,7 +74,9 @@ def _first_yaml_block(body: str) -> dict[str, Any]:
 
 
 def load_framework(
-    profile: str, base: Optional[Path] = None
+    profile: str,
+    base: Optional[Path] = None,
+    config_path: Path | str = DEFAULT_PROFILE_CONFIG,
 ) -> Optional[dict[str, Any]]:
     """Load a profile's framework, or ``None`` when framework.md is absent/unusable.
 
@@ -72,7 +85,7 @@ def load_framework(
     and ``output_sections``.  ``None`` tells callers to fall back to the legacy
     ``report_profiles.yaml`` ``state_schema``.
     """
-    path = framework_path(profile, base)
+    path = framework_path(profile, base, config_path)
     if not path.exists():
         return None
     try:

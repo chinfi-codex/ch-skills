@@ -1,14 +1,14 @@
 # Framework Governance:分析框架治理层(慢思考)通用机制
 
-> 所有 `state_enabled` 的 report profile(`iran_dynamic` / `macro_daily` / `ai_daily`)共用本机制。
+> 所有 `state_enabled` 的 report profile（见 `config/report_profiles.yaml`）共用本机制。
 > 各 profile 的 `framework.md` 只声明自己的 `regime_assumption`、`invalidation_triggers` 与候选换代线索;治理机制本身在这里读一次即可。
 > 本文件是 `watchboard.md` 的**姊妹篇**:watchboard 管**框架内**的快思考(每天在既定框架里填值),本层管**框架本身**的慢思考(regime 质变时把整套框架换代)。
 
 ## 1. 治理层是什么
 
-每一套分析框架,都是为某一个**宏观状态(regime)** 量身做的。iran 的 `framework.md` 从 path 定义(A 续期 / B 交战 / C 僵尸化)到 watchlist(防空补给、扫雷进展)全都假设了"停火后僵局"这一个 regime——它写在 frontmatter 的 `regime_assumption` 里。
+每一套分析框架,都是为某一个**宏观状态(regime)** 量身做的。某个 profile 的 `framework.md` 会把 path 定义、watchlist、输出板块和 `regime_assumption` 绑定在一起；只要这个 regime 仍成立，快思考就在框架内滚动。
 
-regime 没变,框架就有效,快思考在里面每天填值就够了。**regime 一旦质变(如停火破裂、转入持续战争),整套框架的视角会同时失效**:都全面开战了,还判什么"续期 / 僵尸化"、还盯什么"扫雷进展"?这时不是改几个值的事,是要**换一整套框架**。这件事就是本层负责的"慢思考"。
+regime 没变,框架就有效,快思考在里面每天填值就够了。**regime 一旦质变,整套框架的视角会同时失效**:原来的 path、watchlist 和传导重点可能不再能解释事实。这时不是改几个值的事,是要**换一整套框架**。这件事就是本层负责的"慢思考"。
 
 | | 快思考(`watchboard.md`) | 慢思考(本层) |
 |---|---|---|
@@ -24,7 +24,7 @@ regime 没变,框架就有效,快思考在里面每天填值就够了。**regime
 
 `framework.md` 本身就是"框架对象",frontmatter 是它的身份:
 
-- `framework_version`:版本号,如 `iran-v1-ceasefire`。换代即升版本(`iran-v2-wartime`)。
+- `framework_version`:版本号,如 `geopolitics-v1-global-risk`。换代即升版本。
 - `regime_assumption`:这套框架假设的宏观状态。**它是框架的有效边界**——regime 还在,框架就在。
 - `supersedes`:被本版本取代的上一版本(首版为 `null`)。`supersedes` 链就是换代史。
 
@@ -41,13 +41,13 @@ seed(冷启动种子) → active(在役,快思考每天用) → challenged(慢�
 
 这是整个治理层的命门,务必和 `watchboard.md` §7、各 `framework.md` 的"两级触发"表述对齐:
 
-- **框架内触发(不归本层)**:path 在 A↔B↔C 间切换。这是快思考的活,`framework.md` 的"path 判定逻辑"处理,改的是 `frame.path` 的值。
+- **框架内触发(不归本层)**:path 在本 profile 的枚举内切换。这是快思考的活,`framework.md` 的 path 判定逻辑处理,改的是 `frame.path` 的值。
 - **框架级触发(本层)**:`regime_assumption` 不再成立。改的是整个框架版本。
 
 本层在两种情况下被唤起:
 
 1. **定期体检**:距上次 framework review > 3 天。例行问一句"regime 还稳吗",防止框架在"一切正常"里悄悄锈掉。
-2. **事件触发**:当前 `framework.md` 机器区的 `invalidation_triggers` 命中(如 iran 的"任一主要方在停火窗口期外、确认的成规模军事行动,且报复链 ≥3 天")。命中即唤起,不等 3 天。
+2. **事件触发**:当前 `framework.md` 机器区的 `invalidation_triggers` 命中。命中即唤起,不等 3 天。
 
 **谁来检测**:脚本只做**确定性检测**——算距上次 review 的天数、把 `invalidation_triggers` 的关键条件在当日 fact stream 里扫一遍命中没,然后**亮灯**。"灯亮之后 regime 到底变没变",是模型(诊断)和人(确认)的判断,脚本绝不替它们下结论。这和 watchboard"脚本只搬状态、不判断"的纪律一致。
 
@@ -81,7 +81,7 @@ seed(冷启动种子) → active(在役,快思考每天用) → challenged(慢�
 - 新模型区:新 path 判定逻辑、新 watchlist、新行为体权重,以及**跨域推演重点怎么变**(对商品 / 金融 / 地缘的影响路径,新旧 regime 是两套);
 - 配套的**状态迁移计划**(§7)。
 
-以 iran 停火→战时为例,草案大致是:path 从"续期 / 交战 / 僵尸化"换成"升级失控 / 有限战 / 消耗僵持 / 外力停火";watchlist 从"防空补给 / 扫雷"换成"战线推进 / 核设施 / 第三方参战 / 海峡封锁";市场推演从"溢价高位震荡"换成"油价 spike / 封锁定价 / risk-off 避险暴动"。
+例如地缘日报如果从“全球多点摩擦期”进入“单一大战时 regime”，草案就应整体替换 path、watchlist 和传导重点，而不是在旧框架的自由字段里硬塞战时事实。
 
 ## 7. 状态迁移规约(换代不断历史)
 
@@ -99,9 +99,9 @@ seed(冷启动种子) → active(在役,快思考每天用) → challenged(慢�
 
 ```json
 "framework_switch": {
-  "from": "iran-v1-ceasefire", "to": "iran-v2-wartime",
+  "from": "geopolitics-v1-global-risk", "to": "geopolitics-v2-wartime",
   "migrated": ["T-001", "T-004"], "retired": ["T-003"], "promoted": ["T-009"],
-  "rationale": "06-12 以伊全面交火确认 + 报复链 4 天,停火 regime 失效"
+  "rationale": "某主线进入持续战争且全球多区域聚合框架无法解释主要风险"
 }
 ```
 
@@ -116,7 +116,7 @@ seed(冷启动种子) → active(在役,快思考每天用) → challenged(慢�
 ```json
 {
   "review_date": "2026-06-12",
-  "framework_version": "iran-v1-ceasefire",
+  "framework_version": "geopolitics-v1-global-risk",
   "regime_verdict": "质变",
   "triggers_hit": ["窗口期外成规模军事行动 + 报复链 ≥3 天"],
   "assessment": {"regime_check": "对照 invalidation_triggers 与 watchlist 的体检发现", "watchlist_changes": ["+新增…", "-退役…"], "framework_gaps": ["path/维度装不下的事项"]},
@@ -135,6 +135,6 @@ seed(冷启动种子) → active(在役,快思考每天用) → challenged(慢�
 
 看到要改的反模式:
 
-- **用自由字段硬扛框架级变化**:拿 `sub_branch` / `regime` 长期承载本该属于别的 path、甚至别的 regime 的事实(如"A-2 形式续期 / 内核空转"长期偷渡 C 的内核)。自由字段反复硬撑,正是 regime 在变、该上报本层的信号,不是继续往 watchboard 里塞。
+- **用自由字段硬扛框架级变化**:拿 `sub_branch` / `regime` 长期承载本该属于别的 path、甚至别的 regime 的事实。自由字段反复硬撑,正是 regime 在变、该上报本层的信号,不是继续往 watchboard 里塞。
 - **让脚本判断 regime 变没变**:脚本只算时间差、扫触发器命中;判断与重构是模型 + 人的活。
 - **频繁换代**:换代是大动作。只有 `invalidation_triggers` 命中或持续质变才动,不是每次 review 都换。

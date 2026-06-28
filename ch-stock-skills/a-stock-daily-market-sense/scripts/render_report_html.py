@@ -22,6 +22,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPT_ROOT.parent
 DEFAULT_MARKET_DATA = SKILL_ROOT / "references" / "market_data.json"
 INDEX_KLINE_DISPLAY_DAYS = 120
+MONTHLY_KLINE_DISPLAY_MONTHS = 72
 
 _BUNDLED_SHARED = SCRIPT_ROOT / "_shared"
 _DEV_SHARED = SCRIPT_ROOT.parents[2] / "shared"
@@ -146,6 +147,32 @@ def extract_stock_kline_payload(raw: dict, source_path: Optional[Path], missing:
             "kline_days_requested": item.get("kline_days_requested"),
             "records": records,
         }
+
+    # 月线平台突破组（5.2）的月线序列：多年底部箱体 + pivot + 突破月，供月线 K 线图。
+    monthly_raw = raw.get("monthly") if isinstance(raw, dict) else None
+    if isinstance(monthly_raw, dict):
+        m_by = monthly_raw.get("by_ts_code")
+        m_name = monthly_raw.get("name_to_ts_code")
+        monthly_payload: Dict[str, Any] = {
+            "by_ts_code": {},
+            "name_to_ts_code": m_name if isinstance(m_name, dict) else {},
+        }
+        if isinstance(m_by, dict):
+            for ts_code, item in m_by.items():
+                if not isinstance(item, dict):
+                    continue
+                records = item.get("records")
+                records = records[-MONTHLY_KLINE_DISPLAY_MONTHS:] if isinstance(records, list) else []
+                monthly_payload["by_ts_code"][str(ts_code)] = {
+                    "available": bool(records),
+                    "name": item.get("name"),
+                    "ts_code": item.get("ts_code") or ts_code,
+                    "base_top_pivot": item.get("base_top_pivot"),
+                    "base_start_month": item.get("base_start_month"),
+                    "breakout_month": item.get("breakout_month"),
+                    "records": records,
+                }
+        payload["monthly"] = monthly_payload
     return payload
 
 
@@ -239,6 +266,10 @@ const klineDisplayDays = __payload.display_days || 120;
 const indices = payload.indices || {};
 const stockByCode = stockPayload.by_ts_code || {};
 const stockNameIndex = stockPayload.name_to_ts_code || {};
+const monthlyPayload = __payload.stocks_monthly || {};
+const monthlyByCode = monthlyPayload.by_ts_code || {};
+const monthlyNameIndex = monthlyPayload.name_to_ts_code || {};
+const klineDisplayMonths = __payload.display_months || 72;
 const reportBody = document.getElementById("report-body");
 if (!reportBody) return;
 
@@ -254,13 +285,13 @@ const indexConfigs = [
 const stockSectionConfigs = [
   { headingText: "3.3", gridLabel: "module3-leaders" },
   { headingText: "5.1", gridLabel: "module5-capacity-up" },
-  { headingText: "5.2", gridLabel: "module5-star-breakout" },
   { headingText: "5.3", gridLabel: "module5-early-limit" },
   { headingText: "5.4", gridLabel: "module5-discount-relaunch" }
 ];
 
 insertIndexKlines();
 insertStockTableKlines();
+insertMonthlyBreakoutKlines();
 
 function insertIndexKlines() {
   const prepared = indexConfigs.map(config => {
@@ -270,7 +301,9 @@ function insertIndexKlines() {
   }).filter(Boolean);
   if (!prepared.length) return;
 
-  const anchor = findInsertionAnchor(indexConfigs[0].anchorTexts) || findInsertionAnchor(indexConfigs.flatMap(c => c.anchorTexts));
+  const trendHeading = findHeading("指数趋势");
+  const trendTable = trendHeading ? findNextTableWrap(trendHeading) : null;
+  const anchor = trendTable ? { element: trendTable, insert: "after" } : findInsertionAnchor(indexConfigs[0].anchorTexts) || findInsertionAnchor(indexConfigs.flatMap(c => c.anchorTexts));
   if (!anchor) return;
 
   const grid = document.createElement("div");
@@ -309,6 +342,203 @@ function insertStockTableKlines() {
     tableWrap.after(grid);
     tableWrap.dataset.stockKlinesInserted = "1";
   });
+}
+
+// 5.2 全市场月线平台突破：画月线 K 线 + 多年底部箱体阴影 + 箱体上沿 pivot 线 + 突破月标记。
+function insertMonthlyBreakoutKlines() {
+  const heading = findHeading("5.2");
+  if (!heading) return;
+  const tableWrap = findNextTableWrap(heading);
+  if (!tableWrap || tableWrap.dataset.stockKlinesInserted === "1") return;
+  const names = extractStockNames(tableWrap);
+  const prepared = names.map(name => {
+    const data = findMonthlyData(name);
+    if (!data) return null;
+    const rows = normalizeRows(data.records).slice(-klineDisplayMonths);
+    return rows.length ? { rows, data: { ...data, name }, fallbackTitle: name } : null;
+  }).filter(Boolean);
+  if (!prepared.length) return;
+  const grid = document.createElement("div");
+  grid.className = "stock-kline-grid stock-kline-grid-module5-monthly-base";
+  prepared.forEach(item => {
+    grid.appendChild(buildMonthlyCard(item.rows, item.data, item.fallbackTitle));
+  });
+  tableWrap.after(grid);
+  tableWrap.dataset.stockKlinesInserted = "1";
+}
+
+function findMonthlyData(name) {
+  const normalized = normalizeStockName(name);
+  const tsCode = monthlyNameIndex[name] || monthlyNameIndex[normalized];
+  if (!tsCode) return null;
+  return monthlyByCode[tsCode] || null;
+}
+
+function buildMonthlyCard(rows, data, fallbackTitle) {
+  const card = document.createElement("article");
+  card.className = "kline-card";
+  card.style.position = "relative";
+  const title = document.createElement("div");
+  title.className = "chart-title";
+  title.textContent = `${data.name || fallbackTitle} 月线 · 多年底部箱体突破`;
+  const subtitle = document.createElement("div");
+  subtitle.className = "chart-subtitle";
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  const pivot = Number(data.base_top_pivot);
+  subtitle.textContent = `${formatMonth(first.trade_date)} 至 ${formatMonth(last.trade_date)} · ${rows.length} 个月`
+    + (Number.isFinite(pivot) ? ` · 箱体上沿 ${pivot.toFixed(2)}` : "");
+  card.appendChild(title);
+  card.appendChild(subtitle);
+  card.appendChild(drawMonthlyKline(rows, card, data));
+  card.appendChild(CK.legend([
+    ["月K", "var(--neg)"],
+    ["箱体上沿", "var(--orange)"],
+    ["横盘箱体", "rgba(245,158,11,0.18)"],
+    ["成交量", "rgba(100,116,139,0.55)"]
+  ]));
+  return card;
+}
+
+function drawMonthlyKline(rows, card, meta) {
+  const width = 560;
+  const height = 340;
+  const pad = { left: 48, right: 14, top: 12, bottom: 24 };
+  const usableW = width - pad.left - pad.right;
+  const volPanelH = 64;
+  const panelGap = 16;
+  const priceH = height - pad.top - pad.bottom - volPanelH - panelGap;
+  const volTop = pad.top + priceH + panelGap;
+  const volBottom = volTop + volPanelH;
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img" });
+
+  const pivot = Number(meta && meta.base_top_pivot);
+  const allPrices = rows.flatMap(r => [r.high, r.low]).filter(Number.isFinite);
+  if (Number.isFinite(pivot)) allPrices.push(pivot);
+  let min = Math.min(...allPrices);
+  let max = Math.max(...allPrices);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) { min = 0; max = 1; }
+  if (min === max) { min -= 1; max += 1; }
+  const span = max - min;
+  min -= span * 0.05;
+  max += span * 0.08;
+
+  const x = idx => pad.left + (rows.length <= 1 ? usableW / 2 : idx / (rows.length - 1) * usableW);
+  const y = price => pad.top + (max - price) / (max - min) * priceH;
+  const candleWidth = Math.max(2, Math.min(7, usableW / Math.max(rows.length, 1) * 0.62));
+  const vols = rows.map(r => r.vol).filter(v => Number.isFinite(v) && v > 0);
+  const maxVol = vols.length ? Math.max(...vols) : 1;
+  const volY = v => volBottom - (v / maxVol) * volPanelH;
+
+  for (let i = 0; i <= 4; i += 1) {
+    const gy = pad.top + priceH * i / 4;
+    svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: gy, y2: gy, class: "grid-line" }));
+  }
+  svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: pad.top + priceH, y2: pad.top + priceH, class: "axis" }));
+  svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: volBottom, y2: volBottom, class: "axis" }));
+
+  // 横盘箱体阴影：箱体上沿成形月 → 突破月、上沿以下区域。
+  const startIdx = findMonthIndex(rows, meta && meta.base_start_month);
+  const breakIdx = findMonthIndex(rows, meta && meta.breakout_month);
+  if (Number.isFinite(pivot) && startIdx >= 0) {
+    const bx = x(startIdx);
+    const bxEnd = breakIdx >= 0 ? x(breakIdx) : x(rows.length - 1);
+    const boxTop = y(pivot);
+    const boxBottom = pad.top + priceH;
+    svg.appendChild(svgEl("rect", {
+      x: bx.toFixed(2), y: boxTop.toFixed(2),
+      width: Math.max(1, bxEnd - bx).toFixed(2),
+      height: Math.max(1, boxBottom - boxTop).toFixed(2),
+      fill: "rgba(245,158,11,0.14)", stroke: "none"
+    }));
+  }
+
+  const tooltip = CK.tooltip(card);
+  rows.forEach((row, idx) => {
+    const px = x(idx);
+    const up = row.close >= row.open;
+    const cls = up ? "kline-candle-up" : "kline-candle-down";
+    if (Number.isFinite(row.vol) && row.vol > 0) {
+      const barTop = volY(row.vol);
+      svg.appendChild(svgEl("rect", {
+        x: (px - candleWidth / 2).toFixed(2), y: barTop.toFixed(2),
+        width: candleWidth.toFixed(2), height: Math.max(1, volBottom - barTop).toFixed(2),
+        class: `amount-bar ${up ? "amount-bar-up" : "amount-bar-down"}`, rx: 1
+      }));
+    }
+    const bodyTop = y(Math.max(row.open, row.close));
+    const bodyBottom = y(Math.min(row.open, row.close));
+    svg.appendChild(svgEl("line", {
+      x1: px.toFixed(2), x2: px.toFixed(2),
+      y1: y(row.high).toFixed(2), y2: y(row.low).toFixed(2),
+      class: `kline-wick ${cls}`
+    }));
+    svg.appendChild(svgEl("rect", {
+      x: (px - candleWidth / 2).toFixed(2), y: bodyTop.toFixed(2),
+      width: candleWidth.toFixed(2), height: Math.max(1, bodyBottom - bodyTop).toFixed(2),
+      class: cls, rx: 1, opacity: 0.88
+    }));
+    const hit = svgEl("rect", {
+      x: (px - Math.max(candleWidth, 4) / 2).toFixed(2), y: pad.top,
+      width: Math.max(candleWidth, 4).toFixed(2), height: volBottom - pad.top,
+      fill: "transparent", stroke: "none", style: "cursor:pointer"
+    });
+    hit.addEventListener("mouseenter", () => {
+      tooltip.innerHTML = [
+        `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${formatMonth(row.trade_date)}</div>`,
+        `<div>开: ${formatNumber(row.open)} 高: ${formatNumber(row.high)}</div>`,
+        `<div>低: ${formatNumber(row.low)} 收: ${formatNumber(row.close)}</div>`
+      ].join("");
+      tooltip.style.opacity = "1";
+    });
+    hit.addEventListener("mousemove", event => CK.moveTip(tooltip, card, event));
+    hit.addEventListener("mouseleave", () => { tooltip.style.opacity = "0"; });
+    svg.appendChild(hit);
+  });
+
+  if (Number.isFinite(pivot)) {
+    const py = y(pivot);
+    svg.appendChild(svgEl("line", {
+      x1: pad.left, x2: width - pad.right, y1: py.toFixed(2), y2: py.toFixed(2),
+      stroke: "var(--orange)", "stroke-width": 1.3, "stroke-dasharray": "5 3", opacity: 0.95
+    }));
+    svg.appendChild(svgText(width - pad.right - 2, py - 4, `上沿 ${pivot.toFixed(2)}`, "end", "var(--orange)"));
+  }
+
+  if (breakIdx >= 0) {
+    const bxp = x(breakIdx);
+    svg.appendChild(svgEl("line", {
+      x1: bxp.toFixed(2), x2: bxp.toFixed(2), y1: pad.top, y2: pad.top + priceH,
+      stroke: "var(--neg)", "stroke-width": 1, "stroke-dasharray": "2 3", opacity: 0.6
+    }));
+    svg.appendChild(svgText(bxp, pad.top + 10, "突破", "middle", "var(--neg)"));
+  }
+
+  svg.appendChild(svgText(4, pad.top + 4, formatNumber(max), "start", "var(--text-tertiary)"));
+  svg.appendChild(svgText(4, pad.top + priceH, formatNumber(min), "start", "var(--text-tertiary)"));
+  svg.appendChild(svgText(4, volTop + 12, "成交量", "start", "var(--text-tertiary)"));
+  return svg;
+}
+
+function findMonthIndex(rows, monthLabel) {
+  if (!monthLabel) return -1;
+  const target = String(monthLabel).replace(/[^0-9]/g, "").slice(0, 6);
+  if (target.length < 6) return -1;
+  for (let i = 0; i < rows.length; i += 1) {
+    const ym = String(rows[i].trade_date || "").replace(/[^0-9]/g, "").slice(0, 6);
+    if (ym === target) return i;
+  }
+  for (let i = 0; i < rows.length; i += 1) {
+    const ym = String(rows[i].trade_date || "").replace(/[^0-9]/g, "").slice(0, 6);
+    if (ym >= target) return i;
+  }
+  return -1;
+}
+
+function formatMonth(value) {
+  const digits = String(value || "").replace(/[^0-9]/g, "");
+  if (digits.length >= 6) return `${digits.slice(0, 4)}-${digits.slice(4, 6)}`;
+  return formatDate(value);
 }
 
 function findInsertionAnchor(texts) {
@@ -596,7 +826,7 @@ if (anchor.table) {
    (report_template.md style, <p><strong>1.3 市场风格</strong></p>) fall back to
    that paragraph, with the sibling walk stopping at the next pseudo-heading. */
 function findStyleAnchor() {
-  const heading = CK.findHeading(reportBody, "市场风格", "h2, h3");
+  const heading = CK.findHeading(reportBody, "市场风格", "h2, h3, h4");
   if (heading) return { element: heading, table: CK.findNextTable(heading) };
   const strong = Array.from(reportBody.querySelectorAll("p > strong"))
     .find(el => (el.textContent || "").includes("市场风格"));
@@ -806,7 +1036,7 @@ if (!records.length) return;
 const reportBody = document.getElementById("report-body");
 const { svgEl, svgText } = CK;
 const formatDate = CK.fmt.date;
-const headings = reportBody.querySelectorAll("h3");
+const headings = reportBody.querySelectorAll("h2, h3, h4");
 let targetHeading = null;
 for (const h of headings) {
   if (h.textContent.includes("1.1") && h.textContent.includes("情绪趋势")) { targetHeading = h; break; }
@@ -843,7 +1073,7 @@ if (targetHeading) {
   let insertAfter = targetHeading;
   let sibling = targetHeading.nextElementSibling;
   while (sibling) {
-    if (sibling.tagName === "H3" || sibling.tagName === "H2") break;
+    if (/^H[234]$/.test(sibling.tagName || "")) break;
     insertAfter = sibling;
     sibling = sibling.nextElementSibling;
   }
@@ -1055,7 +1285,9 @@ def build_job(args) -> RenderJob:
         payload={
             "index": index_kline_data,
             "stocks": stock_kline_data,
+            "stocks_monthly": stock_kline_data.get("monthly") or {},
             "display_days": INDEX_KLINE_DISPLAY_DAYS,
+            "display_months": MONTHLY_KLINE_DISPLAY_MONTHS,
         },
         js=KLINE_CHARTS_JS,
     ))

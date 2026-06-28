@@ -3999,134 +3999,294 @@ def fetch_jrj_limit_up_records(trade_date: str) -> Tuple[List[Dict[str, Any]], O
     return records, None
 
 
-def build_star_monthly_breakout_samples(
+def fetch_stock_monthly(
+    pro,
+    ts_codes: List[str],
+    start_date: str,
+    end_date: str,
+    max_workers: int = 8,
+) -> Dict[str, pd.DataFrame]:
+    """拉取一组个股的前复权月线行情，用于月线平台突破组的多年底部测算。
+
+    本地 PG / 缓存只覆盖约一年日线，看不到多年底部，必须单拉月线。用 ts.pro_bar(adj='qfq',
+    freq='M') 取**前复权**月 K——与生产日线统一的前复权口径一致，避免「现价(qfq) 比 多年箱体
+    上沿(raw)」的口径错配（含分红/送转的票尤其要紧）。月线一行一月、体量极小，只在预筛幸存集
+    （默认 ≤80 只）上拉取，并发受限、单只失败即跳过。返回 {ts_code: 月线 DataFrame}；pro 不可用
+    或全部失败时返回空字典，由调用方降级处理。
+    """
+    out: Dict[str, pd.DataFrame] = {}
+    codes = [str(code).strip() for code in ts_codes if str(code).strip()]
+    if pro is None or not codes:
+        return out
+
+    def _one(code: str):
+        try:
+            df = ts.pro_bar(
+                ts_code=code,
+                api=pro,
+                asset="E",
+                freq="M",
+                adj="qfq",
+                start_date=start_date,
+                end_date=end_date,
+            )
+            return code, df
+        except Exception:
+            return code, None
+
+    with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(codes)))) as executor:
+        for code, df in executor.map(_one, codes):
+            if df is not None and not getattr(df, "empty", True):
+                out[code] = df
+    return out
+
+
+def build_monthly_base_breakout_samples(
     features: pd.DataFrame,
     target_date: str,
     sample_limit: int,
+    pro=None,
+    monthly_lookback_months: int = 84,
+    up_threshold: float = 7.0,
+    breakout_tol: float = 0.02,
+    min_base_months: int = 3,
+    max_survivors: int = 150,
 ) -> Dict[str, Any]:
-    if features is None or features.empty:
-        return {
-            "available": False,
-            "filter_criteria": {},
-            "candidates": [],
-            "summary": {"candidate_count": 0},
+    """全市场月线平台突破（替代原科创板月线突破）。
+
+    形态参照雅克科技：多年月线横盘后，当天放量大涨、日线收盘第一次站上多年箱体上沿。要点：
+
+      - 全市场（排除北交所 / .BJ 与 ST/*ST），不再限定科创板；
+      - **当天大涨 + 当天突破**：当日涨幅 ≥ up_threshold（默认 7%），且**昨收 ≤ 箱体上沿 < 今收**
+        （今天日线收盘第一次站上箱体上沿），当天下跌或早已站上箱体之上的不算；
+      - **横盘长优先、短期也要**：箱体上沿 pivot = 完整月线（回看约 monthly_lookback_months 个月）
+        最高价，横盘月数 base_length_months（pivot 成形月 → 当月）≥ min_base_months（默认 3，避免
+        次新乱入）即可入选，再按横盘月数降序——多年长底排在前、12 个月内的短底也保留。
+
+    两阶段：阶段一在已加载窗口（约一年日线）上做廉价预筛（当日涨幅 ≥ up_threshold、非北交/ST、
+    日线历史够长），按当日成交额取前 max_survivors 只；阶段二对幸存集单拉 Tushare 前复权月 K，
+    测算多年箱体上沿 pivot 与横盘月数、确认昨收在 pivot 下、今收在 pivot 上。pro 不可用时本组降级
+    为 available=false 并给原因。脚本只给确定性量价证据与月线序列，是否落在 2-3 星主线、归因与取舍
+    由模型在写作时叠加（见 module5 方法论）。
+    """
+    filter_criteria = {
+        "universe": "全市场，排除北交所 / .BJ 与 ST/*ST",
+        "big_up_day": f"当日涨幅 ≥ {up_threshold}%（当天大涨）",
+        "breakout_today": f"昨收 < 箱体上沿 pivot 且 今收 ≥ pivot×(1-{breakout_tol})（昨天没站上多年高、今天放量大涨收在上沿一线以上；下沿单边容差 {breakout_tol:.0%}，上沿敞开；当天下跌或早已在 pivot 之上的不算）",
+        "monthly_base": f"箱体上沿 pivot = 完整月线最高价（回看约 {monthly_lookback_months} 个月、不含当月）",
+        "min_base_months": f"横盘月数 base_length_months（pivot 成形月 → 当月）≥ {min_base_months}（短期突破也保留、按横盘月数降序）",
+        "prefilter": f"阶段一窗口预筛：当日涨幅 ≥ {up_threshold}%、日线历史 ≥ 120 日；按当日成交额取前 {max_survivors} 只再拉月线",
+        "sort_by": "横盘月数 base_length_months 降序（横盘越长越好），其次当日成交额降序",
+        "sample_limit": sample_limit,
+        "reference_shape": "雅克科技 002409.SZ：多年月线箱体后，当天放量大涨站上箱体上沿",
+        "data_source": "多年箱体来自 Tushare 前复权月 K（ts.pro_bar adj=qfq freq=M，本地仅约一年日线）；昨收/今收取已加载前复权日线，口径统一",
+    }
+
+    def _result(available: bool, candidates=None, series=None, monthly_map=None, reason=None) -> Dict[str, Any]:
+        candidates = candidates or []
+        series = series or {}
+        payload = {
+            "available": available,
+            "filter_criteria": filter_criteria,
+            "candidates": candidates,
+            "monthly_series_by_ts_code": series,
+            "summary": {
+                "candidate_count": len(candidates),
+                "survivors_fetched": len(monthly_map or {}),
+                "total_amount_100m_yuan": round(sum(float(c.get("amount_100m_yuan") or 0) for c in candidates), 2),
+                "max_base_length_months": max((int(c.get("base_length_months") or 0) for c in candidates), default=0),
+            },
+            "model_overlay": "本组只给技术形态命中；可操作性需模型叠加——仅当个股落在当日 ★★/★★★ 主线内才算主线级信号，否则记为「形态命中但暂不在主线」。",
         }
+        if reason:
+            payload["reason"] = reason
+        return payload
+
+    if features is None or features.empty or "trade_date" not in features.columns:
+        return _result(False, reason="无候选日线特征帧")
 
     df = features.copy()
     df["trade_date"] = df["trade_date"].astype(str)
-    for column in (
-        "open", "high", "low", "close", "pct_chg", "amount",
-        "ret_5d", "ret_20d", "amount_ratio_20d", "history_days",
-        "prev_high_120d", "close_position_120d", "drawdown_120_high",
-        "close_ma20", "close_ma60",
-    ):
+    for column in ("open", "high", "low", "close", "pct_chg", "amount", "vol", "history_days", "amount_ratio_20d"):
         if column in df.columns:
             df[column] = pd.to_numeric(df[column], errors="coerce")
-
-    target_rows = df.loc[df["trade_date"] == target_date].copy()
+    df = df.loc[df["trade_date"] <= str(target_date)]
+    target_rows = df.loc[df["trade_date"] == str(target_date)].copy()
     if target_rows.empty:
-        return {
-            "available": True,
-            "filter_criteria": {},
-            "candidates": [],
-            "summary": {"candidate_count": 0},
-        }
+        return _result(True)
 
-    market = target_rows["market"].fillna("").astype(str) if "market" in target_rows.columns else pd.Series("", index=target_rows.index)
-    ts_codes = target_rows["ts_code"].fillna("").astype(str)
-    target_rows = target_rows.loc[market.eq("科创板") | ts_codes.str.startswith(("688", "689"))].copy()
+    # 阶段一：全市场预筛（排除北交/ST、**当天大涨** ≥ up_threshold、日线历史够长），按当日成交额取前 N 只。
+    names = target_rows["name"].fillna("").astype(str) if "name" in target_rows.columns else pd.Series("", index=target_rows.index)
+    markets = target_rows["market"].fillna("").astype(str) if "market" in target_rows.columns else pd.Series("", index=target_rows.index)
+    codes_ser = target_rows["ts_code"].fillna("").astype(str)
+    keep = (
+        ~markets.eq("北交所")
+        & ~codes_ser.str.endswith(".BJ")
+        & ~names.str.upper().str.contains("ST", na=False)
+    )
+    target_rows = target_rows.loc[keep].copy()
+    if target_rows.empty:
+        return _result(True)
 
+    prelim: List[Dict[str, Any]] = []
+    for _, row in target_rows.iterrows():
+        code = str(row.get("ts_code") or "")
+        close = safe_float(row.get("close"))
+        pct = safe_float(row.get("pct_chg"))
+        hist = safe_float(row.get("history_days"))
+        amount = safe_float(row.get("amount"))
+        if not code or close is None or pct is None:
+            continue
+        if pct < up_threshold:  # 当天大涨
+            continue
+        if hist is not None and hist < 120:
+            continue
+        prelim.append({"ts_code": code, "amount": amount or 0.0, "row": row})
+    if not prelim:
+        return _result(True)
+    prelim.sort(key=lambda item: -float(item["amount"]))
+    prelim = prelim[:max_survivors]
+
+    if pro is None:
+        return _result(False, reason="缺少 Tushare pro：无法拉取月线确认多年底部，本组跳过")
+
+    start_dt = (ymd_to_dt(str(target_date)) - timedelta(days=(monthly_lookback_months + 2) * 31)).strftime("%Y%m%d")
+    monthly_map = fetch_stock_monthly(pro, [item["ts_code"] for item in prelim], start_dt, str(target_date))
+    if not monthly_map:
+        return _result(False, reason="Tushare 月线拉取失败或为空，本组跳过")
+
+    cur_month = pd.Period(pd.to_datetime(str(target_date)), freq="M")
     candidates: List[Dict[str, Any]] = []
-    grouped = df.loc[df["ts_code"].isin(target_rows["ts_code"])].groupby("ts_code", group_keys=False)
-    current_month = pd.Period(pd.to_datetime(target_date), freq="M")
+    series_by_code: Dict[str, Dict[str, Any]] = {}
 
-    for ts_code, sub in grouped:
-        sub = sub.sort_values("trade_date").reset_index(drop=True)
-        target_match = sub.loc[sub["trade_date"] == target_date]
-        if target_match.empty:
+    for item in prelim:
+        code = item["ts_code"]
+        row = item["row"]
+        mdf = monthly_map.get(code)
+        if mdf is None or mdf.empty:
             continue
-        target_row = target_match.iloc[-1]
-        history_days = safe_float(target_row.get("history_days")) or 0
-        prev_high_120d = safe_float(target_row.get("prev_high_120d"))
-        close = safe_float(target_row.get("close"))
-        if history_days < 120 or close is None or prev_high_120d is None or close < prev_high_120d:
-            continue
-
-        dated = sub.copy()
-        dated["_month"] = pd.to_datetime(dated["trade_date"]).dt.to_period("M")
-        current_month_rows = dated.loc[dated["_month"] == current_month]
-        previous_month_rows = dated.loc[dated["_month"] < current_month]
-        if current_month_rows.empty or previous_month_rows.empty:
-            continue
-        previous_month_high = safe_float(previous_month_rows["high"].max())
-        current_month_high = safe_float(current_month_rows["high"].max())
-        if previous_month_high is None or close <= previous_month_high:
+        mdf = mdf.copy()
+        mdf["trade_date"] = mdf["trade_date"].astype(str)
+        for col in ("open", "high", "low", "close", "vol"):
+            if col in mdf.columns:
+                mdf[col] = pd.to_numeric(mdf[col], errors="coerce")
+        mdf["_month"] = pd.to_datetime(mdf["trade_date"], format="%Y%m%d", errors="coerce").dt.to_period("M")
+        mdf = mdf.dropna(subset=["_month", "close", "high"]).sort_values("_month")
+        # 接口里的当前月（可能不完整）丢弃，当前月统一用已加载日线合成。
+        completed = mdf.loc[mdf["_month"] < cur_month]
+        if len(completed) < min_base_months:
             continue
 
-        previous_rows = sub.loc[sub["trade_date"] < target_date]
-        prior_row = previous_rows.iloc[-1] if not previous_rows.empty else None
-        high_trend_excluded = False
-        if prior_row is not None:
-            prior_close = safe_float(prior_row.get("close"))
-            prior_ma20 = safe_float(prior_row.get("close_ma20"))
-            prior_ma60 = safe_float(prior_row.get("close_ma60"))
-            prior_position = safe_float(prior_row.get("close_position_120d"))
-            prior_ret20 = safe_float(prior_row.get("ret_20d"))
-            high_trend_excluded = bool(
-                prior_close is not None
-                and prior_ma20 is not None
-                and prior_ma60 is not None
-                and prior_position is not None
-                and prior_ret20 is not None
-                and prior_close > prior_ma20 > prior_ma60
-                and prior_position >= 0.70
-                and prior_ret20 > 20.0
-            )
-        if high_trend_excluded:
+        # 当前月 bar：用已加载日线本自然月（截至 target）合成。
+        cur_daily = df.loc[df["ts_code"] == code].copy()
+        cur_daily["_month"] = pd.to_datetime(cur_daily["trade_date"], format="%Y%m%d", errors="coerce").dt.to_period("M")
+        cur_daily = cur_daily.loc[cur_daily["_month"] == cur_month].sort_values("trade_date")
+        cur_close = safe_float(row.get("close"))
+        if cur_close is None and not cur_daily.empty:
+            cur_close = safe_float(cur_daily["close"].iloc[-1])
+        if cur_close is None:
+            continue
+        cur_high = safe_float(cur_daily["high"].max()) if not cur_daily.empty else cur_close
+        cur_low = safe_float(cur_daily["low"].min()) if not cur_daily.empty else cur_close
+        cur_open = safe_float(cur_daily["open"].iloc[0]) if not cur_daily.empty else cur_close
+        # 当前月成交量用日线本月累加；Tushare 月线(pro_bar freq=M) 的 vol 以「股」计，日线 vol 以
+        # 「手」计，差 100 倍，这里换算到「股」与月线 bar 同口径（既为画图，也保证仅当前月突破时
+        # vol_expansion 不被低估 100 倍）。
+        cur_vol = (
+            safe_float(cur_daily["vol"].sum()) * 100
+            if ("vol" in cur_daily.columns and not cur_daily.empty)
+            else None
+        )
+
+        # 多年箱体上沿 pivot = 完整月线（不含当月）最高价；pivot_month = 该高点所在月。
+        pivot = safe_float(completed["high"].max())
+        if pivot is None or pivot <= 0:
+            continue
+        pivot_month = completed.loc[completed["high"].idxmax(), "_month"]
+
+        # 当天突破：昨收还在多年箱体上沿之下（昨天没站上多年高），今天放量大涨、收在上沿一线以上
+        # （今收 ≥ 上沿×(1-breakout_tol)）。容差是单边的、只管下沿：雅克这类长底突破常是「大涨日收在
+        # 前高一线、次日才收上去」，0 容差会因毫厘漏掉；上沿保持敞开——果断收上箱体的强突破照收，而
+        # 「早已冲到箱体上方/已翻倍」的票由「昨收 < 上沿」这条天然挡掉，不需要上限。
+        prev_rows = df.loc[(df["ts_code"] == code) & (df["trade_date"] < str(target_date))]
+        prev_close = (
+            safe_float(prev_rows.sort_values("trade_date")["close"].iloc[-1])
+            if not prev_rows.empty else None
+        )
+        if prev_close is None:
+            continue
+        if not (prev_close < pivot and cur_close >= pivot * (1.0 - breakout_tol)):
             continue
 
-        amount = safe_float(target_row.get("amount"))
+        # 横盘月数：pivot 成形月 → 当月；短期也保留（≥ min_base_months），长底靠排序排前面。
+        base_length_months = (cur_month - pivot_month).n
+        if base_length_months < min_base_months:
+            continue
+
+        amount = safe_float(row.get("amount"))
+        amount_ratio_20d = round_optional(row.get("amount_ratio_20d"), 2)
+        # 今收可能略低于上沿（在 breakout_tol 容差内）；措辞要分清「站上」与「收在一线（仍略低）」，
+        # 不能一律说成「站上」。close_vs_pivot_pct 已能反映正负，trigger_reason 也据实描述。
+        stand_label = "站上" if cur_close >= pivot else f"收在一线（容差 {breakout_tol:.0%} 内、仍略低于上沿）"
         candidates.append({
-            "ts_code": ts_code,
-            "name": nullable_value(target_row.get("name")),
-            "market": nullable_value(target_row.get("market")),
-            "pct_chg": round_optional(target_row.get("pct_chg"), 2),
+            "ts_code": code,
+            "name": nullable_value(row.get("name")),
+            "market": nullable_value(row.get("market")),
+            "pct_chg": round_optional(row.get("pct_chg"), 2),
             "amount_100m_yuan": round_optional(amount / 100000, 2) if amount is not None else None,
-            "close": round_optional(close, 2),
-            "prev_high_120d": round_optional(prev_high_120d, 2),
-            "close_vs_prev_high_120d_pct": pct_change_optional(close, prev_high_120d),
-            "previous_complete_month_high": round_optional(previous_month_high, 2),
-            "current_month_high": round_optional(current_month_high, 2),
-            "close_vs_previous_month_high_pct": pct_change_optional(close, previous_month_high),
-            "ret_5d": round_optional(target_row.get("ret_5d"), 2),
-            "ret_20d": round_optional(target_row.get("ret_20d"), 2),
-            "amount_ratio_20d": round_optional(target_row.get("amount_ratio_20d"), 2),
-            "drawdown_120_high": round_optional(target_row.get("drawdown_120_high"), 2),
-            "close_position_120d": round_optional(target_row.get("close_position_120d"), 4),
-            "trigger_reason": "科创板；今日收盘突破前120日高点；真实自然月K突破此前完整月份高点；未落入高位趋势排除条件",
+            "close": round_optional(cur_close, 2),
+            "prev_close": round_optional(prev_close, 2),
+            "base_top_pivot": round_optional(pivot, 2),
+            "base_length_months": int(base_length_months),
+            "base_start_month": str(pivot_month),
+            "breakout_month": str(cur_month),
+            "close_vs_pivot_pct": pct_change_optional(cur_close, pivot),
+            "amount_ratio_20d": amount_ratio_20d,
+            "monthly_history_count": int(len(completed) + 1),
+            "trigger_reason": (
+                f"全市场；当天涨 {round_optional(row.get('pct_chg'), 2)}%"
+                + (f"、放量 {amount_ratio_20d}×20日均量" if amount_ratio_20d is not None else "")
+                + f"；今收 {round(cur_close, 2)} 当天第一次{stand_label}多年箱体上沿 {round(pivot, 2)}"
+                f"（昨收 {round(prev_close, 2)} 仍在上沿之下），横盘约 {int(base_length_months)} 个月"
+            ),
         })
 
-    candidates.sort(key=lambda item: (
-        -float(item.get("amount_100m_yuan") or 0),
-        -float(item.get("close_vs_previous_month_high_pct") or 0),
+        # 月线序列（供 HTML 月线图：底部箱体阴影 + pivot 线 + 突破月）。
+        chart_rows: List[Dict[str, Any]] = []
+        for _, mrow in completed.iterrows():
+            chart_rows.append({
+                "trade_date": str(mrow.get("trade_date")),
+                "open": round_optional(mrow.get("open"), 2),
+                "high": round_optional(mrow.get("high"), 2),
+                "low": round_optional(mrow.get("low"), 2),
+                "close": round_optional(mrow.get("close"), 2),
+                "vol": round_optional(mrow.get("vol"), 2),
+            })
+        chart_rows.append({
+            "trade_date": str(target_date),
+            "open": round_optional(cur_open, 2),
+            "high": round_optional(cur_high, 2),
+            "low": round_optional(cur_low, 2),
+            "close": round_optional(cur_close, 2),
+            "vol": round_optional(cur_vol, 2),
+        })
+        series_by_code[code] = {
+            "name": nullable_value(row.get("name")),
+            "ts_code": code,
+            "base_top_pivot": round_optional(pivot, 2),
+            "base_start_month": str(pivot_month),
+            "breakout_month": str(cur_month),
+            "records": chart_rows[-monthly_lookback_months:],
+        }
+
+    candidates.sort(key=lambda it: (
+        -int(it.get("base_length_months") or 0),
+        -float(it.get("amount_100m_yuan") or 0),
     ))
     candidates = candidates[:sample_limit]
-    return {
-        "available": True,
-        "filter_criteria": {
-            "market": "科创板，或 ts_code 以 688/689 开头",
-            "new_high": "今日收盘价突破前 120 个交易日最高价",
-            "monthly_breakout": "当前自然月最新收盘价突破此前完整自然月最高价",
-            "exclude_high_trend": "剔除前一日已处于 close > MA20 > MA60、120日位置 >= 0.70、近20日涨幅 > 20% 的高位趋势样本",
-            "sample_limit": sample_limit,
-            "sort_by": "成交额（亿元）降序，其次月线突破幅度降序",
-        },
-        "candidates": candidates,
-        "summary": {
-            "candidate_count": len(candidates),
-            "total_amount_100m_yuan": round(sum(float(item.get("amount_100m_yuan") or 0) for item in candidates), 2),
-        },
-    }
+    kept_codes = {c["ts_code"] for c in candidates}
+    series_by_code = {k: v for k, v in series_by_code.items() if k in kept_codes}
+    return _result(True, candidates=candidates, series=series_by_code, monthly_map=monthly_map)
 
 
 def build_early_limit_up_1030_samples(
@@ -4233,7 +4393,7 @@ def build_early_limit_up_1030_samples(
 def build_feature_group_overlaps(groups: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     labels = {
         "capacity_up": "容量上涨",
-        "star_120_high_monthly_breakout": "科创板月线突破",
+        "monthly_base_breakout": "全市场月线平台突破",
         "early_limit_up_1030": "10:30前涨停",
         "discount_relaunch": "折扣启动",
     }
@@ -4289,6 +4449,8 @@ def build_feature_group_analysis_samples(
     discount_volume_expansion_min: float,
     discount_high_lookback: int,
     discount_low_recency_days: int,
+    pro=None,
+    full_market_features: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Any]:
     capacity_group = build_capacity_up_samples(
         panel,
@@ -4297,7 +4459,13 @@ def build_feature_group_analysis_samples(
         pct_chg_threshold=capacity_pct_chg_threshold,
         sample_limit=sample_limit,
     )
-    star_group = build_star_monthly_breakout_samples(features, target_date, sample_limit)
+    # 月线平台突破要真·全市场：用全市场多日帧 screening_features 做「当天大涨」预筛，而不是
+    # 候选池 features（后者偏向容量/折扣/科创口径，会漏掉低换手的非科创长底突破）。其余组仍用
+    # 候选池。无全市场帧时回退到 features。
+    monthly_group = build_monthly_base_breakout_samples(
+        full_market_features if full_market_features is not None and not full_market_features.empty else features,
+        target_date, sample_limit, pro=pro,
+    )
     early_group = build_early_limit_up_1030_samples(target_date, panel, basic, sample_limit)
     # 折扣启动需要 candidate_panel（候选池目标日切片，带 daily_basic 市值与量能特征），
     # 折扣本身（前高之后最低价 / 前高收盘价）按多日序列在 features 上另算后附到该切片。
@@ -4325,7 +4493,7 @@ def build_feature_group_analysis_samples(
     )
     groups = {
         "capacity_up": capacity_group,
-        "star_120_high_monthly_breakout": star_group,
+        "monthly_base_breakout": monthly_group,
         "early_limit_up_1030": early_group,
         "discount_relaunch": discount_group,
     }
@@ -4336,7 +4504,7 @@ def build_feature_group_analysis_samples(
         "overlap_hits": overlaps,
         "summary": {
             "capacity_up_count": len(capacity_group.get("candidates") or []),
-            "star_120_high_monthly_breakout_count": len(star_group.get("candidates") or []),
+            "monthly_base_breakout_count": len(monthly_group.get("candidates") or []),
             "early_limit_up_1030_count": len(early_group.get("candidates") or []),
             "discount_relaunch_count": len(discount_group.get("candidates") or []),
             "overlap_hit_count": len(overlaps),
@@ -4453,23 +4621,21 @@ def build_report_context(
         "volume_ratio",
         "trigger_reason",
     ]
-    star_fields = [
+    monthly_base_fields = [
         "ts_code",
         "name",
         "market",
         "pct_chg",
         "amount_100m_yuan",
         "close",
-        "prev_high_120d",
-        "close_vs_prev_high_120d_pct",
-        "previous_complete_month_high",
-        "current_month_high",
-        "close_vs_previous_month_high_pct",
-        "ret_5d",
-        "ret_20d",
+        "prev_close",
+        "base_top_pivot",
+        "base_length_months",
+        "base_start_month",
+        "breakout_month",
+        "close_vs_pivot_pct",
         "amount_ratio_20d",
-        "drawdown_120_high",
-        "close_position_120d",
+        "monthly_history_count",
         "trigger_reason",
     ]
     early_limit_fields = [
@@ -4604,12 +4770,15 @@ def build_report_context(
                         feature_limit,
                     ),
                 },
-                "star_120_high_monthly_breakout": {
-                    "filter_criteria": (feature_group_payload.get("star_120_high_monthly_breakout") or {}).get("filter_criteria"),
-                    "summary": (feature_group_payload.get("star_120_high_monthly_breakout") or {}).get("summary"),
+                "monthly_base_breakout": {
+                    "available": (feature_group_payload.get("monthly_base_breakout") or {}).get("available"),
+                    "reason": (feature_group_payload.get("monthly_base_breakout") or {}).get("reason"),
+                    "model_overlay": (feature_group_payload.get("monthly_base_breakout") or {}).get("model_overlay"),
+                    "filter_criteria": (feature_group_payload.get("monthly_base_breakout") or {}).get("filter_criteria"),
+                    "summary": (feature_group_payload.get("monthly_base_breakout") or {}).get("summary"),
                     "candidates": compact_records(
-                        (feature_group_payload.get("star_120_high_monthly_breakout") or {}).get("candidates", []),
-                        star_fields,
+                        (feature_group_payload.get("monthly_base_breakout") or {}).get("candidates", []),
+                        monthly_base_fields,
                         feature_limit,
                     ),
                 },
@@ -5051,6 +5220,8 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         discount_volume_expansion_min=args.discount_volume_expansion_min,
         discount_high_lookback=args.discount_high_lookback,
         discount_low_recency_days=args.discount_low_recency_days,
+        pro=pro,
+        full_market_features=screening_features,
     )
     timer.mark("modules")
     stock_kline_records = build_stock_kline_records(
@@ -5060,6 +5231,22 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         target_date=target_date,
         kline_days=args.index_kline_days,
     )
+    # 月线平台突破组：把月线序列（多年箱体 + pivot + 突破月）注入 kline 展示层供 HTML 月线图，
+    # 同时从证据里弹出，避免几十行月线大数组污染模型读取的 evidence 主体。
+    monthly_breakout_group = (feature_group_analysis.get("groups") or {}).get("monthly_base_breakout") or {}
+    monthly_series = (
+        monthly_breakout_group.pop("monthly_series_by_ts_code", {})
+        if isinstance(monthly_breakout_group, dict) else {}
+    )
+    if monthly_series:
+        stock_kline_records["monthly"] = {
+            "by_ts_code": monthly_series,
+            "name_to_ts_code": {
+                (item.get("name") or code): code
+                for code, item in monthly_series.items()
+                if isinstance(item, dict)
+            },
+        }
     timer.mark("stock_klines")
 
     try:

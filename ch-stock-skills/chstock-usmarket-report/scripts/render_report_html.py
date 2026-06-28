@@ -3,8 +3,8 @@
 
 The Markdown report remains the truth source. This wrapper only builds the
 browser layer: frontmatter stripping, generic Markdown->HTML rendering, and an
-evidence-driven chart hook that visualizes the report's three layers —
-大盘+广度 / 板块赚钱效应 / 观察池 vs-QQQ + 池外新方向.
+evidence-driven chart hook that visualizes the report's layers —
+大盘+广度 / 板块赚钱效应 / 观察池热力墙 + 分组 ETF 指数对比 / 池外新方向.
 
 Chart data sources, all deterministic:
 - evidence JSON (`--evidence`): QQQ + pool snapshots (vs-QQQ / 52w / 量比) +
@@ -85,6 +85,10 @@ td .num-neg, .summary-card .summary-body .num-neg, .metric-value.neg, .bar-value
 .ph-tile.d3 { background: color-mix(in srgb, var(--neg) 58%, var(--surface, #fff)); color: var(--ink-1, #1e293b); }
 .ph-tile.d4 { background: color-mix(in srgb, var(--neg) 82%, var(--surface, #fff)); color: #fff; }
 .ph-tile.d5 { background: var(--neg); color: #fff; }
+/* 热力墙正下方：各分组等权 ETF 指数多线对比图（取代旧的 vs-QQQ 当日超额条形图） */
+.report .group-index.chart-card { margin-top: 16px; }
+.group-index .chart-subtitle { font-size: 11px; }
+.group-index svg text { font-family: var(--font-mono, monospace); }
 """
 
 
@@ -228,15 +232,11 @@ function insertSectorCharts() {
 
 function insertPoolCharts() {
   const heatmap = poolHeatmapCard(data.groups, data.pool_relative);
-  const rel = poolRelativeCard(data.pool_relative);
-  if (!heatmap && !rel) return;
+  const gidx = groupIndexCard(data.group_indices);
+  if (!heatmap && !gidx) return;
   const frag = document.createDocumentFragment();
   if (heatmap) frag.appendChild(heatmap);
-  if (rel) {
-    const grid = CK.grid("chart-grid");
-    grid.appendChild(rel);
-    frag.appendChild(grid);
-  }
+  if (gidx) frag.appendChild(gidx);          // 热力墙正下方：各分组等权 ETF 指数多线对比
   CK.insertAfter(root, ["观察池个股明细", "观察池"], frag);
   if (heatmap) removePoolTables();
 }
@@ -398,18 +398,155 @@ function universeRotationCard(buckets) {
   });
 }
 
-/* pool members' same-day excess over QQQ — who actually beat the tape */
-function poolRelativeCard(rows) {
-  const r = (rows || []).filter(x => Number.isFinite(CK.num(x.vs_qqq_1d)))
-    .sort((a, b) => Math.abs(CK.num(b.vs_qqq_1d)) - Math.abs(CK.num(a.vs_qqq_1d))).slice(0, 14)
-    .map(x => ({ label: x.ticker, value: CK.num(x.vs_qqq_1d), meta: pct0(x.position_52w) }));
-  if (!r.length) return null;
-  return CK.horizontalBarCard({
-    title: "观察池 vs QQQ（当日超额）",
-    subtitle: "谁跑赢 / 跑输大盘 · meta = 52周位置",
-    rows: r,
-    maxRows: 14
+/* 各分组等权合成 ETF 指数，全部 rebase 到 base(=100) 叠在一张图里对比，QQQ 虚线为基准。
+   渲染在热力墙正下方，取代旧版按当日超额排序的 vs-QQQ 条形图。 */
+function groupIndexCard(gi) {
+  gi = gi || {};
+  let series = (gi.series || []).filter(s => s && Array.isArray(s.records) && s.records.length >= 2);
+  if (!series.length) return null;
+  // 各线按数组下标共用一条横轴，故必须同一条日期轴。生成器产物天然对齐；
+  // 若手工/旧 evidence 里某条长度或首尾日期不一致，丢弃它而不是错画横轴。
+  const ref = series.reduce((a, b) => (b.records.length > a.records.length ? b : a), series[0]);
+  const refLen = ref.records.length;
+  const refStart = (ref.records[0] || {}).trade_date;
+  const refEnd = (ref.records[refLen - 1] || {}).trade_date;
+  const sameAxis = s => s.records.length === refLen
+    && (s.records[0] || {}).trade_date === refStart
+    && (s.records[refLen - 1] || {}).trade_date === refEnd;
+  series = series.filter(sameAxis);
+  if (!series.length) return null;
+  const base = Number.isFinite(CK.num(gi.base)) ? CK.num(gi.base) : 100;
+  const palette = ["#1a73e8", "#9334e6", "#12b5cb", "#f9ab00", "#e8519b", "#1e8e3e", "#ea4335", "#7c4dff", "#0b8043", "#c2410c"];
+
+  const lines = series.map((s, i) => ({
+    label: s.name || ("组" + (i + 1)),
+    color: palette[i % palette.length],
+    records: s.records,
+    ret: CK.num(s.total_return_pct),
+    dashed: false,
+    width: 1.8
+  }));
+  const bench = gi.benchmark;
+  if (bench && Array.isArray(bench.records) && bench.records.length >= 2 && sameAxis(bench)) {
+    lines.push({ label: bench.ticker || "QQQ", color: "var(--ink-3)", records: bench.records, ret: CK.num(bench.total_return_pct), dashed: true, width: 1.8 });
+  }
+
+  const start = gi.start_date || refStart || "";
+  const end = gi.end_date || refEnd || "";
+  const card = CK.card("group-index chart-card", "观察池分组 ETF 指数对比",
+    `各分组等权合成指数 · ${CK.fmt.date(start)}=${Math.round(base)} 起、日频再平衡 · QQQ 虚线为基准 · ${CK.fmt.date(start)} 至 ${CK.fmt.date(end)}`);
+  card.appendChild(drawGroupIndex(lines, base, card));
+  card.appendChild(CK.legend(lines.map(l => [l.label, l.color])));
+  return card;
+}
+
+function drawGroupIndex(lines, base, card) {
+  const { svgEl, svgText } = CK;
+  const len = Math.max(...lines.map(l => l.records.length));
+  const refRecs = (lines.find(l => l.records.length === len) || lines[0]).records;
+  const width = 780, height = 320;
+  const pad = { left: 42, right: 112, top: 14, bottom: 24 };
+  const usableW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+  const plotBottom = pad.top + plotH;
+
+  const allVals = lines.flatMap(l => l.records.map(r => CK.num(r.index)).filter(Number.isFinite));
+  let min = Math.min(base, ...allVals), max = Math.max(base, ...allVals);
+  if (min === max) { min -= 1; max += 1; }
+  const span = max - min; min -= span * 0.06; max += span * 0.06;
+
+  const x = i => pad.left + (len <= 1 ? usableW / 2 : i / (len - 1) * usableW);
+  const y = v => pad.top + (max - v) / (max - min) * plotH;
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img" });
+
+  for (let g = 0; g <= 4; g += 1) {
+    const gy = pad.top + plotH * g / 4;
+    const gv = max - (max - min) * g / 4;
+    svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: gy.toFixed(2), y2: gy.toFixed(2), class: "grid-line" }));
+    svg.appendChild(svgText(pad.left - 6, gy + 3, gv.toFixed(0), "end", "var(--text-tertiary)", 9.5));
+  }
+  const baseY = y(base);
+  svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: baseY.toFixed(2), y2: baseY.toFixed(2), stroke: "var(--ink-4)", "stroke-width": 1, "stroke-dasharray": "2 3", opacity: 0.65 }));
+  svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: plotBottom, y2: plotBottom, class: "axis" }));
+
+  for (let t = 0; t <= 4; t += 1) {
+    const i = Math.round(t / 4 * (len - 1));
+    const rec = refRecs[i];
+    if (!rec) continue;
+    svg.appendChild(svgText(x(i), height - 7, CK.fmt.date(rec.trade_date).slice(5), t === 0 ? "start" : t === 4 ? "end" : "middle", "var(--text-tertiary)", 9));
+  }
+
+  const endpoints = [];
+  lines.forEach(l => {
+    const pts = l.records.map((r, i) => ({ i, v: CK.num(r.index) })).filter(p => Number.isFinite(p.v));
+    if (pts.length < 2) return;
+    const d = pts.map((p, k) => `${k === 0 ? "M" : "L"} ${x(p.i).toFixed(2)} ${y(p.v).toFixed(2)}`).join(" ");
+    const path = svgEl("path", { d, fill: "none", stroke: l.color, "stroke-width": l.width, "stroke-linejoin": "round", "stroke-linecap": "round" });
+    if (l.dashed) path.setAttribute("stroke-dasharray", "5 4");
+    svg.appendChild(path);
+    endpoints.push({ label: l.label, color: l.color, ret: l.ret, y: y(pts[pts.length - 1].v), dashed: l.dashed });
   });
+
+  // 右端标签按收益高低排开，简单防重叠：先自上而下推开，溢出再整体上移并夹住顶部
+  endpoints.sort((a, b) => a.y - b.y);
+  const gap = 12;
+  for (let i = 1; i < endpoints.length; i += 1) {
+    if (endpoints[i].y - endpoints[i - 1].y < gap) endpoints[i].y = endpoints[i - 1].y + gap;
+  }
+  const n = endpoints.length;
+  if (n && endpoints[n - 1].y > plotBottom) {
+    const shift = endpoints[n - 1].y - plotBottom;
+    endpoints.forEach(ep => { ep.y -= shift; });
+  }
+  if (n && endpoints[0].y < pad.top + 3) {
+    const shift = pad.top + 3 - endpoints[0].y;
+    endpoints.forEach(ep => { ep.y += shift; });
+  }
+  endpoints.forEach(ep => {
+    const retTxt = Number.isFinite(ep.ret) ? ` ${ep.ret >= 0 ? "+" : ""}${ep.ret.toFixed(1)}%` : "";
+    const label = svgText(width - pad.right + 7, ep.y + 3, `${ep.label}${retTxt}`, "start", ep.color, 9.5);
+    if (ep.dashed) label.setAttribute("opacity", "0.85");
+    svg.appendChild(label);
+  });
+
+  // hover：竖向定位线 + 各线圆点 + tooltip 列出该日各分组指数值与涨幅（按指数值降序）
+  const tip = CK.tooltip(card);
+  const guide = svgEl("line", { x1: pad.left, x2: pad.left, y1: pad.top, y2: plotBottom, stroke: "var(--ink-4)", "stroke-width": 1, opacity: 0 });
+  svg.appendChild(guide);
+  const dots = lines.map(l => { const c = svgEl("circle", { r: 3, fill: l.color, stroke: "#fff", "stroke-width": 1, opacity: 0 }); svg.appendChild(c); return c; });
+  const overlay = svgEl("rect", { x: pad.left, y: pad.top, width: usableW, height: plotH, fill: "transparent", style: "cursor:crosshair" });
+  overlay.addEventListener("mousemove", e => {
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width) return;
+    const relX = (e.clientX - rect.left) / rect.width * width;
+    let i = Math.round((relX - pad.left) / usableW * (len - 1));
+    i = Math.max(0, Math.min(len - 1, i));
+    const gx = x(i);
+    guide.setAttribute("x1", gx); guide.setAttribute("x2", gx); guide.setAttribute("opacity", "0.4");
+    const rows = [];
+    lines.forEach((l, li) => {
+      const rec = l.records[i];
+      const v = rec ? CK.num(rec.index) : null;
+      if (Number.isFinite(v)) {
+        dots[li].setAttribute("cx", gx); dots[li].setAttribute("cy", y(v).toFixed(2)); dots[li].setAttribute("opacity", "1");
+        rows.push({ label: l.label, color: l.color, v, ret: v - base });
+      } else {
+        dots[li].setAttribute("opacity", "0");
+      }
+    });
+    rows.sort((a, b) => b.v - a.v);
+    const date = (refRecs[i] || {}).trade_date || "";
+    tip.innerHTML = `<div style="color:#94a3b8;font-size:11px;margin-bottom:3px">${CK.fmt.date(date)}</div>`
+      + rows.map(r => `<div style="display:flex;justify-content:space-between;gap:14px">`
+        + `<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${r.color};margin-right:6px;vertical-align:middle"></span>${escapeHtml(r.label)}</span>`
+        + `<span>${r.v.toFixed(1)} <span style="color:${r.ret >= 0 ? "var(--pos)" : "var(--neg)"}">${r.ret >= 0 ? "+" : ""}${r.ret.toFixed(1)}%</span></span></div>`).join("");
+    tip.style.opacity = "1";
+    CK.moveTip(tip, card, e);
+  });
+  overlay.addEventListener("mouseleave", () => { tip.style.opacity = "0"; guide.setAttribute("opacity", "0"); dots.forEach(d => d.setAttribute("opacity", "0")); });
+  svg.appendChild(overlay);
+  return svg;
 }
 """
 
@@ -643,6 +780,7 @@ def extract_chart_payload(
         },
         "groups": groups,
         "pool_relative": watchlist_rows,
+        "group_indices": evidence.get("group_indices") or {},
         "watchlist_abnormal": abnormal[:12],
         "universe": {"buckets": universe_buckets},
         "themes": themes or [],
@@ -704,6 +842,7 @@ def build_job(args: Any) -> RenderJob:
                 "themes": len(payload.get("themes") or []),
                 "universe_buckets": len((payload.get("universe") or {}).get("buckets") or []),
                 "pool_relative": len(payload.get("pool_relative") or []),
+                "group_index_series": len((payload.get("group_indices") or {}).get("series") or []),
             },
         },
     )

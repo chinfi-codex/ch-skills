@@ -27,6 +27,7 @@ DEFAULT_CONFIG_PATH = ROOT_DIR / "assets" / "stock_pool.yaml"
 UNIVERSE_PATH = ROOT_DIR / "assets" / "nasdaq_tech_universe.yaml"
 HISTORY_DAYS = 260  # ≈ 52 周的交易日；够算 52 周位置 + 20 日均量 + 20 日趋势
 QQQ_KLINE_DAYS = 120  # 嵌入证据包的 QQQ K 线展示窗口（HTML 头部蜡烛图）
+GROUP_INDEX_DAYS = QQQ_KLINE_DAYS  # 分组等权 ETF 指数展示窗口（与 QQQ K 线同窗，便于热力墙下方多线对比）
 EVIDENCE_TYPE = "us_market_watchlist_evidence"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
 REQUEST_HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -307,6 +308,117 @@ def build_kline_records(history: list[Dict[str, Any]], days: int = QQQ_KLINE_DAY
     return records[-days:] if days else records
 
 
+def build_group_indices(
+    config: Dict[str, Any],
+    history_by_ticker: Dict[str, Optional[list[Dict[str, Any]]]],
+    window_days: int = GROUP_INDEX_DAYS,
+    benchmark_ticker: str = "QQQ",
+    base: float = 100.0,
+    report_date: Optional[date] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build one equal-weight, daily-rebalanced synthetic index per watchlist group.
+
+    Each group's constituents are folded into a single "ETF-like" index so the HTML
+    layer can overlay groups in one normalized comparison chart (热力墙下方那张图).
+    Construction is the textbook equal-weight method: a session's index return is the
+    mean of constituents' daily returns — only names with both that day's and the
+    prior day's close contribute, so ragged histories (newer listings) are handled —
+    compounded forward from `base`. All series share one trading calendar so the lines
+    align. The window is anchored at `report_date` (when given) so a historical
+    look-back doesn't leak sessions after the report day. This is deterministic data
+    prep (no judgement); the model never touches it.
+    """
+    # 真实基准(QQQ)历史：既定日历轴，也是后面那条虚线基准线的唯一来源。
+    benchmark_history = history_by_ticker.get(benchmark_ticker)
+    # 日历轴优先用基准；基准缺失才退回最长的成员历史（仅借它定交易日，不冒充基准线）。
+    calendar_history = benchmark_history or max(
+        (h for h in history_by_ticker.values() if h), key=len, default=None
+    )
+    if not calendar_history or len(calendar_history) < 2:
+        return None
+    calendar_dates = [row["date"] for row in calendar_history]
+    if report_date is not None:
+        calendar_dates = [d for d in calendar_dates if d <= report_date]
+    dates = calendar_dates[-window_days:]
+    if len(dates) < 2:
+        return None
+
+    def _aligned_closes(history: Optional[list[Dict[str, Any]]]) -> list[Optional[float]]:
+        by_date = {row["date"]: row.get("close") for row in (history or [])}
+        return [by_date.get(d) for d in dates]
+
+    def _records(levels: list[float]) -> list[Dict[str, Any]]:
+        return [{"trade_date": dates[i].isoformat(), "index": round(level, 4)} for i, level in enumerate(levels)]
+
+    def _equal_weight_levels(members_closes: list[list[Optional[float]]]) -> list[float]:
+        levels = [base]
+        for k in range(1, len(dates)):
+            day_returns = []
+            for closes in members_closes:
+                prev_c, cur_c = closes[k - 1], closes[k]
+                if prev_c and cur_c and prev_c > 0:
+                    day_returns.append(cur_c / prev_c - 1.0)
+            step = sum(day_returns) / len(day_returns) if day_returns else 0.0
+            levels.append(levels[-1] * (1.0 + step))
+        return levels
+
+    series: list[Dict[str, Any]] = []
+    for group in config.get("groups", []):
+        tickers = list(dict.fromkeys(group.get("stocks", [])))
+        members_closes = []
+        for ticker in tickers:
+            history = history_by_ticker.get(ticker)
+            if not history:
+                continue
+            aligned = _aligned_closes(history)
+            if any(c for c in aligned):
+                members_closes.append(aligned)
+        if not members_closes:
+            continue  # 空组或成员行情全失败 → 整组省略，不画空线
+        levels = _equal_weight_levels(members_closes)
+        series.append(
+            {
+                "name": group.get("name", ""),
+                "emoji": group.get("emoji", ""),
+                "member_count": len(tickers),
+                "valid_member_count": len(members_closes),
+                "records": _records(levels),
+                "total_return_pct": round(levels[-1] - base, 4),
+            }
+        )
+
+    if not series:
+        return None
+
+    # benchmark (QQQ) 自身收盘价归一为同窗基准线（虚线），缺口前向填充保持连续。
+    # 只有拿到真实 QQQ 历史时才画——基准缺失就不画基准线，绝不拿某只成员的归一线冒充 QQQ。
+    benchmark_block: Optional[Dict[str, Any]] = None
+    if benchmark_history:
+        bench_aligned = _aligned_closes(benchmark_history)
+        base_close = next((c for c in bench_aligned if c), None)
+        if base_close:
+            last = base
+            bench_levels = []
+            for close in bench_aligned:
+                if close:
+                    last = base * close / base_close
+                bench_levels.append(last)
+            benchmark_block = {
+                "ticker": benchmark_ticker,
+                "records": _records(bench_levels),
+                "total_return_pct": round(bench_levels[-1] - base, 4),
+            }
+
+    return {
+        "window_days": window_days,
+        "base": base,
+        "start_date": dates[0].isoformat(),
+        "end_date": dates[-1].isoformat(),
+        "benchmark": benchmark_block,
+        "series": series,
+    }
+
+
 def collect_unique_tickers(config: Dict[str, Any]) -> list[str]:
     tickers: list[str] = []
     for index_item in config.get("indices", []):
@@ -422,7 +534,10 @@ def build_market_evidence(config: Dict[str, Any], report_date: Optional[date] = 
         entry = {"ticker": index_item["ticker"], "snapshot": snapshot}
         index_history = history_by_ticker.get(index_item["ticker"])
         if index_history:
-            entry["kline_records"] = build_kline_records(index_history, QQQ_KLINE_DAYS)
+            # 锚定报告日：历史回看时不把报告日之后的“未来”K线画进去，
+            # 与下方分组 ETF 指数图同口径（默认最近交易日时此截断为空操作）。
+            kline_history = [row for row in index_history if row["date"] <= resolved_date] or index_history
+            entry["kline_records"] = build_kline_records(kline_history, QQQ_KLINE_DAYS)
             entry["kline_days_requested"] = QQQ_KLINE_DAYS
         index_snapshots.append(entry)
 
@@ -443,6 +558,16 @@ def build_market_evidence(config: Dict[str, Any], report_date: Optional[date] = 
     for snapshot in stock_snapshots.values():
         inject_relative_fields(snapshot, qqq_snapshot)
 
+    # Per-group equal-weight ETF-style index series (drives the HTML 热力墙下方 multi-line
+    # comparison chart). Reuses the histories already fetched above — no extra requests.
+    benchmark_ticker = "QQQ"
+    configured_index_tickers = [item.get("ticker") for item in config.get("indices", []) if item.get("ticker")]
+    if benchmark_ticker not in configured_index_tickers and configured_index_tickers:
+        benchmark_ticker = configured_index_tickers[0]
+    group_indices = build_group_indices(
+        config, history_by_ticker, benchmark_ticker=benchmark_ticker, report_date=resolved_date
+    )
+
     # Authoritative data date = the resolved trading session (QQQ snapshot), not the
     # requested --date: a weekend/holiday/future date backfills to an earlier session,
     # so the evidence must be labeled with the day the data actually came from (else the
@@ -457,6 +582,7 @@ def build_market_evidence(config: Dict[str, Any], report_date: Optional[date] = 
         "thresholds": config.get("thresholds", {}),
         "indices": index_snapshots,
         "groups": build_group_evidence(config, stock_snapshots),
+        "group_indices": group_indices,
         "abnormal_moves": build_abnormal_evidence(
             stock_snapshots,
             config.get("thresholds", {}),

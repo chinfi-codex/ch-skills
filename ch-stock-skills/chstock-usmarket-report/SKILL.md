@@ -177,6 +177,7 @@ python scripts/render_report_html.py --input reports/us-2026-06-18.md --theme pr
 - `type=us_market_watchlist_evidence`、`date` / `generated_at` / `thresholds`
 - `indices`：仅 QQQ（含全部派生字段）
 - `groups`：每组成员快照 + `summary{valid_count,up_count,down_count,avg_change_pct}`（summary 仅弱参考，正文以个股为主）
+- `group_indices`：每个非空分组的**等权合成 ETF 指数序列**（`series[].records[]={trade_date,index}`，全部 rebase 到 `base=100`、与 QQQ 同窗 120 日、日频再平衡），含 `benchmark`(QQQ 归一线) + 每组 `total_return_pct`；纯确定性派生（复用已取历史、不额外请求），只喂 HTML 热力墙下方那张多线对比图，正文不引用
 - `abnormal_moves.rises/.drops`：观察池内 ±7% 票
 - `market_wide_movers`（除非 `--no-market-scan`）：`type=us_nasdaq_movers_evidence`、`scan_date` / `date_aligned`、`market_states`（扫描时的盘口状态集合，正常应为 `["CLOSED"]` 或 `["POST"]`；若含 `REGULAR` 说明在盘中跑、成交额是半日口径，正文须提示"盘中扫描、dollar-volume 为不完整口径"）、`thresholds`、`rises` / `drops`（每项含 `dollar_volume` / `dollar_volume_million` / `is_abnormal` / `market_cap_billion` / `exchange` / `full_exchange_name` / `market_state`）、`errors`
 - `universe_scan`（仅 `--scan-universe`）：`type=us_nasdaq_universe_scan`、`date`、`benchmark`(QQQ)、`buckets`（每个含 `valid/up/down/dollar_volume_million/median_change_pct/median_vs_qqq_5d/leaders`，读板块广度与轮动）、`movers`（宇宙内涨 ≥3% 的票，按成交额降序，含 `vs_qqq` / `position_52w` / `vol_vs_20d`，捞安静被买的名字）、`errors`
@@ -272,6 +273,7 @@ HTML 输出规则：
 - 带 YAML frontmatter 默认剥离后渲染；`==...==` 渲染为浅蓝提示块。
 - HTML 图表只读 evidence 已有的价格 / 成交额 / 位置字段；催化仍以正文联网检索（Tavily/WebSearch）来源为准。
 - 观察池在 HTML 里以一块**分组热力墙**呈现（整池一格、按分组分带，每格=代码 + 当日涨幅，绿涨红跌、色深=幅度，`＋` 标跑赢 QQQ、`★` 标 ±7% 异动，悬停 tooltip 给 收盘 / vs-QQQ / 5日 / 52周位置 / 量比 + 信号箭头）。墙已承载逐股明细，故渲染器**在 HTML 里自动删掉墙下面的各组明细表**（每组的文字点评保留）；**Markdown 正文的明细表不动**——它仍是真相源，HTML 只清浏览层冗余。
+- 热力墙**正下方**接一张**分组 ETF 指数对比图**：把各非空分组当成等权 ETF 指数（成员等权、日频再平衡、全部 rebase 到 100、与 QQQ 同窗），7 组左右 + QQQ 基准（虚线）叠在**一张多线走势图**里看相对强弱，右端按区间收益高低排标签、悬停看某日各组指数值与涨幅。数据全取自 evidence 的 `group_indices`（确定性派生，模型不参与）。此图**取代**了旧版「观察池 vs QQQ（当日超额）」条形图。
 
 ## 示例
 

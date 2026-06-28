@@ -30,17 +30,7 @@ groups:
 - name: AI光存
   desc: AI 光通信芯片/模块 + 存储
   emoji: 💡
-  stocks:
-  - LITE
-  - COHR
-  - MRVL
-  - TSEM
-  - AAOI
-  - MU
-  - SNDK
-  - WDC
-  - STX
-  - CRDO
+  stocks: []
 - name: AI Cloud
   desc: AI 算力云
   emoji: ☁️
@@ -76,8 +66,21 @@ groups:
 - name: AI Server
   desc: AI 服务器 / AI Factory 集成商（DELL / HPE / SMCI 等供应链）
   emoji: 🖥️
+  stocks: []
+- name: AI硬件
+  desc: ''
+  emoji: ''
   stocks:
-  - DELL
+  - LITE
+  - COHR
+  - MRVL
+  - TSEM
+  - APH
+  - CRDO
+  - MU
+  - SNDK
+  - WDC
+  - CRDO
 thresholds:
   drop: -7.0
   rise: 7.0

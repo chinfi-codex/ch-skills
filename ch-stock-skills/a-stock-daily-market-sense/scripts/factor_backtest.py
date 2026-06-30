@@ -54,65 +54,27 @@ from market_panel import (  # noqa: E402
     fetch_by_trade_dates,
     get_pro,
 )
+from returns_core import (  # noqa: E402
+    BENCHMARK_CODES,  # noqa: F401  (保留导出，供调试/向后兼容)
+    HORIZONS,
+    WIDE_BASE,  # noqa: F401
+    _f,
+    _r,
+    _ymd,
+    board_of,  # noqa: F401
+    compute_forward_returns,
+    load_adj,  # noqa: F401
+    load_calendar,
+    load_daily,
+    load_index,  # noqa: F401
+    matched_benchmark,  # noqa: F401
+)
 
 REPORTS_DIR = HERE.parent / "reports"
 
-# ----------------------------------------------------------------------------
-# 规模/板块匹配基准（用户决策：先按板块、主板内再按市值档）。沪深300 另作宽基对照。
-# ----------------------------------------------------------------------------
-WIDE_BASE = "sh.000300"  # 沪深300，宽基对照列
-BENCHMARK_CODES = ["000688.SH", "399006.SZ", "sh.000300", "sh.000905", "sh.000852", "sz.399303"]
-
-
-def matched_benchmark(ts_code: str, total_mv_wan: Optional[float]) -> str:
-    """逐观测按板块 + 市值档分配基准代码。"""
-    prefix = str(ts_code)[:3]
-    if prefix in ("688", "689"):
-        return "000688.SH"  # 科创50
-    if prefix in ("300", "301"):
-        return "399006.SZ"  # 创业板指
-    mv_yi = (total_mv_wan or 0) / 1e4
-    if mv_yi >= 300:
-        return "sh.000300"  # 沪深300
-    if mv_yi >= 80:
-        return "sh.000905"  # 中证500
-    return "sh.000852"      # 中证1000
-
-
-def board_of(ts_code: str) -> str:
-    p = str(ts_code)[:3]
-    if p in ("688", "689"):
-        return "科创板"
-    if p in ("300", "301"):
-        return "创业板"
-    if p[0] in ("8", "4"):
-        return "北交所"
-    if p in ("600", "601", "603", "605"):
-        return "沪主板"
-    return "深主板"
-
-
-def _f(x: Any) -> Optional[float]:
-    try:
-        v = float(x)
-        return v if np.isfinite(v) else None
-    except (TypeError, ValueError):
-        return None
-
-
-def _r(x: Any, n: int = 2) -> Optional[float]:
-    v = _f(x)
-    return round(v, n) if v is not None else None
-
-
-def _ymd(s: "pd.Series") -> "pd.Series":
-    """统一交易日为 YYYYMMDD 字符串。
-
-    DB 的 trade_date 是 DATE 列，原生读出是日期对象/带横杠字符串；而生产函数
-    （attach_discount_after_high 的月线解析用 format='%Y%m%d'）、Tushare API 都要 YYYYMMDD。
-    所有 DB 读取后必须过这一层，否则月线趋势过滤会整列判 None。
-    """
-    return pd.to_datetime(s).dt.strftime("%Y%m%d")
+# 规模/板块匹配基准、后复权前向收益、小工具（_f/_r/_ymd）与 DB 价格加载
+# （load_calendar/load_daily/load_adj/load_index）已抽到 returns_core，回测与实盘
+# 选股台账共用同尺，见文件顶部 import。本文件只保留回测特有的 daily_basic 加载与回补。
 
 
 _OPS = {">": lambda s, v: s > v, ">=": lambda s, v: s >= v,
@@ -127,31 +89,9 @@ def _apply_cond(series: "pd.Series", op: str, val: float) -> "pd.Series":
 
 
 # ----------------------------------------------------------------------------
-# 数据加载
+# 数据加载（daily_basic 为回测特有：换手/市值/量比历史 + Tushare 回补）
+# load_calendar/load_daily/load_adj/load_index 已移至 returns_core。
 # ----------------------------------------------------------------------------
-def load_calendar() -> List[str]:
-    with get_connection() as conn:
-        df = pd.read_sql(
-            "SELECT DISTINCT trade_date FROM stock_daily ORDER BY trade_date", conn
-        )
-    return sorted(_ymd(df["trade_date"]).tolist())
-
-
-def load_daily(ts_codes: Optional[List[str]] = None) -> pd.DataFrame:
-    cols = "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,vol,amount"
-    with get_connection() as conn:
-        if ts_codes:
-            ph = ",".join(["%s"] * len(ts_codes))
-            df = pd.read_sql(
-                f"SELECT {cols} FROM stock_daily WHERE ts_code IN ({ph})",
-                conn, params=ts_codes,
-            )
-        else:
-            df = pd.read_sql(f"SELECT {cols} FROM stock_daily", conn)
-    df["trade_date"] = _ymd(df["trade_date"])
-    return df
-
-
 def load_daily_basic(signal_days: List[str]) -> pd.DataFrame:
     lo, hi = min(signal_days), max(signal_days)
     with get_connection() as conn:
@@ -167,28 +107,6 @@ def load_daily_basic(signal_days: List[str]) -> pd.DataFrame:
 def load_basic_names() -> pd.DataFrame:
     with get_connection() as conn:
         df = pd.read_sql("SELECT ts_code,name,market FROM stock_basic", conn)
-    return df
-
-
-def load_index(codes: List[str]) -> pd.DataFrame:
-    ph = ",".join(["%s"] * len(codes))
-    with get_connection() as conn:
-        df = pd.read_sql(
-            f"SELECT ts_code,trade_date,open,close FROM stock_index_daily WHERE ts_code IN ({ph})",
-            conn, params=codes,
-        )
-    df["trade_date"] = _ymd(df["trade_date"])
-    return df
-
-
-def load_adj(ts_codes: List[str]) -> pd.DataFrame:
-    ph = ",".join(["%s"] * len(ts_codes))
-    with get_connection() as conn:
-        df = pd.read_sql(
-            f"SELECT ts_code,trade_date,adj_factor FROM stock_adj_factor WHERE ts_code IN ({ph})",
-            conn, params=ts_codes,
-        )
-    df["trade_date"] = _ymd(df["trade_date"])
     return df
 
 
@@ -473,92 +391,7 @@ def replay(args: argparse.Namespace) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     return replay_discount_relaunch(args)
 
 
-# ----------------------------------------------------------------------------
-# 6 格前向相对收益（匹配基准 + 宽基对照）
-# ----------------------------------------------------------------------------
-HORIZONS = [3, 5, 10]
-
-
-def compute_forward_returns(sig_df: pd.DataFrame, calendar: List[str]) -> pd.DataFrame:
-    if sig_df.empty:
-        return sig_df
-    codes = sorted(sig_df["ts_code"].unique().tolist())
-    px = load_daily(codes)[["ts_code", "trade_date", "open", "close", "pre_close"]].copy()
-    adj = load_adj(codes)
-    px = px.merge(adj, on=["ts_code", "trade_date"], how="left")
-    px = px.sort_values(["ts_code", "trade_date"])
-    px["adj_factor"] = px.groupby("ts_code")["adj_factor"].ffill().fillna(1.0)
-    for col in ("open", "close", "pre_close"):
-        px[col] = pd.to_numeric(px[col], errors="coerce")
-    px["adj_open"] = px["open"] * px["adj_factor"]
-    px["adj_close"] = px["close"] * px["adj_factor"]
-
-    idx = load_index(BENCHMARK_CODES)
-    for col in ("open", "close"):
-        idx[col] = pd.to_numeric(idx[col], errors="coerce")
-    idx_open = {(r.ts_code, r.trade_date): r.open for r in idx.itertuples()}
-    idx_close = {(r.ts_code, r.trade_date): r.close for r in idx.itertuples()}
-
-    aopen = {(r.ts_code, r.trade_date): r.adj_open for r in px.itertuples()}
-    aclose = {(r.ts_code, r.trade_date): r.adj_close for r in px.itertuples()}
-    rawopen = {(r.ts_code, r.trade_date): r.open for r in px.itertuples()}
-    preclose = {(r.ts_code, r.trade_date): r.pre_close for r in px.itertuples()}
-
-    cal_idx = {d: i for i, d in enumerate(calendar)}
-
-    def offset(d: str, k: int) -> Optional[str]:
-        i = cal_idx.get(d)
-        if i is None or i + k >= len(calendar):
-            return None
-        return calendar[i + k]
-
-    def idx_ret(code: str, d_from: str, d_to: str, use_open: bool) -> Optional[float]:
-        base = idx_open.get((code, d_from)) if use_open else idx_close.get((code, d_from))
-        end = idx_close.get((code, d_to))
-        if base and end and base != 0:
-            return (end / base - 1.0) * 100.0
-        return None
-
-    rows = []
-    for r in sig_df.itertuples():
-        tc, T = r.ts_code, r.signal_date
-        t1 = offset(T, 1)
-        rec: Dict[str, Any] = {"ts_code": tc, "signal_date": T}
-        if t1 is None:
-            rows.append(rec)
-            continue
-        e_open = aopen.get((tc, t1))
-        e_close = aclose.get((tc, t1))
-        pc1 = preclose.get((tc, t1))
-        ro1 = rawopen.get((tc, t1))
-        if e_open is None or e_close is None:
-            rows.append(rec)
-            continue
-        rec["t1_gap"] = (ro1 / pc1 - 1.0) * 100.0 if (ro1 and pc1) else None
-        bench = matched_benchmark(tc, getattr(r, "total_mv_100m_yuan", None) and r.total_mv_100m_yuan * 1e4)
-        rec["benchmark"] = bench
-        rec["board"] = board_of(tc)
-        for k in HORIZONS:
-            tk = offset(T, k)
-            xc = aclose.get((tc, tk)) if tk else None
-            if xc is None:
-                continue
-            ro = (xc / e_open - 1.0) * 100.0
-            rc = (xc / e_close - 1.0) * 100.0
-            rec[f"ro_{k}"] = ro
-            rec[f"rc_{k}"] = rc
-            bo = idx_ret(bench, t1, tk, True)
-            bc = idx_ret(bench, t1, tk, False)
-            rec[f"relo_{k}"] = (ro - bo) if bo is not None else None
-            rec[f"relc_{k}"] = (rc - bc) if bc is not None else None
-            wo = idx_ret(WIDE_BASE, t1, tk, True)
-            wc = idx_ret(WIDE_BASE, t1, tk, False)
-            rec[f"relo_{k}_w"] = (ro - wo) if wo is not None else None
-            rec[f"relc_{k}_w"] = (rc - wc) if wc is not None else None
-        rows.append(rec)
-
-    fwd = pd.DataFrame(rows)
-    return sig_df.merge(fwd, on=["ts_code", "signal_date"], how="left", suffixes=("", "_fwd"))
+# HORIZONS 与 compute_forward_returns 已移至 returns_core（见文件顶部 import）。
 
 
 # ----------------------------------------------------------------------------

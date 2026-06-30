@@ -28,6 +28,7 @@ import db_adapter
 import market_panel as mp
 import render_report_html as rrh
 import run_daily_panel as rdp
+import strategy_picks as sp
 
 
 # --------------------------------------------------------------------------- #
@@ -696,6 +697,57 @@ def test_cleanup_intermediates():
         # 幂等：再跑一次不报错
         again = rdp.cleanup_intermediates(reports, "20260609")
         assert again["removed"] == []
+
+
+# --------------------------------------------------------------------------- #
+# 策略选股（strategy_picks 纯函数：条件匹配 / 画像可用性 / 日期）
+# --------------------------------------------------------------------------- #
+def test_strategy_eval_condition():
+    cond = {"all": [{"factor": "turnover_rate", "op": ">=", "threshold": 5},
+                    {"factor": "volume_ratio", "op": "<", "threshold": 2.5}]}
+    assert sp.eval_condition(cond, {"turnover_rate": 8.0, "volume_ratio": 1.2}) == "match"
+    assert sp.eval_condition(cond, {"turnover_rate": 3.0, "volume_ratio": 1.2}) == "fail"
+    # 任一原子因子缺失 → 整条无法评估（不计入满足，也不算 fail）
+    assert sp.eval_condition(cond, {"turnover_rate": 8.0}) == "cannot_evaluate"
+    assert sp.eval_condition(cond, {"turnover_rate": 8.0, "volume_ratio": None}) == "cannot_evaluate"
+    # 单原子 + 负阈值（容量上涨 pre_ret_5d < -5）
+    neg = {"all": [{"factor": "pre_ret_5d", "op": "<", "threshold": -5}]}
+    assert sp.eval_condition(neg, {"pre_ret_5d": -8.0}) == "match"
+    assert sp.eval_condition(neg, {"pre_ret_5d": -2.0}) == "fail"
+
+
+def test_strategy_profile_coverage():
+    # 缺画像 → missing（命中只作纯观察）
+    assert sp.profile_coverage(None, "2026-06-26")["status"] == "missing"
+    # 新鲜画像 → calibrated
+    fresh = {"asof": "2026-06-20", "max_age_days": 60, "profile_version": "v1",
+             "target_cell": "close_T+5", "robustness": "medium"}
+    cov_fresh = sp.profile_coverage(fresh, "2026-06-26")
+    assert cov_fresh["status"] == "calibrated" and cov_fresh["age_days"] == 6
+    # 超过 max_age_days → stale（显式降级、不阻断）
+    old = {"asof": "2026-01-01", "max_age_days": 60, "target_cell": "close_T+5"}
+    cov_old = sp.profile_coverage(old, "2026-06-26")
+    assert cov_old["status"] == "stale" and cov_old["age_days"] > 60 and cov_old["note"]
+
+
+def test_strategy_date_helpers():
+    assert sp.norm_iso("20260626") == "2026-06-26"
+    assert sp.norm_iso("2026-06-26") == "2026-06-26"
+    assert sp.norm_iso("2026/06/26") == "2026-06-26"
+    assert sp.ymd("2026-06-26") == "20260626"
+    try:
+        sp.norm_iso("not-a-date")
+        raise AssertionError("expected SystemExit for bad date")
+    except SystemExit:
+        pass
+
+
+def test_strategy_ledger_ddl_has_per_horizon_status():
+    # 分 horizon 独立状态（Codex 必改第 5 条）：每个 horizon 都要有 hk_status 列
+    for k in (3, 5, 10):
+        assert f"h{k}_status" in sp.LEDGER_DDL
+        assert f"relc_{k}" in sp.LEDGER_DDL and f"t{k}_date" in sp.LEDGER_DDL
+    assert "PRIMARY KEY (asof, ts_code)" in sp.LEDGER_DDL
 
 
 # --------------------------------------------------------------------------- #

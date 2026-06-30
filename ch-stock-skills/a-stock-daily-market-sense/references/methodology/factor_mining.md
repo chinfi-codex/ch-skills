@@ -16,6 +16,7 @@ caveat 是模型的活。
    写 `reports/factor_mining_<group>_<asof>.json`。
 4. **模型选最优叠加解**（自动）：读 JSON，按 §四 rubric 选定叠加条件，写报告。
 5. **你决定要不要用**（人工）：当研究参考，或手动把叠加条件提级成分组生产阈值——脚本不替你改生产。
+   也可把选定的有效叠加条件写进 `references/strategy_profiles/<group_id>.json`（策略画像），接入**每日复盘第 6 节策略选股**：慢循环（这里挖矿选解）→ 画像 → 快循环（`strategy_picks.py context` 当日匹配）。**画像只用当日可知因子**——`t1_gap`（次日高开）这类未来值在回测里 edge 常最大，但当日选股时不可知，绝不能入画像。画像 schema 见 `references/strategy_profiles/README.md`。
 
 ## 二、回测口径（脚本固定）
 

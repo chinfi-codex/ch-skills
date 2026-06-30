@@ -1,0 +1,45 @@
+{
+  "profile_id": "discount_relaunch",
+  "group_label": "折扣启动",
+  "profile_version": "2026-06-29.1",
+  "asof": "2026-06-29",
+  "window_start": "2026-03-25",
+  "window_end": "2026-06-29",
+  "target_cell": "close_T+5",
+  "mined_by": "factor_backtest.py --group discount_relaunch --skip-backfill --min-n 15",
+  "base": {"n": 129, "mean": 2.43, "median": 1.15, "win": 55.8, "rel_mean": 0.88, "rel_win": 47.3},
+  "selected_conditions": [
+    {
+      "condition_id": "turnover_ge_5",
+      "label": "换手率 ≥ 5%",
+      "all": [{"factor": "turnover_rate", "op": ">=", "threshold": 5}],
+      "n": 100, "win": 58.0, "rel_mean": 1.8, "delta": 0.92, "oos_balance": 0.75,
+      "target_cell": "close_T+5", "passes_guardrails": true, "robustness": "strong",
+      "rationale": "反转组的稳健骨架：折扣启动要有真实换手承接，无量反包多是假启动。样本大(100)、前后半区均衡(0.75)。"
+    },
+    {
+      "condition_id": "disc_ge_078_x_turnover_ge_5",
+      "label": "前高折扣 ≥ 0.78 ∧ 换手率 ≥ 5%",
+      "all": [{"factor": "discount_after_high", "op": ">=", "threshold": 0.78}, {"factor": "turnover_rate", "op": ">=", "threshold": 5}],
+      "n": 25, "win": 64.0, "rel_mean": 4.03, "delta": 3.15, "oos_balance": 0.43,
+      "target_cell": "close_T+5", "passes_guardrails": true, "robustness": "medium",
+      "rationale": "折扣不太深(自前高仅回撤约15-22%、更贴前高) + 真实换手：回撤温和的反包比深坑弱反弹更易延续。N 偏小、均衡中等，edge 大但作加分。"
+    },
+    {
+      "condition_id": "disc_ge_078_x_volratio_lt_25",
+      "label": "前高折扣 ≥ 0.78 ∧ 量比 < 2.5",
+      "all": [{"factor": "discount_after_high", "op": ">=", "threshold": 0.78}, {"factor": "volume_ratio", "op": "<", "threshold": 2.5}],
+      "n": 21, "win": 76.2, "rel_mean": 5.83, "delta": 4.95, "oos_balance": 0.46,
+      "target_cell": "close_T+5", "passes_guardrails": true, "robustness": "fragile",
+      "rationale": "胜率/edge 最高，但 N 最小(21)：温和折扣 + 不过度放量。只作加分项、不单独依赖。"
+    }
+  ],
+  "robustness": "medium",
+  "max_age_days": 60,
+  "model_note": "反转组方向与强势组相反——这里高换手是加分(要承接)，与容量上涨偏好低量比相反。最稳的是换手≥5%骨架；折扣≥0.78 的两条叠加 edge 大但 N 小，列为加分/观察，不单独定强信心。",
+  "caveats": [
+    "单一市场环境、窗口约3个月(2026-03-25~06-29)、daily_basic 仅缓存该窗口；这是证据扫描、非跨周期统计定论。",
+    "均值易被少数大赢家抬高，已同看 win 与 oos_balance；折扣叠加条件 N≤25 偏薄。",
+    "win 为绝对收益胜率、rel_mean 为相对匹配基准均值，两者口径不同，引用时分开说。"
+  ]
+}

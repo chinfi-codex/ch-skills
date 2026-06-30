@@ -297,3 +297,67 @@ CREATE TABLE IF NOT EXISTS theme_market_day (
     market_state  TEXT NOT NULL,
     note          TEXT
 );
+
+
+-- -------------------------------------------------------------------------
+-- 14. Strategy pick ledger (a-stock-daily-market-sense, 策略选股实盘台账)
+-- -------------------------------------------------------------------------
+-- One row per (asof signal day, ts_code): a model-confirmed 策略选股 watch
+-- candidate for that day, written by strategy_picks.py record after the model
+-- finalises section 6.  Carries a full fingerprint/snapshot (which profile
+-- version + which matched conditions + the stock's feature values at T) so the
+-- out-of-sample track record stays auditable even after profiles are updated.
+-- Per-horizon (T+3 / T+5 / T+10) realized forward returns are backfilled by
+-- strategy_picks.py score as data matures; each horizon has its own status so
+-- partial maturity / suspension / index gaps never collapse into one flag and
+-- re-runs stay idempotent.  Strategy profiles themselves live in
+-- references/strategy_profiles/*.json (git, canonical) — NOT in PG.
+-- conviction_tier is an enum strong/medium/watch; the report renders 强/中/观察.
+-- hk_status ∈ pending/scored/missing_price/expired/error.  Markdown reports stay
+-- the narrative truth source; this table is runtime track-record data only.
+CREATE TABLE IF NOT EXISTS strategy_pick_ledger (
+    asof                    DATE NOT NULL,
+    ts_code                 TEXT NOT NULL,
+    name                    TEXT,
+    board                   TEXT,
+    benchmark               TEXT,
+    benchmark_wide          TEXT,
+    groups_hit              JSONB,
+    conviction_tier         TEXT NOT NULL,
+    in_main_line            TEXT,
+    rationale               TEXT,
+    matched_conditions      JSONB,
+    feature_snapshot        JSONB,
+    profile_fingerprints    JSONB,
+    backtest_stats_snapshot JSONB,
+    source_evidence         TEXT,
+    source_report           TEXT,
+    t1_date                 DATE,
+    t1_open                 DOUBLE PRECISION,
+    t1_close                DOUBLE PRECISION,
+    -- horizon T+3
+    t3_date     DATE, t3_close DOUBLE PRECISION,
+    ro_3 DOUBLE PRECISION, rc_3 DOUBLE PRECISION,
+    relo_3 DOUBLE PRECISION, relc_3 DOUBLE PRECISION, relc_3_w DOUBLE PRECISION,
+    h3_status   TEXT NOT NULL DEFAULT 'pending', scored_at_3 TIMESTAMPTZ,
+    -- horizon T+5
+    t5_date     DATE, t5_close DOUBLE PRECISION,
+    ro_5 DOUBLE PRECISION, rc_5 DOUBLE PRECISION,
+    relo_5 DOUBLE PRECISION, relc_5 DOUBLE PRECISION, relc_5_w DOUBLE PRECISION,
+    h5_status   TEXT NOT NULL DEFAULT 'pending', scored_at_5 TIMESTAMPTZ,
+    -- horizon T+10
+    t10_date    DATE, t10_close DOUBLE PRECISION,
+    ro_10 DOUBLE PRECISION, rc_10 DOUBLE PRECISION,
+    relo_10 DOUBLE PRECISION, relc_10 DOUBLE PRECISION, relc_10_w DOUBLE PRECISION,
+    h10_status  TEXT NOT NULL DEFAULT 'pending', scored_at_10 TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (asof, ts_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_pick_tier
+    ON strategy_pick_ledger(conviction_tier);
+
+-- score scans for not-yet-scored horizons; index the earliest-maturing one.
+CREATE INDEX IF NOT EXISTS idx_strategy_pick_h3_status
+    ON strategy_pick_ledger(h3_status);

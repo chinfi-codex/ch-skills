@@ -1,7 +1,7 @@
 ---
 name: a-stock-daily-market-sense
-description: 基于 Tushare Pro A 股 daily 日线数据和 Baostock 风格指数生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板/科创50指数趋势、市场风格判断、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、容量上涨/全市场月线平台突破（多年月线箱体横盘后、当天放量大涨且当天日线首次站上箱体上沿，横盘越久越好但12个月内短底也保留，形态参照雅克科技长底突破，排除北交）/10:30前涨停/折扣启动（自前高深度回撤、近5日刚见底、缩量后重新放量、且月线站上10月线）等特征分组分析、对你提出的某个特征分组做量化回溯/相对收益因子挖掘/找分组内叠加条件最优解（回测 T+1 进场、T+3/5/10 前向收益、相对板块匹配基准）、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
-version: 2.4.1
+description: 基于 Tushare Pro A 股 daily 日线数据和 Baostock 风格指数生成盘后市场研报的方法论 skill。当用户要求做每日盘面趋势、上证/创业板/科创50指数趋势、市场风格判断、情绪指数趋势、赚钱效应与上涨主线分析、爆量下跌识别、容量上涨/全市场月线平台突破（多年月线箱体横盘后、当天放量大涨且当天日线首次站上箱体上沿，横盘越久越好但12个月内短底也保留，形态参照雅克科技长底突破，排除北交）/10:30前涨停/折扣启动（自前高深度回撤、近5日刚见底、缩量后重新放量、且月线站上10月线）等特征分组分析、对你提出的某个特征分组做量化回溯/相对收益因子挖掘/找分组内叠加条件最优解（回测 T+1 进场、T+3/5/10 前向收益、相对板块匹配基准）、把因子复盘的有效叠加条件接进每日复盘做策略选股（按因子表现/过去胜率/特征分组命中给出信心分档的观察清单，并把每日选股落台账、事后回填真实前向收益累积样本外战绩；不给买卖建议）、历史某日复盘、基于 daily/daily_basic/涨跌停/指数数据做量化选股观察时，必须优先使用本 skill。本 skill 先生成确定性证据包，再由模型或 Codex/Claude Code 等通用 agent 的 subagent 编排能力按模块撰写；不在脚本中调用 LLM，不提供买卖建议，不按申万、同花顺、东方财富等现成行业/概念口径分组。
+version: 2.5.0
 ---
 
 # Tushare Daily Market Sense
@@ -21,21 +21,22 @@ version: 2.4.1
 ## 工作流程
 
 1. 确定交易日：解析“今天/最近”或具体日期，默认只使用 `D` 及以前数据；只有用户明确要求后验时才允许 `--allow-future`。
-2. 生成证据包：运行 `scripts/run_daily_panel.py`。脚本会直接调用数据管线，写出完整 evidence、个股 K 线展示数据（`kline_YYYYMMDD.json`）和模块级 JSON。
+2. 生成证据包：运行 `scripts/run_daily_panel.py`。脚本会直接调用数据管线，写出完整 evidence、个股 K 线展示数据（`kline_YYYYMMDD.json`）和模块级 JSON。生成模块 JSON 后，它还会自动跑**策略选股后处理**（`strategy_picks.py score` 先回填过去票成熟 horizon，再 `context` 生成 `module_context_YYYYMMDD/module6_strategy_candidates.json`）。这是 build_panel 之外的独立后处理、best-effort——失败只告警、不影响日报主产物；`--no-strategy` 可关闭。score/context 只读 DB 与缓存，不需要 `TUSHARE_TOKEN`。
 3. 选择撰写模式：
-   - 有 subagent 编排能力时，主 agent 将 5 个模块 JSON 分发给 5 个 subagent 并行撰写。
+   - 有 subagent 编排能力时，主 agent 将模块 1-5 的 JSON 分发给 5 个 subagent 并行撰写。
    - 没有 subagent 能力时，按同样模块顺序单会话执行，每次只加载当前模块的 JSON、方法论和模板段。
-4. 聚合成稿：主 agent 读取 6 段输出、`assembled_checks.json` 与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。默认不做外部收评校验、不搜索第三方行情综述、不在报告中加入“外部校验参考”；只有用户明确要求时才补充外部来源。
-5. 主线生命周期落库：报告定稿后，把当日主线判定沉淀进 PG 生命周期台账。先运行 `python3 scripts/theme_lifecycle.py context --asof YYYYMMDD` 取注册表、各主线近期状态与 watchlist；模型完成别名归一（当日临时主题名 → canonical theme_id）和生命周期状态判定（低位启动/在场候选/主线确认/高位分歧/退潮/修复/再聚焦/沉寂），写出 `reports/lifecycle_YYYYMMDD.json` 后运行 `python3 scripts/theme_lifecycle.py record --input reports/lifecycle_YYYYMMDD.json` 落库。脚本只做确定性校验（枚举、状态机转移合法性、theme_id 存在性），判断留给模型；输入格式、状态机与判定基准见 `references/theme_lifecycle.md`。
-6. 按需生成 HTML：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文；若同目录存在 `evidence_YYYYMMDD_utf8.json` 与 `kline_YYYYMMDD.json`，HTML 会自动读取指数 120 日 K 线与个股 K 线并插入对应正文附近；其中 5.2 全市场月线平台突破组改画**月线 K 线图**（多年底部箱体阴影 + 箱体上沿 pivot 水平线 + 突破月标记，数据来自 `kline_YYYYMMDD.json` 的 `monthly` 段），其余分组仍为 120 日日线。若 `theme_daily_state` 已有该日数据，HTML 还会在主线判定小节下方自动注入主线生命周期泳道图区块（近 22 个交易日，红 = 强势在场、绿 = 退潮、闪电 = 低位启动；`--lifecycle-days` 调窗口、`--no-lifecycle` 关闭）；区块只展示台账已落库数据，不新增判断。若 evidence 含风格序列，HTML 会在「市场风格」小节表格下方自动注入两张 60 日归一化对比图（规模轴五线 / 成长价值红利三线，起点=100），区块只展示 evidence 已有数据、不新增判断。
-7. 证据包边界：`reports/evidence_YYYYMMDD_utf8.json` 是本 skill 的 Market Evidence Pack，只属于 skill 输出目录。即使在 AlphaVault 中写入趋势复盘，也不要把该证据包复制或登记为 `RAW/crawlers/` 来源；AlphaVault 侧只写最终趋势复盘 Markdown/HTML、索引和日志。生命周期台账同理：它是 skill 域运行时数据，归 PG 管，不进 AlphaVault 状态文件体系。
-8. 清理临时产物：确认 `reports/report_YYYYMMDD.md`（及按需生成的 HTML）已写入并可读后，运行一条确定性清理命令，不要手工逐个删文件：
+4. 聚合成稿：主 agent 读取模块 1-5 输出、`assembled_checks.json` 与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。**然后写第 6 节「策略选股观察清单」**——它在聚合阶段写、依赖模块 3 主线判定与模块 5 命中（信心分档要对照 3.2 主线表，主题归属是模型产出、脚本不知道），读 `module6_strategy_candidates.json` + `references/methodology/module6_strategy_observation.md` + `references/template/section6.md`，按锚点 rubric 给信心分档（强/中/观察）+ 每只持续性待验证条件，**只作观察、不给买卖建议**。默认不做外部收评校验、不搜索第三方行情综述、不在报告中加入“外部校验参考”；只有用户明确要求时才补充外部来源。
+5. 策略选股落台账：第 6 节定稿后，按 `module6_strategy_observation.md` 的 schema 写 `reports/strategy_picks_YYYYMMDD.json`（含画像指纹 + 当时特征/条件快照），运行 `python3 scripts/strategy_picks.py record --input reports/strategy_picks_YYYYMMDD.json` 落入 PG `strategy_pick_ledger`，积累样本外战绩。脚本只做确定性校验与 upsert，选谁/信心几档是模型判断。台账在 PG、不受 `--cleanup` 影响。策略画像（`references/strategy_profiles/*.json`）是慢循环产物、本节只读：要刷新画像走特征因子挖掘流程（见下），不在每日复盘里改。
+6. 主线生命周期落库：报告定稿后，把当日主线判定沉淀进 PG 生命周期台账。先运行 `python3 scripts/theme_lifecycle.py context --asof YYYYMMDD` 取注册表、各主线近期状态与 watchlist；模型完成别名归一（当日临时主题名 → canonical theme_id）和生命周期状态判定（低位启动/在场候选/主线确认/高位分歧/退潮/修复/再聚焦/沉寂），写出 `reports/lifecycle_YYYYMMDD.json` 后运行 `python3 scripts/theme_lifecycle.py record --input reports/lifecycle_YYYYMMDD.json` 落库。脚本只做确定性校验（枚举、状态机转移合法性、theme_id 存在性），判断留给模型；输入格式、状态机与判定基准见 `references/theme_lifecycle.md`。
+7. 按需生成 HTML：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文；若同目录存在 `evidence_YYYYMMDD_utf8.json` 与 `kline_YYYYMMDD.json`，HTML 会自动读取指数 120 日 K 线与个股 K 线并插入对应正文附近；其中 5.2 全市场月线平台突破组改画**月线 K 线图**（多年底部箱体阴影 + 箱体上沿 pivot 水平线 + 突破月标记，数据来自 `kline_YYYYMMDD.json` 的 `monthly` 段），其余分组仍为 120 日日线。若 `theme_daily_state` 已有该日数据，HTML 还会在主线判定小节下方自动注入主线生命周期泳道图区块（近 22 个交易日，红 = 强势在场、绿 = 退潮、闪电 = 低位启动；`--lifecycle-days` 调窗口、`--no-lifecycle` 关闭）；区块只展示台账已落库数据，不新增判断。若 evidence 含风格序列，HTML 会在「市场风格」小节表格下方自动注入两张 60 日归一化对比图（规模轴五线 / 成长价值红利三线，起点=100），区块只展示 evidence 已有数据、不新增判断。
+8. 证据包边界：`reports/evidence_YYYYMMDD_utf8.json` 是本 skill 的 Market Evidence Pack，只属于 skill 输出目录。即使在 AlphaVault 中写入趋势复盘，也不要把该证据包复制或登记为 `RAW/crawlers/` 来源；AlphaVault 侧只写最终趋势复盘 Markdown/HTML、索引和日志。生命周期台账同理：它是 skill 域运行时数据，归 PG 管，不进 AlphaVault 状态文件体系。
+9. 清理临时产物：确认 `reports/report_YYYYMMDD.md`（及按需生成的 HTML）已写入并可读后，运行一条确定性清理命令，不要手工逐个删文件：
 
    ```bash
    python3 scripts/run_daily_panel.py --cleanup YYYYMMDD
    ```
 
-   该命令删除同日期的 evidence、kline、stderr 日志、lifecycle 输入、report_context 与 module_context 目录，永远不会碰 `report_YYYYMMDD.md` / `report_YYYYMMDD.html`（生命周期数据已持久化在 PG，不受清理影响）。不要跨日期批量清理，除非用户明确要求。
+   该命令删除同日期的 evidence、kline、stderr 日志、lifecycle 输入、策略选股输入（`strategy_picks_YYYYMMDD.json`）、report_context 与 module_context 目录（含 `module6_strategy_candidates.json`），永远不会碰 `report_YYYYMMDD.md` / `report_YYYYMMDD.html`（生命周期与策略台账数据已持久化在 PG，不受清理影响）。不要跨日期批量清理，除非用户明确要求。
 
 ## 特征因子挖掘（量化回溯 · 按需研究流程）
 
@@ -55,7 +56,7 @@ version: 2.4.1
    ```
    产物：`reports/factor_mining_<group>_<asof>.json`（证据包，gitignore，跑完即临时）。
 3. **模型选最优叠加解**：读 JSON，按 reference §四 rubric（稳健优先于大 Δ、看 `oos_balance` 与中位数胜率、深度≤2、经济逻辑）选定叠加条件，写 `reports/factor_mining_<group>_<asof>.md`。
-4. **你决定要不要用**：当研究参考，或手动把叠加条件提级成分组生产阈值——脚本不替你改生产。
+4. **你决定要不要用**：当研究参考，或手动把叠加条件提级成分组生产阈值——脚本不替你改生产。也可把选定的有效叠加条件写进 `references/strategy_profiles/<group_id>.json`（策略画像），让它进入**每日复盘第 6 节策略选股**（慢循环→画像→快循环匹配，见工作流程第 2/4/5 步与 `references/strategy_profiles/README.md`）。画像只用当日可知的因子（`t1_gap` 等未来值不能入画像）；脚本不替你选条件、不自动写画像，落盘由你确认。
 
 口径要点：进场 T+1 开盘/尾盘 × 持有 T+3/T+5/T+10，后复权；相对收益挂**板块/市值匹配基准**（科创→科创50、创业→创业板指、主板按市值→沪深300/中证500/中证1000），沪深300 作宽基对照。脚本默认会把信号窗口缺失的 `daily_basic` 从 Tushare 回补入库（需 `TUSHARE_TOKEN`）。折扣启动要完整 200 日历史，信号只落在数据最近端、样本偏小——所以护栏与诚实 caveat 是骨架，结论按"单一环境证据扫描、非统计定论"来写。
 
@@ -119,6 +120,8 @@ python3 scripts/render_report_html.py --input reports/report_20260429.md [--them
 | `--discount-low-recency-days` | 折扣启动回撤最低点须落在大涨日前几个交易日内（最低点新鲜度） | 5 |
 | `--discount-pre-contraction-max` | 折扣启动调整缩量上限（前5日均额/前20日均额） | 0.9 |
 | `--discount-volume-expansion-min` | 折扣启动当日重新放量下限（amount_vs_prev5_ratio，相对前5日缩量期） | 2.0 |
+| `--no-strategy` | 跳过策略选股后处理（score + module6 候选证据） | 关闭=默认执行 |
+| `--profiles-dir` | 策略画像目录 | `references/strategy_profiles` |
 
 ## Subagent 编排契约
 
@@ -132,16 +135,19 @@ python3 scripts/render_report_html.py --input reports/report_20260429.md [--them
 | 4 爆量下跌 | `module4_decline.json` | `references/methodology/module4_decline.md` | `references/template/section4.md` |
 | 5 特征分组 | `module5_feature_groups.json` | `references/methodology/module5_feature_groups.md` | `references/template/section5.md` |
 
+模块 1-5 是互不读取的并行 subagent。**第 6 节「策略选股观察清单」不在此并行**——它依赖模块 3 主线判定与模块 5 命中（主题归属是模型产出、脚本不知道），所以放在聚合阶段写。
+
 聚合 agent 额外读取：
 
 - `assembled_checks.json`：M3 赚钱效应池与 M4 爆量下跌池的确定性交叉检查。
 - `references/methodology/output_discipline.md`：最终成稿纪律。
+- `module6_strategy_candidates.json` + `references/methodology/module6_strategy_observation.md` + `references/template/section6.md`：第 6 节策略选股观察清单（信心分档 rubric、回测/样本外分开、禁买卖；依赖已写好的 3.2 主线与第 5 节命中）。
 
 Python 不调用 Anthropic API、不调用任何 LLM、不硬编码模型名。Codex、Claude Code 或其他通用 agent 的 subagent 编排能力负责并行撰写。
 
 ## 输出规范
 
-完整研报按五个模块输出。每个判断段先给自然语言结论，再选择少量关键证据支撑；表格承载细项数据，段落解释这些数据意味着进攻、分歧、退潮、修复、拥挤还是扩散。所有强弱判断都要能回到成交额、放量倍数、涨跌幅、相对收益或回撤证据，但不要把所有可用指标塞进同一段。模块 3 的主题分组只作为内部推理步骤，不输出单独的主题分组陈列表，赚钱效应总览后直接进入主线判定。
+完整研报按六个模块输出（模块 1-5 + 第 6 节策略选股观察清单）。每个判断段先给自然语言结论，再选择少量关键证据支撑；表格承载细项数据，段落解释这些数据意味着进攻、分歧、退潮、修复、拥挤还是扩散。所有强弱判断都要能回到成交额、放量倍数、涨跌幅、相对收益或回撤证据，但不要把所有可用指标塞进同一段。模块 3 的主题分组只作为内部推理步骤，不输出单独的主题分组陈列表，赚钱效应总览后直接进入主线判定。
 
 **文风默认（项目级硬性要求）：**
 
@@ -152,7 +158,7 @@ Python 不调用 Anthropic API、不调用任何 LLM、不硬编码模型名。C
 
 每个一级大章节（1-5）里已有的总结/定性段落必须使用 Markdown 高亮样式 `==...==` 包裹，例如“指数趋势判断”“市场风格判断”“盘面定性”“拥挤度判断”“主线 vs 资金轮动结论”“风险传导提示”“特征分组一句话判断”。不要为了高亮额外新增“本节总结”段落；高亮的是原本就承担总结作用的段落。
 
-禁止输出买卖建议。可以写“风险传导”“持续性待验证”“主线确认度”，不要写“买入/卖出/止损/目标价”。
+禁止输出买卖建议。可以写“风险传导”“持续性待验证”“主线确认度”，不要写“买入/卖出/止损/目标价”。第 6 节策略选股同样守此红线：它是按因子表现与历史/样本外胜率给出的**信心分档观察清单**，每只配“持续性待验证条件”，不写买点、仓位、止损、目标价；回测画像表现与样本外台账战绩要分开引用、各自带样本量与 caveat。
 
 HTML 输出只改变呈现方式：必须保留 Markdown 研报中的所有文字、表格、引用和免责声明。`==...==` 高亮段落在 HTML 中渲染为浅蓝提示块；正文前可以增加 `market_data.json` 驱动的趋势图区域。若可读取同日期 evidence，HTML 可以在“指数趋势”正文附近插入上证指数、创业板指数、科创50 的 120 日 K 线图，并在图中展示成交金额柱；也可以在 3.3、5.2、5.3、5.4 股票明细表下方插入表内股票的 120 日 K 线图；若 evidence 含风格序列，还可以在“市场风格”表格下方插入两张 60 日归一化对比图（规模轴五线 / 成长价值红利三线，起点=100）。这些图表只展示 evidence 中已有的 OHLC、成交金额与风格指数收盘序列数据，不得新增与 Markdown 不一致的分析结论。
 

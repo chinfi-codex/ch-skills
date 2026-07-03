@@ -34,6 +34,7 @@ shared:
       skills:
         - ch-news-reporter
         - a-stock-daily-market-sense
+        - a-stock-earnings-forecast
     # html 能力：报告渲染框架（Markdown→HTML + 内联图表）
     - source: shared/html_report
       dest: scripts/_shared/html_report
@@ -84,4 +85,6 @@ exclude:
   # 被排除目录在 Agent 目标端也不会被镜像删除，运行时产物得以保留。
   skill_root_dirs:
     a-stock-daily-market-sense:
+      - reports
+    a-stock-earnings-forecast:
       - reports

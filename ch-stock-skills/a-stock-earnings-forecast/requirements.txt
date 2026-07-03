@@ -1,0 +1,10 @@
+tushare>=1.4.0
+pandas>=1.5.0
+requests>=2.28.0
+# cninfo enrichment: forecast announcements are text PDFs; PyMuPDF preferred,
+# PyPDF2 is the fallback extractor.
+PyMuPDF>=1.24.0
+PyPDF2>=3.0.0
+# Storage / incremental cache via shared/data/db_core.py. psycopg2 is only
+# needed for the default PostgreSQL backend; ALPHA_DB_BACKEND=sqlite needs none.
+psycopg2-binary>=2.9.0

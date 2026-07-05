@@ -569,19 +569,33 @@ def compute_reaction(bars: List[Dict[str, Any]], anchor_ann: str, gap_min: float
     block["since_ann_pct"] = _r2((float(last["close"]) / pre_close - 1) * 100.0)
     block["trading_days_since_r"] = len(post)
     lows_since = [float(b["low"]) for b in post if b.get("low") is not None]
+    highs_since = [float(b["high"]) for b in post if b.get("high") is not None]
     min_low = min(lows_since) if lows_since else None
+    max_high = max(highs_since) if highs_since else None
     block["min_low_since_r"] = _r2(min_low)
+    block["max_high_since_r"] = _r2(max_high)
 
-    has_gap = gap_open is not None and gap_open >= gap_min
-    if not has_gap:
-        block["gap_status"] = "none"
-    elif min_low is not None and min_low <= pre_close:
-        block["gap_status"] = "filled"      # 跌回公告前收盘价下方 = 断层回补
+    # Direction-aware 净利润断层：向上=业绩超预期跳空(强表现)，向下=不及预期跳空(弱表现)。
+    # 回补口径随方向翻转：向上断层被跌回 pre_close 下方 = 回补；向下断层被涨回 pre_close 上方 = 回补。
+    if gap_open is None:
+        gap_dir = None
+    elif gap_open >= gap_min:
+        gap_dir = "up"
+    elif gap_open <= -gap_min:
+        gap_dir = "down"
     else:
-        block["gap_status"] = "intact"      # 未回补
+        gap_dir = None
+    block["gap_dir"] = gap_dir
+    if gap_dir is None:
+        block["gap_status"] = "none"
+    elif gap_dir == "up":
+        block["gap_status"] = "filled" if (min_low is not None and min_low <= pre_close) else "intact"
+    else:  # down
+        block["gap_status"] = "filled" if (max_high is not None and max_high >= pre_close) else "intact"
     # Mechanical threshold hits only — NOT an opportunity verdict.
     block["flags"] = {
-        "gap": bool(has_gap),
+        "gap_up": gap_dir == "up",
+        "gap_down": gap_dir == "down",
         "gap_intact": block["gap_status"] == "intact",
         "low_base": block.get("pre_pos_1y_pct") is not None and block["pre_pos_1y_pct"] < 40.0,
         "high_pos": block.get("pre_pos_1y_pct") is not None and block["pre_pos_1y_pct"] >= 60.0,

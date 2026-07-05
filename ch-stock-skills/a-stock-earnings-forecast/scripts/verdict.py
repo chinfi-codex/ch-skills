@@ -119,6 +119,7 @@ def build_context(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[s
             "kf_net_profit_yi": _kf_summary(en_idx.get(ts_code)),
             "price_reaction": {
                 "gap_open_pct": pr.get("gap_open_pct"),
+                "gap_dir": pr.get("gap_dir"),
                 "r_day_pct": pr.get("r_day_pct"),
                 "since_ann_pct": pr.get("since_ann_pct"),
                 "gap_status": pr.get("gap_status"),

@@ -506,8 +506,10 @@ def _r2(v: Optional[float]) -> Optional[float]:
 def compute_reaction(bars: List[Dict[str, Any]], anchor_ann: str, gap_min: float) -> Dict[str, Any]:
     """Reaction metrics anchored on the first announcement date.
 
-    pre-ann close = close of the last bar <= anchor_ann (业绩预告基本为盘后披露);
-    reaction day R = first bar strictly after anchor_ann.
+    业绩预告一般在披露日(ann_date)的前一交易日盘后发出，ann_date 标的是正式披露日，
+    所以市场反应落在 ann_date 当天：pre-ann close = 最后一个 < anchor_ann 的交易日收盘
+    (即公告日前一交易日)，reaction day R = 第一个 >= anchor_ann 的交易日(即公告日当天，
+    若为交易日；否则顺延到之后第一个交易日)。
     """
     block: Dict[str, Any] = {"anchor_ann_date": anchor_ann}
     usable = [b for b in bars if b.get("close") is not None and b.get("trade_date")]
@@ -516,7 +518,7 @@ def compute_reaction(bars: List[Dict[str, Any]], anchor_ann: str, gap_min: float
         return block
     pre_idx = None
     for i, b in enumerate(usable):
-        if str(b["trade_date"]) <= anchor_ann:
+        if str(b["trade_date"]) < anchor_ann:   # 严格小于：公告日前一交易日为基准
             pre_idx = i
         else:
             break
@@ -739,8 +741,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             anchors = {c: a for c, a in anchors.items() if a}
             reactions, price_calls = gather_price_reactions(pro, store, anchors, args.gap_min, workers)
             notes.append(
-                "price_reaction 以首次披露日为锚：跳空/当日反应取公告后首个交易日，"
-                "公告前位置=一年区间分位，gap_status 未回补=公告后最低价未跌破公告前收盘。"
+                "price_reaction 以首次披露日为锚：预告多在披露日前一交易日盘后发出，跳空/反应取"
+                "公告日当天(vs 公告日前一交易日收盘)；公告前位置=一年区间分位；未回补=向上断层其后"
+                "最低价未跌破、向下断层其后最高价未涨回公告前收盘。"
             )
         for row in forecasts:
             ts_code = str(row["ts_code"])

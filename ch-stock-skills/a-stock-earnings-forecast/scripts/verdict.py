@@ -162,7 +162,7 @@ def build_context(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[s
         "notes": [
             "对每只 to_judge 股判 tier(强/中/观察/剔除)与 theme_id(归属主线，对不上填 null=无归属)。",
             "主线匹配靠语义:用 change_reason/行业 比对 themes 的 name/aliases/members_sample;弱匹配 match_confidence=low。",
-            "price_reaction 是净利润断层证据：gap_open_pct=公告次日跳空、pre_pos_1y_pct=公告前一年分位"
+            "price_reaction 是净利润断层证据：gap_open_pct=公告日跳空(公告日前一交易日收盘→公告日当天开盘)、pre_pos_1y_pct=公告前一年分位"
             "(高位=趋势加速型/低位=低位启动型)、gap_status=intact 未回补。断层且在主线内的胜率锚更高，"
             "回补(filled)或业绩强但股价长期无反应要在 caveat 里点明；判断细则见 references/methodology.md §八。",
             "reason_to_judge=stale_* 的是预告已修订或增速漂移，需复判；其余是新披露。",

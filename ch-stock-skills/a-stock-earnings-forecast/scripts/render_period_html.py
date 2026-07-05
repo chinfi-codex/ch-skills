@@ -251,15 +251,18 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
 
 
 # --------------------------------------------------------------------------- #
+# 配色口径（A 股习惯）：红=涨/强/好，绿=跌/弱/差。--pos/--grn 系承载"涨/强"语义故取
+# 红色，--neg/--red 系承载"跌/弱"语义故取绿色；K线 --kup/--kdn 同为红涨绿跌；--warn
+# (待复判等流程警示)独立保持红色，不随涨跌语义翻转。
 _CSS = """
 :root{--s0:#faf9f5;--s1:#f2f0e9;--s2:#fff;--tx:#1a1a18;--tx2:#5f5e5a;--tx3:#8a897f;
---bd:#e5e3da;--acc:#185fa5;--accbg:#e6f1fb;--pos:#3b6d11;--neg:#a32d2d;--amb:#854f0b;--ambbg:#faeeda;
---grn:#3b6d11;--grnbg:#eaf3de;--gry:#5f5e5a;--grybg:#f1efe8;--red:#a32d2d;--redbg:#fcebeb;
---kup:#c2453e;--kdn:#1d9e75;--upbg:#eef6e6;--dnbg:#fbecec}
+--bd:#e5e3da;--acc:#185fa5;--accbg:#e6f1fb;--pos:#a32d2d;--neg:#3b6d11;--amb:#854f0b;--ambbg:#faeeda;
+--grn:#a32d2d;--grnbg:#fcebeb;--gry:#5f5e5a;--grybg:#f1efe8;--red:#3b6d11;--redbg:#eaf3de;
+--warn:#a32d2d;--warnbg:#fcebeb;--kup:#c2453e;--kdn:#1d9e75;--upbg:#fbecec;--dnbg:#eef6e6}
 @media (prefers-color-scheme:dark){:root{--s0:#26251f;--s1:#2f2e27;--s2:#33322b;--tx:#ece9e0;--tx2:#b4b2a9;--tx3:#888780;
---bd:#44443f;--acc:#85b7eb;--accbg:#0c447c;--pos:#97c459;--neg:#f09595;--amb:#fac775;--ambbg:#633806;
---grn:#c0dd97;--grnbg:#27500a;--gry:#b4b2a9;--grybg:#3a3a35;--red:#f09595;--redbg:#501313;
---kup:#e06c66;--kdn:#5dcaa5;--upbg:#2b3320;--dnbg:#3a2626}}
+--bd:#44443f;--acc:#85b7eb;--accbg:#0c447c;--pos:#f09595;--neg:#97c459;--amb:#fac775;--ambbg:#633806;
+--grn:#f09595;--grnbg:#501313;--gry:#b4b2a9;--grybg:#3a3a35;--red:#c0dd97;--redbg:#27500a;
+--warn:#f09595;--warnbg:#501313;--kup:#e06c66;--kdn:#5dcaa5;--upbg:#3a2626;--dnbg:#2b3320}}
 *{box-sizing:border-box}body{margin:0;background:var(--s0);color:var(--tx);
 font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
 font-size:14px;line-height:1.6}.wrap{max-width:1200px;margin:0 auto;padding:24px 20px 60px}
@@ -288,7 +291,7 @@ input{flex:1;min-width:130px}
 .thot{background:var(--accbg);color:var(--acc)}.tcool{background:var(--grybg);color:var(--tx2)}
 .badge{font-size:10px;padding:1px 6px;border-radius:20px;margin-left:2px}
 .bnew{background:var(--accbg);color:var(--acc)}.bupd{background:var(--ambbg);color:var(--amb)}
-.bstale{background:var(--redbg);color:var(--red)}
+.bstale{background:var(--warnbg);color:var(--warn)}
 .gap-up{background:var(--grnbg);color:var(--grn);font-weight:500}
 .gap-dn{background:var(--redbg);color:var(--red);font-weight:500}
 .gap-fade{background:var(--grybg);color:var(--tx2)}
@@ -386,7 +389,7 @@ function renderDetail(){
   let h=`<div class="dh"><span class="nm">${s.name}</span><span class="cd mut">${s.ts_code}</span><span class="mut" style="font-size:12px">${s.type}</span>${s.tier?pill(tierPill[s.tier],s.tier):''}${gapBadge(s)}${badges(s)}</div>`;
   h+=`<div class="klwrap" id="kl"></div>`;
   h+=`<div class="dsec">股价断层</div><div class="mgrid">`;
-  h+=mrow('公告次日跳空',s.gap_open_pct===null?'—':sign(s.gap_open_pct)+'%',cls(s.gap_open_pct));
+  h+=mrow('公告日跳空',s.gap_open_pct===null?'—':sign(s.gap_open_pct)+'%',cls(s.gap_open_pct));
   h+=mrow('公告后累计',s.since_ann_pct===null?'—':sign(s.since_ann_pct)+'%',cls(s.since_ann_pct));
   h+='</div>';
   // 行业趋势分析：所属主线内 强表现(向上断层) vs 弱表现(向下断层)
@@ -482,7 +485,7 @@ def render_html(view: Dict[str, Any]) -> str:
 <div class="list" id="list"></div>
 <div class="detail" id="detail"><div class="empty">点击左侧个股查看详情</div></div>
 </div>
-<div class="foot">净利=预告中值 · 断层以首次披露日为锚：跳空=公告后首个交易日开盘 vs 公告前收盘；向上=业绩超预期跳空(强表现)、向下=不及预期跳空下跌(弱表现)；未回补=其后价格未回到公告前收盘另一侧，D+n=断层后交易日数(新断层未经检验) · 行业趋势=报告期内按主线聚合成员的断层方向(强表现向上/弱表现向下)自下而上归纳，机械计数、定性由报告承担 · K线红涨绿跌，蓝虚线=公告反应日、橙虚线=公告前收盘 · 归属主线由模型语义匹配 daily-market-sense 主线台账 · 仅作观察、不含买卖建议</div>
+<div class="foot">净利=预告中值 · 断层以首次披露日为锚(预告多在披露日前一交易日盘后发出，反应落在披露日当天)：跳空=公告日当天开盘 vs 公告日前一交易日收盘；向上=业绩超预期跳空(强表现)、向下=不及预期跳空下跌(弱表现)；未回补=其后价格未回到公告前收盘另一侧，D+n=断层后交易日数(新断层未经检验) · 行业趋势=报告期内按主线聚合成员的断层方向(强表现向上/弱表现向下)自下而上归纳，机械计数、定性由报告承担 · K线红涨绿跌，蓝虚线=公告反应日、橙虚线=公告前收盘 · 归属主线由模型语义匹配 daily-market-sense 主线台账 · 仅作观察、不含买卖建议</div>
 {empty_note}
 </div>
 <script>const DATA={data_json};{_JS}</script>

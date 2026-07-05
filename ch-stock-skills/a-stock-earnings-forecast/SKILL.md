@@ -1,6 +1,6 @@
 ---
 name: a-stock-earnings-forecast
-description: A 股业绩预告(forecast)全市场扫描与优秀个股筛选。按最新报告期(一季报/半年报/三季报/年报)扫业绩预告，净利润预告区间按中值折算，拆出当年累计同比、最新单季度同比、环比三口径增速，抽取业绩变动原因，并可选用巨潮 cninfo 公告原文补扣非净利(Tushare 结构化预告没有)与少数公司的营收，识别一次性损益、判断含金量；还能把每只预告股按语义匹配到 daily-market-sense 的上涨主线台账（归属主线），把「优秀分档 + 主线归属」落判分台账后，渲染成一期一页、随披露增量更新的 HTML 报告期页。当用户要“看最新业绩预告”“哪些公司预增/大增/高增”“业绩预告扣非净利多少”“按中值算预告净利和增速”“把预告拆成单季同比和环比”“中报/半年报/一季报/年报业绩预告筛优秀个股”“预告里谁在加速”“业绩预告变动原因”“这季谁的预告最好”“这只预告股归属哪条主线”“把业绩预告做成 HTML/网页/报告期页”时使用。脚本只出确定性证据(中值、三口径拆解、营收 trailing、拆解护栏)、落库增量抓取、校验落台账与渲染 HTML；谁优秀/如何排序/归属哪条主线/识别低基数/扭亏/一次性损益/营收利润背离全由模型判断。不做个股基本面深挖(用 a-stock-analyzer)、不做盘面复盘选股(用 a-stock-daily-market-sense)、不给买卖建议/目标价/仓位。
+description: A 股业绩预告(forecast)全市场扫描与优秀个股筛选。按最新报告期(一季报/半年报/三季报/年报)扫业绩预告，净利润预告区间按中值折算，拆出当年累计同比、最新单季度同比、环比三口径增速，抽取业绩变动原因，并可选用巨潮 cninfo 公告原文补扣非净利(Tushare 结构化预告没有)与少数公司的营收，识别一次性损益、判断含金量；同时计算每只预告股的股价反应做净利润断层观察——公告次日跳空幅度、断层是否回补、公告前一年分位与动量（区分趋势加速型/低位启动型）、公告后累计涨幅（是否已充分定价）；还能把每只预告股按语义匹配到 daily-market-sense 的上涨主线台账（归属主线，断层+主线内=高胜率锚），把「优秀分档 + 主线归属」落判分台账后，渲染成一期一页、随披露增量更新的 HTML 报告期页。当用户要“看最新业绩预告”“哪些公司预增/大增/高增”“业绩预告扣非净利多少”“按中值算预告净利和增速”“把预告拆成单季同比和环比”“中报/半年报/一季报/年报业绩预告筛优秀个股”“预告里谁在加速”“业绩预告变动原因”“净利润断层”“业绩公布后股价跳空/未回补”“业绩超预期但股价没反应”“从业绩和股价关系找机会”“这季谁的预告最好”“这只预告股归属哪条主线”“把业绩预告做成 HTML/网页/报告期页”时使用。脚本只出确定性证据(中值、三口径拆解、营收 trailing、拆解护栏)、落库增量抓取、校验落台账与渲染 HTML；谁优秀/如何排序/归属哪条主线/识别低基数/扭亏/一次性损益/营收利润背离全由模型判断。不做个股基本面深挖(用 a-stock-analyzer)、不做盘面复盘选股(用 a-stock-daily-market-sense)、不给买卖建议/目标价/仓位。
 version: 1.0.0
 ---
 
@@ -37,11 +37,11 @@ version: 1.0.0
 ## 工作流程
 
 1. **定报告期**：解析用户说的季度/半年/年报；未指定就用当前最新季度末（脚本 `--period` 缺省即“今天之前最近的季度末”）。确认 2026H1 → `20260630`。
-2. **跑证据脚本**：`python3 scripts/forecast_scan.py --period 20260630`。脚本会逐交易日扫 `forecast(ann_date=)`（接口不支持区间/纯 period 查询）、按报告期过滤、每股留最新一版预告，再取实际季报拆三口径增速、挂 trailing 营收，写出 `reports/forecast_scan_<period>.json`。**已抓的预告/季报都存进 DB（`forecast_*` 表），每天重跑只增量抓新公告日与新个股，不重复全量抓取**（详见「数据存储与增量」）。`meta.fetch_stats` 会报告本次实际抓了几个公告日、几只走了缓存。
+2. **跑证据脚本**：`python3 scripts/forecast_scan.py --period 20260630`。脚本会逐交易日扫 `forecast(ann_date=)`（接口不支持区间/纯 period 查询）、按报告期过滤、每股留最新一版预告，再取实际季报拆三口径增速、挂 trailing 营收；同时取个股日线算 **`price_reaction` 净利润断层证据**（以首次披露日为锚：公告次日跳空/当日涨幅/放量倍数、公告前一年分位与 20 日动量、公告后累计涨幅、断层未回补/已回补状态；`--no-price` 可关），写出 `reports/forecast_scan_<period>.json`。**已抓的预告/季报/日线都存进 DB（`forecast_*` 表），每天重跑只增量抓新公告日、新个股与日线尾部**（详见「数据存储与增量」）。`meta.fetch_stats` 会报告本次实际抓了几个公告日、几只走了缓存。
 3. **模型读证据做初筛**：读 JSON，按上面的方法论**逐股判断是否优秀并排序**——重点用 `profit_growth`（三口径 + `base_consistency`）、`flags`（`accelerating/turnaround/positive_type` 等）、`change_reason`（一次性损益识别）、`revenue_trailing`（营收匹配）。先圈出「强 / 中 / 观察」候选池。
 4. **（可选）cninfo 增强优秀候选**：对初筛出的强/中候选跑 `python3 scripts/cninfo_enrich.py --period 20260630 --codes <候选代码>`（或 `--from reports/forecast_scan_20260630.json --positive --top 15`）。脚本抓每家预告原文，补出 Tushare 没有的**扣非净利**、完整变动原因、以及少数公司披露的营收，写 `reports/cninfo_enrich_<period>.json`。用扣非/归母差额复核含金量、剔除靠一次性冲高的票，再定档。`parsed` 是最佳努力解析（带 `raw` 与 `confidence`），要对照同一条记录的 `text` 全文核对后再采用。
 5. **判分 + 主线匹配落台账**：跑 `python3 scripts/verdict.py context --period 20260630` 拿到「待判个股（新披露 + 预告已修订/增速漂移的待复判）+ 主线注册表（daily-market-sense 的 `theme_registry`：名称/别名/当前★状态/成员样本）」。模型据此**逐只判 `tier`（强/中/观察/剔除）+ `theme_id`（归属哪条在场主线，对不上填 `null`=无归属）**，写 `reports/verdict_<period>.json`，再 `python3 scripts/verdict.py record --period 20260630 --input reports/verdict_<period>.json` 落 `forecast_verdict` 台账。主线匹配是**语义判断**：用 `change_reason`/行业比对主线 name/aliases/成员样本，弱匹配标 `match_confidence=low`（渲染成"疑似"），完全对不上就 `null`（"无归属"本身是"业绩强但暂无主线关注"的信号）。台账增量累积，每天只判 context 列出的增量。判分细则与匹配方法见 `references/verdict_and_html.md`。
-6. **生成报告期 HTML**：`python3 scripts/render_period_html.py --period 20260630` → `reports/forecast_<period>.html`。**一期一页、每次从累积缓存整页重渲染**：读 evidence + enrich + `forecast_verdict`，实时 join `theme_daily_state` 取主线当前状态；页面含 KPI、按主线分组视图、带「归属主线」列的可筛选明细表，`NEW/更新/待复判` 由披露日与判分快照派生。自包含单文件、无 CDN。渲染只投影不新增判断。
+6. **生成报告期 HTML**：`python3 scripts/render_period_html.py --period 20260630` → `reports/forecast_<period>.html`。**一期一页、每次从累积缓存整页重渲染**：读 evidence + enrich + `forecast_verdict` + `forecast_daily_cache`，实时 join `theme_daily_state` 取主线当前状态。页面为「KPI → 过滤条 → **左列表+右详情**双栏」：左列表可按**断层分组**（趋势加速型/低位启动型——按公告前一年分位机械二分 `--pos-split` 默认 50、位置不足、业绩强但未反应=潜在未定价 `--muted-max` 默认 3%、其余）或按主线分组或平铺，断层股带"未回补 D+n"与"主线内"徽标、主线内优先排序；右侧 sticky 详情含 **SVG 日K线**（约 130 根+成交量，红涨绿跌，蓝虚线=公告反应日、橙虚线=公告前收盘，断层缺口直观可见）与股价反应/业绩/主线/判分/变动原因全档。`NEW/更新/待复判` 由披露日与判分快照派生。自包含单文件、无 CDN。渲染只投影不新增判断（两型分类是机械阈值切分，机会与否由判分台账与报告承担）。
 7. **（可选）写 Markdown 报告**：需要叙事版时按 `references/output_template.md` 输出整体画像 + 优秀个股 shortlist（每只三口径、扣非含金量、归属主线、caveat）。HTML 与 Markdown 同源于 evidence + verdict，二选一或都出。
 8. **诚实标注缺口**：`meta.income_missing`、`single_q_note=base_missing/base_nonpositive/cur_missing`、`base_consistency=diverge`、cninfo `missing`、以及 `theme_registry` 为空（主线台账未填充需先跑 daily-market-sense）都要如实说明。
 
@@ -96,7 +96,9 @@ python3 scripts/render_period_html.py --period 20260630       # → reports/fore
 | `--rebuild` | 忽略缓存水位、整窗重扫并刷新季报 | 关闭 |
 | `--refresh-income` | 强制重取实际季报（季报追溯调整时用） | 关闭 |
 | `--no-cache` | 本次不落库、全量抓取 | 关闭 |
-| `--fetch-workers` | forecast/income 并发线程数（限流时设 1 串行） | 4 |
+| `--fetch-workers` | forecast/income/日线 并发线程数（限流时设 1 串行） | 4 |
+| `--gap-min` | 跳空开盘幅度 ≥ N% 记为断层 | 2.0 |
+| `--no-price` | 跳过股价反应(净利润断层)计算 | 关闭 |
 | `--out` / `--stdout` | 输出路径 / 同时打印完整 JSON | `reports/forecast_scan_<period>.json` |
 
 输出 JSON 结构（关键字段，完整字典见 `references/methodology.md`）：
@@ -106,6 +108,7 @@ python3 scripts/render_period_html.py --period 20260630       # → reports/fore
   - `net_profit`：`min_yi/max_yi/median_yi`（预告净利中值，亿元）、`last_parent_yi`（上年同期）。
   - `profit_growth`：`cum_yoy_pct`（当年累计同比，`cum_yoy_source=p_change/derived`）、`single_q_yoy_pct`（单季度同比）+ `single_q_note`、`qoq_pct`（环比）+ `qoq_note`、`single_q_cur_yi/prev_yi`（拆出的单季归母净利）、`base_consistency`（上年基数与实际季报是否一致）。
   - `revenue_trailing`：最近实际报告期营收（`cum_yi`、`cum_yoy_pct`、`single_q_yi`、`single_q_yoy_pct`、`qoq_pct`），标注 actual、非预告。
+  - `price_reaction`：净利润断层证据（`gap_open_pct` 公告次日跳空、`r_day_pct`/`r_vol_ratio` 反应日涨幅与放量、`pre_pos_1y_pct`/`pre_mom_20d_pct` 公告前位置与动量、`since_ann_pct` 公告后累计、`gap_status=intact/filled/none/pending`、`trading_days_since_r` 新鲜度；字段语义与判断要点见 `references/methodology.md` §八）。
   - `flags`（机械阈值命中，非结论）：`positive_type/negative_type/turnaround/accelerating/qoq_positive/cum_yoy_ge_min/prefilter_pass`。
   - `type/summary/change_reason/ann_date/first_ann_date`。
 
@@ -125,7 +128,7 @@ python3 scripts/render_period_html.py --period 20260630       # → reports/fore
 预告是逐日增量披露的，所以脚本把抓到的都落库、每天只补新增，不重复全量抓：
 
 - **连接层**：统一走仓库共享的 `shared/data/db_core.py`（开发态）/ 同步后的 `scripts/_shared/db_core.py`，不自建连接方案。后端由 `ALPHA_DB_BACKEND` 决定（PostgreSQL 默认，sqlite 离线），表都建在共享库里、以 `forecast_` 前缀命名（首次运行自动建表）。
-- **落库的东西**：`forecast_cache`（每股最新一版预告）、`forecast_fetch_log`（已扫过的「报告期×公告日」水位）、`forecast_income_cache`（实际季报归母净利/营收，含 NULL 行标记「查过但无数据」，避免次新股每次重查）、`forecast_basic_cache`（名称/行业）、`forecast_enrich_cache`（cninfo 扣非/原文）、`forecast_verdict`（模型判分 tier + 主线归属 + 证据指纹，增量判、待复判可查）。`theme_registry`/`theme_daily_state` 是 daily-market-sense 维护的主线台账，本 skill **只读**。
+- **落库的东西**：`forecast_cache`（每股最新一版预告）、`forecast_fetch_log`（已扫过的「报告期×公告日」水位）、`forecast_income_cache`（实际季报归母净利/营收，含 NULL 行标记「查过但无数据」，避免次新股每次重查）、`forecast_daily_cache`（预告股日线，供断层计算；首次抓公告前 400 自然日历史，此后每天只补尾部新 K 线）、`forecast_basic_cache`（名称/行业）、`forecast_enrich_cache`（cninfo 扣非/原文）、`forecast_verdict`（模型判分 tier + 主线归属 + 证据指纹，增量判、待复判可查）。`theme_registry`/`theme_daily_state` 是 daily-market-sense 维护的主线台账，本 skill **只读**。
 - **增量逻辑**：`forecast_scan` 只抓 `forecast_fetch_log` 里没有的公告日，外加最近 `--refetch-days`（默认 3）天始终重扫（抓当日新披露与修订版）；然后从 `forecast_cache` 读回该报告期**全量累积**结果做拆解。个股实际季报按 `(ts_code, period)` 命中缓存，只有新出现的个股才发 income 请求。`cninfo_enrich` 按 `(code, period)` 复用已下载解析的公告，不重复下 PDF。
 - **控制开关**：`--rebuild`（忽略水位、整窗重扫并刷新季报）、`--refresh-income`（强制重取季报，用于季报追溯调整）、`--no-cache`（本次不落库、全量抓）。`cninfo_enrich --refresh` 强制重下原文。
 - **性能**：落库写用单条批量语句（PostgreSQL 走 `execute_values`、SQLite 走 `executemany`），缓存读用 IN 批量、`forecast_cache(end_date)` 建索引；冷启动的 forecast 按公告日、income 按个股用线程池并发（`--fetch-workers` 默认 4；cninfo `--workers` 默认 6，配 thread-local `requests.Session` 复用连接）。限流时把 workers 设 1 串行，`TushareProxy` 自带退避重试。

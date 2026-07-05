@@ -46,6 +46,12 @@ POSITIVE_TYPES = {"预增", "略增", "续盈", "扭亏", "减亏"}
 NEGATIVE_TYPES = {"预减", "略减", "首亏", "续亏", "增亏"}
 
 INCOME_FIELDS = "ts_code,end_date,ann_date,report_type,n_income_attr_p,revenue"
+DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,vol,amount"
+
+# Price-reaction engine (净利润断层观察): history window before the announcement
+# for the 1y-position percentile, and the minimum bars to trust that percentile.
+PRICE_HISTORY_CAL_DAYS = 400
+POS_MIN_BARS = 60
 
 
 # --------------------------------------------------------------------------- #
@@ -239,8 +245,14 @@ def scan_forecasts_incremental(pro: TushareProxy, store: Store, period: str, sta
     if failed:
         notes.append(f"共有 {failed} 个公告日取数失败(已跳过)。")
 
-    store.upsert_forecasts(new_rows)
-    store.record_fetch_days(period, day_counts)
+    # Dedupe before upsert: a wide scan collects the same (ts_code, end_date) on
+    # multiple announcement days; the batch upsert must not carry duplicate keys.
+    # Only record the fetch-log watermark if the rows actually persisted — never
+    # mark a day scanned when its forecasts failed to write (would drop them).
+    if store.upsert_forecasts(_dedupe_latest(new_rows)):
+        store.record_fetch_days(period, day_counts)
+    elif store.available:
+        notes.append("预告落库失败，本次不记录公告日水位(下次将重扫)。")
 
     if store.available:
         full = store.load_forecasts(period)
@@ -265,7 +277,8 @@ def _median(lo: Any, hi: Any) -> Optional[float]:
 
 
 def build_stock_record(row: pd.Series, cache: CumCache, period: str,
-                       basic: Dict[str, Dict[str, str]], min_pchange: float) -> Dict[str, Any]:
+                       basic: Dict[str, Dict[str, str]], min_pchange: float,
+                       price_reaction: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     ts_code = str(row["ts_code"])
     ftype = str(row["type"]) if pd.notna(row.get("type")) else ""
 
@@ -371,6 +384,7 @@ def build_stock_record(row: pd.Series, cache: CumCache, period: str,
             "base_consistency": base_consistency,
         },
         "revenue_trailing": rev_block,
+        "price_reaction": price_reaction,
         "flags": {
             "positive_type": positive_type,
             "negative_type": ftype in NEGATIVE_TYPES,
@@ -476,6 +490,174 @@ def gather_income(pro: TushareProxy, store: Store, ts_codes: List[str], period: 
     return result, len(to_fetch)
 
 
+# --------------------------------------------------------------------------- #
+# Price reaction (净利润断层观察): deterministic gap/position/holding metrics
+# around the FIRST forecast announcement. No opportunity judgment here — the
+# model reads these plus the theme attribution to judge 断层机会.
+# --------------------------------------------------------------------------- #
+def _shift_ymd(ymd: str, days: int) -> str:
+    return (dt.datetime.strptime(ymd, "%Y%m%d").date() + dt.timedelta(days=days)).strftime("%Y%m%d")
+
+
+def _r2(v: Optional[float]) -> Optional[float]:
+    return None if v is None else round(v, 2)
+
+
+def compute_reaction(bars: List[Dict[str, Any]], anchor_ann: str, gap_min: float) -> Dict[str, Any]:
+    """Reaction metrics anchored on the first announcement date.
+
+    pre-ann close = close of the last bar <= anchor_ann (业绩预告基本为盘后披露);
+    reaction day R = first bar strictly after anchor_ann.
+    """
+    block: Dict[str, Any] = {"anchor_ann_date": anchor_ann}
+    usable = [b for b in bars if b.get("close") is not None and b.get("trade_date")]
+    if not usable:
+        block["note"] = "no_bars"
+        return block
+    pre_idx = None
+    for i, b in enumerate(usable):
+        if str(b["trade_date"]) <= anchor_ann:
+            pre_idx = i
+        else:
+            break
+    if pre_idx is None:
+        block["note"] = "no_pre_ann_bar"
+        return block
+
+    pre = usable[pre_idx]
+    pre_close = float(pre["close"])
+    block["pre_ann_date"] = str(pre["trade_date"])
+    block["pre_ann_close"] = _r2(pre_close)
+
+    # --- pre-announcement position / momentum (the two-case classifier inputs) ---
+    hist = usable[max(0, pre_idx + 1 - 250): pre_idx + 1]
+    block["history_bars"] = len(hist)
+    if len(hist) >= POS_MIN_BARS:
+        lows = [float(b["low"]) for b in hist if b.get("low") is not None]
+        highs = [float(b["high"]) for b in hist if b.get("high") is not None]
+        lo, hi = min(lows), max(highs)
+        block["pre_pos_1y_pct"] = _r2((pre_close - lo) / (hi - lo) * 100.0) if hi > lo else None
+    else:
+        block["pre_pos_1y_pct"] = None
+        block["note"] = "history_short"
+    if pre_idx >= 20 and usable[pre_idx - 20].get("close"):
+        block["pre_mom_20d_pct"] = _r2((pre_close / float(usable[pre_idx - 20]["close"]) - 1) * 100.0)
+    else:
+        block["pre_mom_20d_pct"] = None
+
+    # --- reaction day and after ---
+    post = usable[pre_idx + 1:]
+    if not post:
+        block["gap_status"] = "pending"
+        block["note"] = block.get("note") or "pending_reaction"
+        return block
+    r = post[0]
+    gap_open = (float(r["open"]) / pre_close - 1) * 100.0 if r.get("open") else None
+    block["reaction_date"] = str(r["trade_date"])
+    block["gap_open_pct"] = _r2(gap_open)
+    block["r_day_pct"] = _r2((float(r["close"]) / pre_close - 1) * 100.0)
+    if r.get("open") and float(r["open"]) > 0:
+        block["r_close_vs_open_pct"] = _r2((float(r["close"]) / float(r["open"]) - 1) * 100.0)
+    vol20 = [float(b["vol"]) for b in usable[max(0, pre_idx - 19): pre_idx + 1] if b.get("vol")]
+    if vol20 and r.get("vol"):
+        avg = sum(vol20) / len(vol20)
+        block["r_vol_ratio"] = _r2(float(r["vol"]) / avg) if avg > 0 else None
+
+    last = post[-1]
+    block["latest_date"] = str(last["trade_date"])
+    block["latest_close"] = _r2(float(last["close"]))
+    block["since_ann_pct"] = _r2((float(last["close"]) / pre_close - 1) * 100.0)
+    block["trading_days_since_r"] = len(post)
+    lows_since = [float(b["low"]) for b in post if b.get("low") is not None]
+    min_low = min(lows_since) if lows_since else None
+    block["min_low_since_r"] = _r2(min_low)
+
+    has_gap = gap_open is not None and gap_open >= gap_min
+    if not has_gap:
+        block["gap_status"] = "none"
+    elif min_low is not None and min_low <= pre_close:
+        block["gap_status"] = "filled"      # 跌回公告前收盘价下方 = 断层回补
+    else:
+        block["gap_status"] = "intact"      # 未回补
+    # Mechanical threshold hits only — NOT an opportunity verdict.
+    block["flags"] = {
+        "gap": bool(has_gap),
+        "gap_intact": block["gap_status"] == "intact",
+        "low_base": block.get("pre_pos_1y_pct") is not None and block["pre_pos_1y_pct"] < 40.0,
+        "high_pos": block.get("pre_pos_1y_pct") is not None and block["pre_pos_1y_pct"] >= 60.0,
+    }
+    return block
+
+
+def _price_fetch_ranges(bars: List[Dict[str, Any]], anchor_ann: str, today_str: str) -> List[Tuple[str, str]]:
+    """Head/tail incremental ranges for one stock's bar cache."""
+    need_start = _shift_ymd(anchor_ann, -PRICE_HISTORY_CAL_DAYS)
+    if not bars:
+        return [(need_start, today_str)]
+    cached_min = str(bars[0]["trade_date"])
+    cached_max = str(bars[-1]["trade_date"])
+    ranges: List[Tuple[str, str]] = []
+    # 45d buffer absorbs holidays; younger stocks simply have no earlier bars.
+    if cached_min > _shift_ymd(need_start, 45):
+        ranges.append((need_start, _shift_ymd(cached_min, -1)))
+    if cached_max < today_str:
+        ranges.append((_shift_ymd(cached_max, 1), today_str))
+    return ranges
+
+
+def _fetch_bars(pro: TushareProxy, ts_code: str, ranges: List[Tuple[str, str]]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for start, end in ranges:
+        if start > end:
+            continue
+        try:
+            df = pro.daily(ts_code=ts_code, start_date=start, end_date=end, fields=DAILY_FIELDS)
+        except Exception:  # noqa: BLE001
+            continue
+        if df is None or df.empty:
+            continue
+        for _, r in df.iterrows():
+            rows.append({
+                "ts_code": ts_code, "trade_date": str(r["trade_date"]),
+                "open": _clean(r.get("open")), "high": _clean(r.get("high")),
+                "low": _clean(r.get("low")), "close": _clean(r.get("close")),
+                "pre_close": _clean(r.get("pre_close")), "pct_chg": _clean(r.get("pct_chg")),
+                "vol": _clean(r.get("vol")), "amount": _clean(r.get("amount")),
+            })
+    return rows
+
+
+def gather_price_reactions(pro: TushareProxy, store: Store, anchors: Dict[str, str],
+                           gap_min: float, workers: int) -> Tuple[Dict[str, Dict[str, Any]], int]:
+    """Cache-first incremental bars for the forecast stocks, then compute the
+    reaction block per stock. Network fetch is concurrent; the batch write and
+    all computation stay on the main thread."""
+    codes = list(anchors.keys())
+    cached = store.load_bars_many(codes)
+    today_str = dt.date.today().strftime("%Y%m%d")
+
+    plans = {c: _price_fetch_ranges(cached.get(c, []), anchors[c], today_str) for c in codes}
+    to_fetch = [c for c in codes if plans[c]]
+    fetched_rows: List[Dict[str, Any]] = []
+    if to_fetch:
+        with ThreadPoolExecutor(max_workers=max(1, min(workers, len(to_fetch)))) as ex:
+            for rows in ex.map(lambda c: _fetch_bars(pro, c, plans[c]), to_fetch):
+                fetched_rows.extend(rows)
+    store.upsert_bars_many(fetched_rows)
+
+    new_by_code: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for row in fetched_rows:
+        new_by_code.setdefault(row["ts_code"], {})[row["trade_date"]] = row
+
+    reactions: Dict[str, Dict[str, Any]] = {}
+    for c in codes:
+        merged = {str(b["trade_date"]): b for b in cached.get(c, [])}
+        merged.update(new_by_code.get(c, {}))
+        bars = [merged[k] for k in sorted(merged)]
+        reactions[c] = compute_reaction(bars, anchors[c], gap_min)
+    return reactions, len(to_fetch)
+
+
 def _sort_key(rec: Dict[str, Any]) -> Tuple[int, float]:
     v = rec["profit_growth"]["cum_yoy_pct"]
     return (0, -v) if v is not None else (1, 0.0)
@@ -495,6 +677,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--rebuild", action="store_true", help="Ignore the fetch log and re-scan the whole window + refresh income.")
     ap.add_argument("--refresh-income", action="store_true", help="Force re-fetch of cached income actuals.")
     ap.add_argument("--no-cache", action="store_true", help="Disable the DB cache (full fetch, non-incremental).")
+    ap.add_argument("--gap-min", type=float, default=2.0,
+                    help="跳空开盘幅度 >= N%% 记为断层(gap flag)，默认 2.0。")
+    ap.add_argument("--no-price", action="store_true", help="跳过股价反应(净利润断层)计算。")
     ap.add_argument("--out", help="Output JSON path. Default: reports/forecast_scan_<period>.json")
     ap.add_argument("--stdout", action="store_true", help="Also print the full JSON to stdout.")
     args = ap.parse_args(argv)
@@ -526,16 +711,30 @@ def main(argv: Optional[List[str]] = None) -> int:
     stocks: List[Dict[str, Any]] = []
     income_missing: List[str] = []
     income_calls = 0
+    price_calls = 0
     if forecasts:
         all_codes = [str(f["ts_code"]) for f in forecasts]
         basic = resolve_basic(pro, store, all_codes)
         income_by_code, income_calls = gather_income(pro, store, all_codes, period, refresh_income, workers)
+        reactions: Dict[str, Dict[str, Any]] = {}
+        if not args.no_price:
+            anchors = {
+                str(f["ts_code"]): str(f.get("first_ann_date") or f.get("ann_date") or "")
+                for f in forecasts
+            }
+            anchors = {c: a for c, a in anchors.items() if a}
+            reactions, price_calls = gather_price_reactions(pro, store, anchors, args.gap_min, workers)
+            notes.append(
+                "price_reaction 以首次披露日为锚：跳空/当日反应取公告后首个交易日，"
+                "公告前位置=一年区间分位，gap_status 未回补=公告后最低价未跌破公告前收盘。"
+            )
         for row in forecasts:
             ts_code = str(row["ts_code"])
             cache = CumCache(income_by_code.get(ts_code, {}))
             if not cache.has_actual_np(prev_cumulative_period(period)):
                 income_missing.append(ts_code)
-            rec = build_stock_record(row, cache, period, basic, args.min_pchange)
+            rec = build_stock_record(row, cache, period, basic, args.min_pchange,
+                                     price_reaction=reactions.get(ts_code))
             if args.positive_only and rec["flags"]["negative_type"]:
                 continue
             stocks.append(rec)
@@ -543,6 +742,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     stocks.sort(key=_sort_key)
     fetch_stats["income_calls"] = income_calls
     fetch_stats["income_from_cache"] = max(len(forecasts) - income_calls, 0)
+    fetch_stats["price_fetch_stocks"] = price_calls
 
     payload = {
         "meta": {

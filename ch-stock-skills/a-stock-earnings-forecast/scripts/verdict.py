@@ -105,6 +105,7 @@ def build_context(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[s
                 why = "stale_drift"
             else:
                 continue  # already judged and still current
+        pr = s.get("price_reaction") or {}
         item = {
             "ts_code": ts_code,
             "name": s.get("name", ""),
@@ -116,6 +117,14 @@ def build_context(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[s
             "net_profit_median_yi": s.get("net_profit", {}).get("median_yi"),
             "change_reason": s.get("change_reason", ""),
             "kf_net_profit_yi": _kf_summary(en_idx.get(ts_code)),
+            "price_reaction": {
+                "gap_open_pct": pr.get("gap_open_pct"),
+                "r_day_pct": pr.get("r_day_pct"),
+                "since_ann_pct": pr.get("since_ann_pct"),
+                "gap_status": pr.get("gap_status"),
+                "pre_pos_1y_pct": pr.get("pre_pos_1y_pct"),
+                "pre_mom_20d_pct": pr.get("pre_mom_20d_pct"),
+            } if pr else None,
             "reason_to_judge": why,
         }
         if v is not None:
@@ -152,6 +161,9 @@ def build_context(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[s
         "notes": [
             "对每只 to_judge 股判 tier(强/中/观察/剔除)与 theme_id(归属主线，对不上填 null=无归属)。",
             "主线匹配靠语义:用 change_reason/行业 比对 themes 的 name/aliases/members_sample;弱匹配 match_confidence=low。",
+            "price_reaction 是净利润断层证据：gap_open_pct=公告次日跳空、pre_pos_1y_pct=公告前一年分位"
+            "(高位=趋势加速型/低位=低位启动型)、gap_status=intact 未回补。断层且在主线内的胜率锚更高，"
+            "回补(filled)或业绩强但股价长期无反应要在 caveat 里点明；判断细则见 references/methodology.md §八。",
             "reason_to_judge=stale_* 的是预告已修订或增速漂移，需复判；其余是新披露。",
             "theme_registry_empty=true 时主线台账为空(需先跑 daily-market-sense)，theme_id 一律填 null。",
         ],

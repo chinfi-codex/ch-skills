@@ -99,6 +99,14 @@ _SCHEMA: Dict[str, str] = {
             fetched_at TEXT,
             PRIMARY KEY (ts_code, period)
         )""",
+    "forecast_daily_cache": """
+        CREATE TABLE IF NOT EXISTS forecast_daily_cache (
+            ts_code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            open REAL, high REAL, low REAL, close REAL, pre_close REAL,
+            pct_chg REAL, vol REAL, amount REAL,
+            PRIMARY KEY (ts_code, trade_date)
+        )""",
     "forecast_verdict": """
         CREATE TABLE IF NOT EXISTS forecast_verdict (
             period TEXT NOT NULL,
@@ -133,6 +141,8 @@ _BASIC_COLS = ["ts_code", "name", "industry", "area", "market", "fetched_at"]
 _ENRICH_COLS = ["ts_code", "period", "ann_date", "title", "url", "parsed_json", "text", "fetched_at"]
 _VERDICT_COLS = ["period", "ts_code", "tier", "reason", "caveat", "theme_id", "theme_rationale",
                  "match_confidence", "evidence_ann_date", "evidence_cum_yoy", "judged_at"]
+_BAR_COLS = ["ts_code", "trade_date", "open", "high", "low", "close", "pre_close",
+             "pct_chg", "vol", "amount"]
 
 
 def _now() -> str:
@@ -184,6 +194,16 @@ class Store:
         """
         if not rows:
             return
+        # De-dupe by conflict key (keep last). PostgreSQL's execute_values runs a
+        # single INSERT ... ON CONFLICT statement, which errors if the same
+        # conflict target appears twice ("cannot affect row a second time");
+        # callers should pre-dedupe with domain order, this is the safety net.
+        if conflict_cols and len(rows) > 1:
+            key_idx = [cols.index(c) for c in conflict_cols]
+            deduped: Dict[Any, Sequence[Any]] = {}
+            for r in rows:
+                deduped[tuple(r[i] for i in key_idx)] = r
+            rows = list(deduped.values())
         update_cols = update_cols or [c for c in cols if c not in conflict_cols]
         set_clause = ", ".join(f"{c}=excluded.{c}" for c in update_cols)
         conflict = ", ".join(conflict_cols)
@@ -230,17 +250,22 @@ class Store:
             pass
 
     # -- forecast rows ------------------------------------------------------
-    def upsert_forecasts(self, rows: List[Dict[str, Any]]) -> None:
-        if not self.available or not rows:
-            return
+    def upsert_forecasts(self, rows: List[Dict[str, Any]]) -> bool:
+        """Returns True if persisted (or nothing to persist), False on failure —
+        so the caller only records the fetch-log watermark on a real write."""
+        if not self.available:
+            return False
+        if not rows:
+            return True
         try:
             self._batch_upsert(
                 "forecast_cache", FORECAST_COLS + ["fetched_at"], ["ts_code", "end_date"],
                 [[r.get(c) for c in FORECAST_COLS] + [_now()] for r in rows],
                 where="excluded.ann_date >= forecast_cache.ann_date",
             )
+            return True
         except Exception:  # noqa: BLE001
-            pass
+            return False
 
     def load_forecasts(self, period: str) -> List[Dict[str, Any]]:
         if not self.available:
@@ -384,6 +409,36 @@ class Store:
                 [(r["period"], r["ts_code"], r["tier"], r.get("reason"), r.get("caveat"),
                   r.get("theme_id"), r.get("theme_rationale"), r.get("match_confidence"),
                   r.get("evidence_ann_date"), r.get("evidence_cum_yoy"), now) for r in records],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    # -- daily bars (price-reaction engine; per-stock incremental) ----------
+    def load_bars_many(self, ts_codes: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """{ts_code: [bar dict asc by trade_date]} for the forecast stocks."""
+        if not self.available or not ts_codes:
+            return {}
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        try:
+            for chunk in _chunks(list(ts_codes), 900):
+                rows = self._rows(
+                    f"SELECT {', '.join(_BAR_COLS)} FROM forecast_daily_cache "
+                    f"WHERE ts_code IN ({self._in_clause(chunk)}) ORDER BY trade_date",
+                    list(chunk), _BAR_COLS,
+                )
+                for r in rows:
+                    out.setdefault(str(r["ts_code"]), []).append(r)
+        except Exception:  # noqa: BLE001
+            return out
+        return out
+
+    def upsert_bars_many(self, records: Sequence[Dict[str, Any]]) -> None:
+        if not self.available or not records:
+            return
+        try:
+            self._batch_upsert(
+                "forecast_daily_cache", _BAR_COLS, ["ts_code", "trade_date"],
+                [tuple(r.get(c) for c in _BAR_COLS) for r in records],
             )
         except Exception:  # noqa: BLE001
             pass

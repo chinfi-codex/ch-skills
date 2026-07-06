@@ -47,6 +47,7 @@ NEGATIVE_TYPES = {"预减", "略减", "首亏", "续亏", "增亏"}
 
 INCOME_FIELDS = "ts_code,end_date,ann_date,report_type,n_income_attr_p,revenue"
 DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,vol,amount"
+ADJ_FACTOR_FIELDS = "ts_code,trade_date,adj_factor"
 
 # Price-reaction engine (净利润断层观察): history window before the announcement
 # for the 1y-position percentile, and the minimum bars to trust that percentile.
@@ -665,6 +666,43 @@ def _price_fetch_ranges(bars: List[Dict[str, Any]], anchor_ann: str, today_str: 
     return ranges
 
 
+def _apply_qfq(df: pd.DataFrame, adj: pd.DataFrame) -> pd.DataFrame:
+    """Return OHLC prices on latest-available-date qfq basis for this range."""
+    if df is None or df.empty or adj is None or adj.empty:
+        return df
+    daily = df.copy()
+    factors = adj.copy()
+    daily["ts_code"] = daily["ts_code"].astype(str)
+    daily["trade_date"] = daily["trade_date"].astype(str)
+    factors["ts_code"] = factors["ts_code"].astype(str)
+    factors["trade_date"] = factors["trade_date"].astype(str)
+    factors["adj_factor"] = pd.to_numeric(factors["adj_factor"], errors="coerce")
+    factors = factors.dropna(subset=["ts_code", "trade_date", "adj_factor"])
+    if factors.empty:
+        return daily
+    end_date = str(daily["trade_date"].max())
+    base = (
+        factors.loc[factors["trade_date"] <= end_date]
+        .sort_values(["ts_code", "trade_date"])
+        .groupby("ts_code", as_index=False)
+        .tail(1)[["ts_code", "adj_factor"]]
+        .rename(columns={"adj_factor": "base_adj_factor"})
+    )
+    merged = daily.merge(
+        factors[["ts_code", "trade_date", "adj_factor"]],
+        on=["ts_code", "trade_date"], how="left",
+    ).merge(base, on="ts_code", how="left")
+    merged["qfq_factor"] = merged["adj_factor"] / merged["base_adj_factor"]
+    valid = merged["qfq_factor"].notna() & (merged["qfq_factor"] > 0)
+    for col in ("open", "high", "low", "close", "pre_close"):
+        if col in merged.columns:
+            merged[col] = pd.to_numeric(merged[col], errors="coerce")
+            merged.loc[valid, col] = merged.loc[valid, col] * merged.loc[valid, "qfq_factor"]
+    if "pct_chg" in merged.columns:
+        merged["pct_chg"] = pd.to_numeric(merged["pct_chg"], errors="coerce")
+    return merged.drop(columns=["adj_factor", "base_adj_factor", "qfq_factor"], errors="ignore")
+
+
 def _fetch_bars(pro: TushareProxy, ts_code: str, ranges: List[Tuple[str, str]]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for start, end in ranges:
@@ -676,6 +714,11 @@ def _fetch_bars(pro: TushareProxy, ts_code: str, ranges: List[Tuple[str, str]]) 
             continue
         if df is None or df.empty:
             continue
+        try:
+            adj = pro.adj_factor(ts_code=ts_code, start_date=start, end_date=end, fields=ADJ_FACTOR_FIELDS)
+            df = _apply_qfq(df, adj)
+        except Exception:  # noqa: BLE001
+            pass
         for _, r in df.iterrows():
             rows.append({
                 "ts_code": ts_code, "trade_date": str(r["trade_date"]),
@@ -688,11 +731,14 @@ def _fetch_bars(pro: TushareProxy, ts_code: str, ranges: List[Tuple[str, str]]) 
 
 
 def gather_price_reactions(pro: TushareProxy, store: Store, anchors: Dict[str, str],
-                           gap_min: float, workers: int) -> Tuple[Dict[str, Dict[str, Any]], int]:
+                           gap_min: float, workers: int, refresh_price: bool = False
+                           ) -> Tuple[Dict[str, Dict[str, Any]], int]:
     """Cache-first incremental bars for the forecast stocks, then compute the
     reaction block per stock. Network fetch is concurrent; the batch write and
     all computation stay on the main thread."""
     codes = list(anchors.keys())
+    if refresh_price:
+        store.delete_bars_many(codes)
     cached = store.load_bars_many(codes)
     today_str = dt.date.today().strftime("%Y%m%d")
 
@@ -736,6 +782,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="Always re-scan the most recent N trading days for late/revised filings (default 3).")
     ap.add_argument("--rebuild", action="store_true", help="Ignore the fetch log and re-scan the whole window + refresh income.")
     ap.add_argument("--refresh-income", action="store_true", help="Force re-fetch of cached income actuals.")
+    ap.add_argument("--refresh-price", action="store_true", help="Drop and refetch cached daily bars for the period stocks (qfq basis).")
     ap.add_argument("--no-cache", action="store_true", help="Disable the DB cache (full fetch, non-incremental).")
     ap.add_argument("--gap-min", type=float, default=2.0,
                     help="跳空开盘幅度 >= N%% 记为断层(gap flag)，默认 2.0。")
@@ -783,11 +830,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                 for f in forecasts
             }
             anchors = {c: a for c, a in anchors.items() if a}
-            reactions, price_calls = gather_price_reactions(pro, store, anchors, args.gap_min, workers)
+            reactions, price_calls = gather_price_reactions(
+                pro, store, anchors, args.gap_min, workers, args.refresh_price,
+            )
             notes.append(
                 "price_reaction 以首次披露日为锚：预告多在披露日前一交易日盘后发出，跳空/反应取"
                 "公告日当天(vs 公告日前一交易日收盘)；公告前位置=一年区间分位；未回补=向上断层其后"
-                "最低价未跌破、向下断层其后最高价未涨回公告前收盘。"
+                "最低价未跌破、向下断层其后最高价未涨回公告前收盘；个股日线 OHLC 使用前复权(qfq)"
+                "口径，成交量/成交额保留原始口径。"
             )
         for row in forecasts:
             ts_code = str(row["ts_code"])

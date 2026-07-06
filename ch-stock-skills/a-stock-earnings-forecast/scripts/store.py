@@ -527,6 +527,21 @@ class Store:
         except Exception:  # noqa: BLE001
             pass
 
+    def delete_bars_many(self, ts_codes: Sequence[str]) -> None:
+        """Drop cached price bars before a full price-basis refresh."""
+        if not self.available or not ts_codes:
+            return
+        try:
+            with get_connection() as conn:
+                cur = conn.cursor()
+                for chunk in _chunks(list(ts_codes), 900):
+                    cur.execute(
+                        adapt_sql(f"DELETE FROM forecast_daily_cache WHERE ts_code IN ({self._in_clause(chunk)})"),
+                        tuple(chunk),
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+
     # -- theme registry / lifecycle (READ-ONLY; owned by daily-market-sense) -
     def load_theme_registry(self) -> Dict[str, Dict[str, Any]]:
         """{theme_id: {name, aliases[], overlay, status}}. Empty if the theme

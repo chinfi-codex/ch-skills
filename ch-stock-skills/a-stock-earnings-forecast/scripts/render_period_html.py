@@ -4,8 +4,9 @@
 
 Layout: title → 产业结构综述 (model text from forecast_period_overview, stale-
 badged when the sample fingerprint moved) → filter bar → two panes. Left pane is
-the stock LIST, grouped by 主线 (default), 断层 facet, or flat; 净利润断层 rows
-are strongly marked (向上=业绩超预期跳空↑/强表现, 向下=不及预期跳空↓/弱表现).
+the stock LIST, grouped by 主线 (default), sorted by 公告发布时间, grouped by
+断层 facet, or flat; 净利润断层 rows are strongly marked (向上=业绩超预期跳空↑/强表现,
+向下=不及预期跳空↓/弱表现).
 Right pane is the DETAIL for
 the selected stock — an embedded K-line (candles + volume, announcement reaction
 day and pre-announcement close marked) plus a slim price line (跳空/公告后累计)、
@@ -193,6 +194,7 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
             "caveat": (v or {}).get("caveat"),
             "badges": badges,
             "stale": stale,
+            "ann_date": ann,
             "first_ann_date": first_ann,
         }
         # deterministic list facet (opportunity judgment stays with the model)
@@ -370,6 +372,7 @@ function rowLine2(s){
   const parts=[s.type||'—','累计'+fmtPct(s.cum_yoy,s.type),'单季'+fmtPct(s.single_q_yoy,s.type)+(s.accelerating?'↑':'')];
   if(s.since_ann_pct!==null&&s.since_ann_pct!==undefined)parts.push('后'+sign(s.since_ann_pct)+'%');
   if(s.theme_name)parts.push(s.theme_name.split('/')[0].trim());
+  if(s.ann_date)parts.push('披露'+s.ann_date.slice(4,6)+'-'+s.ann_date.slice(6));
   return parts.join(' · ');
 }
 function stockRow(s){
@@ -423,6 +426,14 @@ function renderList(){
   }else if(mode==='facet'){
     for(const [key,lab] of FACETS){const grp=rows.filter(s=>s.facet===key);if(!grp.length)continue;
       h+=`<div class="ghead"><span>${lab}</span><span>${grp.length}</span></div>`+grp.map(stockRow).join('');}
+  }else if(mode==='ann'){
+    const byDate=[...rows].sort((a,b)=>(b.ann_date||b.first_ann_date||'').localeCompare(a.ann_date||a.first_ann_date||''));
+    const seen=new Map();
+    for(const s of byDate){const d=s.ann_date||s.first_ann_date||'未披露日期';if(!seen.has(d))seen.set(d,[]);seen.get(d).push(s);}
+    for(const [d,grp] of seen.entries()){
+      const label=d==='未披露日期'?d:`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`;
+      h+=`<div class="ghead"><span>${label}</span><span>${grp.length}</span></div>`+grp.map(stockRow).join('');
+    }
   }else{h=rows.map(stockRow).join('');}
   document.getElementById('list').innerHTML=h||'<div class="empty">无匹配</div>';
   document.querySelectorAll('.row').forEach(el=>el.onclick=()=>select(el.dataset.c));
@@ -546,7 +557,7 @@ def render_html(view: Dict[str, Any]) -> str:
 {overview_html}
 <div class="ctrl">
 <input id="q" placeholder="搜索 名称 / 代码 / 主线">
-<select id="grp"><option value="theme">按主线分组</option><option value="facet">按断层分组</option><option value="flat">平铺</option></select>
+<select id="grp"><option value="theme">按主线分组</option><option value="ann">按发布时间排序</option><option value="facet">按断层分组</option><option value="flat">平铺</option></select>
 <select id="react"><option value="">全部反应</option><option value="up">向上断层(强)</option><option value="down">向下断层(弱)</option><option value="intact">断层未回补</option><option value="muted">未反应</option><option value="intheme">主线内</option></select>
 <select id="tier"><option value="">全部分档</option><option>强</option><option>中</option><option>观察</option><option>剔除</option></select>
 </div>

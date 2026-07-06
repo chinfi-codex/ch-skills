@@ -15,6 +15,9 @@ Cache tables
                          re-queried every run
 - forecast_basic_cache: stock name/industry/area/market
 - forecast_enrich_cache: cninfo 扣非/营收/原因 per (ts_code, period)
+- forecast_verdict     : model verdicts (tier + theme attribution) per (period, ts_code)
+- forecast_theme_trend : model-judged report-period industry trend per (period, theme_id)
+- forecast_period_overview: model-written 产业结构综述 per period (sample fingerprint for staleness)
 
 Writes go through one batched statement per table (execute_values on PostgreSQL,
 executemany on SQLite); reads are batched (one query per call, IN-lists for the
@@ -122,6 +125,30 @@ _SCHEMA: Dict[str, str] = {
             judged_at TEXT,
             PRIMARY KEY (period, ts_code)
         )""",
+    "forecast_theme_trend": """
+        CREATE TABLE IF NOT EXISTS forecast_theme_trend (
+            period TEXT NOT NULL,
+            theme_id TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            strong_common TEXT,
+            weak_common TEXT,
+            cross_validation TEXT,
+            confidence TEXT,
+            evidence_strong_n INTEGER,
+            evidence_weak_n INTEGER,
+            evidence_member_n INTEGER,
+            judged_at TEXT,
+            PRIMARY KEY (period, theme_id)
+        )""",
+    "forecast_period_overview": """
+        CREATE TABLE IF NOT EXISTS forecast_period_overview (
+            period TEXT PRIMARY KEY,
+            overview TEXT NOT NULL,
+            evidence_total INTEGER,
+            evidence_positive INTEGER,
+            evidence_negative INTEGER,
+            judged_at TEXT
+        )""",
 }
 
 # forecast_cache is read by end_date (period); the PK is (ts_code, end_date) so a
@@ -141,6 +168,10 @@ _BASIC_COLS = ["ts_code", "name", "industry", "area", "market", "fetched_at"]
 _ENRICH_COLS = ["ts_code", "period", "ann_date", "title", "url", "parsed_json", "text", "fetched_at"]
 _VERDICT_COLS = ["period", "ts_code", "tier", "reason", "caveat", "theme_id", "theme_rationale",
                  "match_confidence", "evidence_ann_date", "evidence_cum_yoy", "judged_at"]
+_TREND_COLS = ["period", "theme_id", "direction", "strong_common", "weak_common", "cross_validation",
+               "confidence", "evidence_strong_n", "evidence_weak_n", "evidence_member_n", "judged_at"]
+_OVERVIEW_COLS = ["period", "overview", "evidence_total", "evidence_positive",
+                  "evidence_negative", "judged_at"]
 _BAR_COLS = ["ts_code", "trade_date", "open", "high", "low", "close", "pre_close",
              "pct_chg", "vol", "amount"]
 
@@ -409,6 +440,59 @@ class Store:
                 [(r["period"], r["ts_code"], r["tier"], r.get("reason"), r.get("caveat"),
                   r.get("theme_id"), r.get("theme_rationale"), r.get("match_confidence"),
                   r.get("evidence_ann_date"), r.get("evidence_cum_yoy"), now) for r in records],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    # -- model theme trends (report-period industry trend per 主线) ----------
+    def load_theme_trends(self, period: str) -> Dict[str, Dict[str, Any]]:
+        if not self.available:
+            return {}
+        try:
+            rows = self._rows(
+                f"SELECT {', '.join(_TREND_COLS)} FROM forecast_theme_trend WHERE period = ?",
+                [period], _TREND_COLS,
+            )
+            return {str(r["theme_id"]): r for r in rows}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def upsert_theme_trends(self, records: Sequence[Dict[str, Any]]) -> None:
+        if not self.available or not records:
+            return
+        try:
+            now = _now()
+            self._batch_upsert(
+                "forecast_theme_trend", _TREND_COLS, ["period", "theme_id"],
+                [(r["period"], r["theme_id"], r["direction"], r.get("strong_common"),
+                  r.get("weak_common"), r.get("cross_validation"), r.get("confidence"),
+                  r.get("evidence_strong_n"), r.get("evidence_weak_n"),
+                  r.get("evidence_member_n"), now) for r in records],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    # -- model period overview (产业结构综述, one row per period) -------------
+    def load_period_overview(self, period: str) -> Optional[Dict[str, Any]]:
+        if not self.available:
+            return None
+        try:
+            rows = self._rows(
+                f"SELECT {', '.join(_OVERVIEW_COLS)} FROM forecast_period_overview WHERE period = ?",
+                [period], _OVERVIEW_COLS,
+            )
+            return rows[0] if rows else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def upsert_period_overview(self, record: Dict[str, Any]) -> None:
+        if not self.available or not record:
+            return
+        try:
+            self._batch_upsert(
+                "forecast_period_overview", _OVERVIEW_COLS, ["period"],
+                [(record["period"], record["overview"], record.get("evidence_total"),
+                  record.get("evidence_positive"), record.get("evidence_negative"), _now())],
             )
         except Exception:  # noqa: BLE001
             pass

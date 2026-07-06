@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """Render one self-contained HTML page per report period (master-detail view).
 
-Layout: title → filter bar → two panes. Left pane is the stock LIST, grouped by
-主线 (default), 断层 facet, or flat; 净利润断层 rows are strongly marked (向上=
-业绩超预期跳空↑/强表现, 向下=不及预期跳空↓/弱表现). Right pane is the DETAIL for
+Layout: title → 产业结构综述 (model text from forecast_period_overview, stale-
+badged when the sample fingerprint moved) → filter bar → two panes. Left pane is
+the stock LIST, grouped by 主线 (default), 断层 facet, or flat; 净利润断层 rows
+are strongly marked (向上=业绩超预期跳空↑/强表现, 向下=不及预期跳空↓/弱表现).
+Right pane is the DETAIL for
 the selected stock — an embedded K-line (candles + volume, announcement reaction
 day and pre-announcement close marked) plus a slim price line (跳空/公告后累计)、
 业绩、归属主线, and a **行业趋势分析** block: within the stock's mainline, how many
-members are 强表现 (向上断层) vs 弱表现 (向下断层), i.e. the report-period
-industry trend read bottom-up from earnings-vs-price gaps.
+members are 强表现 (向上断层) vs 弱表现 (向下断层) — the report-period industry
+trend read bottom-up from earnings-vs-price gaps — plus, when the model has
+judged it, the attributed trend from forecast_theme_trend (direction + 强/弱侧
+归因 + cross-validation), marked stale when membership moved since judgment.
 
-Everything comes from the evidence pack + cninfo enrichment + verdict ledger +
-live theme states + the skill's own bar cache; the renderer projects and
-tallies deterministic facts, it does not judge opportunities. Self-contained
-single file, no CDN, dark-mode aware.
+Everything comes from the evidence pack + cninfo enrichment + verdict ledger
+(incl. theme trends) + live theme states + the skill's own bar cache; the
+renderer projects and tallies deterministic facts, it does not judge
+opportunities. Self-contained single file, no CDN, dark-mode aware.
 
 Usage:
     python3 scripts/render_period_html.py --period 20260630
@@ -26,6 +31,7 @@ import datetime as dt
 import json
 import os
 import sys
+from html import escape
 from typing import Any, Dict, List, Optional
 
 from store import Store
@@ -103,7 +109,8 @@ def _compact_kline(bars: List[Dict[str, Any]], keep: int) -> List[List[Any]]:
 
 def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str, Any]],
                verdicts: Dict[str, Dict[str, Any]], themes: Dict[str, Dict[str, Any]],
-               states: Dict[str, Dict[str, Any]], bars_map: Dict[str, List[Dict[str, Any]]],
+               states: Dict[str, Dict[str, Any]], trends: Dict[str, Dict[str, Any]],
+               overview_row: Optional[Dict[str, Any]], bars_map: Dict[str, List[Dict[str, Any]]],
                today: dt.date, pos_split: float = POS_SPLIT, muted_max: float = MUTED_MAX_PCT,
                kline_bars: int = KLINE_BARS) -> Dict[str, Any]:
     en_idx = {str(s["ts_code"]): s for s in (enrich or {}).get("stocks", []) if s.get("found")}
@@ -221,7 +228,7 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
             tr["weak"].append(brief)
         else:
             tr["neutral_n"] += 1
-    for tr in theme_trends.values():
+    for tid, tr in theme_trends.items():
         s_n, w_n = len(tr["strong"]), len(tr["weak"])
         tr["net"] = s_n - w_n
         if tr["net"] >= TREND_NET:
@@ -232,10 +239,44 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
             tr["trend"] = "分歧"
         else:
             tr["trend"] = "中性"
+        # model-judged trend (attribution + cross-validation) joined from the
+        # ledger; stale when membership moved since the judgment snapshot.
+        row = trends.get(tid)
+        if row:
+            snap = (row.get("evidence_strong_n"), row.get("evidence_weak_n"),
+                    row.get("evidence_member_n"))
+            tr["judged"] = {
+                "direction": row.get("direction"),
+                "strong_common": row.get("strong_common"),
+                "weak_common": row.get("weak_common"),
+                "cross_validation": row.get("cross_validation"),
+                "confidence": row.get("confidence"),
+                "judged_at": str(row.get("judged_at") or "")[:10],
+                "snap_strong": snap[0], "snap_weak": snap[1],
+                "stale": snap != (s_n, w_n, s_n + w_n + tr["neutral_n"]),
+            }
 
     facet_rank = {"gap_trend": 0, "gap_low": 1, "gap_unpos": 2, "gap_down": 3, "muted": 4, "other": 5}
     stocks.sort(key=lambda s: (facet_rank[s["facet"]], not s["theme_hot"],
                                -abs(s["gap_open_pct"] or 0), -(s["cum_yoy"] or -999)))
+
+    # 产业结构综述 (model text from forecast_period_overview); stale when the
+    # whole-sample fingerprint (total/positive/negative counts) moved since it
+    # was written — same fingerprint verdict.py snapshots at record time.
+    overview = None
+    if overview_row:
+        ev_stocks = evidence.get("stocks", [])
+        cur = (len(ev_stocks),
+               sum(1 for s in ev_stocks if (s.get("flags") or {}).get("positive_type")),
+               sum(1 for s in ev_stocks if (s.get("flags") or {}).get("negative_type")))
+        snap = (overview_row.get("evidence_total"), overview_row.get("evidence_positive"),
+                overview_row.get("evidence_negative"))
+        overview = {
+            "text": overview_row.get("overview") or "",
+            "judged_at": str(overview_row.get("judged_at") or "")[:10],
+            "snap_total": snap[0],
+            "stale": snap != cur,
+        }
 
     return {
         "period": period,
@@ -246,6 +287,7 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
         "trend_net": TREND_NET,
         "stocks": stocks,
         "theme_trends": theme_trends,
+        "overview": overview,
         "klines": klines,
     }
 
@@ -267,6 +309,9 @@ _CSS = """
 font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
 font-size:14px;line-height:1.6}.wrap{max-width:1200px;margin:0 auto;padding:24px 20px 60px}
 h1{font-size:21px;font-weight:500;margin:0}.sub{color:var(--tx2);font-size:13px;margin-top:3px}
+.ovw{background:var(--s2);border:1px solid var(--bd);border-radius:12px;padding:12px 16px;margin-top:14px;font-size:13px}
+.ovw .ttl{font-size:12px;color:var(--tx3);font-weight:500;margin-bottom:4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ovw .ovtx{white-space:pre-line;line-height:1.75}
 .ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:16px 0 12px}
 input,select{font:inherit;font-size:13px;padding:6px 9px;border:1px solid var(--bd);border-radius:8px;background:var(--s2);color:var(--tx)}
 input{flex:1;min-width:130px}
@@ -340,6 +385,12 @@ function trendPill(tr){
   const arrow=tr.trend==='偏强'?'↑':(tr.trend==='偏弱'?'↓':(tr.trend==='分歧'?'⇅':'·'));
   return `<span class="trend ${cls}">${arrow}${tr.trend} 强${tr.strong.length}/弱${tr.weak.length}</span>`;
 }
+function judgedPill(tr){
+  if(!tr||!tr.judged)return'';
+  const j=tr.judged;
+  const cls=j.direction==='向上'?'t-up':(j.direction==='向下'?'t-dn':(j.direction==='分化'?'t-mix':'t-flat'));
+  return `<span class="trend ${cls}" title="${(j.cross_validation||'').replace(/"/g,'&quot;')}">判·${j.direction}${j.stale?'†':''}</span>`;
+}
 function filtered(){
   const q=document.getElementById('q').value.trim().toLowerCase();
   const tf=document.getElementById('tier').value, rf=document.getElementById('react').value;
@@ -367,7 +418,7 @@ function renderList(){
     for(const k of keys){
       const grp=seen.get(k),s0=grp[0],tr=DATA.theme_trends[k];
       const label=k==='__none__'?'无归属主线':(k==='__unjudged__'?'未判':`${s0.theme_name} ${s0.theme_state||''}${s0.theme_stars?'★'+s0.theme_stars:''}`);
-      h+=`<div class="ghead"><span>${label}</span>${tr?trendPill(tr):`<span>${grp.length}</span>`}</div>`+grp.map(stockRow).join('');
+      h+=`<div class="ghead"><span>${label}</span><span style="display:flex;gap:4px;flex-wrap:wrap">${tr?trendPill(tr)+judgedPill(tr):`<span>${grp.length}</span>`}</span></div>`+grp.map(stockRow).join('');
     }
   }else if(mode==='facet'){
     for(const [key,lab] of FACETS){const grp=rows.filter(s=>s.facet===key);if(!grp.length)continue;
@@ -401,7 +452,16 @@ function renderDetail(){
     if(tr.strong.length)h+=`<div class="tline"><span class="pos">强表现·向上断层 ${tr.strong.length}</span>：${tr.strong.map(memberLine).join('、')}</div>`;
     if(tr.weak.length)h+=`<div class="tline"><span class="neg">弱表现·向下断层 ${tr.weak.length}</span>：${tr.weak.map(memberLine).join('、')}</div>`;
     if(tr.neutral_n)h+=`<div class="tline mut">无断层 ${tr.neutral_n} 只</div>`;
-    h+=`<div class="tline mut" style="font-size:11px">净方向=强−弱=${tr.net>=0?'+':''}${tr.net}（|净|≥${DATA.trend_net} 记偏强/偏弱；机械计数，趋势解读由报告承担）</div>`;
+    h+=`<div class="tline mut" style="font-size:11px">净方向=强−弱=${tr.net>=0?'+':''}${tr.net}（|净|≥${DATA.trend_net} 记偏强/偏弱；机械计数）</div>`;
+    const j=tr.judged;
+    if(j){
+      h+=`<div class="tline" style="margin-top:4px">${judgedPill(tr)}${j.confidence?` <span class="mut" style="font-size:11px">confidence=${j.confidence}</span>`:''} <span class="mut" style="font-size:11px">判于 ${j.judged_at}（当时强${j.snap_strong}/弱${j.snap_weak}）${j.stale?' · 成员已变化，待复判':''}</span></div>`;
+      if(j.strong_common)h+=`<div class="tline"><span class="pos">强侧归因</span>：${j.strong_common}</div>`;
+      if(j.weak_common)h+=`<div class="tline"><span class="neg">弱侧归因</span>：${j.weak_common}</div>`;
+      if(j.cross_validation)h+=`<div class="dtext" style="margin-top:3px">交叉验证：${j.cross_validation}</div>`;
+    }else{
+      h+=`<div class="tline mut" style="font-size:11px">行业趋势归因待判——verdict 判分时对该主线写 theme_trends（强/弱侧归因+交叉验证）。</div>`;
+    }
   }
   h+=`<div class="dsec">业绩（预告中值口径）</div><div class="mgrid">`;
   h+=mrow('归母净利中值',s.np_median_yi!=null?s.np_median_yi+'亿':'—');
@@ -464,6 +524,14 @@ renderList();
 def render_html(view: Dict[str, Any]) -> str:
     empty_note = ('<div class="foot">主线台账为空——归属与行业趋势需先运行 daily-market-sense 填充 theme 台账、再跑 verdict 判分归属。</div>'
                   if view["theme_registry_empty"] else "")
+    ov = view.get("overview")
+    if ov:
+        stale_badge = '<span class="badge bstale">样本已更新，待复判</span>' if ov["stale"] else ""
+        overview_html = ('<div class="ovw"><div class="ttl">报告期产业结构综述（模型判断，落台账）'
+                         f'<span>判于 {ov["judged_at"]} · 当时样本 {ov["snap_total"]} 家</span>{stale_badge}</div>'
+                         f'<div class="ovtx">{escape(ov["text"])}</div></div>')
+    else:
+        overview_html = ""
     data_json = json.dumps({
         "pos_split": view["pos_split"], "trend_net": view["trend_net"],
         "stocks": view["stocks"], "theme_trends": view["theme_trends"], "klines": view["klines"],
@@ -475,6 +543,7 @@ def render_html(view: Dict[str, Any]) -> str:
 <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px">
 <div><h1>{view['period_label']} 业绩预告 · 报告期观察</h1><div class="sub">end_date {view['period']} · 业绩 × 股价断层 × 主线行业趋势 · 列表+详情 · 一期一页增量更新</div></div>
 <div class="sub">更新于 {view['updated_at']}</div></div>
+{overview_html}
 <div class="ctrl">
 <input id="q" placeholder="搜索 名称 / 代码 / 主线">
 <select id="grp"><option value="theme">按主线分组</option><option value="facet">按断层分组</option><option value="flat">平铺</option></select>
@@ -485,7 +554,7 @@ def render_html(view: Dict[str, Any]) -> str:
 <div class="list" id="list"></div>
 <div class="detail" id="detail"><div class="empty">点击左侧个股查看详情</div></div>
 </div>
-<div class="foot">净利=预告中值 · 断层以首次披露日为锚(预告多在披露日前一交易日盘后发出，反应落在披露日当天)：跳空=公告日当天开盘 vs 公告日前一交易日收盘；向上=业绩超预期跳空(强表现)、向下=不及预期跳空下跌(弱表现)；未回补=其后价格未回到公告前收盘另一侧，D+n=断层后交易日数(新断层未经检验) · 行业趋势=报告期内按主线聚合成员的断层方向(强表现向上/弱表现向下)自下而上归纳，机械计数、定性由报告承担 · K线红涨绿跌，蓝虚线=公告反应日、橙虚线=公告前收盘 · 归属主线由模型语义匹配 daily-market-sense 主线台账 · 仅作观察、不含买卖建议</div>
+<div class="foot">净利=预告中值 · 断层以首次披露日为锚(预告多在披露日前一交易日盘后发出，反应落在披露日当天)：跳空=公告日当天开盘 vs 公告日前一交易日收盘；向上=业绩超预期跳空(强表现)、向下=不及预期跳空下跌(弱表现)；未回补=其后价格未回到公告前收盘另一侧，D+n=断层后交易日数(新断层未经检验) · 行业趋势=报告期内按主线聚合成员的断层方向(强表现向上/弱表现向下)自下而上归纳：↑↓⇅为机械计数，「判·方向」为模型对强/弱成员变动原因的归因交叉验证(落 verdict 台账，†=成员已变化待复判) · 页首产业结构综述=模型基于全样本行业聚合(industry_summary，含负向预告)的结构判断，样本随披露累积、综述会随之更新 · K线红涨绿跌，蓝虚线=公告反应日、橙虚线=公告前收盘 · 归属主线由模型语义匹配 daily-market-sense 主线台账 · 仅作观察、不含买卖建议</div>
 {empty_note}
 </div>
 <script>const DATA={data_json};{_JS}</script>
@@ -520,7 +589,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     codes = [str(s["ts_code"]) for s in evidence.get("stocks", [])]
     bars_map = store.load_bars_many(codes)
     view = build_view(period, evidence, enrich, store.load_verdicts(period),
-                      store.load_theme_registry(), store.load_theme_latest_state(), bars_map, today,
+                      store.load_theme_registry(), store.load_theme_latest_state(),
+                      store.load_theme_trends(period), store.load_period_overview(period),
+                      bars_map, today,
                       pos_split=args.pos_split, muted_max=args.muted_max, kline_bars=args.kline_days)
     html = render_html(view)
 
@@ -531,6 +602,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     trends = view["theme_trends"]
     print(json.dumps({"period": period, "stocks": len(view["stocks"]),
                       "klines": len(view["klines"]), "themes_with_trend": len(trends),
+                      "themes_judged": sum(1 for t in trends.values() if t.get("judged")),
+                      "overview": bool(view.get("overview")),
                       "out": out_path}, ensure_ascii=False, indent=2))
     return 0
 

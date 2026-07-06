@@ -397,6 +397,50 @@ def build_stock_record(row: pd.Series, cache: CumCache, period: str,
     }
 
 
+def build_industry_summary(stocks: List[Dict[str, Any]], top_members: int = 5) -> List[Dict[str, Any]]:
+    """Per stock_basic-industry tallies for the 产业结构综述: direction counts,
+    growth medians, gap tallies and the largest members. Counting only — how the
+    industries cluster into macro groups (高端制造/消费/地产链…) and what the
+    structure means is the model's judgment (references/methodology.md §十)."""
+    def med(vals: List[Any]) -> Optional[float]:
+        nums = sorted(float(v) for v in vals if v is not None)
+        if not nums:
+            return None
+        n = len(nums)
+        m = nums[n // 2] if n % 2 else (nums[n // 2 - 1] + nums[n // 2]) / 2.0
+        return round(m, 2)
+
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for s in stocks:
+        groups.setdefault(s.get("industry") or "未知", []).append(s)
+    out: List[Dict[str, Any]] = []
+    for ind, grp in groups.items():
+        members = sorted(grp, key=lambda s: -abs(s["net_profit"].get("median_yi") or 0.0))[:top_members]
+        out.append({
+            "industry": ind,
+            "n": len(grp),
+            "positive_n": sum(1 for s in grp if s["flags"]["positive_type"]),
+            "negative_n": sum(1 for s in grp if s["flags"]["negative_type"]),
+            "turnaround_n": sum(1 for s in grp if s["flags"]["turnaround"]),
+            "accelerating_n": sum(1 for s in grp if s["flags"]["accelerating"]),
+            "gap_up_n": sum(1 for s in grp if (s.get("price_reaction") or {}).get("gap_dir") == "up"),
+            "gap_down_n": sum(1 for s in grp if (s.get("price_reaction") or {}).get("gap_dir") == "down"),
+            "cum_yoy_median": med([s["profit_growth"].get("cum_yoy_pct") for s in grp]),
+            "single_q_yoy_median": med([s["profit_growth"].get("single_q_yoy_pct") for s in grp]),
+            "qoq_median": med([s["profit_growth"].get("qoq_pct") for s in grp]),
+            "members": [{
+                "name": m.get("name", ""),
+                "type": m.get("type", ""),
+                "cum_yoy_pct": m["profit_growth"].get("cum_yoy_pct"),
+                "single_q_yoy_pct": m["profit_growth"].get("single_q_yoy_pct"),
+                "np_median_yi": m["net_profit"].get("median_yi"),
+                "gap_dir": (m.get("price_reaction") or {}).get("gap_dir"),
+            } for m in members],
+        })
+    out.sort(key=lambda g: (-g["n"], g["industry"]))
+    return out
+
+
 def fetch_all_basic(pro: TushareProxy) -> Dict[str, Dict[str, str]]:
     df = pro.stock_basic(exchange="", list_status="L",
                          fields="ts_code,name,industry,area,market")
@@ -760,6 +804,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     fetch_stats["income_calls"] = income_calls
     fetch_stats["income_from_cache"] = max(len(forecasts) - income_calls, 0)
     fetch_stats["price_fetch_stocks"] = price_calls
+    notes.append(
+        "industry_summary 按 stock_basic 行业口径做确定性计数(方向家数/增速中位/断层计数/大票样本)，"
+        "只是产业结构综述的原料；宏观分组与结构判断由模型完成，行业口径本身不当结论用。"
+    )
 
     payload = {
         "meta": {
@@ -776,6 +824,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "income_missing": income_missing,
             "data_notes": notes,
         },
+        "industry_summary": build_industry_summary(stocks),
         "stocks": stocks,
     }
 

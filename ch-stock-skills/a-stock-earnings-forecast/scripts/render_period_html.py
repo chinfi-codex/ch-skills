@@ -8,8 +8,9 @@ the stock LIST, grouped by 主线 (default), sorted by 公告发布时间, group
 断层 facet, or flat; 净利润断层 rows are strongly marked (向上=业绩超预期跳空↑/强表现,
 向下=不及预期跳空↓/弱表现).
 Right pane is the DETAIL for
-the selected stock — an embedded K-line (candles + volume, announcement reaction
-day and pre-announcement close marked) plus a slim price line (跳空/公告后累计)、
+the selected stock — an embedded K-line (candles + volume, announcement marker
+on the trading bar immediately before ann_date, and pre-announcement close marked)
+plus a slim price line (跳空/公告后累计)、
 业绩、归属主线, and a **行业趋势分析** block: within the stock's mainline, how many
 members are 强表现 (向上断层) vs 弱表现 (向下断层) — the report-period industry
 trend read bottom-up from earnings-vs-price gaps — plus, when the model has
@@ -506,9 +507,10 @@ function drawKline(el,bars,s){
   for(let i=0;i<4;i++){const p=lo+(hi-lo)*i/3,yy=y(p);
     g+=`<line x1="${PADL}" y1="${yy}" x2="${W-PADR}" y2="${yy}" stroke="var(--bd)" stroke-width="0.6"/>`+
        `<text x="${PADL-4}" y="${yy+3.5}" font-size="10" fill="var(--tx3)" text-anchor="end">${p.toFixed(p>=100?0:2)}</text>`;}
-  let k='',v='',rIdx=-1;
+  let k='',v='',rIdx=-1,annIdx=-1;
   for(let i=0;i<n;i++){const b=bars[i],x=PADL+i*step+step/2;
     if(b[0]===s.reaction_date)rIdx=i;
+    if(annIdx<0&&s.ann_date&&b[0]>=s.ann_date)annIdx=i;
     if(b[1]===null||b[2]===null||b[3]===null||b[4]===null)continue;
     const up=b[4]>=b[1],c=up?'var(--kup)':'var(--kdn)';
     k+=`<line x1="${x}" y1="${y(b[2])}" x2="${x}" y2="${y(b[3])}" stroke="${c}" stroke-width="1"/>`;
@@ -519,13 +521,14 @@ function drawKline(el,bars,s){
   if(s.pre_ann_close!==null&&s.pre_ann_close!==undefined){const yy=y(s.pre_ann_close);
     m+=`<line x1="${PADL}" y1="${yy}" x2="${W-PADR}" y2="${yy}" stroke="var(--amb)" stroke-width="1" stroke-dasharray="4 3"/>`+
        `<text x="${W-PADR}" y="${yy-4}" font-size="10" fill="var(--amb)" text-anchor="end">公告前收盘 ${s.pre_ann_close}</text>`;}
-  if(rIdx>=0){const x=PADL+rIdx*step+step/2;
+  const anchorIdx=annIdx>=0?annIdx:rIdx;
+  if(anchorIdx>=0){const markerIdx=Math.max(0,anchorIdx-1),x=PADL+markerIdx*step+step/2;
     m+=`<line x1="${x}" y1="${PADT}" x2="${x}" y2="${PADT+PH+GAPV+VH}" stroke="var(--acc)" stroke-width="1" stroke-dasharray="4 3"/>`+
-       `<text x="${x+3}" y="${PADT+10}" font-size="10" fill="var(--acc)">公告反应日</text>`;}
+       `<text x="${x+3}" y="${PADT+10}" font-size="10" fill="var(--acc)">公告日</text>`;}
   const d0=bars[0][0],d1=bars[n-1][0];
   const ax=`<text x="${PADL}" y="${H-4}" font-size="10" fill="var(--tx3)">${d0.slice(0,4)}-${d0.slice(4,6)}-${d0.slice(6)}</text>`+
     `<text x="${W-PADR}" y="${H-4}" font-size="10" fill="var(--tx3)" text-anchor="end">${d1.slice(0,4)}-${d1.slice(4,6)}-${d1.slice(6)}</text>`;
-  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img" aria-label="${s.name} 日K线，标注业绩预告反应日与公告前收盘">${g}${k}${v}${m}${ax}</svg>`;
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img" aria-label="${s.name} 日K线，公告日标注在公告日前一交易日，并标注公告前收盘">${g}${k}${v}${m}${ax}</svg>`;
 }
 ['q','tier','react','grp'].forEach(id=>document.getElementById(id).addEventListener('input',renderList));
 renderList();
@@ -565,7 +568,7 @@ def render_html(view: Dict[str, Any]) -> str:
 <div class="list" id="list"></div>
 <div class="detail" id="detail"><div class="empty">点击左侧个股查看详情</div></div>
 </div>
-<div class="foot">净利=预告中值 · 断层以首次披露日为锚(预告多在披露日前一交易日盘后发出，反应落在披露日当天)：跳空=公告日当天开盘 vs 公告日前一交易日收盘；向上=业绩超预期跳空(强表现)、向下=不及预期跳空下跌(弱表现)；未回补=其后价格未回到公告前收盘另一侧，D+n=断层后交易日数(新断层未经检验) · 行业趋势=报告期内按主线聚合成员的断层方向(强表现向上/弱表现向下)自下而上归纳：↑↓⇅为机械计数，「判·方向」为模型对强/弱成员变动原因的归因交叉验证(落 verdict 台账，†=成员已变化待复判) · 页首产业结构综述=模型基于全样本行业聚合(industry_summary，含负向预告)的结构判断，样本随披露累积、综述会随之更新 · K线使用前复权(qfq)口径，红涨绿跌，蓝虚线=公告反应日、橙虚线=公告前收盘 · 归属主线由模型语义匹配 daily-market-sense 主线台账 · 仅作观察、不含买卖建议</div>
+<div class="foot">净利=预告中值 · 断层以首次披露日为锚(预告多在披露日前一交易日盘后发出，反应落在披露日当天)：跳空=公告日当天开盘 vs 公告日前一交易日收盘；向上=业绩超预期跳空(强表现)、向下=不及预期跳空下跌(弱表现)；未回补=其后价格未回到公告前收盘另一侧，D+n=断层后交易日数(新断层未经检验) · 行业趋势=报告期内按主线聚合成员的断层方向(强表现向上/弱表现向下)自下而上归纳：↑↓⇅为机械计数，「判·方向」为模型对强/弱成员变动原因的归因交叉验证(落 verdict 台账，†=成员已变化待复判) · 页首产业结构综述=模型基于全样本行业聚合(industry_summary，含负向预告)的结构判断，样本随披露累积、综述会随之更新 · K线使用前复权(qfq)口径，红涨绿跌，蓝虚线=公告日标注(落在公告日前一交易日，如公告日7.3则标7.2)、橙虚线=公告前收盘 · 归属主线由模型语义匹配 daily-market-sense 主线台账 · 仅作观察、不含买卖建议</div>
 {empty_note}
 </div>
 <script>const DATA={data_json};{_JS}</script>

@@ -120,6 +120,8 @@ CPI、PPI、社融、PMI 等中国月度数据只在电报识别到当天发布/
 
 Agent 从 evidence packet 的 `enrichment_candidates` 中挑选目标，再把明确 target 交给脚本执行。脚本只做抓取和写库，不负责判断哪些对象值得抓。
 
+AI 日报走**两轮 enrichment**：**广度 pass**（默认，5-15 个候选、每个抓一个 URL，核实每个对象是什么）跑完并做完价值定级后，对判为 **S 级今日重点** 的 0-2 个对象再跑一轮**深挖 pass**——用 `scripts/_shared/web_search/tavily_search.py` 搜第三方评测 / 竞品回应 / benchmark 复核，把命中 URL 连同官方公告页、docs、pricing 一起喂给 `enrich_targets.py`（同一 item 可挂多个 URL、去重键含 URL，不会互相覆盖），抓到能写 300-500 字深度拆解为止。判级标准见 `references/reports/ai_daily/framework.md`（价值定级），深挖清单见 `references/reports/ai_daily/enrichment.md`（深挖 pass）。
+
 ```powershell
 $json = '{"item_id":"...","target_type":"github_repo","target_url":"https://github.com/owner/repo"}'
 $json | python scripts/enrich_targets.py --targets-file -
@@ -306,7 +308,7 @@ python scripts/render_report_html.py -i reports/geopolitical_daily_2026-06-04.md
 - 每个关键判断都要能回到数据表中的新闻或项目。
 - 对传闻、单源消息、未确认说法必须降级表述。
 - 财经内容避免直接给交易指令；AI 内容避免把 GitHub star 变化直接等同于商业成功。
-- 默认控制在 1500-2500 字；用户要求深度研究时可扩展。当用户要“简版 / 精简 / 速览 / 短版”时改走简版输出（见工作流程「5b. 简版输出」）：**仅 `geopolitical_daily` / `macro_daily`，正文 ≤600 字**；`ai_daily` 不提供简版。
+- 默认控制在 1500-2500 字；`ai_daily` 当天有 S 级今日重点、带深度拆解板块时正文可到 3000+ 字（深拆本身就是深度研究，不必压字数）；用户要求深度研究时也可扩展。当用户要“简版 / 精简 / 速览 / 短版”时改走简版输出（见工作流程「5b. 简版输出」）：**仅 `geopolitical_daily` / `macro_daily`，正文 ≤600 字**；`ai_daily` 不提供简版。
 
 ## 示例
 
@@ -330,7 +332,8 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 
 输出应包含：
 
-- 一句话结论（唯一速读层）：纵轴能力 / 技术往哪走 + 横轴渗透有没有新变化（没有直说）+ 后续 24-72h 最该盯的 1-2 个对象。
+- 一句话结论（唯一速读层）：第一句给框架移动——哪条矢量 / 渗透进档、新开或被证伪，以及这对两轴大图意味着什么的关系级判断（地图没动就直说是证据积累日）；再点 S 级重点与 24-72h 最该盯的对象。
+- 今日重点 · 深度拆解：当天有 S 级对象（推动某条轴进档 / 跨档，或 flagship 级且影响多个 frame 维度，且有一手证据）时，对 0-2 个重点做 300-500 字拆解（是什么 → 方法论落点 → 产业位置 → 证据与反例 → 兑现路径）；没有 S 级就省略整节。
 - 纵轴 · 能力与技术演进：逐条矢量，实验室证据 + 开源证据并在一处，写档位（实验 / 收敛中 / 事实标准）+ 卡点；同一矢量 ≥2 证据才判收敛。
 - 横轴 · 渗透率：有没有新形态 / 新入口让更多人真用上（载体 / 用户段 / 自主度 / 真实使用信号 + 萌芽 / 早期采用 / 主流化档位）；没有就直说"今日无新渗透信号"。
 - 原始证据附录：双引擎当天的原始 feed 压成一张精简表，只枚举 + 一句定性 + 指向哪条轴（已在两轴展开的只给指针，不重述）；融资 & 政策另起短 list。

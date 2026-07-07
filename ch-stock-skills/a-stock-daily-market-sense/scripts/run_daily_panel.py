@@ -203,6 +203,10 @@ def cleanup_intermediates(reports_dir: Path, date: str) -> Dict[str, Any]:
         reports_dir / f"report_context_{date}.json",
         reports_dir / f"lifecycle_{date}.json",
         reports_dir / f"strategy_picks_{date}.json",
+        # 因子实验室（慢循环）同日期临时包
+        reports_dir / f"calibration_{date}.json",
+        reports_dir / f"profile_refresh_{date}.json",
+        reports_dir / f"weekly_factor_pack_{date}.json",
     ]
     for path in candidates:
         if path.exists():
@@ -210,6 +214,10 @@ def cleanup_intermediates(reports_dir: Path, date: str) -> Dict[str, Any]:
             removed.append(str(path))
         else:
             missing.append(str(path))
+    # 因子挖掘决策包 + 明细（研究线临时产物，按组名 × 该日期成对清理）
+    for extra in sorted(reports_dir.glob(f"factor_mining_*_{date}*.json")):
+        extra.unlink()
+        removed.append(str(extra))
     module_dir = reports_dir / f"module_context_{date}"
     if module_dir.is_dir():
         for child in sorted(module_dir.glob("*.json")):

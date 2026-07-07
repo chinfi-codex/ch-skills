@@ -12,6 +12,7 @@
 | 字段 | 含义 |
 |---|---|
 | `profile_id` | = 分组键（`discount_relaunch` / `capacity_up` / …），需与 evidence `groups` 的键一致 |
+| `mining_spec` | 让 `factor_lab.py refresh` 能用原口径复现挖矿：`{"kind":"builtin","group":...,"min_n":N}` 或 `{"kind":"spec","min_n":N,"spec":{...}}`。缺此字段的画像 refresh 会跳过（命中仍只作纯技术观察，不影响每日复盘加载） |
 | `profile_version` / `asof` | 版本与挖掘基准日；`strategy_picks.py` 用 `asof + max_age_days` 判过期 |
 | `window_start/end` | 回测信号窗口（诚实标注，样本/环境单一） |
 | `target_cell` | 目标格，如 `close_T+5`（进场 T+1 尾盘、持有到 T+5），与下面各条统计口径一致 |

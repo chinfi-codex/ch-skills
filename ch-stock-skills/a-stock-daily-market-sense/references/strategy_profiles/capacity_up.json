@@ -7,6 +7,17 @@
   "window_end": "2026-06-29",
   "target_cell": "close_T+5",
   "mined_by": "factor_backtest.py --group custom --spec capacity_up_spec.json --skip-backfill --min-n 20",
+  "mining_spec": {
+    "kind": "spec",
+    "min_n": 20,
+    "spec": {
+      "name": "容量上涨",
+      "warmup": 120,
+      "conditions": [["total_mv_100m_yuan", ">", 70], ["amount_100m", ">", 5], ["pct_chg", ">", 8]],
+      "exclude_st": true,
+      "exclude_bj": true
+    }
+  },
   "base": {"n": 4780, "mean": 2.31, "median": 1.13, "win": 54.2, "rel_mean": 0.69, "rel_win": 47.2},
   "selected_conditions": [
     {

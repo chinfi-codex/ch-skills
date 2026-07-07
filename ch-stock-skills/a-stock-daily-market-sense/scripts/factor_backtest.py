@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -46,7 +47,8 @@ _BUNDLED_SHARED = HERE / "_shared"
 _DEV_SHARED = HERE.parents[2] / "shared" / "data"
 sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
 
-from db_core import get_connection  # noqa: E402
+from db_core import BACKEND, Backend, get_connection  # noqa: E402
+from factor_experiment import log_experiment  # noqa: E402
 from market_panel import (  # noqa: E402
     add_numeric_features,
     attach_discount_after_high,
@@ -434,10 +436,12 @@ FACTOR_BINS = {
 }
 
 
-def factor_layers(df: pd.DataFrame, obj_col: str, abs_col: str) -> Dict[str, Any]:
+def factor_layers(df: pd.DataFrame, obj_col: str, abs_col: str,
+                  extra_bins: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     base = df[obj_col].dropna()
-    for fac, (bins, labels) in FACTOR_BINS.items():
+    bins_map = {**FACTOR_BINS, **(extra_bins or {})}
+    for fac, (bins, labels) in bins_map.items():
         if fac not in df.columns:
             continue
         sub = df.dropna(subset=[fac, obj_col]).copy()
@@ -517,18 +521,26 @@ def _cut_mask(df: pd.DataFrame, fac: str, op: str, edge: float) -> "pd.Series":
 
 
 def overlay_singles(df: pd.DataFrame, obj_col: str, abs_col: str,
-                    min_n: int, base_obj: Optional[float]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-    """单因子叠加条件网格。脚本不挑赢家，只标 pass/fail。"""
+                    min_n: int, base_obj: Optional[float],
+                    extra_bins: Optional[Dict[str, Any]] = None,
+                    min_n_extra: Optional[int] = None) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """单因子叠加条件网格。脚本不挑赢家，只标 pass/fail。
+
+    extra_bins 里的 provider 因子用 min_n_extra（更高，压多重检验）；不传时行为与核心 9 因子完全一致。
+    """
     dates = sorted(df["signal_date"].dropna().unique().tolist())
     split = dates[len(dates) // 2] if dates else None
     out: List[Dict[str, Any]] = []
-    for fac, (bins, _labels) in FACTOR_BINS.items():
+    bins_map = {**FACTOR_BINS, **(extra_bins or {})}
+    extra_keys = set(extra_bins or {})
+    for fac, (bins, _labels) in bins_map.items():
         if fac not in df.columns:
             continue
+        mn = min_n_extra if (fac in extra_keys and min_n_extra is not None) else min_n
         for edge in bins[1:-1]:  # 内部切点
             for op in (">=", "<"):
                 st = _combo_stats(df[_cut_mask(df, fac, op, edge)], f"{fac} {op} {edge:g}", fac,
-                                  obj_col, abs_col, min_n, base_obj, split, mask_key=(fac, op, edge))
+                                  obj_col, abs_col, mn, base_obj, split, mask_key=(fac, op, edge))
                 if st:
                     out.append(st)
     out.sort(key=lambda c: (c["delta_vs_base"] is not None, c["delta_vs_base"] or -1e9), reverse=True)
@@ -537,8 +549,13 @@ def overlay_singles(df: pd.DataFrame, obj_col: str, abs_col: str,
 
 def overlay_pairs(df: pd.DataFrame, singles: List[Dict[str, Any]], obj_col: str, abs_col: str,
                   min_n: int, base_obj: Optional[float], split: Optional[str],
-                  max_factors: int = 8) -> List[Dict[str, Any]]:
-    """配对叠加（深度≤2）：取每个因子最优的单条件，跨不同因子两两组合。"""
+                  max_factors: int = 8, provider_factors: Optional[set] = None,
+                  min_n_extra: Optional[int] = None) -> List[Dict[str, Any]]:
+    """配对叠加（深度≤2）：取每个因子最优的单条件，跨不同因子两两组合。
+
+    任一因子是 provider 时该配对用 min_n_extra（更高门槛）；不传 provider 时与核心行为一致。
+    """
+    provider_factors = provider_factors or set()
     best: Dict[str, Dict[str, Any]] = {}
     for c in singles:
         if c.get("delta_vs_base") is None:
@@ -554,12 +571,88 @@ def overlay_pairs(df: pd.DataFrame, singles: List[Dict[str, Any]], obj_col: str,
             fa, opa, ea = a["_mask_key"]
             fb, opb, eb = b["_mask_key"]
             mask = _cut_mask(df, fa, opa, ea) & _cut_mask(df, fb, opb, eb)
+            mn = (min_n_extra if (min_n_extra is not None
+                  and (a["factor"] in provider_factors or b["factor"] in provider_factors))
+                  else min_n)
             st = _combo_stats(df[mask], f"{a['condition']} ∧ {b['condition']}",
-                              f"{fa}+{fb}", obj_col, abs_col, min_n, base_obj, split)
+                              f"{fa}+{fb}", obj_col, abs_col, mn, base_obj, split)
             if st:
+                st["_mask_keys"] = [a["_mask_key"], b["_mask_key"]]
                 out.append(st)
     out.sort(key=lambda c: (c["delta_vs_base"] is not None, c["delta_vs_base"] or -1e9), reverse=True)
     return out
+
+
+# ----------------------------------------------------------------------------
+# 证据分片：决策包（模型读）只留结论 + 少量例证，逐条 signals 明细单独落 detail 文件
+# （见 references/methodology/factor_mining.md §七；决策包纪律 ≤150KB）。
+# ----------------------------------------------------------------------------
+_EXAMPLE_FACTOR_COLS = [
+    "pct_chg", "total_mv_100m_yuan", "turnover_rate", "volume_ratio",
+    "close_position_120d", "discount_after_high", "amount_vs_prev5_ratio",
+]
+
+
+def _signals_summary(sig_df: pd.DataFrame) -> Dict[str, Any]:
+    """命中信号的分布摘要（替代整列 dump）：总数、按月、按板块。"""
+    if sig_df.empty:
+        return {"total": 0}
+    months = sig_df["signal_date"].astype(str).str[:6]
+    by_month = {str(m): int(c) for m, c in months.value_counts().sort_index().items()}
+    by_board: Dict[str, int] = {}
+    if "board" in sig_df.columns:
+        by_board = {str(b): int(c) for b, c in sig_df["board"].value_counts().items()}
+    return {
+        "total": int(len(sig_df)),
+        "unique_stocks": int(sig_df["ts_code"].nunique()),
+        "by_month": by_month,
+        "by_board": by_board,
+    }
+
+
+def _example_rows(sub: pd.DataFrame, obj_col: str, abs_col: str, n: int = 3) -> List[Dict[str, Any]]:
+    """从命中子集取 ≤n 条例证，按目标格收益取「高/中/低」分布（不只挑赢家，便于诚实引用）。"""
+    sub = sub.dropna(subset=[obj_col]).copy()
+    if sub.empty:
+        return []
+    sub = sub.sort_values(obj_col, ascending=False)
+    if len(sub) <= n:
+        picks = sub
+    else:
+        picks = sub.iloc[[0, len(sub) // 2, len(sub) - 1]]  # top / median / bottom
+    rows: List[Dict[str, Any]] = []
+    for r in picks.itertuples():
+        rec: Dict[str, Any] = {
+            "ts_code": getattr(r, "ts_code", None),
+            "name": getattr(r, "name", None),
+            "signal_date": getattr(r, "signal_date", None),
+            obj_col: _r(getattr(r, obj_col, None)),
+            abs_col: _r(getattr(r, abs_col, None)),
+        }
+        for f in _EXAMPLE_FACTOR_COLS:
+            v = getattr(r, f, None)
+            if v is not None and pd.notna(v):
+                rec[f] = _r(v)
+        rows.append(rec)
+    return rows
+
+
+def build_examples(df: pd.DataFrame, singles: List[Dict[str, Any]], pairs: List[Dict[str, Any]],
+                   obj_col: str, abs_col: str) -> Dict[str, List[Dict[str, Any]]]:
+    """给每条「过闸」叠加条件配 ≤3 条命中例证（非过闸条件不配——不会被引用）。"""
+    examples: Dict[str, List[Dict[str, Any]]] = {}
+    for c in singles:
+        if not c.get("passes_guardrails") or "_mask_key" not in c:
+            continue
+        fac, op, edge = c["_mask_key"]
+        examples[c["condition"]] = _example_rows(df[_cut_mask(df, fac, op, edge)], obj_col, abs_col)
+    for c in pairs:
+        if not c.get("passes_guardrails") or "_mask_keys" not in c:
+            continue
+        (fa, opa, ea), (fb, opb, eb) = c["_mask_keys"]
+        mask = _cut_mask(df, fa, opa, ea) & _cut_mask(df, fb, opb, eb)
+        examples[c["condition"]] = _example_rows(df[mask], obj_col, abs_col)
+    return examples
 
 
 # ----------------------------------------------------------------------------
@@ -572,35 +665,14 @@ SIGNAL_FACTOR_COLS = [
 ]
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="特征分组量化回溯因子挖掘引擎")
-    ap.add_argument("--group", default="discount_relaunch", choices=["discount_relaunch", "custom"])
-    ap.add_argument("--spec", default=None, help="custom 分组的 filter spec JSON 路径")
-    ap.add_argument("--warmup", type=int, default=120, help="custom 分组特征预热交易日数")
-    ap.add_argument("--asof", default=None, help="信号窗口结束日 YYYYMMDD（默认最新交易日）")
-    ap.add_argument("--start", default=None, help="信号窗口起始日 YYYYMMDD")
-    ap.add_argument("--end", default=None, help="同 --asof，优先级更高")
-    ap.add_argument("--entry", default="close", choices=["open", "close"], help="默认目标格进场")
-    ap.add_argument("--horizon", type=int, default=5, choices=HORIZONS, help="默认目标格持有期")
-    ap.add_argument("--min-n", dest="min_n", type=int, default=20, help="叠加条件最小保留样本")
-    ap.add_argument("--fetch-workers", dest="fetch_workers", type=int, default=4)
-    ap.add_argument("--skip-backfill", dest="skip_backfill", action="store_true",
-                    help="跳过 daily_basic 回补（仅用已缓存日，快速冒烟）")
-    ap.add_argument("--refresh-basic", dest="refresh_basic", action="store_true",
-                    help="整窗重取 daily_basic（修复脏缓存）")
-    # 折扣启动阈值（镜像 SKILL.md 默认）
-    ap.add_argument("--market-cap", dest="market_cap", type=float, default=80.0)
-    ap.add_argument("--amount", type=float, default=5.0)
-    ap.add_argument("--pct", type=float, default=7.0)
-    ap.add_argument("--discount-min", dest="discount_min", type=float, default=0.6)
-    ap.add_argument("--discount-max", dest="discount_max", type=float, default=0.85)
-    ap.add_argument("--contraction-max", dest="contraction_max", type=float, default=0.9)
-    ap.add_argument("--expansion-min", dest="expansion_min", type=float, default=2.0)
-    ap.add_argument("--lookback", type=int, default=200)
-    ap.add_argument("--low-recency", dest="low_recency", type=int, default=5)
-    ap.add_argument("--out", default=None)
-    args = ap.parse_args()
-    if args.asof and not args.end:
+def run_mining(args: argparse.Namespace) -> Dict[str, Any]:
+    """执行一次因子挖掘，返回组装好的 evidence/detail —— 纯取数 + 计算，不做文件 I/O、
+    不登记实验、不打印摘要。CLI（main）与画像重检（factor_lab refresh）共用此函数，保证
+    「回测画像表现」与「refresh 重算」走完全一致的统计路径，不靠跨脚本借用研究入口。
+
+    返回 dict：evidence / detail(None if empty) / group_key / asof / obj_col / sig_df / empty。
+    """
+    if getattr(args, "asof", None) and not getattr(args, "end", None):
         args.end = args.asof
 
     calendar = load_calendar()
@@ -645,19 +717,30 @@ def main() -> None:
         evidence["factor_layers"] = {}
         evidence["overlay_singles"] = []
         evidence["overlay_pairs"] = []
-        evidence["signals"] = []
-        _write(evidence, args, group_key, asof)
-        print("[done] 无命中信号——只写出 meta。")
-        return
+        evidence["signals_summary"] = {"total": 0}
+        evidence["examples"] = {}
+        return {"evidence": evidence, "detail": None, "group_key": group_key,
+                "asof": asof, "obj_col": obj_col, "sig_df": sig_df, "empty": True}
 
     sig_df = compute_forward_returns(sig_df, calendar)
 
+    # 跨技能因子（v1）：附 forecast/theme 派生列（as-of 防泄漏），覆盖足够才进叠加网格。
+    import factor_providers as fp
+    sig_df, factor_coverage = fp.compute_providers(sig_df, calendar)
+    overlay_provider_bins = {k: v for k, v in fp.PROVIDER_BINS.items()
+                             if factor_coverage.get(k, {}).get("enters_overlay")}
+    prov_min_n = max(args.min_n, 25)  # provider 因子叠加门槛更高，压多重检验
+
     base_cells = base_six_cells(sig_df)
     base_obj = base_cells.get(f"{args.entry}_T+{args.horizon}", {}).get("rel_mean")
-    layers = factor_layers(sig_df, obj_col, abs_col)
-    singles, split = overlay_singles(sig_df, obj_col, abs_col, args.min_n, base_obj)
-    pairs = overlay_pairs(sig_df, singles, obj_col, abs_col, args.min_n, base_obj, split)
+    layers = factor_layers(sig_df, obj_col, abs_col, extra_bins=fp.PROVIDER_BINS)
+    singles, split = overlay_singles(sig_df, obj_col, abs_col, args.min_n, base_obj,
+                                     extra_bins=overlay_provider_bins, min_n_extra=prov_min_n)
+    pairs = overlay_pairs(sig_df, singles, obj_col, abs_col, args.min_n, base_obj, split,
+                          provider_factors=set(fp.PROVIDER_COLS), min_n_extra=prov_min_n)
+    examples = build_examples(sig_df, singles, pairs, obj_col, abs_col)
     singles_out = [{k: v for k, v in c.items() if k != "_mask_key"} for c in singles]
+    pairs_out = [{k: v for k, v in c.items() if k != "_mask_keys"} for c in pairs]
 
     keep_cols = ["ts_code", "name", "signal_date", "board", "benchmark"] + SIGNAL_FACTOR_COLS + \
         [f"{p}_{k}" for p in ("ro", "rc", "relo", "relc") for k in HORIZONS]
@@ -667,18 +750,76 @@ def main() -> None:
     evidence["base_cells"] = base_cells
     evidence["factor_layers"] = layers
     evidence["overlay_singles"] = singles_out
-    evidence["overlay_pairs"] = pairs
-    evidence["signals"] = signals_out
-    _write(evidence, args, group_key, asof)
+    evidence["overlay_pairs"] = pairs_out
+    evidence["signals_summary"] = _signals_summary(sig_df)
+    evidence["examples"] = examples
+    evidence["meta"]["factor_coverage"] = factor_coverage
+    detail = {
+        "meta": {"group": args.group, "group_label": group_label, "asof": asof,
+                 "objective_cell": evidence["meta"]["objective_cell"], "n_signals": len(signals_out)},
+        "signals": signals_out,
+    }
+    return {"evidence": evidence, "detail": detail, "group_key": group_key,
+            "asof": asof, "obj_col": obj_col, "sig_df": sig_df, "empty": False}
 
-    _print_summary(evidence, sig_df, obj_col)
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="特征分组量化回溯因子挖掘引擎")
+    ap.add_argument("--group", default="discount_relaunch", choices=["discount_relaunch", "custom"])
+    ap.add_argument("--spec", default=None, help="custom 分组的 filter spec JSON 路径")
+    ap.add_argument("--warmup", type=int, default=120, help="custom 分组特征预热交易日数")
+    ap.add_argument("--asof", default=None, help="信号窗口结束日 YYYYMMDD（默认最新交易日）")
+    ap.add_argument("--start", default=None, help="信号窗口起始日 YYYYMMDD")
+    ap.add_argument("--end", default=None, help="同 --asof，优先级更高")
+    ap.add_argument("--entry", default="close", choices=["open", "close"], help="默认目标格进场")
+    ap.add_argument("--horizon", type=int, default=5, choices=HORIZONS, help="默认目标格持有期")
+    ap.add_argument("--min-n", dest="min_n", type=int, default=20, help="叠加条件最小保留样本")
+    ap.add_argument("--fetch-workers", dest="fetch_workers", type=int, default=4)
+    ap.add_argument("--skip-backfill", dest="skip_backfill", action="store_true",
+                    help="跳过 daily_basic 回补（仅用已缓存日，快速冒烟）")
+    ap.add_argument("--refresh-basic", dest="refresh_basic", action="store_true",
+                    help="整窗重取 daily_basic（修复脏缓存）")
+    # 折扣启动阈值（镜像 SKILL.md 默认）
+    ap.add_argument("--market-cap", dest="market_cap", type=float, default=80.0)
+    ap.add_argument("--amount", type=float, default=5.0)
+    ap.add_argument("--pct", type=float, default=7.0)
+    ap.add_argument("--discount-min", dest="discount_min", type=float, default=0.6)
+    ap.add_argument("--discount-max", dest="discount_max", type=float, default=0.85)
+    ap.add_argument("--contraction-max", dest="contraction_max", type=float, default=0.9)
+    ap.add_argument("--expansion-min", dest="expansion_min", type=float, default=2.0)
+    ap.add_argument("--lookback", type=int, default=200)
+    ap.add_argument("--low-recency", dest="low_recency", type=int, default=5)
+    ap.add_argument("--out", default=None)
+    args = ap.parse_args()
+    result = run_mining(args)
+
+    evidence = result["evidence"]
+    group_key, asof, obj_col = result["group_key"], result["asof"], result["obj_col"]
+    if result["empty"]:
+        ev_path = _write(evidence, args, group_key, asof)
+        log_experiment(evidence, args, group_key, asof, ev_path)
+        print("[done] 无命中信号——只写出 meta。")
+        return
+
+    ev_path = _write(evidence, args, group_key, asof, detail=result["detail"])
+    log_experiment(evidence, args, group_key, asof, ev_path)
+    _print_summary(evidence, result["sig_df"], obj_col)
 
 
-def _write(evidence: Dict[str, Any], args: argparse.Namespace, group_key: str, asof: str) -> None:
+def _write(evidence: Dict[str, Any], args: argparse.Namespace, group_key: str, asof: str,
+           detail: Optional[Dict[str, Any]] = None) -> str:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     out = Path(args.out) if args.out else REPORTS_DIR / f"factor_mining_{group_key}_{asof}.json"
+    if detail is not None:
+        detail_path = out.with_name(out.stem + "_detail.json")
+        detail_path.write_text(json.dumps(detail, ensure_ascii=False, indent=2), encoding="utf-8")
+        evidence["meta"]["detail_file"] = detail_path.name
+        evidence["meta"]["detail_signals"] = detail.get("meta", {}).get("n_signals")
+        print(f"[detail]   {detail_path}  (signals={detail.get('meta', {}).get('n_signals')})")
     out.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[evidence] {out}")
+    kb = len(json.dumps(evidence, ensure_ascii=False)) / 1024
+    print(f"[evidence] {out}  ({kb:.1f} KB)")
+    return str(out)
 
 
 def _print_summary(evidence: Dict[str, Any], sig_df: pd.DataFrame, obj_col: str) -> None:

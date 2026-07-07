@@ -361,3 +361,41 @@ CREATE INDEX IF NOT EXISTS idx_strategy_pick_tier
 -- score scans for not-yet-scored horizons; index the earliest-maturing one.
 CREATE INDEX IF NOT EXISTS idx_strategy_pick_h3_status
     ON strategy_pick_ledger(h3_status);
+
+
+-- -------------------------------------------------------------------------
+-- 15. Factor experiment log (a-stock-daily-market-sense, 因子挖掘实验台账)
+-- -------------------------------------------------------------------------
+-- One row per (group_key, window_end, spec_hash): a factor-mining run logged
+-- by factor_backtest.py so挖过什么组/什么参数/结论如何 stays auditable across
+-- sessions and repeated runs never re-mine the same thing blindly.  The script
+-- writes only the deterministic columns (counts, spec, evidence path).  The
+-- three verdict columns are model judgement, filled later by a human via
+-- factor_lab.py experiments --set-verdict — the script never writes them.
+-- spec_json is the full builtin-threshold dict or custom spec so the run is
+-- reproducible.  Strategy profiles themselves live in
+-- references/strategy_profiles/*.json (git); this table is runtime log only.
+CREATE TABLE IF NOT EXISTS factor_experiment_log (
+    group_key        TEXT NOT NULL,
+    window_end       TEXT NOT NULL,           -- YYYYMMDD
+    spec_hash        TEXT NOT NULL,           -- sha1 of threshold args (builtin) / spec content (custom)
+    run_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    group_label      TEXT,
+    window_start     TEXT,
+    objective_cell   TEXT,
+    min_n            INTEGER,
+    spec_json        JSONB,
+    n_signals        INTEGER,
+    n_unique_stocks  INTEGER,
+    n_singles_passed INTEGER,
+    n_pairs_passed   INTEGER,
+    evidence_path    TEXT,
+    -- model judgement, set by a human after reading the evidence (never by script):
+    verdict          TEXT,                    -- adopted / rejected / observing / NULL=未判
+    verdict_note     TEXT,
+    promoted_profile TEXT,                    -- e.g. discount_relaunch@2026-07-04.1
+    PRIMARY KEY (group_key, window_end, spec_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_factor_experiment_group
+    ON factor_experiment_log(group_key, window_end);

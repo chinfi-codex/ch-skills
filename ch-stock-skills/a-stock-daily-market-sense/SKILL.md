@@ -58,7 +58,13 @@ version: 2.5.0
 3. **模型选最优叠加解**：读 JSON，按 reference §四 rubric（稳健优先于大 Δ、看 `oos_balance` 与中位数胜率、深度≤2、经济逻辑）选定叠加条件，写 `reports/factor_mining_<group>_<asof>.md`。
 4. **你决定要不要用**：当研究参考，或手动把叠加条件提级成分组生产阈值——脚本不替你改生产。也可把选定的有效叠加条件写进 `references/strategy_profiles/<group_id>.json`（策略画像），让它进入**每日复盘第 6 节策略选股**（慢循环→画像→快循环匹配，见工作流程第 2/4/5 步与 `references/strategy_profiles/README.md`）。画像只用当日可知的因子（`t1_gap` 等未来值不能入画像）；脚本不替你选条件、不自动写画像，落盘由你确认。
 
-口径要点：进场 T+1 开盘/尾盘 × 持有 T+3/T+5/T+10，后复权；相对收益挂**板块/市值匹配基准**（科创→科创50、创业→创业板指、主板按市值→沪深300/中证500/中证1000），沪深300 作宽基对照。脚本默认会把信号窗口缺失的 `daily_basic` 从 Tushare 回补入库（需 `TUSHARE_TOKEN`）。折扣启动要完整 200 日历史，信号只落在数据最近端、样本偏小——所以护栏与诚实 caveat 是骨架，结论按"单一环境证据扫描、非统计定论"来写。
+口径要点：进场 T+1 开盘/尾盘 × 持有 T+3/T+5/T+10，后复权；相对收益挂**板块/市值匹配基准**（科创→科创50、创业→创业板指、主板按市值→沪深300/中证500/中证1000），沪深300 作宽基对照。脚本默认会把信号窗口缺失的 `daily_basic` 从 Tushare 回补入库（需 `TUSHARE_TOKEN`）。折扣启动要完整 200 日历史，信号只落在数据最近端、样本偏小——所以护栏与诚实 caveat 是骨架，结论按"单一环境证据扫描、非统计定论"来写。挖矿证据分**决策包**（≤150KB，模型读：结论 + 每条过闸条件 ≤3 例证）与 `_detail.json`（整列 signals，按需读）；每次挖矿自动登记进 PG `factor_experiment_log`（可查、可判分，见下）。
+
+**周度体检（慢循环收口，验证画像还灵不灵）**：挖矿选进画像后，靠 `factor_lab.py` 持续验证——`weekly` 一键出体检包（`calibrate` 回测承诺 vs 实盘台账真实战绩对账 + `refresh` 旧条件在滚动窗口是否还过闸 + `experiments` 实验台账/判分），一个上下文读完。读法、维持/降级/刷新的判断 rubric、周报模板见 `references/methodology/factor_lab.md`。脚本只铺对账证据，判断与改画像由模型 + 人确认。
+
+```bash
+python3 scripts/factor_lab.py weekly          # → reports/weekly_factor_pack_<asof>.json（≤150KB）
+```
 
 ## 数据获取
 
@@ -97,31 +103,8 @@ python3 scripts/render_report_html.py --input reports/report_20260429.md [--them
 
 默认输出 `reports/report_20260429.html`，并将 `references/market_data.json` 内嵌到 HTML 中。本地浏览器可直接打开，图表不依赖外部 CDN。`--theme` 默认 `default`（AlphaVault 站点 / Google Material）；`--theme claude` 为 Claude.ai 暖色风格；`--theme print` 为黑白衬线、A4 友好，适合导出 PDF 或邮件附件。样式模板由仓库通用 `shared/html_report`（同步到 `scripts/_shared/html_report/`）提供，与 `a-stock-analyzer` 共用。
 
-常用参数：
-
-| 参数 | 含义 | 默认 |
-|---|---|---:|
-| `--fetch-workers` | cache/API 获取线程数；排查限流时设为 1 | 6 |
-| `--index-kline-days` | HTML 上证/创业板/科创50 K 线展示窗口，独立于 `--market-trend-days` | 120 |
-| `--money-pct-threshold` | 赚钱效应最低当日涨幅 | 7.0 |
-| `--money-amount-threshold` | 赚钱效应最低成交额，单位亿元 | 2.0 |
-| `--decline-pct-max` | 爆量下跌最大当日涨幅 | -3.0 |
-| `--decline-volume-ratio` | 爆量下跌最低 20 日放量倍数 | 2.0 |
-| `--capacity-market-cap-threshold` | 容量上涨最低总市值，单位亿元，严格大于 | 70.0 |
-| `--capacity-amount-threshold` | 容量上涨最低成交额，单位亿元，严格大于 | 5.0 |
-| `--capacity-pct-threshold` | 容量上涨最低当日涨幅，严格大于 | 8.0 |
-| `--feature-sample-limit` | 模块 5 每组最大样本数 | 60 |
-| `--discount-market-cap-threshold` | 折扣启动最低总市值，单位亿元，严格大于 | 80.0 |
-| `--discount-amount-threshold` | 折扣启动最低成交额，单位亿元，严格大于 | 5.0 |
-| `--discount-pct-threshold` | 折扣启动最低当日涨幅，严格大于 | 7.0 |
-| `--discount-min` | 折扣启动前高折扣下界（前高之后最低价/前高收盘价），严格大于 | 0.6 |
-| `--discount-max` | 折扣启动前高折扣上界，严格小于 | 0.85 |
-| `--discount-high-lookback` | 折扣启动"前高"回看交易日数（取该窗口内收盘价最高日） | 200 |
-| `--discount-low-recency-days` | 折扣启动回撤最低点须落在大涨日前几个交易日内（最低点新鲜度） | 5 |
-| `--discount-pre-contraction-max` | 折扣启动调整缩量上限（前5日均额/前20日均额） | 0.9 |
-| `--discount-volume-expansion-min` | 折扣启动当日重新放量下限（amount_vs_prev5_ratio，相对前5日缩量期） | 2.0 |
-| `--no-strategy` | 跳过策略选股后处理（score + module6 候选证据） | 关闭=默认执行 |
-| `--profiles-dir` | 策略画像目录 | `references/strategy_profiles` |
+常用参数（赚钱效应/爆量/容量/折扣阈值、`--fetch-workers`、`--no-strategy`、`--cleanup` 等）与
+`factor_backtest.py` / `factor_lab.py` / `render_report_html.py` 的参数集中在 `references/cli_reference.md`。
 
 ## Subagent 编排契约
 

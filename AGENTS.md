@@ -310,6 +310,7 @@ python3 scripts/_shared/db_ping.py --alpha-schema
 | **Claude Code** | `~/.claude/skills` | 仅读自身品牌目录 |
 | **Codex** | `~/.codex/skills` | 仅读自身品牌目录 |
 | **.agents** | `~/.agents/skills` | ClawHub 安装目录 |
+| **WorkBuddy** | `~/.workbuddy/skills`（用户级）+ `{workspace}/.workbuddy/skills`（项目级） | 用户级跨项目可用；项目级仅当前项目可见，两者合并加载 |
 
 **问题**：修改本仓库后，各 Agent 安装目录里的副本不会自动更新，导致 Kimi / Claude / Codex 读到的可能是旧版本，甚至完全缺失某些 skill。
 
@@ -331,6 +332,7 @@ python3 scripts/_shared/db_ping.py --alpha-schema
     ┌──────────────┬──────────────┬──────────────┐
     ▼              ▼              ▼              ▼
  ~/.kimi/skills  ~/.claude/skills ~/.codex/skills ~/.agents/skills
+ ~/.hermes/skills  ~/.openclaw/skills  ~/.workbuddy/skills
 ```
 
 **扁平化规则**：仓库中任何包含 `SKILL.md` 的目录都被视为一个独立 skill，同步时目录名作为目标 skill 名，直接提升到各 Agent `skills/` 根目录下。嵌套结构（如 `stock-skills/a-stock-analyzer/`）会被自动打平为 `a-stock-analyzer/`。
@@ -381,10 +383,11 @@ python scripts/skill_sync.py --watch --interval 5
 
 ```yaml
 targets:
-  kimi:    "$env:USERPROFILE/.kimi/skills"
-  claude:  "$env:USERPROFILE/.claude/skills"
-  codex:   "$env:USERPROFILE/.codex/skills"
-  agents:  "$env:USERPROFILE/.agents/skills"
+  kimi:     "$env:USERPROFILE/.kimi/skills"
+  claude:   "$env:USERPROFILE/.claude/skills"
+  codex:    "$env:USERPROFILE/.codex/skills"
+  agents:   "$env:USERPROFILE/.agents/skills"
+  workbuddy: "$env:USERPROFILE/.workbuddy/skills"
 
 rename:
   "iran-war-tracker - V2": "iran-war-tracker-v2"

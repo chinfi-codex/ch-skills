@@ -11,11 +11,12 @@
 targets:
   # Agent 品牌目录（Kimi CLI 启动时会按优先级自动扫描）
   # 开启 merge_all_available_skills = true 后，Kimi 会合并所有品牌目录
-  kimi:    "~/.kimi/skills"
-  claude:  "~/.claude/skills"
-  codex:   "~/.codex/skills"
-  hermes:  "~/.hermes/skills"
+  kimi:     "~/.kimi/skills"
+  claude:   "~/.claude/skills"
+  codex:    "~/.codex/skills"
+  hermes:   "~/.hermes/skills"
   openclaw: "~/.openclaw/skills"
+  workbuddy: "~/.workbuddy/skills"
 
 # 重命名映射：源目录名 → 目标 skill 名
 # 键为相对于仓库根的路径，值为目标目录名

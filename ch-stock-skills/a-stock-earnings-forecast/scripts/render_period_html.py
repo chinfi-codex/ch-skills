@@ -4,9 +4,8 @@
 
 Layout: title → 产业结构综述 (model text from forecast_period_overview, stale-
 badged when the sample fingerprint moved) → filter bar → two panes. Left pane is
-the stock LIST, grouped by 主线 (default), sorted by 公告发布时间, grouped by
-断层 facet, or flat; 净利润断层 rows are strongly marked (向上=业绩超预期跳空↑/强表现,
-向下=不及预期跳空↓/弱表现).
+the stock LIST, grouped by 主线 (default), sorted by 公告发布时间, or flat;
+净利润断层 rows are strongly marked (向上=业绩超预期跳空↑/强表现, 向下=不及预期跳空↓/弱表现).
 Right pane is the DETAIL for
 the selected stock — an embedded K-line (candles + volume, announcement marker
 on the trading bar immediately before ann_date, and pre-announcement close marked)
@@ -361,7 +360,6 @@ _JS = r"""
 const fmtPct=(v,t)=>{if(v===null||v===undefined){if(t&&/扭亏|减亏/.test(t))return'扭亏';if(t&&/首亏|续亏|增亏/.test(t))return'增亏';return'—';}return(v>=0?'+':'')+v+'%';};
 const sign=v=>(v===null||v===undefined)?'—':((v>=0?'+':'')+v);
 const tierPill={'强':'strong','中':'mid','观察':'watch','剔除':'drop'};
-const FACETS=[['gap_trend','趋势加速型断层 · 公告前高位续升'],['gap_low','低位启动型断层 · 业绩点火'],['gap_unpos','断层 · 位置数据不足(次新)'],['gap_down','反向断层 · 不及预期跳空下跌(弱表现)'],['muted','业绩强但股价未反应 · 潜在未定价'],['other','其余']];
 function pill(cls,txt){return `<span class="pill ${cls}">${txt}</span>`;}
 function gapBadge(s){
   if(s.gap_dir==='up'){const st=s.gap_status==='intact'?'未回补 D+'+(s.days_since_r||0):'已回补';return `<span class="badge ${s.gap_status==='intact'?'gap-up':'gap-fade'}">⬆断层${sign(s.gap_open_pct)}% ${st}</span>`;}
@@ -402,7 +400,7 @@ function filtered(){
     if(tf&&s.tier!==tf)return false;
     if(rf==='up'&&s.gap_dir!=='up')return false;
     if(rf==='down'&&s.gap_dir!=='down')return false;
-    if(rf==='intact'&&s.gap_status!=='intact')return false;
+    if(rf==='intact'&&!(s.gap_dir==='up'&&s.gap_status==='intact'))return false;
     if(rf==='muted'&&s.facet!=='muted')return false;
     if(rf==='intheme'&&!s.theme_hot)return false;
     if(q&&!(s.name.toLowerCase().includes(q)||s.ts_code.toLowerCase().includes(q)||(s.theme_name||'').toLowerCase().includes(q)))return false;
@@ -424,9 +422,6 @@ function renderList(){
       const label=k==='__none__'?'无归属主线':(k==='__unjudged__'?'未判':`${s0.theme_name} ${s0.theme_state||''}${s0.theme_stars?'★'+s0.theme_stars:''}`);
       h+=`<div class="ghead"><span>${label}</span><span style="display:flex;gap:4px;flex-wrap:wrap">${tr?trendPill(tr)+judgedPill(tr):`<span>${grp.length}</span>`}</span></div>`+grp.map(stockRow).join('');
     }
-  }else if(mode==='facet'){
-    for(const [key,lab] of FACETS){const grp=rows.filter(s=>s.facet===key);if(!grp.length)continue;
-      h+=`<div class="ghead"><span>${lab}</span><span>${grp.length}</span></div>`+grp.map(stockRow).join('');}
   }else if(mode==='ann'){
     const byDate=[...rows].sort((a,b)=>(b.ann_date||b.first_ann_date||'').localeCompare(a.ann_date||a.first_ann_date||''));
     const seen=new Map();
@@ -560,8 +555,8 @@ def render_html(view: Dict[str, Any]) -> str:
 {overview_html}
 <div class="ctrl">
 <input id="q" placeholder="搜索 名称 / 代码 / 主线">
-<select id="grp"><option value="theme">按主线分组</option><option value="ann">按发布时间排序</option><option value="facet">按断层分组</option><option value="flat">平铺</option></select>
-<select id="react"><option value="">全部反应</option><option value="up">向上断层(强)</option><option value="down">向下断层(弱)</option><option value="intact">断层未回补</option><option value="muted">未反应</option><option value="intheme">主线内</option></select>
+<select id="grp"><option value="theme">按主线分组</option><option value="ann">按发布时间排序</option><option value="flat">平铺</option></select>
+<select id="react"><option value="">全部反应</option><option value="up">向上断层(强)</option><option value="down">向下断层(弱)</option><option value="intact">跳空未回补</option><option value="muted">未反应</option><option value="intheme">主线内</option></select>
 <select id="tier"><option value="">全部分档</option><option>强</option><option>中</option><option>观察</option><option>剔除</option></select>
 </div>
 <div class="panes">

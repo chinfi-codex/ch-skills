@@ -3,7 +3,8 @@
 Pure standard library. Supports the subset of Markdown that research reports
 need: headings, paragraphs, bullet lists, blockquotes, tables (with
 alignment), inline code/bold/italic/links, fenced code blocks, and the
-``==highlighted text==`` callout sugar.
+``==highlighted text==`` callout sugar. Analyzer Deep-mode finding
+cards use a structured ``==深度调研发现｜...`` block.
 """
 
 from __future__ import annotations
@@ -33,6 +34,63 @@ def inline_markdown(text: str) -> str:
     for idx, value in enumerate(code_values):
         escaped = escaped.replace(f"@@CODE{idx}@@", value)
     return escaped
+
+
+def _strip_callout_markers(lines: List[str]) -> List[str]:
+    cleaned = [line.strip() for line in lines]
+    if cleaned:
+        cleaned[0] = cleaned[0].removeprefix("==").strip()
+        cleaned[0] = cleaned[0].removesuffix("==").strip()
+    if cleaned:
+        cleaned[-1] = cleaned[-1].removesuffix("==").strip()
+    return [line for line in cleaned if line]
+
+
+def _render_deep_finding(lines: List[str]) -> str:
+    cleaned = _strip_callout_markers(lines)
+    header = cleaned[0] if cleaned else "深度调研发现"
+    parts = [part.strip() for part in re.split(r"[|｜]", header) if part.strip()]
+    badges = parts[1:] if parts and parts[0] == "深度调研发现" else parts
+
+    rows = {}
+    notes: List[str] = []
+    for line in cleaned[1:]:
+        match = re.match(r"^(来源|原文|判断|影响)[：:]\s*(.+)$", line)
+        if match:
+            rows[match.group(1)] = match.group(2).strip()
+        else:
+            notes.append(line)
+
+    out = [
+        '<aside class="deep-finding-card">',
+        '<div class="deep-finding-head"><span class="deep-finding-title">深度调研发现</span>',
+    ]
+    for badge in badges:
+        out.append('<span class="deep-finding-sep">｜</span>')
+        out.append(f'<span class="deep-finding-badge">{inline_markdown(badge)}</span>')
+    out.append("</div>")
+    out.append('<div class="deep-finding-body">')
+    for label in ("来源", "原文", "判断", "影响"):
+        value = rows.get(label)
+        if value:
+            out.append(
+                f'<div class="deep-finding-row deep-finding-row-{label}">'
+                f'<span class="deep-finding-label">{label}：</span>'
+                f'<span class="deep-finding-value">{inline_markdown(value)}</span>'
+                "</div>"
+            )
+    for note in notes:
+        out.append(f'<p class="deep-finding-note">{inline_markdown(note)}</p>')
+    out.append("</div></aside>")
+    return "".join(out)
+
+
+def render_callout(lines: List[str]) -> str:
+    cleaned = _strip_callout_markers(lines)
+    if cleaned and cleaned[0].startswith("深度调研发现"):
+        return _render_deep_finding(lines)
+    callout = " ".join(cleaned).strip()
+    return f"<div class=\"callout\">{inline_markdown(callout)}</div>"
 
 
 def flush_paragraph(parts: List[str], out: List[str]) -> None:
@@ -128,12 +186,25 @@ def render_markdown(markdown_text: str) -> str:
             flush_paragraph(paragraph, out)
             close_list()
             callout_parts = [stripped]
-            while not callout_parts[-1].endswith("==") and idx + 1 < len(lines):
-                idx += 1
-                callout_parts.append(lines[idx].strip())
-            callout = " ".join(callout_parts).strip()
-            callout = callout.removeprefix("==").removesuffix("==").strip()
-            out.append(f"<div class=\"callout\">{inline_markdown(callout)}</div>")
+            if stripped == "==深度调研发现==":
+                while idx + 1 < len(lines):
+                    next_line = lines[idx + 1].strip()
+                    if (
+                        not next_line
+                        or next_line.startswith("#")
+                        or next_line.startswith("|")
+                        or re.match(r"^[-*]\s+", next_line)
+                    ):
+                        break
+                    idx += 1
+                    callout_parts.append(next_line)
+                    if next_line == "==" or next_line.endswith("=="):
+                        break
+            else:
+                while not callout_parts[-1].endswith("==") and idx + 1 < len(lines):
+                    idx += 1
+                    callout_parts.append(lines[idx].strip())
+            out.append(render_callout(callout_parts))
             idx += 1
             continue
 

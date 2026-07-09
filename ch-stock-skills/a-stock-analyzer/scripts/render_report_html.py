@@ -169,23 +169,80 @@ function drawValuationBands() {
   const series = charts.valuation_series || [];
   const bands = charts.valuation_bands || {};
   if (series.length < 2) return;
-  const heading = findHeading(["估值快照与历史分位", "估值快照", "历史分位", "估值模式"]);
+  const heading = findHeading(["估值方法与相对贵贱", "估值带 + 同业", "估值快照与同业", "估值快照与历史分位", "估值快照", "历史分位", "估值模式"]);
   if (!heading) return;
 
-  const specs = [
-    { key: "pe_ttm", title: "PE-TTM 估值带" },
-    { key: "pb", title: "PB 估值带" },
-    { key: "ps_ttm", title: "PS-TTM 估值带" }
-  ];
+  const spec = inferValuationSpec(heading);
+  if (!spec) return;
+
   const grid = document.createElement("div");
   grid.className = "chart-grid";
-  specs.forEach(spec => {
-    const card = buildBandTimeCard(spec.key, spec.title);
-    if (card) grid.appendChild(card);
-  });
+  const card = buildBandTimeCard(spec);
+  if (card) grid.appendChild(card);
   if (grid.children.length) insertAfterBlock(heading, grid);
 
-  function buildBandTimeCard(key, title) {
+  function inferValuationSpec(heading) {
+    const section = sectionText(heading);
+    return specFromText(section) || specFromText(root.innerText || "");
+  }
+
+  function sectionText(heading) {
+    const level = Number((heading.tagName || "H2").slice(1)) || 2;
+    const parts = [heading.innerText || ""];
+    let node = heading.nextElementSibling;
+    while (node) {
+      if (/^H[1-6]$/.test(node.tagName || "")) {
+        const nextLevel = Number(node.tagName.slice(1)) || 6;
+        if (nextLevel <= level) break;
+      }
+      parts.push(node.innerText || "");
+      node = node.nextElementSibling;
+    }
+    return parts.join("\n");
+  }
+
+  function specFromText(text) {
+    const patterns = [
+      /主估值锚[^：:\n]{0,16}[：:]\s*([^\n\r。；;，,]+)/i,
+      /估值方法[^：:\n]{0,16}[：:]\s*([^\n\r。；;，,]+)/i,
+      /采用\s*([^\n\r。；;，,]{1,32}?)\s*(?:估值|作为主锚|为主)/i,
+      /以\s*([^\n\r。；;，,]{1,32}?)\s*(?:为|作为)\s*主/i
+    ];
+    for (const pattern of patterns) {
+      const m = String(text || "").match(pattern);
+      if (!m) continue;
+      const spec = specFromAnchor(m[1]);
+      if (spec) return spec;
+    }
+    return null;
+  }
+
+  function specFromAnchor(raw) {
+    const text = String(raw || "").replace(/[\[\]【】]/g, " ").trim();
+    if (!text) return null;
+    const upper = text.toUpperCase();
+    const tokenHits = ["PE", "PB", "PS", "股息", "EV", "SOTP", "DCF", "RNPV", "NAV"].filter(t => upper.includes(t) || text.includes(t));
+    if (/\bPE\b/i.test(upper) && /\bPB\b/i.test(upper) && /\bPS\b/i.test(upper)) return null;
+    if ((raw.includes("…") || raw.includes("...")) && tokenHits.length > 2) return null;
+    if (tokenHits.length > 3) return null;
+
+    if (/股息|DIVIDEND|DV_TTM/i.test(text)) {
+      return { key: "dv_ttm", title: "主估值锚：股息率估值带", fmt: v => fmtNum(v) + "%" };
+    }
+    if (/P\s*[-/]?\s*(EV|NBV)\b|\bPB\b|P\/B/i.test(upper)) {
+      return { key: "pb", title: "主估值锚：PB 估值带", fmt: fmtNum };
+    }
+    if (/\bPS\b|P\/S/i.test(upper)) {
+      return { key: "ps_ttm", title: "主估值锚：PS-TTM 估值带", fmt: fmtNum };
+    }
+    if (/\bPEG\b|\bPE\b|P\/E|中周期\s*PE/i.test(upper) || /中周期利润/.test(text)) {
+      return { key: "pe_ttm", title: "主估值锚：PE-TTM 估值带", fmt: fmtNum };
+    }
+    return null;
+  }
+
+  function buildBandTimeCard(spec) {
+    const { key, title, fmt = fmtNum } = spec;
     const pts = series
       .map((r, i) => ({ i, date: String(r.trade_date || ""), v: Number(r[key]) }))
       .filter(p => Number.isFinite(p.v) && p.v > 0);
@@ -196,8 +253,8 @@ function drawValuationBands() {
     const win = wkey ? windows[wkey] : null;
     const current = Number.isFinite(Number(band.current)) ? Number(band.current) : pts[pts.length - 1].v;
     const pctText = win && Number.isFinite(win.current_percentile) ? ` · 分位 ${win.current_percentile.toFixed(0)}%` : "";
-    const metricName = title.split(" ")[0];
-    const card = mkCard("chart-card", title, `当前 ${fmtNum(current)}${pctText}`);
+    const metricName = title.replace(/^主估值锚：/, "").replace(/估值带$/, "").trim();
+    const card = mkCard("chart-card", title, `当前 ${fmt(current)}${pctText}`);
     const tip = mkTooltip(card);
 
     const W = 480, H = 220, pad = { l: 38, r: 40, t: 12, b: 28 };
@@ -226,7 +283,7 @@ function drawValuationBands() {
     bandLines.forEach(item => {
       const v = item[1], color = item[2];
       svg.appendChild(svgEl("line", { x1: pad.l, x2: W - pad.r, y1: y(v).toFixed(2), y2: y(v).toFixed(2), stroke: color, "stroke-width": 1, "stroke-dasharray": "3 3", opacity: 0.65 }));
-      svg.appendChild(svgText(W - pad.r + 3, y(v) + 3, fmtNum(v), "start", color, 9));
+      svg.appendChild(svgText(W - pad.r + 3, y(v) + 3, fmt(v), "start", color, 9));
     });
 
     const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(2)} ${y(p.v).toFixed(2)}`).join(" ");
@@ -251,7 +308,7 @@ function drawValuationBands() {
       idx = Math.max(0, Math.min(n - 1, idx));
       const p = pts[idx];
       cursor.setAttribute("x1", x(idx)); cursor.setAttribute("x2", x(idx)); cursor.setAttribute("opacity", "1");
-      tip.innerHTML = `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${fmtDate(p.date)}</div><div>${metricName}: ${fmtNum(p.v)}</div>`;
+      tip.innerHTML = `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${fmtDate(p.date)}</div><div>${metricName}: ${fmt(p.v)}</div>`;
       tip.style.opacity = "1";
       moveTip(tip, card, e);
     });
@@ -356,6 +413,29 @@ function drawFinancialTrends() {
     return card;
   }
 }
+"""
+
+
+# --------------------------------------------------------------------------- #
+# Deep-mode finding cards: rendered by shared markdown_engine for structured
+# ``==深度调研发现｜...`` blocks. Kept here (instead of global themes) because
+# the component is analyzer-specific and should not leak into other reports.
+# --------------------------------------------------------------------------- #
+DEEP_FINDING_CSS = """
+.deep-finding-card { grid-column: 1 / -1; margin: 18px 0 22px; border: 1px solid var(--accent-hair, #c2d7f7); border-left: 4px solid var(--accent, #1a73e8); border-radius: var(--r-md, 12px); background: linear-gradient(180deg, var(--accent-soft, #e8f0fe), var(--surface, #fff)); box-shadow: var(--shadow-1, 0 1px 3px rgba(0,0,0,0.12)); overflow: hidden; }
+.deep-finding-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 10px 14px 9px; border-bottom: 1px solid var(--accent-hair, #c2d7f7); }
+.deep-finding-title { font-size: 12px; font-weight: 700; letter-spacing: .02em; color: var(--accent-ink, #0b57d0); }
+.deep-finding-sep { color: var(--ink-4, #9aa0a6); font-size: 12px; }
+.deep-finding-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 1px 8px; border-radius: var(--pill, 999px); background: var(--surface, #fff); border: 1px solid var(--line-2, #e8eaed); color: var(--ink-3, #5f6368); font-size: 11px; font-weight: 600; }
+.deep-finding-body { padding: 11px 14px 13px; display: grid; gap: 7px; }
+.deep-finding-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 9px; align-items: baseline; color: var(--ink-2, #3c4043); font-size: 13.5px; line-height: 1.7; }
+.deep-finding-label { color: var(--accent-ink, #0b57d0); font-weight: 700; font-size: 12px; }
+.deep-finding-value a { color: var(--accent-ink, #0b57d0); text-decoration: none; border-bottom: 1px solid var(--accent-hair, #c2d7f7); }
+.deep-finding-value a:hover { border-bottom-color: var(--accent, #1a73e8); }
+.deep-finding-row-原文 .deep-finding-value { color: var(--ink-3, #5f6368); }
+.deep-finding-row-判断 .deep-finding-value, .deep-finding-row-影响 .deep-finding-value { color: var(--ink-1, #202124); }
+.deep-finding-note { margin: 0; color: var(--ink-3, #5f6368); font-size: 13.5px; line-height: 1.7; }
+@media (max-width: 700px) { .deep-finding-row { grid-template-columns: 1fr; gap: 1px; } }
 """
 
 
@@ -609,7 +689,7 @@ def build_job(args) -> RenderJob:
     meta_text = header_sub + (" · " + latest if (latest and header_sub) else latest)
 
     tracking = load_tracking(args, charts, input_path)
-    extra_css = TRACKING_CSS if tracking else ""
+    extra_css = DEEP_FINDING_CSS + ("\n" + TRACKING_CSS if tracking else "")
 
     builder = HtmlReportBuilder(title=title, theme=args.theme, meta_text=meta_text, extra_css=extra_css)
     builder.add_decoration(PillDecoration(ANALYZER_PILL_RULES))

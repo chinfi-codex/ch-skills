@@ -1,6 +1,6 @@
 ---
 name: stock-ai-analyzer
-description: A股股票基本面投研分析方法论。当用户要求按股票名称或代码分析中国A股、判断公司成长性与核心亮点、评估估值阶段与隐含预期、分析财务质量与业务结构、判断股票是否处于当前市场主线内、做竞争格局分析或风险排查，或基于Tushare/公开市场数据生成股票基本面分析时使用。用户提问形式包括"帮我分析XX股票""XX的基本面怎么样""XX成长性如何""XX估值贵不贵""XX为什么值得买""XX是不是当前主线""XX所在行业景气度如何""XX管理层/创始人靠不靠谱""XX团队能不能兑现成长""XX治理有没有硬伤""用VC视角判断XX成长成功率"等。当用户要求"深度分析""深挖""把异常/业绩变化查清楚""读年报找线索""挖未被定价的看点"时，进入 Deep 模式（见 references/deep_mode.md）做命题先行的主动调研。该技能要求分析流程、判断框架、内容输出全部写在SKILL.md中；脚本只允许做原子数据获取与确定性扫描。
+description: A股股票基本面投研分析方法论。当用户要求按股票名称或代码分析中国A股、判断公司成长性与核心亮点、评估估值阶段与隐含预期、分析财务质量与业务结构、判断股票是否处于当前市场主线内、做竞争格局分析或风险排查，或基于Tushare/公开市场数据生成股票基本面分析时使用。用户提问形式包括"帮我分析XX股票""XX的基本面怎么样""XX成长性如何""XX估值贵不贵""XX为什么值得买""XX是不是当前主线""XX所在行业景气度如何""XX管理层/创始人靠不靠谱""XX团队能不能兑现成长""XX治理有没有硬伤""用VC视角判断XX成长成功率"等。当用户要求"深度分析""深挖""把异常/业绩变化查清楚""读年报找线索""挖未被定价的看点"时，进入 Deep 模式（见 references/deep_mode.md）做命题先行的主动调研。该技能要求分析流程、判断框架、内容输出全部写在SKILL.md中；脚本只允许做原子数据获取、确定性扫描、状态持久化和只读 HTML 渲染，不允许替模型生成投资结论。
 ---
 
 # A股基本面投研分析助手
@@ -12,7 +12,7 @@ description: A股股票基本面投研分析方法论。当用户要求按股票
 ## 一、总原则
 
 - 所有内容逻辑都放在本 `SKILL.md` 中：分析路径、判断标准、报告结构、措辞边界。
-- 只使用 `scripts/data_fetcher.py` 获取单一数据集，或解析股票名称/代码。
+- 证据获取用 `scripts/data_fetcher.py`；Deep 模式确定性 surfacing 用 `scripts/thesis_scan.py`；持续跟踪状态写入用 `scripts/tracking_table.py`；Markdown 到 HTML 的只读渲染用 `scripts/render_report_html.py`。
 - 脚本输出只是证据，结论必须由你基于证据推理得出。
 - **A股估值的核心哲学**：A股是高度叙事驱动的市场。一只股票是否处于当前市场主线内，会显著影响其估值定价方式。这一判断是定量分析中无法回避的关键变量，详见第 5.5 节。
 - **估值不得默认使用通用 PE**。估值前必须做**双轴分型**：(1) 生命周期分型——成长股 / 成熟龙头 / 红利价值，决定"看远期还是看当期"；(2) 行业 / 商业模式分型——决定"用哪个倍数作为主估值锚"（PE / PEG / PS / EV-Sales / EV/ARR / Rule of 40 / PB / EV-EBITDA / 中周期利润 / SOTP / rNPV 等）。盈利稳定 → PE/PEG；高增长但利润未释放 → PS/EV-Sales；SaaS → EV/ARR、PS、Rule of 40；重资产或强周期 → PB、EV/EBITDA、中周期利润；多业务并行 → SOTP；创新药 → rNPV/DCF；金融 → PB/P-EV/P-NBV。详见第 5.1 节与 `references/industry_valuation_library.md`。
@@ -114,6 +114,37 @@ python scripts/render_report_html.py -i reports/report_600519.md --evidence repo
 - `fetch report-text … --section <章节/关键词> [--to-markdown]`：把"盲读前 6 万字"升级为**定向读章节**。年报标准章节别名 `mda`/`财务报告`/`重要事项`/`公司治理`/`股东`；不命中（如季报、或"研发"/"AI"等子主题）自动降级为关键词窗口。引擎优先级 pymupdf4llm → PyMuPDF → PyPDF2，缺高级库自动回退。
 - `fetch daily <code> --limit 0`：取全量日线，供"月线横盘/价格 vs 盈利"等长周期判断（pack 默认仅 60 日）。
 
+### 2.5 持续跟踪：个股估值建模跟踪表（PG）与 HTML 跟踪点
+
+同一只股票会被反复分析。为了让"这次相对上次变了什么"可沉淀、可回看，每只跟踪股在本地 PostgreSQL（`alpha_data`）里有一张**逻辑上的个股跟踪表**——所有股票共用三张按 `ts_code` 分区的表（`stock_tracking_meta` / `stock_tracking_field` / `stock_tracking_history`，schema 见 `_shared/init_alpha_data.sql §16`），不是每股一张物理表。字段由**该股自己的建模变量**定义，不套统一模板：
+
+- **主锚推算变量**（按 §5.4.A 主锚选）：PE 股→远期净利、合理 PE 区间；PS 股→远期收入、远期净利率正常化；PB→中周期 ROE、远期 BVPS；rNPV→各管线节点/成功率；EV/ARR→ARR、NDR。
+- **主线连接强度**（§5.5）：强/弱/无连接 + 依据。
+- **上修 / 下修条件里可量化的催化跟踪点**（§5.6）：订单、产能、渗透率、提价、稼动率等，取 2–5 个最关键的。
+
+合计 5–15 个字段为宜。首次分析**建基线**（每个字段落一条当日记录）；之后每次跟踪，只对**发生变化**的字段追加一条带日期的新记录——历史 append-only，同日重跑覆盖当日那条，旧日期永不改写。
+
+**CLI（`scripts/tracking_table.py`，只做校验+持久化，不做判断）**：
+
+```bash
+# 建表头（公司名 + 主锚），幂等
+python3 scripts/tracking_table.py init 600519.SH --name 贵州茅台 --anchor PE
+# 追加/更新一个字段（新字段首次必带 --label）
+python3 scripts/tracking_table.py set 600519.SH --field fy2026_np \
+    --value "96–100" --label "2026E 归母净利" --group 盈利预测 --unit 亿元 \
+    --source 业绩预告 --confidence 中 --note "预告中值上修"
+python3 scripts/tracking_table.py set 600519.SH --field mainline \
+    --value 强连接 --label 主线连接强度 --group 主线
+# 查看 / 单字段完整历史 / 列出所有跟踪股
+python3 scripts/tracking_table.py show 600519.SH
+python3 scripts/tracking_table.py show 600519.SH --field fy2026_np
+python3 scripts/tracking_table.py list
+```
+
+连接走 `_shared/db_core.py`（默认 `alpha_user@/alpha_data` 的 `/tmp` socket）；表在首次写入时自建（`ensure_schema`），无需先跑建表脚本。字段取值判断仍是你的职责——脚本只校验字段 id、日期、置信度枚举并落库。
+
+**HTML 挂载**：`render_report_html.py` 会自动按 `ts_code`（来自 evidence 或报告文件名，或 `--tracking-code` 指定）读回该股跟踪表，在报告里注入「估值建模跟踪表」卡片（每字段一行：最新值 + "MM-DD 更新 · N次"徽标，点击展开该字段完整历史）。正文里还可在建模数值后手动挂**行内跟踪点** `{{track:字段id}}`，渲染成同款徽标，点击弹出该字段历史浮层。缺表 / 缺字段 / DB 不可达时静默跳过（与 §2.3"内容与格式解耦、尽力而为"一致）。`--no-tracking` 可关闭。
+
 ---
 
 ## 三、工作流程
@@ -181,6 +212,16 @@ python scripts/render_report_html.py -i reports/report_600519.md --evidence repo
 - 显式说明关键假设（包括主线归属假设）。
 - 避免单边结论，写出最强反方观点。
 - 结尾写清风险和非投资建议声明。
+
+### 持续跟踪更新（分析一只已跟踪过的股票时）
+
+若该股此前已建过跟踪表（`tracking_table.py list` 可查），把它接进本次分析：
+
+1. **先看基线**：`tracking_table.py show <ts_code>` 拉出上次记录的建模字段与现值，作为"这次相对上次变了什么"的锚。
+2. **分析**：照常走定性/定量框架。
+3. **落更新**：只对**发生变化**的字段 `set` 一条当日记录（值变了、主线连接强度变了、某个催化点兑现/落空）；没变的字段不动。首次分析该股则按 §2.5 建基线。
+4. **正文挂点（可选）**：在报告正文的建模数值后加 `{{track:字段id}}`，让读者能就地看到该数值的更新历史。
+5. **重渲 HTML**：`render_report_html.py` 自动读回跟踪表并注入跟踪卡片 + 行内徽标。
 
 ### Deep 模式（可选，用户显式要求时）
 
@@ -300,6 +341,8 @@ python scripts/data_fetcher.py fetch daily-basic <peer_code> --limit 1
 ## 八、输出模板
 
 下面模板里的几个小标题同时是 HTML 渲染（2.3 节）的图表锚点：「核心判断」→ hero 卡片，「估值快照与历史分位」→ PE/PB/PS 估值带时间序列图，「成长性与财务质量诊断」→ 财务趋势图。沿用这些命名能让图表自动落位；但锚点是尽力而为，命名变了也只是少几张图，不影响正文。
+
+跟踪已建表的股票时（§2.5），正文可在建模字段的数值后挂行内跟踪点 `{{track:字段id}}`（如"2026E 归母净利 96–100 亿元 `{{track:fy2026_np}}`"），渲染成"更新徽标 + 历史弹层"；纯可选，缺表/缺字段静默降级，不影响正文。
 
 **Deep 模式的嵌入规则（确保查了的都体现，不是凑满 3 条就行）**：调研工单里每条 ✅ 完成项，都要把它的 `==深度调研发现==` 块**就近嵌入相关正文**——异常归因→§4 成长诊断 / 主线·B 型期权→§5 核心看点与定量 §6–§7 / 人与治理→§6 成长成功率 / 风险→第三部分；并在末尾「深度调研索引」登记一行。⚠️ 数据缺、✗ 放弃的项不嵌正文，但**仍要进索引并注明、汇入 §8 置信度**。**正文 + 索引合起来必须覆盖整张工单，无一遗漏。**
 

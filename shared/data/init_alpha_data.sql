@@ -399,3 +399,70 @@ CREATE TABLE IF NOT EXISTS factor_experiment_log (
 
 CREATE INDEX IF NOT EXISTS idx_factor_experiment_group
     ON factor_experiment_log(group_key, window_end);
+
+
+-- -------------------------------------------------------------------------
+-- 16. Per-stock valuation-model tracking (a-stock-analyzer, 个股估值建模跟踪)
+-- -------------------------------------------------------------------------
+-- Persistent, cross-analysis tracking of ONE stock's own valuation-model
+-- variables.  "每股一张跟踪表" is LOGICAL, not physical: like stock_daily /
+-- theme_daily_state / strategy_pick_ledger, every stock's rows live in these
+-- shared tables partitioned by ts_code — no DDL per stock.  Three tables mirror
+-- the analyst's mental model:
+--   stock_tracking_meta    — one row per tracked stock (company name + primary
+--                            valuation anchor, for the report header)
+--   stock_tracking_field   — the field roster for a stock; each field is one
+--                            modeling variable the analyst chose to track
+--                            (远期净利 / 远期收入 / 中周期 ROE / 管线节点 /
+--                            主线连接强度 / 上修·下修催化点 …).  Fields differ
+--                            per stock, hence a roster rather than fixed columns.
+--   stock_tracking_history — append-only dated entries per field; a same-day
+--                            re-run UPSERTs that date's row (an intraday
+--                            correction stays one row) while older dates are
+--                            never rewritten.
+-- The HTML renderer reads these back to mount an "updated MM-DD" badge + a
+-- history popover on each tracked field.  Field choice and values are the
+-- model's job (per SKILL.md §2.5); tracking_table.py only validates + persists.
+-- grp (not "group", a reserved word) is exposed as "group" in the JSON the
+-- renderer consumes.  Markdown reports stay the narrative truth source; these
+-- tables are runtime tracking series only.
+CREATE TABLE IF NOT EXISTS stock_tracking_meta (
+    ts_code     TEXT PRIMARY KEY,
+    name        TEXT,
+    anchor      TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS stock_tracking_field (
+    ts_code     TEXT NOT NULL,
+    field_id    TEXT NOT NULL,
+    label       TEXT NOT NULL,
+    grp         TEXT NOT NULL DEFAULT '其他',
+    unit        TEXT,
+    status      TEXT NOT NULL DEFAULT 'active',   -- active / retired
+    sort_key    INTEGER NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ts_code, field_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_tracking_field_stock
+    ON stock_tracking_field(ts_code, status);
+
+CREATE TABLE IF NOT EXISTS stock_tracking_history (
+    ts_code     TEXT NOT NULL,
+    field_id    TEXT NOT NULL,
+    asof        DATE NOT NULL,
+    value       TEXT NOT NULL,
+    note        TEXT,
+    source      TEXT,
+    confidence  TEXT,                              -- 高 / 中 / 低 / NULL
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ts_code, field_id, asof),
+    FOREIGN KEY (ts_code, field_id)
+        REFERENCES stock_tracking_field(ts_code, field_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_tracking_history_field
+    ON stock_tracking_history(ts_code, field_id, asof);

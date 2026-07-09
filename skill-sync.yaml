@@ -36,6 +36,7 @@ shared:
         - ch-news-reporter
         - a-stock-daily-market-sense
         - a-stock-earnings-forecast
+        - a-stock-analyzer
     # html 能力：报告渲染框架（Markdown→HTML + 内联图表）
     - source: shared/html_report
       dest: scripts/_shared/html_report
@@ -56,6 +57,7 @@ shared:
 exclude:
   dirs:
     - .git
+    - .cache
     - __pycache__
     - .pytest_cache
     - evals
@@ -88,4 +90,6 @@ exclude:
     a-stock-daily-market-sense:
       - reports
     a-stock-earnings-forecast:
+      - reports
+    a-stock-analyzer:
       - reports

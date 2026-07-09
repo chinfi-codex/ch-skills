@@ -257,10 +257,34 @@ def _resolve_skill_relative_path(skill_dst: Path, path_str: str) -> Path:
     if not _is_relative_path(path_str):
         raise ValueError(f"bundle 目标路径必须是 skill 内相对路径，且不能包含 '..': {path_str}")
 
-    path = (skill_dst / path_str).resolve()
-    if path != skill_dst.resolve() and skill_dst.resolve() not in path.parents:
+    # Keep this check lexical. When a target skill directory is currently a
+    # symlink/junction to the source tree, Path.resolve() follows it and makes a
+    # bundle destination look like it belongs under the repo. That in turn copies
+    # generated _shared assets back into the canonical source during sync.
+    base = skill_dst.absolute()
+    path = (skill_dst / path_str).absolute()
+    if path != base and base not in path.parents:
         raise ValueError(f"bundle 目标路径越界: {path_str}")
     return path
+
+
+def _is_dir_link(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", lambda: False)
+    return path.is_symlink() or is_junction()
+
+
+def _prepare_copy_destination(dst: Path, dry_run: bool = False) -> None:
+    """Switching from link mode back to copy mode must replace the dir link.
+
+    Otherwise rsync/robocopy follow the link and mirror generated bundle assets
+    into the source skill directory.
+    """
+    if not _is_dir_link(dst):
+        return
+    if dry_run:
+        print(f"  [DRY-RUN] 将移除目录链接以便复制同步: {dst}")
+        return
+    dst.unlink()
 
 
 def _skill_matches_bundle(skill_name: str, skill_src: Path, bundle: dict) -> bool:
@@ -325,6 +349,7 @@ def _mirror_robocopy(
         print(f"  [DRY-RUN] 将镜像同步: {src.name} -> {dst}")
         return
 
+    _prepare_copy_destination(dst, dry_run)
     dst.mkdir(parents=True, exist_ok=True)
     cmd = [
         "robocopy",
@@ -362,6 +387,7 @@ def _mirror_rsync(
         print(f"  [DRY-RUN] 将镜像同步: {src.name} -> {dst}")
         return
 
+    _prepare_copy_destination(dst, dry_run)
     dst.mkdir(parents=True, exist_ok=True)
     cmd = ["rsync", "-av", "--delete"]
     for e in exclude_dirs + exclude_files:

@@ -20,7 +20,8 @@ from typing import Any, Dict, List, Optional
 SCRIPT_ROOT = Path(__file__).resolve().parent
 _BUNDLED_SHARED = SCRIPT_ROOT / "_shared"
 _DEV_SHARED = SCRIPT_ROOT.parents[2] / "shared"
-sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
+_SHARED_PATHS = [str(p) for p in (_DEV_SHARED, _BUNDLED_SHARED) if p.exists()]
+sys.path[:0] = [p for p in _SHARED_PATHS if p not in sys.path]
 
 from html_report import (  # noqa: E402
     ChartHook,
@@ -168,23 +169,80 @@ function drawValuationBands() {
   const series = charts.valuation_series || [];
   const bands = charts.valuation_bands || {};
   if (series.length < 2) return;
-  const heading = findHeading(["估值快照与历史分位", "估值快照", "历史分位", "估值模式"]);
+  const heading = findHeading(["估值方法与相对贵贱", "估值带 + 同业", "估值快照与同业", "估值快照与历史分位", "估值快照", "历史分位", "估值模式"]);
   if (!heading) return;
 
-  const specs = [
-    { key: "pe_ttm", title: "PE-TTM 估值带" },
-    { key: "pb", title: "PB 估值带" },
-    { key: "ps_ttm", title: "PS-TTM 估值带" }
-  ];
+  const spec = inferValuationSpec(heading);
+  if (!spec) return;
+
   const grid = document.createElement("div");
   grid.className = "chart-grid";
-  specs.forEach(spec => {
-    const card = buildBandTimeCard(spec.key, spec.title);
-    if (card) grid.appendChild(card);
-  });
+  const card = buildBandTimeCard(spec);
+  if (card) grid.appendChild(card);
   if (grid.children.length) insertAfterBlock(heading, grid);
 
-  function buildBandTimeCard(key, title) {
+  function inferValuationSpec(heading) {
+    const section = sectionText(heading);
+    return specFromText(section) || specFromText(root.innerText || "");
+  }
+
+  function sectionText(heading) {
+    const level = Number((heading.tagName || "H2").slice(1)) || 2;
+    const parts = [heading.innerText || ""];
+    let node = heading.nextElementSibling;
+    while (node) {
+      if (/^H[1-6]$/.test(node.tagName || "")) {
+        const nextLevel = Number(node.tagName.slice(1)) || 6;
+        if (nextLevel <= level) break;
+      }
+      parts.push(node.innerText || "");
+      node = node.nextElementSibling;
+    }
+    return parts.join("\n");
+  }
+
+  function specFromText(text) {
+    const patterns = [
+      /主估值锚[^：:\n]{0,16}[：:]\s*([^\n\r。；;，,]+)/i,
+      /估值方法[^：:\n]{0,16}[：:]\s*([^\n\r。；;，,]+)/i,
+      /采用\s*([^\n\r。；;，,]{1,32}?)\s*(?:估值|作为主锚|为主)/i,
+      /以\s*([^\n\r。；;，,]{1,32}?)\s*(?:为|作为)\s*主/i
+    ];
+    for (const pattern of patterns) {
+      const m = String(text || "").match(pattern);
+      if (!m) continue;
+      const spec = specFromAnchor(m[1]);
+      if (spec) return spec;
+    }
+    return null;
+  }
+
+  function specFromAnchor(raw) {
+    const text = String(raw || "").replace(/[\[\]【】]/g, " ").trim();
+    if (!text) return null;
+    const upper = text.toUpperCase();
+    const tokenHits = ["PE", "PB", "PS", "股息", "EV", "SOTP", "DCF", "RNPV", "NAV"].filter(t => upper.includes(t) || text.includes(t));
+    if (/\bPE\b/i.test(upper) && /\bPB\b/i.test(upper) && /\bPS\b/i.test(upper)) return null;
+    if ((raw.includes("…") || raw.includes("...")) && tokenHits.length > 2) return null;
+    if (tokenHits.length > 3) return null;
+
+    if (/股息|DIVIDEND|DV_TTM/i.test(text)) {
+      return { key: "dv_ttm", title: "主估值锚：股息率估值带", fmt: v => fmtNum(v) + "%" };
+    }
+    if (/P\s*[-/]?\s*(EV|NBV)\b|\bPB\b|P\/B/i.test(upper)) {
+      return { key: "pb", title: "主估值锚：PB 估值带", fmt: fmtNum };
+    }
+    if (/\bPS\b|P\/S/i.test(upper)) {
+      return { key: "ps_ttm", title: "主估值锚：PS-TTM 估值带", fmt: fmtNum };
+    }
+    if (/\bPEG\b|\bPE\b|P\/E|中周期\s*PE/i.test(upper) || /中周期利润/.test(text)) {
+      return { key: "pe_ttm", title: "主估值锚：PE-TTM 估值带", fmt: fmtNum };
+    }
+    return null;
+  }
+
+  function buildBandTimeCard(spec) {
+    const { key, title, fmt = fmtNum } = spec;
     const pts = series
       .map((r, i) => ({ i, date: String(r.trade_date || ""), v: Number(r[key]) }))
       .filter(p => Number.isFinite(p.v) && p.v > 0);
@@ -195,8 +253,8 @@ function drawValuationBands() {
     const win = wkey ? windows[wkey] : null;
     const current = Number.isFinite(Number(band.current)) ? Number(band.current) : pts[pts.length - 1].v;
     const pctText = win && Number.isFinite(win.current_percentile) ? ` · 分位 ${win.current_percentile.toFixed(0)}%` : "";
-    const metricName = title.split(" ")[0];
-    const card = mkCard("chart-card", title, `当前 ${fmtNum(current)}${pctText}`);
+    const metricName = title.replace(/^主估值锚：/, "").replace(/估值带$/, "").trim();
+    const card = mkCard("chart-card", title, `当前 ${fmt(current)}${pctText}`);
     const tip = mkTooltip(card);
 
     const W = 480, H = 220, pad = { l: 38, r: 40, t: 12, b: 28 };
@@ -225,7 +283,7 @@ function drawValuationBands() {
     bandLines.forEach(item => {
       const v = item[1], color = item[2];
       svg.appendChild(svgEl("line", { x1: pad.l, x2: W - pad.r, y1: y(v).toFixed(2), y2: y(v).toFixed(2), stroke: color, "stroke-width": 1, "stroke-dasharray": "3 3", opacity: 0.65 }));
-      svg.appendChild(svgText(W - pad.r + 3, y(v) + 3, fmtNum(v), "start", color, 9));
+      svg.appendChild(svgText(W - pad.r + 3, y(v) + 3, fmt(v), "start", color, 9));
     });
 
     const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(2)} ${y(p.v).toFixed(2)}`).join(" ");
@@ -250,7 +308,7 @@ function drawValuationBands() {
       idx = Math.max(0, Math.min(n - 1, idx));
       const p = pts[idx];
       cursor.setAttribute("x1", x(idx)); cursor.setAttribute("x2", x(idx)); cursor.setAttribute("opacity", "1");
-      tip.innerHTML = `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${fmtDate(p.date)}</div><div>${metricName}: ${fmtNum(p.v)}</div>`;
+      tip.innerHTML = `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${fmtDate(p.date)}</div><div>${metricName}: ${fmt(p.v)}</div>`;
       tip.style.opacity = "1";
       moveTip(tip, card, e);
     });
@@ -359,14 +417,260 @@ function drawFinancialTrends() {
 
 
 # --------------------------------------------------------------------------- #
+# Deep-mode finding cards: rendered by shared markdown_engine for structured
+# ``==深度调研发现｜...`` blocks. Kept here (instead of global themes) because
+# the component is analyzer-specific and should not leak into other reports.
+# --------------------------------------------------------------------------- #
+DEEP_FINDING_CSS = """
+.deep-finding-card { grid-column: 1 / -1; margin: 18px 0 22px; border: 1px solid var(--accent-hair, #c2d7f7); border-left: 4px solid var(--accent, #1a73e8); border-radius: var(--r-md, 12px); background: linear-gradient(180deg, var(--accent-soft, #e8f0fe), var(--surface, #fff)); box-shadow: var(--shadow-1, 0 1px 3px rgba(0,0,0,0.12)); overflow: hidden; }
+.deep-finding-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 10px 14px 9px; border-bottom: 1px solid var(--accent-hair, #c2d7f7); }
+.deep-finding-title { font-size: 12px; font-weight: 700; letter-spacing: .02em; color: var(--accent-ink, #0b57d0); }
+.deep-finding-sep { color: var(--ink-4, #9aa0a6); font-size: 12px; }
+.deep-finding-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 1px 8px; border-radius: var(--pill, 999px); background: var(--surface, #fff); border: 1px solid var(--line-2, #e8eaed); color: var(--ink-3, #5f6368); font-size: 11px; font-weight: 600; }
+.deep-finding-body { padding: 11px 14px 13px; display: grid; gap: 7px; }
+.deep-finding-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 9px; align-items: baseline; color: var(--ink-2, #3c4043); font-size: 13.5px; line-height: 1.7; }
+.deep-finding-label { color: var(--accent-ink, #0b57d0); font-weight: 700; font-size: 12px; }
+.deep-finding-value a { color: var(--accent-ink, #0b57d0); text-decoration: none; border-bottom: 1px solid var(--accent-hair, #c2d7f7); }
+.deep-finding-value a:hover { border-bottom-color: var(--accent, #1a73e8); }
+.deep-finding-row-原文 .deep-finding-value { color: var(--ink-3, #5f6368); }
+.deep-finding-row-判断 .deep-finding-value, .deep-finding-row-影响 .deep-finding-value { color: var(--ink-1, #202124); }
+.deep-finding-note { margin: 0; color: var(--ink-3, #5f6368); font-size: 13.5px; line-height: 1.7; }
+@media (max-width: 700px) { .deep-finding-row { grid-template-columns: 1fr; gap: 1px; } }
+"""
+
+
+# --------------------------------------------------------------------------- #
+# Tracking: per-stock valuation-model tracking table (alpha_data via
+# tracking_store). Renders one card listing every tracked field with its latest
+# value + an "updated MM-DD" badge that expands to the field's dated history;
+# and turns inline ``{{track:field_id}}`` markers in the prose into the same
+# badge with a click-to-open history popover. All var()s carry fallbacks so the
+# print theme (which lacks --surface-2 / --font-mono / --pill / --shadow-2)
+# still renders.
+# --------------------------------------------------------------------------- #
+TRACKING_CSS = """
+.track-card { grid-column: 1 / -1; margin: 16px 0 22px; }
+.track-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.track-tbl td { padding: 7px 10px; border-bottom: 1px solid var(--line-2, #e8eaed); vertical-align: middle; }
+.track-tbl tr:last-child td { border-bottom: none; }
+.track-row { cursor: pointer; transition: background .12s ease; }
+.track-row:hover { background: var(--surface-2, #f4f6f8); }
+.track-c-label { color: var(--ink-1, #202124); font-weight: 500; }
+.track-group { display: inline-block; font-size: 11px; font-weight: 500; padding: 1px 7px; border-radius: var(--pill, 999px); background: var(--accent-soft, #e8f0fe); color: var(--accent-ink, #0b57d0); margin-right: 6px; }
+.track-c-val { font-family: var(--font-mono, ui-monospace, monospace); color: var(--ink-1, #202124); white-space: nowrap; }
+.track-c-chip { text-align: right; white-space: nowrap; }
+.track-c-exp { width: 20px; text-align: center; color: var(--ink-4, #9aa0a6); font-size: 11px; }
+.track-chip { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; line-height: 1.6; padding: 1px 8px; border-radius: var(--pill, 999px); border: 1px solid var(--accent-hair, #c2d7f7); background: var(--accent-soft, #e8f0fe); color: var(--accent-ink, #0b57d0); cursor: pointer; }
+.track-chip.hot { background: var(--accent, #1a73e8); border-color: var(--accent, #1a73e8); color: #fff; }
+.track-chip.inline { vertical-align: baseline; margin: 0 2px; font-size: 10.5px; }
+.track-retired .track-c-label, .track-retired .track-c-val { color: var(--ink-4, #9aa0a6); }
+.track-retired-tag { font-size: 10px; color: var(--ink-4, #9aa0a6); margin-left: 6px; }
+.track-hist td { background: var(--surface-2, #f6f8fa); padding: 4px 10px 10px; }
+.track-hist-list { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 2px; }
+.track-hist-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 12px; color: var(--ink-3, #5f6368); padding: 3px 8px; border-left: 2px solid var(--line-1, #dadce0); }
+.track-hist-item.latest { color: var(--ink-1, #202124); font-weight: 500; border-left-color: var(--accent, #1a73e8); }
+.track-hist-item .th-date { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; color: var(--ink-4, #9aa0a6); min-width: 42px; }
+.track-hist-item.latest .th-date { color: var(--accent-ink, #0b57d0); }
+.track-hist-item .th-val { font-family: var(--font-mono, ui-monospace, monospace); }
+.track-hist-item .th-note { color: var(--ink-3, #5f6368); }
+.track-hist-item .th-meta { color: var(--ink-4, #9aa0a6); font-size: 11px; }
+.track-pop { position: absolute; z-index: 999; max-width: 340px; background: var(--surface, #fff); border: 1px solid var(--line-1, #dadce0); border-radius: var(--r-md, 12px); box-shadow: var(--shadow-2, 0 6px 20px rgba(0,0,0,0.16)); padding: 10px 12px; }
+.track-pop-head { font-size: 12px; font-weight: 600; color: var(--ink-1, #202124); margin-bottom: 6px; padding-bottom: 5px; border-bottom: 1px solid var(--line-2, #e8eaed); }
+@media (max-width: 900px) { .track-c-val, .track-chip { white-space: normal; } }
+"""
+
+TRACKING_JS = r"""
+const data = __payload || {};
+const t = data.table;
+const root = document.getElementById("report-body");
+if (!root || !t || !Array.isArray(t.fields) || !t.fields.length) return;
+
+const fieldsById = {};
+t.fields.forEach(f => { fieldsById[f.id] = f; });
+
+const esc = s => String(s == null ? "" : s);
+const mmdd = d => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d || "")); return m ? m[2] + "-" + m[3] : String(d || ""); };
+const latestOf = f => { const h = f.history || []; return h.length ? h[h.length - 1] : null; };
+function badgeText(f) { const l = latestOf(f); if (!l) return "无记录"; const n = (f.history || []).length; return mmdd(l.date) + " 更新" + (n > 1 ? " · " + n + "次" : ""); }
+
+function histList(field) {
+  const wrap = document.createElement("div");
+  wrap.className = "track-hist-list";
+  const hist = (field.history || []).slice().reverse();
+  if (!hist.length) {
+    const empty = document.createElement("div");
+    empty.className = "track-hist-item";
+    empty.textContent = "暂无更新记录";
+    wrap.appendChild(empty);
+    return wrap;
+  }
+  hist.forEach((e, i) => {
+    const row = document.createElement("div");
+    row.className = "track-hist-item" + (i === 0 ? " latest" : "");
+    const dt = document.createElement("span"); dt.className = "th-date"; dt.textContent = mmdd(e.date);
+    const val = document.createElement("span"); val.className = "th-val";
+    val.textContent = esc(e.value) + (field.unit ? " " + field.unit : "");
+    row.appendChild(dt); row.appendChild(val);
+    if (e.note) { const n = document.createElement("span"); n.className = "th-note"; n.textContent = e.note; row.appendChild(n); }
+    const meta = [e.source, e.confidence ? "置信" + e.confidence : ""].filter(Boolean).join(" · ");
+    if (meta) { const m = document.createElement("span"); m.className = "th-meta"; m.textContent = meta; row.appendChild(m); }
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+buildTrackingCard();
+mountInlineMarkers();
+
+function buildTrackingCard() {
+  const card = CK.card("chart-card track-card", "估值建模跟踪表", buildSubtitle());
+  const tbl = document.createElement("table"); tbl.className = "track-tbl";
+  const tb = document.createElement("tbody");
+  t.fields.forEach(f => {
+    const tr = document.createElement("tr");
+    tr.className = "track-row" + (f.status === "retired" ? " track-retired" : "");
+    const c1 = document.createElement("td"); c1.className = "track-c-label";
+    const g = document.createElement("span"); g.className = "track-group"; g.textContent = f.group || "其他"; c1.appendChild(g);
+    c1.appendChild(document.createTextNode(" " + (f.label || f.id)));
+    if (f.status === "retired") { const rr = document.createElement("span"); rr.className = "track-retired-tag"; rr.textContent = "已退役"; c1.appendChild(rr); }
+    const c2 = document.createElement("td"); c2.className = "track-c-val";
+    const lv = latestOf(f); c2.textContent = lv ? (esc(lv.value) + (f.unit ? " " + f.unit : "")) : "—";
+    const c3 = document.createElement("td"); c3.className = "track-c-chip";
+    const chip = document.createElement("span");
+    chip.className = "track-chip" + (((f.history || []).length) > 1 ? " hot" : "");
+    chip.textContent = badgeText(f); c3.appendChild(chip);
+    const c4 = document.createElement("td"); c4.className = "track-c-exp"; c4.textContent = "▸";
+    tr.appendChild(c1); tr.appendChild(c2); tr.appendChild(c3); tr.appendChild(c4);
+    const hr = document.createElement("tr"); hr.className = "track-hist"; hr.hidden = true;
+    const hc = document.createElement("td"); hc.colSpan = 4; hc.appendChild(histList(f)); hr.appendChild(hc);
+    tr.addEventListener("click", () => { const open = hr.hidden; hr.hidden = !open; c4.textContent = open ? "▾" : "▸"; });
+    tb.appendChild(tr); tb.appendChild(hr);
+  });
+  tbl.appendChild(tb); card.appendChild(tbl);
+  const anchor = CK.findHeading(root, ["估值建模跟踪", "持续跟踪", "跟踪数据表", "估值结论", "估值快照与历史分位"]);
+  if (anchor) anchor.after(card); else root.appendChild(card);
+}
+
+function buildSubtitle() {
+  const nf = t.fields.length;
+  const nu = t.fields.reduce((s, f) => s + ((f.history || []).length), 0);
+  const bits = [((t.name || "") + " " + (t.ts_code || "")).trim(), nf + " 字段", nu + " 次更新"];
+  if (t.updated) bits.push("最近 " + t.updated);
+  return bits.filter(Boolean).join(" · ");
+}
+
+let openPop = null;
+function closePop() { if (openPop) { openPop.remove(); openPop = null; document.removeEventListener("click", outside, true); document.removeEventListener("keydown", onKey, true); } }
+function outside(e) { if (openPop && !openPop.contains(e.target) && !(e.target.classList && e.target.classList.contains("track-chip"))) closePop(); }
+function onKey(e) { if (e.key === "Escape") closePop(); }
+function openPopover(field, anchorEl) {
+  closePop();
+  const pop = document.createElement("div"); pop.className = "track-pop";
+  const h = document.createElement("div"); h.className = "track-pop-head";
+  h.textContent = (field.label || field.id) + (field.unit ? " (" + field.unit + ")" : "");
+  pop.appendChild(h); pop.appendChild(histList(field));
+  document.body.appendChild(pop);
+  const r = anchorEl.getBoundingClientRect();
+  const top = window.scrollY + r.bottom + 6;
+  let left = window.scrollX + r.left;
+  const maxLeft = window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 12;
+  if (left > maxLeft) left = Math.max(window.scrollX + 8, maxLeft);
+  pop.style.top = top + "px"; pop.style.left = left + "px";
+  openPop = pop;
+  setTimeout(() => { document.addEventListener("click", outside, true); document.addEventListener("keydown", onKey, true); }, 0);
+}
+
+function mountInlineMarkers() {
+  const re = /\{\{track:([a-z][a-z0-9_]*)\}\}/g;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const targets = [];
+  let node;
+  while ((node = walker.nextNode())) { if (node.nodeValue && node.nodeValue.indexOf("{{track:") !== -1) targets.push(node); }
+  targets.forEach(textNode => {
+    const text = textNode.nodeValue; re.lastIndex = 0;
+    const frag = document.createDocumentFragment();
+    let last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const field = fieldsById[m[1]];
+      if (field) {
+        const chip = document.createElement("button"); chip.type = "button";
+        chip.className = "track-chip inline" + (((field.history || []).length) > 1 ? " hot" : "");
+        chip.textContent = badgeText(field);
+        chip.addEventListener("click", ev => { ev.stopPropagation(); openPopover(field, chip); });
+        frag.appendChild(chip);
+      }
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    if (frag.childNodes.length) textNode.parentNode.replaceChild(frag, textNode);
+  });
+}
+"""
+
+
+# --------------------------------------------------------------------------- #
 # Thin manifest: declare inputs, decorations and charts; shared runner does
 # the rest (parse args, render, validate, write, print summary).
 # --------------------------------------------------------------------------- #
+def _normalize_ts_code(raw: str) -> Optional[str]:
+    """Best-effort map a 6-digit code or ts_code to Tushare ts_code form."""
+    s = str(raw or "").strip().upper()
+    if not s:
+        return None
+    if "." in s:
+        return s
+    if s.isdigit() and len(s) == 6:
+        if s[0] in "03":
+            return f"{s}.SZ"
+        if s[0] in "69":
+            return f"{s}.SH"
+        if s[0] in "48":
+            return f"{s}.BJ"
+    return None
+
+
+def _code_from_stem(stem: str) -> Optional[str]:
+    match = re.search(r"(\d{6})", stem or "")
+    return _normalize_ts_code(match.group(1)) if match else None
+
+
+def load_tracking(args, charts: Dict[str, Any], input_path: Path) -> Optional[dict]:
+    """Resolve the stock code and read its tracking table from alpha_data.
+    Best-effort: any failure (no --tracking-code + no code in evidence, DB down,
+    missing tables, no rows) returns None and the report renders without it.
+    """
+    if getattr(args, "no_tracking", False):
+        return None
+    code = (
+        _normalize_ts_code(getattr(args, "tracking_code", None) or "")
+        or (charts.get("metadata") or {}).get("ts_code")
+        or _code_from_stem(input_path.stem)
+    )
+    if not code:
+        return None
+    try:
+        import tracking_store
+    except Exception:
+        return None
+    return tracking_store.load_table_safe(code)
+
+
 def add_arguments(parser) -> None:
     parser.add_argument(
         "--evidence",
         default=None,
         help="Evidence JSON path. Defaults to sibling evidence_<code>.json when input is report_<code>.md.",
+    )
+    parser.add_argument(
+        "--tracking-code",
+        default=None,
+        help="ts_code whose alpha_data tracking table to mount (default: from evidence / report filename).",
+    )
+    parser.add_argument(
+        "--no-tracking",
+        action="store_true",
+        help="Skip the valuation-model tracking table even if one exists.",
     )
 
 
@@ -384,13 +688,19 @@ def build_job(args) -> RenderJob:
     latest = str(meta.get("latest_trade_date") or "")
     meta_text = header_sub + (" · " + latest if (latest and header_sub) else latest)
 
-    builder = HtmlReportBuilder(title=title, theme=args.theme, meta_text=meta_text)
+    tracking = load_tracking(args, charts, input_path)
+    extra_css = DEEP_FINDING_CSS + ("\n" + TRACKING_CSS if tracking else "")
+
+    builder = HtmlReportBuilder(title=title, theme=args.theme, meta_text=meta_text, extra_css=extra_css)
     builder.add_decoration(PillDecoration(ANALYZER_PILL_RULES))
     # stop_mode="section": a subheading *inside* 核心判断 keeps collecting (the
     # original analyzer behaviour), rather than truncating the hero card.
     builder.add_decoration(HeroDecoration(heading_prefix="核心判断", stop_mode="section"))
     builder.add_chart_hook(ChartHook(name="stock-charts", payload=charts, js=STOCK_CHARTS_JS))
+    if tracking:
+        builder.add_chart_hook(ChartHook(name="tracking", payload={"table": tracking}, js=TRACKING_JS))
 
+    tracking_fields = tracking.get("fields") if tracking else None
     return RenderJob(
         markdown_text=markdown_text,
         builder=builder,
@@ -400,6 +710,9 @@ def build_job(args) -> RenderJob:
             "valuation_series_points": len(charts.get("valuation_series") or []),
             "valuation_bands": sorted((charts.get("valuation_bands") or {}).keys()),
             "financial_periods": len(charts.get("financial_trends") or []),
+            "tracking_code": (tracking or {}).get("ts_code"),
+            "tracking_fields": len(tracking_fields) if tracking_fields else 0,
+            "tracking_updates": sum(len(f.get("history") or []) for f in (tracking_fields or [])),
         },
     )
 

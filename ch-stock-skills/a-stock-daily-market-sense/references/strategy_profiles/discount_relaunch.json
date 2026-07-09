@@ -7,6 +7,11 @@
   "window_end": "2026-06-29",
   "target_cell": "close_T+5",
   "mined_by": "factor_backtest.py --group discount_relaunch --skip-backfill --min-n 15",
+  "mining_spec": {
+    "kind": "builtin",
+    "group": "discount_relaunch",
+    "min_n": 15
+  },
   "base": {"n": 129, "mean": 2.43, "median": 1.15, "win": 55.8, "rel_mean": 0.88, "rel_win": 47.3},
   "selected_conditions": [
     {

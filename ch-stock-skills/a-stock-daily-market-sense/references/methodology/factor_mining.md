@@ -41,6 +41,13 @@ caveat 是模型的活。
 
 - **候选因子**取自 `add_numeric_features` + `daily_basic` 派生：换手率、量比、总市值、当日涨幅、
   T+1 高开（`t1_gap`）、前高折扣、120 日位置、5 日前收益、放量倍数等（见脚本 `FACTOR_BINS`）。
+- **跨技能因子（v1，见 `factor_providers.py`）**：另并入三个"信号日当日可知"的确定性因子——
+  `days_since_forecast_ann`（业绩预告新鲜度）、`forecast_cum_yoy_med`（预告累计同比中值）、
+  `in_active_theme`（当日是否在"强势在场"主线内，按 theme 台账成员名匹配）。它们全部 as-of 对齐
+  （预告只取 `first_ann_date ≤ T`、theme 只用 T 当日、台账窗口外为 null），**禁用 `forecast_verdict.tier`
+  这类模型事后判断值**。读证据时看 `meta.factor_coverage`：null 占比 > 60% 的因子**只进 `factor_layers`
+  分层观察、不进叠加网格**（覆盖太薄的子集挑出的条件不可信）；进网格的 provider 因子叠加门槛
+  `min_n` 抬到 ≥25。theme 成员是 under-inclusive 样本，命中=1 可信、未命中=0 只表示"不在这份样本里"。
 - **不做连续阈值网格扫描**，只在经济上有意义的少量切点（分档边界）上切，压住多重检验。
 - **单因子**：每个因子按切点生成 `>=` / `<` 两类候选，算 G∧c 表现。
 - **配对（深度≤2）**：取每个因子最优的单条件，跨不同因子两两组合——专门捕捉"单看都一般、合起来强"的组合。
@@ -110,12 +117,22 @@ custom 的 spec（单日特征阈值条件；含价量条件会自动用作廉�
 
 ## 七、证据包 JSON 结构（模型读这个）
 
-- `meta`：分组、asof、目标格、基准方案、护栏定义、数据覆盖、caveats、命中计数。
+产物**分两个文件**（决策包纪律：给模型读的 JSON 控制在 ~150KB 内，逐条明细单独落盘）：
+
+**决策包 `reports/factor_mining_<group>_<asof>.json`（模型默认只读这个）：**
+
+- `meta`：分组、asof、目标格、基准方案、护栏定义、数据覆盖、caveats、命中计数；`detail_file` 指向明细文件名。
 - `base_cells`：基础组 6 格（绝对 + 相对匹配基准的均值/中位/胜率）。
 - `factor_layers`：各因子分层表 + 是否单调（单调因子最可信）。
 - `overlay_singles` / `overlay_pairs`：候选叠加条件，每条带 `obj_mean` / `delta_vs_base` / `win` /
   `oos_first_mean` / `oos_second_mean` / `oos_balance` / `passes_guardrails`。
-- `signals`：逐 (个股, 信号日) 明细（特征值 + 6 格收益），供个股归因与交叉核对。
+- `signals_summary`：命中信号的分布（`total` / `unique_stocks` / `by_month` / `by_board`），替代整列 dump。
+- `examples`：**每条过闸叠加条件**配 ≤3 条命中例证（按目标格收益取高/中/低分布，非只挑赢家），
+  每条含 `ts_code` / `name` / `signal_date` / 目标格收益 + 关键因子值。写报告举例直接用这里。
+
+**明细包 `reports/factor_mining_<group>_<asof>_detail.json`（模型默认不读，只在需要更多个股或交叉核对时按需读）：**
+
+- `signals`：逐 (个股, 信号日) 明细（特征值 + 6 格收益）。整列在此，供深挖归因；`factor_lab.py` 与人工核对也读它。
 
 ## 八、报告写法（模型产出 `reports/factor_mining_<group>_<asof>.md`）
 
@@ -125,5 +142,5 @@ custom 的 spec（单日特征阈值条件；含价量条件会自动用作廉�
 2. **基础组怎么样**：6 格里挑目标格说边际厚薄，点出均值 vs 中位的右偏。
 3. **因子网格**：哪些单调因子有效、方向与经济解释；高 Δ 但不稳的要点名"偏某段行情"。
 4. **叠加条件最优解**：给一句可落地的叠加条件 + 它的目标格表现 + 为什么是它（稳健/逻辑），并列出次选与不取的理由。
-5. **个股例子**：从 `signals` 里举 2–3 只印证。
+5. **个股例子**：从决策包 `examples` 里举 2–3 只印证（每条过闸条件已附高/中/低例证）；要更多个股或做交叉核对时再读 `_detail.json` 的 `signals`。
 6. 不出买卖建议、不出仓位/止损/目标价。

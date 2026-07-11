@@ -42,6 +42,7 @@ shared:
       dest: scripts/_shared/html_report
       skills:
         - a-stock-analyzer
+        - a-stock-earnings-forecast
         - chstock-usmarket-report
         - ch-news-reporter
         - a-stock-daily-market-sense

@@ -33,6 +33,7 @@ import json
 import os
 import sys
 from html import escape
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from store import Store
@@ -295,27 +296,22 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
 
 
 # --------------------------------------------------------------------------- #
-# 配色口径（A 股习惯）：红=涨/强/好，绿=跌/弱/差。--pos/--grn 系承载"涨/强"语义故取
-# 红色，--neg/--red 系承载"跌/弱"语义故取绿色；K线 --kup/--kdn 同为红涨绿跌；--warn
-# (待复判等流程警示)独立保持红色，不随涨跌语义翻转。
+# 配色口径（A 股习惯）：红=涨/强/好，绿=跌/弱/差。shared default 的
+# --neg=红、--pos=绿，因此这里用 --ef-up/--ef-down 做领域别名，避免混淆。
 _CSS = """
-:root{--s0:#faf9f5;--s1:#f2f0e9;--s2:#fff;--tx:#1a1a18;--tx2:#5f5e5a;--tx3:#8a897f;
---bd:#e5e3da;--acc:#185fa5;--accbg:#e6f1fb;--pos:#a32d2d;--neg:#3b6d11;--amb:#854f0b;--ambbg:#faeeda;
---grn:#a32d2d;--grnbg:#fcebeb;--gry:#5f5e5a;--grybg:#f1efe8;--red:#3b6d11;--redbg:#eaf3de;
---warn:#a32d2d;--warnbg:#fcebeb;--kup:#c2453e;--kdn:#1d9e75;--upbg:#fbecec;--dnbg:#eef6e6}
-@media (prefers-color-scheme:dark){:root{--s0:#26251f;--s1:#2f2e27;--s2:#33322b;--tx:#ece9e0;--tx2:#b4b2a9;--tx3:#888780;
---bd:#44443f;--acc:#85b7eb;--accbg:#0c447c;--pos:#f09595;--neg:#97c459;--amb:#fac775;--ambbg:#633806;
---grn:#f09595;--grnbg:#501313;--gry:#b4b2a9;--grybg:#3a3a35;--red:#c0dd97;--redbg:#27500a;
---warn:#f09595;--warnbg:#501313;--kup:#e06c66;--kdn:#5dcaa5;--upbg:#3a2626;--dnbg:#2b3320}}
-*{box-sizing:border-box}body{margin:0;background:var(--s0);color:var(--tx);
-font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
-font-size:14px;line-height:1.6}.wrap{max-width:1200px;margin:0 auto;padding:24px 20px 60px}
+:root{--s0:var(--bg);--s1:var(--surface-2);--s2:var(--surface);--tx:var(--ink-1);--tx2:var(--ink-3);--tx3:var(--ink-4);
+--bd:var(--line-2);--acc:var(--accent);--accbg:var(--accent-soft);--ef-up:var(--neg);--ef-down:var(--pos);
+--amb:var(--warn);--ambbg:var(--warn-soft);--grn:var(--ef-up);--grnbg:var(--neg-soft);--gry:var(--muted);
+--grybg:var(--surface-3);--red:var(--ef-down);--redbg:var(--pos-soft);--warn:var(--g-red);--warnbg:var(--g-red-soft);
+--kup:var(--ef-up);--kdn:var(--ef-down);--upbg:var(--neg-soft);--dnbg:var(--pos-soft)}
+.wrap{max-width:1180px;margin:0 auto;padding:0}.report.earnings-report{padding:28px 30px 34px}
 h1{font-size:21px;font-weight:500;margin:0}.sub{color:var(--tx2);font-size:13px;margin-top:3px}
-.ovw{background:var(--s2);border:1px solid var(--bd);border-radius:12px;padding:12px 16px;margin-top:14px;font-size:13px}
+.ovw{background:var(--accbg);border:1px solid var(--accent-hair);border-left:4px solid var(--acc);border-radius:var(--r-md);padding:14px 18px;margin-top:18px;font-size:13px}
 .ovw .ttl{font-size:12px;color:var(--tx3);font-weight:500;margin-bottom:4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .ovw .ovtx{white-space:pre-line;line-height:1.75}
 .ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:16px 0 12px}
-input,select{font:inherit;font-size:13px;padding:6px 9px;border:1px solid var(--bd);border-radius:8px;background:var(--s2);color:var(--tx)}
+input,select{font:inherit;font-size:13px;padding:8px 10px;border:1px solid var(--line-1);border-radius:var(--r-sm);background:var(--s2);color:var(--tx);outline:none}
+input:focus,select:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--accbg)}
 input{flex:1;min-width:130px}
 .panes{display:grid;grid-template-columns:minmax(340px,44%) 1fr;gap:14px;align-items:start}
 @media (max-width:860px){.panes{grid-template-columns:1fr}.detail{position:static!important}}
@@ -325,8 +321,8 @@ input{flex:1;min-width:130px}
 .trend{font-size:11px;padding:1px 8px;border-radius:20px;font-weight:400}
 .t-up{background:var(--grnbg);color:var(--grn)}.t-dn{background:var(--redbg);color:var(--red)}
 .t-mix{background:var(--ambbg);color:var(--amb)}.t-flat{background:var(--grybg);color:var(--tx2)}
-.row{background:var(--s2);border:1px solid var(--bd);border-radius:10px;padding:8px 11px;margin-bottom:6px;cursor:pointer}
-.row:hover{border-color:var(--tx3)}
+.row{background:var(--s2);border:1px solid var(--bd);border-radius:var(--r-md);padding:9px 12px;margin-bottom:7px;cursor:pointer;transition:border-color .14s ease,box-shadow .14s ease,transform .14s ease}
+.row:hover{border-color:var(--line-1);box-shadow:var(--shadow-1);transform:translateY(-1px)}
 .row.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
 .row.gapup{background:var(--upbg)}.row.gapdn{background:var(--dnbg)}
 .r1{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -343,8 +339,8 @@ input{flex:1;min-width:130px}
 .gap-dn{background:var(--redbg);color:var(--red);font-weight:500}
 .gap-fade{background:var(--grybg);color:var(--tx2)}
 .instar{background:var(--accbg);color:var(--acc)}
-.pos{color:var(--pos)}.neg{color:var(--neg)}.mut{color:var(--tx2)}.acc{color:var(--acc)}
-.detail{position:sticky;top:14px;background:var(--s2);border:1px solid var(--bd);border-radius:12px;padding:14px 16px;min-height:420px}
+.pos{color:var(--ef-up)}.neg{color:var(--ef-down)}.mut{color:var(--tx2)}.acc{color:var(--acc)}
+.detail{position:sticky;top:14px;background:var(--s2);border:1px solid var(--bd);border-radius:var(--r-md);box-shadow:var(--shadow-1);padding:16px 18px;min-height:420px}
 .dh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.dh .nm{font-size:17px;font-weight:500}
 .dsec{font-size:12px;color:var(--tx3);margin:14px 0 6px;font-weight:500}
 .mgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}
@@ -545,10 +541,15 @@ def render_html(view: Dict[str, Any]) -> str:
         "pos_split": view["pos_split"], "trend_net": view["trend_net"],
         "stocks": view["stocks"], "theme_trends": view["theme_trends"], "klines": view["klines"],
     }, ensure_ascii=False, separators=(",", ":"))
+    shared_theme = _load_shared_theme("default")
     return f"""<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{view['period_label']} 业绩预告 · 报告期观察</title><style>{_CSS}</style></head>
-<body><div class="wrap">
+<title>{view['period_label']} 业绩预告 · 报告期观察</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>{shared_theme}\n{_CSS}</style></head>
+<body><main class="page"><div class="doc-head"><span class="dh-title">Earnings Forecast</span><span class="dh-meta">{view['period_label']} · updated {view['updated_at']}</span></div>
+<section class="section report earnings-report"><div class="wrap">
 <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px">
 <div><h1>{view['period_label']} 业绩预告 · 报告期观察</h1><div class="sub">end_date {view['period']} · 业绩 × 股价断层 × 主线行业趋势 · 列表+详情 · 一期一页增量更新</div></div>
 <div class="sub">更新于 {view['updated_at']}</div></div>
@@ -567,7 +568,18 @@ def render_html(view: Dict[str, Any]) -> str:
 {empty_note}
 </div>
 <script>const DATA={data_json};{_JS}</script>
-</body></html>"""
+</section></main></body></html>"""
+
+
+def _load_shared_theme(theme: str) -> str:
+    """Load the canonical shared html_report theme in dev and synced packages."""
+    script_dir = Path(__file__).resolve().parent
+    bundled = script_dir / "_shared" / "html_report" / "themes" / f"{theme}.css"
+    dev = script_dir.parents[2] / "shared" / "html_report" / "themes" / f"{theme}.css"
+    path = bundled if bundled.is_file() else dev
+    if not path.is_file():
+        raise FileNotFoundError(f"shared html_report theme 不存在: {path}")
+    return path.read_text(encoding="utf-8")
 
 
 def main(argv: Optional[List[str]] = None) -> int:

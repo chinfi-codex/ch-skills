@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Fetch full CLS Telegraph and Jin10 flash content without filtering."""
+"""Fetch full Jin10 flash content without filtering."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import io
 import json
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -17,36 +15,22 @@ import requests
 
 
 DEFAULT_TIMEOUT = 20
-DEFAULT_RN = 2000
-CLS_URL = "https://www.cls.cn/nodeapi/telegraphList"
 JIN10_URL = "https://flash-api.jin10.com/get_flash_list?channel=-8200&vip=1"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch full CLS Telegraph and Jin10 flash records without filtering."
+        description="Fetch full Jin10 flash records without filtering."
     )
     parser.add_argument("--output", help="Optional path to write JSON output.")
     parser.add_argument(
         "--limit", type=int, help="Optional limit for the number of records to return."
     )
     parser.add_argument(
-        "--rn",
-        type=int,
-        default=DEFAULT_RN,
-        help="CLS API rn parameter. Default: 2000.",
-    )
-    parser.add_argument(
         "--timeout",
         type=int,
         default=DEFAULT_TIMEOUT,
         help="Request timeout in seconds.",
-    )
-    parser.add_argument(
-        "--source",
-        choices=["all", "cls", "jin10"],
-        default="all",
-        help="Select data source. Default: all.",
     )
     parser.add_argument(
         "--format",
@@ -67,51 +51,6 @@ def get_session() -> requests.Session:
     session = requests.Session()
     session.headers.update({"User-Agent": "market-telegraph-fullfeed/0.1"})
     return session
-
-
-def build_signed_params(
-    session: requests.Session, rn: int, timeout: int
-) -> dict[str, Any]:
-    current_time = int(time.time())
-    params: dict[str, Any] = {
-        "app": "CailianpressWeb",
-        "category": "",
-        "lastTime": current_time,
-        "last_time": current_time,
-        "os": "web",
-        "refresh_type": "1",
-        "rn": str(rn),
-        "sv": "7.7.5",
-    }
-    query_string = session.get(CLS_URL, params=params, timeout=timeout).url.split(
-        "?", 1
-    )[1]
-    sha1 = hashlib.sha1(query_string.encode("utf-8")).hexdigest()
-    params["sign"] = hashlib.md5(sha1.encode("utf-8")).hexdigest()
-    return params
-
-
-def fetch_raw_records(
-    session: requests.Session, rn: int, timeout: int
-) -> list[dict[str, Any]]:
-    params = build_signed_params(session, rn=rn, timeout=timeout)
-    response = session.get(
-        CLS_URL,
-        params=params,
-        headers={
-            "Accept": "application/json, text/plain, */*",
-            "Referer": "https://www.cls.cn/telegraph",
-            "User-Agent": "Mozilla/5.0",
-        },
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    data = payload.get("data", {})
-    records = data.get("roll_data", [])
-    if not isinstance(records, list):
-        raise ValueError("Unexpected CLS response: data.roll_data is not a list")
-    return [record for record in records if isinstance(record, dict)]
 
 
 def fetch_jin10_payload(session: requests.Session, timeout: int) -> dict[str, Any]:
@@ -140,39 +79,6 @@ def fetch_jin10_payload(session: requests.Session, timeout: int) -> dict[str, An
     if not isinstance(payload, dict):
         raise ValueError("Unexpected Jin10 response: payload is not an object")
     return payload
-
-
-def normalize_records(
-    records: list[dict[str, Any]], hours: int = 0
-) -> list[dict[str, Any]]:
-    if not records:
-        return []
-
-    df = pd.DataFrame(records)
-    for column in ["title", "content", "level", "subjects", "ctime"]:
-        if column not in df.columns:
-            df[column] = None
-
-    normalized = df[["title", "content", "level", "subjects", "ctime"]].copy()
-    normalized["ctime"] = pd.to_datetime(
-        normalized["ctime"], unit="s", utc=True, errors="coerce"
-    ).dt.tz_convert("Asia/Shanghai")
-
-    if hours > 0:
-        cutoff_time = pd.Timestamp.now(tz="Asia/Shanghai") - pd.Timedelta(hours=hours)
-        normalized = normalized[normalized["ctime"] >= cutoff_time]
-
-    normalized["tags"] = [
-        [tag.get("subject_name", "") for tag in subjects if isinstance(tag, dict)]
-        if isinstance(subjects, list)
-        else []
-        for subjects in normalized["subjects"].tolist()
-    ]
-    normalized["date"] = normalized["ctime"].dt.strftime("%Y-%m-%d")
-    normalized["time"] = normalized["ctime"].dt.strftime("%H:%M:%S")
-    normalized["ctime"] = normalized["ctime"].dt.strftime("%Y-%m-%dT%H:%M:%S%z")
-    normalized = normalized.drop(columns=["subjects"])
-    return normalized.where(pd.notna(normalized), None).to_dict("records")
 
 
 def normalize_jin10_payload(
@@ -248,38 +154,15 @@ def limit_jin10_raw_payload(
 
 def build_payload(
     session: requests.Session,
-    source: str,
     output_format: str,
-    rn: int,
     timeout: int,
     limit: int | None,
     hours: int,
 ) -> Any:
-    payload: dict[str, Any] = {"source": source, "format": output_format}
-
-    if source in {"all", "cls"}:
-        cls_records = fetch_raw_records(session, rn=rn, timeout=timeout)
-        if limit is not None:
-            cls_records = cls_records[:limit]
-        payload["cls"] = (
-            normalize_records(cls_records, hours=hours)
-            if output_format == "normalized"
-            else cls_records
-        )
-
-    if source in {"all", "jin10"}:
-        jin10_payload = fetch_jin10_payload(session, timeout=timeout)
-        payload["jin10"] = (
-            normalize_jin10_payload(jin10_payload, limit=limit, hours=hours)
-            if output_format == "normalized"
-            else limit_jin10_raw_payload(jin10_payload, limit=limit)
-        )
-
-    if source == "cls":
-        return payload["cls"]
-    if source == "jin10":
-        return payload["jin10"]
-    return payload
+    jin10_payload = fetch_jin10_payload(session, timeout=timeout)
+    if output_format == "normalized":
+        return normalize_jin10_payload(jin10_payload, limit=limit, hours=hours)
+    return limit_jin10_raw_payload(jin10_payload, limit=limit)
 
 
 def emit_output(payload: Any, output: str | None) -> None:
@@ -297,9 +180,7 @@ def main() -> int:
     session = get_session()
     payload = build_payload(
         session=session,
-        source=args.source,
         output_format=args.format,
-        rn=args.rn,
         timeout=args.timeout,
         limit=args.limit,
         hours=args.hours,

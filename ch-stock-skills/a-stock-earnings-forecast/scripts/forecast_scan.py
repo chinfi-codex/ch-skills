@@ -773,7 +773,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Scan A-share earnings forecasts for one period and decompose growth.")
     ap.add_argument("--period", help="Report period end YYYYMMDD (quarter-end). Default: latest quarter <= today.")
     ap.add_argument("--start-ann", help="Announcement-scan window start YYYYMMDD. Default: period_end - 45d.")
-    ap.add_argument("--end-ann", help="Announcement-scan window end YYYYMMDD. Default: min(today, period_end + 75d).")
+    ap.add_argument("--end-ann", help="Announcement-scan window end YYYYMMDD. Default: min(today + 1d, period_end + 75d).")
     ap.add_argument("--min-pchange", type=float, default=0.0, help="prefilter_pass threshold on 当年累计同比 %% (default 0).")
     ap.add_argument("--positive-only", action="store_true", help="Drop negative-type forecasts (预减/首亏/续亏/增亏/略减).")
     ap.add_argument("--fetch-workers", type=int, default=4,
@@ -797,13 +797,15 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_end = dt.datetime.strptime(period, "%Y%m%d").date()
     start_ann = args.start_ann or (p_end - dt.timedelta(days=45)).strftime("%Y%m%d")
-    default_end = min(today, p_end + dt.timedelta(days=75))
+    ann_today = today + dt.timedelta(days=1)
+    default_end = min(ann_today, p_end + dt.timedelta(days=75))
     end_ann = args.end_ann or default_end.strftime("%Y%m%d")
 
     notes: List[str] = [
         "业绩预告(forecast)接口只有净利润(min/max)与同比幅度，没有营收字段；"
         "收入取自最近实际报告期(income)，为 trailing 实际值，不是预告值。",
         "单季度同比/环比用实际季报拆解：单季净利 = 累计(预告中值) − 上一累计期(实际)。",
+        f"公告日扫描窗口默认截止到运行日+1({ann_today.strftime('%Y%m%d')})，用于覆盖盘后披露按次日公告日期入库的数据。",
         "已抓的预告/季报存入 DB(forecast_* 表)，每次只增量抓新公告日与新个股，不重复全量抓取。",
     ]
 

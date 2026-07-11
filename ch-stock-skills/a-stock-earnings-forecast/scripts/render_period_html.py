@@ -304,19 +304,19 @@ _CSS = """
 --amb:var(--warn);--ambbg:var(--warn-soft);--grn:var(--ef-up);--grnbg:var(--neg-soft);--gry:var(--muted);
 --grybg:var(--surface-3);--red:var(--ef-down);--redbg:var(--pos-soft);--warn:var(--g-red);--warnbg:var(--g-red-soft);
 --kup:var(--ef-up);--kdn:var(--ef-down);--upbg:var(--neg-soft);--dnbg:var(--pos-soft)}
-.wrap{max-width:1180px;margin:0 auto;padding:0}.report.earnings-report{padding:28px 30px 34px}
-h1{font-size:21px;font-weight:500;margin:0}.sub{color:var(--tx2);font-size:13px;margin-top:3px}
-.ovw{background:var(--accbg);border:1px solid var(--accent-hair);border-left:4px solid var(--acc);border-radius:var(--r-md);padding:14px 18px;margin-top:18px;font-size:13px}
-.ovw .ttl{font-size:12px;color:var(--tx3);font-weight:500;margin-bottom:4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.page{width:min(1680px,calc(100vw - 24px))}.report.earnings-report{max-width:none;padding:28px 20px 34px}.wrap{max-width:none;margin:0 auto;padding:0}
+h1{font-size:24px;font-weight:500;margin:0}.sub{color:var(--tx2);font-size:14px;margin-top:3px}
+.ovw{background:var(--accbg);border:1px solid var(--accent-hair);border-left:4px solid var(--acc);border-radius:var(--r-md);padding:15px 18px;margin-top:18px;font-size:14px;line-height:1.75}
+.ovw .ttl{font-size:13px;color:var(--tx3);font-weight:500;margin-bottom:5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .ovw .ovtx{white-space:pre-line;line-height:1.75}
 .ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:16px 0 12px}
-input,select{font:inherit;font-size:13px;padding:8px 10px;border:1px solid var(--line-1);border-radius:var(--r-sm);background:var(--s2);color:var(--tx);outline:none}
+input,select{font:inherit;font-size:14px;padding:9px 11px;border:1px solid var(--line-1);border-radius:var(--r-sm);background:var(--s2);color:var(--tx);outline:none}
 input:focus,select:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--accbg)}
 input{flex:1;min-width:130px}
 .panes{display:grid;grid-template-columns:minmax(340px,44%) 1fr;gap:14px;align-items:start}
 @media (max-width:860px){.panes{grid-template-columns:1fr}.detail{position:static!important}}
 .list{min-width:0}
-.ghead{font-size:12px;color:var(--tx2);font-weight:500;background:var(--s1);border-radius:8px;padding:6px 10px;margin:12px 0 6px;display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+.ghead{font-size:13px;color:var(--tx2);font-weight:500;background:var(--s1);border-radius:8px;padding:7px 10px;margin:12px 0 6px;display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
 .ghead:first-child{margin-top:0}
 .trend{font-size:11px;padding:1px 8px;border-radius:20px;font-weight:400}
 .t-up{background:var(--grnbg);color:var(--grn)}.t-dn{background:var(--redbg);color:var(--red)}
@@ -326,13 +326,13 @@ input{flex:1;min-width:130px}
 .row.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
 .row.gapup{background:var(--upbg)}.row.gapdn{background:var(--dnbg)}
 .r1{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.r1 .nm{font-weight:500}.r1 .cd{color:var(--tx3);font-size:12px}
-.r2{font-size:12px;color:var(--tx2);margin-top:2px}
-.pill{font-size:11px;padding:1px 8px;border-radius:20px;white-space:nowrap}
+.r1 .nm{font-weight:500}.r1 .cd{color:var(--tx3);font-size:13px}
+.r2{font-size:13px;color:var(--tx2);margin-top:3px}
+.pill{font-size:12px;padding:2px 8px;border-radius:20px;white-space:nowrap}
 .strong{background:var(--grnbg);color:var(--grn)}.mid{background:var(--ambbg);color:var(--amb)}
 .watch{background:var(--grybg);color:var(--gry)}.drop{background:var(--redbg);color:var(--red)}
 .thot{background:var(--accbg);color:var(--acc)}.tcool{background:var(--grybg);color:var(--tx2)}
-.badge{font-size:10px;padding:1px 6px;border-radius:20px;margin-left:2px}
+.badge{font-size:11px;padding:2px 7px;border-radius:20px;margin-left:2px}
 .bnew{background:var(--accbg);color:var(--acc)}.bupd{background:var(--ambbg);color:var(--amb)}
 .bstale{background:var(--warnbg);color:var(--warn)}
 .gap-up{background:var(--grnbg);color:var(--grn);font-weight:500}
@@ -341,15 +341,15 @@ input{flex:1;min-width:130px}
 .instar{background:var(--accbg);color:var(--acc)}
 .pos{color:var(--ef-up)}.neg{color:var(--ef-down)}.mut{color:var(--tx2)}.acc{color:var(--acc)}
 .detail{position:sticky;top:14px;background:var(--s2);border:1px solid var(--bd);border-radius:var(--r-md);box-shadow:var(--shadow-1);padding:16px 18px;min-height:420px}
-.dh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.dh .nm{font-size:17px;font-weight:500}
-.dsec{font-size:12px;color:var(--tx3);margin:14px 0 6px;font-weight:500}
+.dh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.dh .nm{font-size:19px;font-weight:500}
+.dsec{font-size:13px;color:var(--tx3);margin:14px 0 6px;font-weight:500}
 .mgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}
-.mrow{display:flex;justify-content:space-between;font-size:13px;padding:3px 0;border-bottom:1px dashed var(--bd)}
+.mrow{display:flex;justify-content:space-between;font-size:14px;padding:4px 0;border-bottom:1px dashed var(--bd)}
 .mrow .k{color:var(--tx2)}
-.dtext{font-size:12.5px;color:var(--tx2);background:var(--s1);border-radius:8px;padding:8px 10px;line-height:1.7}
-.tline{font-size:12.5px;padding:2px 0}
-.foot{color:var(--tx3);font-size:11px;margin-top:14px;line-height:1.7}
-.empty{color:var(--tx3);font-size:12px;padding:6px 0}
+.dtext{font-size:13.5px;color:var(--tx2);background:var(--s1);border-radius:8px;padding:9px 10px;line-height:1.75}
+.tline{font-size:13.5px;padding:3px 0}
+.foot{color:var(--tx3);font-size:12px;margin-top:14px;line-height:1.75}
+.empty{color:var(--tx3);font-size:13px;padding:6px 0}
 """
 
 _JS = r"""
@@ -556,7 +556,7 @@ def render_html(view: Dict[str, Any]) -> str:
 {overview_html}
 <div class="ctrl">
 <input id="q" placeholder="搜索 名称 / 代码 / 主线">
-<select id="grp"><option value="theme">按主线分组</option><option value="ann">按发布时间排序</option><option value="flat">平铺</option></select>
+<select id="grp"><option value="ann">按发布时间排序</option><option value="theme">按主线分组</option><option value="flat">平铺</option></select>
 <select id="react"><option value="">全部反应</option><option value="up">向上断层(强)</option><option value="down">向下断层(弱)</option><option value="intact">跳空未回补</option><option value="muted">未反应</option><option value="intheme">主线内</option></select>
 <select id="tier"><option value="">全部分档</option><option>强</option><option>中</option><option>观察</option><option>剔除</option></select>
 </div>

@@ -1,7 +1,7 @@
 """Markdown → HTML engine shared across stock-skill renderers.
 
 Pure standard library. Supports the subset of Markdown that research reports
-need: headings, paragraphs, bullet lists, blockquotes, tables (with
+need: headings, paragraphs, indentation-aware nested bullet lists, blockquotes, tables (with
 alignment), inline code/bold/italic/links, fenced code blocks, and the
 ``==highlighted text==`` callout sugar. Analyzer Deep-mode finding
 cards use a structured ``==深度调研发现｜...`` block.
@@ -140,6 +140,48 @@ def render_table(lines: List[str]) -> str:
     return "".join(html_rows)
 
 
+def _list_item(line: str) -> tuple[int, str] | None:
+    """Return ``(indent, text)`` for an unordered-list line."""
+    match = re.match(r"^(\s*)[-*]\s+(.+)$", line)
+    if not match:
+        return None
+    indent = len(match.group(1).expandtabs(4))
+    return indent, match.group(2)
+
+
+def render_list(lines: List[str]) -> str:
+    """Render consecutive unordered-list lines, preserving indentation levels."""
+    items = [item for line in lines if (item := _list_item(line)) is not None]
+    if not items:
+        return ""
+
+    def render_level(index: int, indent: int) -> tuple[str, int]:
+        out = ["<ul>"]
+        while index < len(items):
+            item_indent, text = items[index]
+            if item_indent < indent:
+                break
+            if item_indent > indent:
+                # A malformed indent jump still belongs to the previous item;
+                # the recursive level uses the actual whitespace rather than
+                # inventing a fixed nesting width.
+                nested, index = render_level(index, item_indent)
+                out.append(nested)
+                continue
+
+            index += 1
+            out.append(f"<li>{inline_markdown(text)}")
+            if index < len(items) and items[index][0] > indent:
+                nested, index = render_level(index, items[index][0])
+                out.append(nested)
+            out.append("</li>")
+        out.append("</ul>")
+        return "".join(out), index
+
+    rendered, _ = render_level(0, items[0][0])
+    return rendered
+
+
 def render_markdown(markdown_text: str) -> str:
     lines = markdown_text.splitlines()
     out: List[str] = []
@@ -147,13 +189,6 @@ def render_markdown(markdown_text: str) -> str:
     idx = 0
     in_code = False
     code_lines: List[str] = []
-    list_open = False
-
-    def close_list() -> None:
-        nonlocal list_open
-        if list_open:
-            out.append("</ul>")
-            list_open = False
 
     while idx < len(lines):
         line = lines[idx]
@@ -161,7 +196,6 @@ def render_markdown(markdown_text: str) -> str:
 
         if stripped.startswith("```"):
             flush_paragraph(paragraph, out)
-            close_list()
             if in_code:
                 out.append(f"<pre><code>{html.escape(chr(10).join(code_lines))}</code></pre>")
                 code_lines = []
@@ -178,13 +212,11 @@ def render_markdown(markdown_text: str) -> str:
 
         if not stripped:
             flush_paragraph(paragraph, out)
-            close_list()
             idx += 1
             continue
 
         if stripped.startswith("=="):
             flush_paragraph(paragraph, out)
-            close_list()
             callout_parts = [stripped]
             if stripped == "==深度调研发现==":
                 while idx + 1 < len(lines):
@@ -210,7 +242,6 @@ def render_markdown(markdown_text: str) -> str:
 
         if stripped.startswith("|") and idx + 1 < len(lines) and is_table_separator(lines[idx + 1]):
             flush_paragraph(paragraph, out)
-            close_list()
             table_lines = [line, lines[idx + 1]]
             idx += 2
             while idx < len(lines) and lines[idx].strip().startswith("|"):
@@ -222,7 +253,6 @@ def render_markdown(markdown_text: str) -> str:
         heading = re.match(r"^(#{1,6})\s+(.+)$", stripped)
         if heading:
             flush_paragraph(paragraph, out)
-            close_list()
             level = min(len(heading.group(1)) + 1, 4)
             out.append(f"<h{level}>{inline_markdown(heading.group(2))}</h{level}>")
             idx += 1
@@ -230,28 +260,24 @@ def render_markdown(markdown_text: str) -> str:
 
         if stripped.startswith(">"):
             flush_paragraph(paragraph, out)
-            close_list()
             quote = stripped.lstrip(">").strip()
             out.append(f"<blockquote>{inline_markdown(quote)}</blockquote>")
             idx += 1
             continue
 
-        item = re.match(r"^[-*]\s+(.+)$", stripped)
-        if item:
+        if _list_item(line) is not None:
             flush_paragraph(paragraph, out)
-            if not list_open:
-                out.append("<ul>")
-                list_open = True
-            out.append(f"<li>{inline_markdown(item.group(1))}</li>")
-            idx += 1
+            list_lines = []
+            while idx < len(lines) and _list_item(lines[idx]) is not None:
+                list_lines.append(lines[idx])
+                idx += 1
+            out.append(render_list(list_lines))
             continue
 
-        close_list()
         paragraph.append(stripped)
         idx += 1
 
     if in_code:
         out.append(f"<pre><code>{html.escape(chr(10).join(code_lines))}</code></pre>")
     flush_paragraph(paragraph, out)
-    close_list()
     return "\n".join(out)

@@ -13,6 +13,9 @@ sustainability) is the model's job. This script only:
   3. Pulls actual quarterly income to decompose the LATEST single quarter into
      单季度同比 (single-quarter YoY) and 环比 (QoQ), alongside 当年累计同比.
   4. Attaches the latest ACTUAL revenue trajectory (forecasts carry no revenue).
+  5. Attaches a valuation reference per stock: 预告中值年化 PE (median annualized
+     by 4/q) plus a rolling variant (prior annual + median - prior same-period),
+     against the latest-trade-day total market cap (one daily_basic bulk call).
 
 Units: forecast net_profit_* / last_parent_net are 万元; income figures are 元.
 Everything is normalized to 元 internally and echoed in 亿元 for readability.
@@ -48,6 +51,7 @@ NEGATIVE_TYPES = {"预减", "略减", "首亏", "续亏", "增亏"}
 INCOME_FIELDS = "ts_code,end_date,ann_date,report_type,n_income_attr_p,revenue"
 DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,vol,amount"
 ADJ_FACTOR_FIELDS = "ts_code,trade_date,adj_factor"
+DAILY_BASIC_FIELDS = "ts_code,trade_date,total_mv"
 
 # Price-reaction engine (净利润断层观察): history window before the announcement
 # for the 1y-position percentile, and the minimum bars to trust that percentile.
@@ -277,9 +281,81 @@ def _median(lo: Any, hi: Any) -> Optional[float]:
     return sum(vals) / len(vals) if vals else None
 
 
+# 年化口径标签（q -> 展示用换算说明）
+_ANNUALIZE_LABEL = {1: "中值×4", 2: "中值×2", 3: "中值×4/3", 4: "年报中值即年化"}
+
+
+def fetch_total_mv(pro: TushareProxy, today: dt.date, notes: List[str]) -> Tuple[Dict[str, float], Optional[str]]:
+    """Latest-trade-day total market cap (元) for the whole market — ONE
+    daily_basic bulk call per run. Today's snapshot only publishes after the
+    close, so step back through the last few trade days until rows appear."""
+    days = trading_days(pro, (today - dt.timedelta(days=15)).strftime("%Y%m%d"),
+                        today.strftime("%Y%m%d"))
+    for day in reversed(days[-3:]):
+        try:
+            df = pro.daily_basic(trade_date=day, fields=DAILY_BASIC_FIELDS)
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"daily_basic({day}) 取数失败: {str(exc)[:80]}——本次无总市值，年化PE缺失。")
+            return {}, None
+        if df is not None and not df.empty:
+            out: Dict[str, float] = {}
+            for _, r in df.iterrows():
+                mv = _clean(r.get("total_mv"))
+                if mv is not None:
+                    out[str(r["ts_code"])] = float(mv) * WAN  # 万元 -> 元
+            return out, day
+    notes.append("最近交易日 daily_basic 均无数据，年化PE缺失。")
+    return {}, None
+
+
+def build_valuation(np_med: Optional[float], cache: CumCache, period: str,
+                    total_mv: Optional[float], mv_asof: Optional[str]) -> Dict[str, Any]:
+    """预告中值年化 PE（估值参照证据，不是买卖依据；读法与坑见 methodology §十一）。
+
+    - 年化净利 = 预告中值 ÷ 报告期季数 × 4（简单年化，未调季节性；年报即中值）。
+    - 滚动净利 = 上年年报实际 + 本期预告中值 − 上年同期实际（季节性对照口径；
+      年报预告时上年同期=上年年报，两口径自然相等）。
+    - 年化净利 ≤ 0 时 PE 无意义，只给 note，不硬算。
+    """
+    year, q = quarter_of(period)
+    annualized = None if np_med is None else np_med * 4.0 / q
+    prior_annual = cache.np(period_end(year - 1, 4))
+    prior_same = cache.np(prev_year_period(period))
+    rolling = None
+    if np_med is not None and prior_annual is not None and prior_same is not None:
+        rolling = prior_annual + np_med - prior_same
+
+    def pe_of(profit: Optional[float]) -> Tuple[Optional[float], str]:
+        if profit is None:
+            return None, "np_missing"
+        if profit <= 0:
+            return None, "np_nonpositive"
+        if total_mv is None or total_mv <= 0:
+            return None, "mv_missing"
+        return round(total_mv / profit, 1), "ok"
+
+    pe_ann, ann_note = pe_of(annualized)
+    pe_roll, roll_note = pe_of(rolling)
+    if rolling is None and np_med is not None:
+        roll_note = "base_missing"  # 上年年报/上年同期实际缺失（次新股等）
+    return {
+        "mv_asof": mv_asof,
+        "total_mv_yi": to_yi(total_mv),
+        "annualized_np_yi": to_yi(annualized),
+        "annualize_label": _ANNUALIZE_LABEL[q],
+        "pe_annualized": pe_ann,
+        "pe_annualized_note": ann_note,
+        "rolling_np_yi": to_yi(rolling),
+        "pe_rolling": pe_roll,
+        "pe_rolling_note": roll_note,
+    }
+
+
 def build_stock_record(row: pd.Series, cache: CumCache, period: str,
                        basic: Dict[str, Dict[str, str]], min_pchange: float,
-                       price_reaction: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                       price_reaction: Optional[Dict[str, Any]] = None,
+                       total_mv: Optional[float] = None,
+                       mv_asof: Optional[str] = None) -> Dict[str, Any]:
     ts_code = str(row["ts_code"])
     ftype = str(row["type"]) if pd.notna(row.get("type")) else ""
 
@@ -372,6 +448,7 @@ def build_stock_record(row: pd.Series, cache: CumCache, period: str,
             "median_yi": to_yi(np_med),
             "last_parent_yi": to_yi(last_parent),
         },
+        "valuation": build_valuation(np_med, cache, period, total_mv, mv_asof),
         "profit_growth": {
             "latest_quarter": f"Q{quarter_of(period)[1]}",
             "cum_yoy_pct": pchg,
@@ -482,6 +559,7 @@ def needed_income_periods(period: str) -> Set[str]:
         rp,
         prev_year_period(rp),
         prev_cumulative_period(rp),
+        period_end(quarter_of(period)[0] - 1, 4),  # 上年年报 — 滚动PE 基数(仅 Q3 时是新增)
     }
     return {p for p in s if p}
 
@@ -821,10 +899,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     income_missing: List[str] = []
     income_calls = 0
     price_calls = 0
+    mv_asof: Optional[str] = None
     if forecasts:
         all_codes = [str(f["ts_code"]) for f in forecasts]
         basic = resolve_basic(pro, store, all_codes)
         income_by_code, income_calls = gather_income(pro, store, all_codes, period, refresh_income, workers)
+        mv_map, mv_asof = fetch_total_mv(pro, today, notes)
         reactions: Dict[str, Dict[str, Any]] = {}
         if not args.no_price:
             anchors = {
@@ -847,7 +927,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             if not cache.has_actual_np(prev_cumulative_period(period)):
                 income_missing.append(ts_code)
             rec = build_stock_record(row, cache, period, basic, args.min_pchange,
-                                     price_reaction=reactions.get(ts_code))
+                                     price_reaction=reactions.get(ts_code),
+                                     total_mv=mv_map.get(ts_code), mv_asof=mv_asof)
             if args.positive_only and rec["flags"]["negative_type"]:
                 continue
             stocks.append(rec)
@@ -856,6 +937,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     fetch_stats["income_calls"] = income_calls
     fetch_stats["income_from_cache"] = max(len(forecasts) - income_calls, 0)
     fetch_stats["price_fetch_stocks"] = price_calls
+    fetch_stats["mv_asof"] = mv_asof
+    notes.append(
+        "valuation 为估值参照：年化净利=预告中值÷报告期季数×4(简单年化，未调季节性)；"
+        "滚动净利=上年年报实际+本期中值−上年同期实际(季节性对照，次新股基数缺失时为空)；"
+        "PE=最新交易日总市值(daily_basic)÷对应净利，年化净利≤0 不给 PE。口径与坑见 methodology §十一。"
+    )
     notes.append(
         "industry_summary 按 stock_basic 行业口径做确定性计数(方向家数/增速中位/断层计数/大票样本)，"
         "只是产业结构综述的原料；宏观分组与结构判断由模型完成，行业口径本身不当结论用。"

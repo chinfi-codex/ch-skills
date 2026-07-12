@@ -7,9 +7,11 @@ badged when the sample fingerprint moved) → filter bar → two panes. Left pan
 the stock LIST, grouped by 主线 (default), sorted by 公告发布时间, or flat;
 净利润断层 rows are strongly marked (向上=业绩超预期跳空↑/强表现, 向下=不及预期跳空↓/弱表现).
 Right pane is the DETAIL for
-the selected stock — a prominent 年化PE hero strip (预告中值年化 against the
-latest total market cap, with the rolling-PE cross-check) under the header, an
-embedded K-line (candles + volume, announcement marker
+the selected stock — a prominent 年化PE hero strip under the header (annualized
+against the latest total market cap; 扣非-first — when cninfo enrichment carries
+a 扣非 median the headline PE is on that non-recurring-adjusted basis with the
+归母 PE kept as a cross-reference, else the 归母 median with a rolling-PE check),
+an embedded K-line (candles + volume, announcement marker
 on the trading bar immediately before ann_date, and pre-announcement close marked)
 plus a slim price line (跳空/公告后累计)、
 业绩、归属主线, and a **行业趋势分析** block: within the stock's mainline, how many
@@ -36,7 +38,7 @@ import os
 import sys
 from html import escape
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from store import Store
 
@@ -99,6 +101,22 @@ def _kf_display(enrich_rec: Optional[Dict[str, Any]]) -> Optional[str]:
     if kf.get("point") is not None:
         return f"{kf['point']}亿"
     return None
+
+
+def _kf_median_yi(enrich_rec: Optional[Dict[str, Any]]) -> Tuple[Optional[float], Optional[str]]:
+    """扣非净利中值(亿元) + parse confidence, from the cninfo enrich record.
+    Range → midpoint, else the single point. None when no 扣非 was parsed."""
+    parsed = (enrich_rec or {}).get("parsed") or {}
+    kf = parsed.get("kf_net_profit_yi")
+    if not kf:
+        return None, None
+    conf = kf.get("confidence")
+    lo, hi, point = kf.get("low"), kf.get("high"), kf.get("point")
+    if lo is not None and hi is not None:
+        return (float(lo) + float(hi)) / 2.0, conf
+    if point is not None:
+        return float(point), conf
+    return None, conf
 
 
 def _compact_kline(bars: List[Dict[str, Any]], keep: int) -> List[List[Any]]:
@@ -164,6 +182,20 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
         gap_dir = pr.get("gap_dir")
         pre_pos = _pct(pr.get("pre_pos_1y_pct"))
         since = _pct(pr.get("since_ann_pct"))
+
+        # 扣非优先年化 PE：有 cninfo 扣非中值时，用扣非(剔除一次性损益)按同一
+        # 年化系数(4/q)重算 PE，作为头条口径；归母口径留作对照。扣非只在 enrich
+        # 跑过的候选上有，未取到就退回归母年化 PE。扣非本身随方向翻转不适用——
+        # 扣非≤0(利润全为非经常性)时给不出 PE，但这本身是强信号，单独标注。
+        total_mv_yi = val.get("total_mv_yi")
+        kf_med, kf_conf = _kf_median_yi(en_idx.get(ts_code))
+        pe_ann_kf = kf_ann_np_yi = None
+        if kf_med is not None and total_mv_yi:
+            kf_ann = kf_med * 4.0 / quarter_of(period)
+            kf_ann_np_yi = round(kf_ann, 4)
+            if kf_ann > 0 and total_mv_yi > 0:
+                pe_ann_kf = round(total_mv_yi / kf_ann, 1)
+
         rec = {
             "ts_code": ts_code,
             "name": s.get("name", ""),
@@ -175,10 +207,14 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
             "pe_ann": val.get("pe_annualized"),
             "pe_ann_note": val.get("pe_annualized_note"),
             "pe_roll": val.get("pe_rolling"),
-            "total_mv_yi": val.get("total_mv_yi"),
+            "total_mv_yi": total_mv_yi,
             "ann_np_yi": val.get("annualized_np_yi"),
             "ann_label": val.get("annualize_label"),
             "mv_asof": val.get("mv_asof"),
+            "pe_ann_kf": pe_ann_kf,
+            "kf_ann_np_yi": kf_ann_np_yi,
+            "kf_median_yi": kf_med,
+            "kf_conf": kf_conf,
             "kf": _kf_display(en_idx.get(ts_code)),
             "rev_yoy": _pct(rev.get("cum_yoy_pct")),
             "rev_period": (rev or {}).get("period_label"),
@@ -452,17 +488,29 @@ function select(code){SEL=code;document.querySelectorAll('.row').forEach(el=>el.
 function mrow(k,v,cls){return `<div class="mrow"><span class="k">${k}</span><span class="${cls||''}">${v}</span></div>`;}
 const fmtYi=v=>(v===null||v===undefined)?'—':(Math.abs(v)>=100?v.toFixed(0):(Math.abs(v)>=10?v.toFixed(1):v.toFixed(2)));
 function peHero(s){
-  let big='—',note='';
-  if(s.pe_ann!==null&&s.pe_ann!==undefined)big=`${s.pe_ann}<span class="vx">×</span>`;
-  else if(s.pe_ann_note==='np_nonpositive')note='年化净利≤0（仍亏损），PE 无意义';
-  else if(s.pe_ann_note==='mv_missing')note='未取到总市值（daily_basic），PE 缺失';
-  else if(s.pe_ann_note==='np_missing')note='预告未披露净利区间，无法年化';
-  else note='无估值证据（evidence 为旧版扫描，重跑 forecast_scan 后生成）';
+  const hasKf=s.pe_ann_kf!==null&&s.pe_ann_kf!==undefined;
+  const kfNeg=!hasKf&&s.kf_median_yi!==null&&s.kf_median_yi!==undefined&&s.kf_median_yi<=0;
   const asof=s.mv_asof?`(${s.mv_asof.slice(4,6)}-${s.mv_asof.slice(6)})`:'';
+  let big='—',note='',label='年化PE·预告中值';
   const subs=[`总市值 ${s.total_mv_yi!==null&&s.total_mv_yi!==undefined?fmtYi(s.total_mv_yi)+'亿':'—'}${asof}`];
-  if(s.ann_np_yi!==null&&s.ann_np_yi!==undefined)subs.push(`年化净利 ${fmtYi(s.ann_np_yi)}亿（${s.ann_label||'预告中值年化'}）`);
-  if(s.pe_roll!==null&&s.pe_roll!==undefined)subs.push(`滚动PE ${s.pe_roll}×（上年年报+本期中值−上年同期）`);
-  return `<div class="vhero"><div class="vpe"><span class="vk">年化PE·预告中值</span><span class="vnum">${big}</span></div><div class="vsub">${subs.join(' · ')}${note?`<br>${note}`:''}</div></div>`;
+  if(hasKf){
+    // 扣非优先：头条用扣非年化 PE，归母年化 PE 作对照
+    label='年化PE·扣非口径';
+    big=`${s.pe_ann_kf}<span class="vx">×</span>`;
+    subs.push(`扣非年化净利 ${fmtYi(s.kf_ann_np_yi)}亿（${s.ann_label||'预告中值年化'}${s.kf_conf?'，cninfo '+s.kf_conf:''}）`);
+    if(s.pe_ann!==null&&s.pe_ann!==undefined)subs.push(`归母年化PE ${s.pe_ann}×（对照）`);
+  }else{
+    // 无扣非（未 enrich）或扣非≤0：退回归母年化 PE
+    if(s.pe_ann!==null&&s.pe_ann!==undefined)big=`${s.pe_ann}<span class="vx">×</span>`;
+    else if(s.pe_ann_note==='np_nonpositive')note='年化净利≤0（仍亏损），PE 无意义';
+    else if(s.pe_ann_note==='mv_missing')note='未取到总市值（daily_basic），PE 缺失';
+    else if(s.pe_ann_note==='np_missing')note='预告未披露净利区间，无法年化';
+    else note='无估值证据（evidence 为旧版扫描，重跑 forecast_scan 后生成）';
+    if(s.ann_np_yi!==null&&s.ann_np_yi!==undefined)subs.push(`年化净利 ${fmtYi(s.ann_np_yi)}亿（${s.ann_label||'预告中值年化'}）`);
+    if(s.pe_roll!==null&&s.pe_roll!==undefined)subs.push(`滚动PE ${s.pe_roll}×（上年年报+本期中值−上年同期）`);
+    if(kfNeg)note=`扣非年化≤0（利润主要为非经常性损益，扣非中值 ${fmtYi(s.kf_median_yi)}亿），归母口径 PE 参考意义有限`;
+  }
+  return `<div class="vhero"><div class="vpe"><span class="vk">${label}</span><span class="vnum">${big}</span></div><div class="vsub">${subs.join(' · ')}${note?`<br>${note}`:''}</div></div>`;
 }
 function memberLine(m){const c=m.gap_open_pct>=0?'pos':'neg';return `<span class="${c}">${m.name}${sign(m.gap_open_pct)}%${m.gap_status==='filled'?'(回补)':''}</span>`;}
 function renderDetail(){
@@ -595,7 +643,7 @@ def render_html(view: Dict[str, Any]) -> str:
 <div class="list" id="list"></div>
 <div class="detail" id="detail"><div class="empty">点击左侧个股查看详情</div></div>
 </div>
-<div class="foot">净利=预告中值 · 断层以首次披露日为锚(预告多在披露日前一交易日盘后发出，反应落在披露日当天)：跳空=公告日当天开盘 vs 公告日前一交易日收盘；向上=业绩超预期跳空(强表现)、向下=不及预期跳空下跌(弱表现)；未回补=其后价格未回到公告前收盘另一侧，D+n=断层后交易日数(新断层未经检验) · 行业趋势=报告期内按主线聚合成员的断层方向(强表现向上/弱表现向下)自下而上归纳：↑↓⇅为机械计数，「判·方向」为模型对强/弱成员变动原因的归因交叉验证(落 verdict 台账，†=成员已变化待复判) · 页首产业结构综述=模型基于全样本行业聚合(industry_summary，含负向预告)的结构判断，样本随披露累积、综述会随之更新 · K线使用前复权(qfq)口径，红涨绿跌，蓝虚线=公告日标注(落在公告日前一交易日，如公告日7.3则标7.2)、橙虚线=公告前收盘 · 年化PE=最新交易日总市值÷年化净利，年化净利=预告中值÷报告期季数×4(简单年化，未调季节性，年报预告即中值)；滚动PE分母=上年年报实际+本期中值−上年同期实际(季节性对照)；年化净利≤0不给PE，扭亏小基数会把PE推到数百倍、一次性损益会让PE虚低，与行情软件静态PE/PE-TTM口径不同 · 归属主线由模型语义匹配 daily-market-sense 主线台账 · 仅作观察、不含买卖建议</div>
+<div class="foot">净利=预告中值 · 断层以首次披露日为锚(预告多在披露日前一交易日盘后发出，反应落在披露日当天)：跳空=公告日当天开盘 vs 公告日前一交易日收盘；向上=业绩超预期跳空(强表现)、向下=不及预期跳空下跌(弱表现)；未回补=其后价格未回到公告前收盘另一侧，D+n=断层后交易日数(新断层未经检验) · 行业趋势=报告期内按主线聚合成员的断层方向(强表现向上/弱表现向下)自下而上归纳：↑↓⇅为机械计数，「判·方向」为模型对强/弱成员变动原因的归因交叉验证(落 verdict 台账，†=成员已变化待复判) · 页首产业结构综述=模型基于全样本行业聚合(industry_summary，含负向预告)的结构判断，样本随披露累积、综述会随之更新 · K线使用前复权(qfq)口径，红涨绿跌，蓝虚线=公告日标注(落在公告日前一交易日，如公告日7.3则标7.2)、橙虚线=公告前收盘 · 年化PE=最新交易日总市值÷年化净利，年化净利=预告中值÷报告期季数×4(简单年化，未调季节性，年报预告即中值)；有 cninfo 扣非中值时头条 PE 优先按扣非(剔除一次性损益)算、归母 PE 作对照，无扣非退回归母；滚动PE分母=上年年报实际+本期中值−上年同期实际(季节性对照)；年化净利≤0不给PE，扭亏小基数会把PE推到数百倍、一次性损益会让归母PE虚低，与行情软件静态PE/PE-TTM口径不同 · 归属主线由模型语义匹配 daily-market-sense 主线台账 · 仅作观察、不含买卖建议</div>
 {empty_note}
 </div>
 <script>const DATA={data_json};{_JS}</script>

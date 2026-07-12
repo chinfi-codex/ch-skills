@@ -16,8 +16,8 @@ from pathlib import Path
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 _CANDIDATES = [
-    SCRIPT_ROOT / "_shared" / "web_search" / "tavily_search.py",      # 同步副本（bundle）
     SCRIPT_ROOT.parents[2] / "shared" / "web_search" / "tavily_search.py",  # canonical 仓库
+    SCRIPT_ROOT / "_shared" / "web_search" / "tavily_search.py",      # 同步副本（bundle）
 ]
 
 

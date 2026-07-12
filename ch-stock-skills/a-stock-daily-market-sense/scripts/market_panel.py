@@ -3358,7 +3358,12 @@ def build_money_effect_samples(
                 "sort_by": "成交额降序",
             },
             "candidates": [],
-            "summary": {"candidate_count": 0},
+            "summary": {
+                "candidate_count": 0,
+                "qualified_before_limit_count": 0,
+                "market_total_amount_100m_yuan": None,
+                "candidate_amount_share_of_market_pct": None,
+            },
         }
 
     # daily.amount unit is thousand yuan: 1亿元 = 100000 千元
@@ -3369,10 +3374,14 @@ def build_money_effect_samples(
         if column in df.columns:
             df[column] = pd.to_numeric(df[column], errors="coerce")
 
+    market_total_amount_100m = float(df["amount"].fillna(0).clip(lower=0).sum() / 100000)
+
     qualified = df.loc[
         (df["pct_chg"].fillna(-999) >= pct_chg_threshold)
         & (df["amount"].fillna(0) >= amount_threshold_thousand_yuan)
     ].copy()
+
+    qualified_before_limit_count = int(len(qualified))
 
     if qualified.empty:
         return {
@@ -3386,7 +3395,12 @@ def build_money_effect_samples(
             "candidates": [],
             "summary": {
                 "candidate_count": 0,
+                "qualified_before_limit_count": 0,
                 "total_amount_100m_yuan": 0.0,
+                "market_total_amount_100m_yuan": round(market_total_amount_100m, 2),
+                "candidate_amount_share_of_market_pct": (
+                    0.0 if market_total_amount_100m > 0 else None
+                ),
             },
         }
 
@@ -3403,7 +3417,14 @@ def build_money_effect_samples(
 
     summary = {
         "candidate_count": int(len(qualified)),
+        "qualified_before_limit_count": qualified_before_limit_count,
         "total_amount_100m_yuan": round(total_amount_100m, 2),
+        "market_total_amount_100m_yuan": round(market_total_amount_100m, 2),
+        "candidate_amount_share_of_market_pct": (
+            round(total_amount_100m / market_total_amount_100m * 100, 2)
+            if market_total_amount_100m > 0
+            else None
+        ),
         "median_pct_chg": round(float(qualified["pct_chg"].median()), 2),
         "max_pct_chg": round(float(qualified["pct_chg"].max()), 2),
         "min_pct_chg": round(float(qualified["pct_chg"].min()), 2),
@@ -4809,7 +4830,7 @@ def build_report_context(
         "reporting_notes": [
             "本上下文是面向模型的轻量辅助包，不是完整证据归档。",
             "最终主线名称和评级仍由模型依据业务事实与 skill 规则判断。",
-            "自动化路径有意省略外部收盘综述校验。",
+            "自动化路径有意省略外部收盘综述校验；模块 3 先完成临时成员映射和确定性统计，由模型锁星后才单独执行催化搜索。",
         ],
     }
 
@@ -4941,7 +4962,8 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
             "subagent_contract": {
                 "module1_market_trend": ["module1_market_trend.json", "references/methodology/module1_trend.md", "references/template/section1.md", "盘面趋势"],
                 "module2_concentration": ["module2_concentration.json", "references/methodology/module2_concentration.md", "references/template/section2.md", "成交额集中度"],
-                "module3_money_effect": ["module3_money_effect.json", "references/methodology/module3_money_effect.md", "references/template/section3.md", "赚钱效应与上涨主线"],
+                "module3_money_effect": ["module3_money_effect.json", "references/methodology/module3_money_effect.md", "module3_theme_map.json", "首轮只做临时主题与成员映射，stars 写 null，不写最终正文"],
+                "module3_money_effect_second_stage": [["module3_theme_map.json", "module3_theme_stats.json", "module3_enrichment_pack.json"], "references/methodology/catalyst_subline_mining.md", "references/template/section3.md", "统计后由模型锁星；星级锁定后补催化与细分线路，再写最终模块 3"],
                 "module4_decline": ["module4_decline.json", "references/methodology/module4_decline.md", "references/template/section4.md", "爆量下跌风险"],
                 "module5_feature_groups": ["module5_feature_groups.json", "references/methodology/module5_feature_groups.md", "references/template/section5.md", "特征分组分析"],
             },

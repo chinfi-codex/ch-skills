@@ -20,7 +20,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+from datetime import date
 from pathlib import Path
 
 TAVILY_ENDPOINT = "https://api.tavily.com/search"
@@ -70,27 +72,41 @@ def tavily_search(
     max_results: int = 5,
     topic: str = "general",
     days: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
     search_depth: str = "basic",
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
     key: str | None = None,
 ) -> dict:
     """调用 Tavily Search，返回精简后的结构化 dict；任何失败都回结构化 error。"""
+    date_error = _validate_date_window(
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if date_error:
+        return {
+            "query": query,
+            "error": {"code": "invalid_parameters", "detail": date_error},
+        }
+
     try:
         import requests  # 本地导入，缺依赖时给清晰报错
     except ImportError:
         return {
             "query": query,
-            "error": "missing_dependency",
-            "detail": "pip install requests",
+            "error": {"code": "missing_dependency", "detail": "pip install requests"},
         }
 
     api_key = key or get_tavily_key()
     if not api_key:
         return {
             "query": query,
-            "error": "missing_api_key",
-            "detail": "Set TAVILY_API_KEY in the environment or repo-root .env.",
+            "error": {
+                "code": "missing_api_key",
+                "detail": "Set TAVILY_API_KEY in the environment or repo-root .env.",
+            },
         }
 
     payload: dict = {
@@ -102,6 +118,10 @@ def tavily_search(
     }
     if days is not None:
         payload["days"] = days
+    if start_date is not None:
+        payload["start_date"] = start_date
+    if end_date is not None:
+        payload["end_date"] = end_date
     if include_domains:
         payload["include_domains"] = include_domains
     if exclude_domains:
@@ -110,13 +130,18 @@ def tavily_search(
     try:
         resp = requests.post(TAVILY_ENDPOINT, json=payload, timeout=30)
     except requests.RequestException as exc:
-        return {"query": query, "error": "request_failed", "detail": str(exc)}
+        return {
+            "query": query,
+            "error": {"code": "request_failed", "detail": str(exc)},
+        }
 
     if resp.status_code != 200:
         return {
             "query": query,
-            "error": f"http_{resp.status_code}",
-            "detail": resp.text[:500],
+            "error": {
+                "code": f"http_{resp.status_code}",
+                "detail": resp.text[:500],
+            },
         }
 
     data = resp.json()
@@ -125,15 +150,12 @@ def tavily_search(
             "title": item.get("title"),
             "url": item.get("url"),
             "published_date": item.get("published_date"),
-            "score": item.get("score"),
             "content": item.get("content"),
         }
         for item in data.get("results", [])
     ]
     return {
         "query": query,
-        "topic": topic,
-        "count": len(results),
         "results": results,
     }
 
@@ -142,6 +164,53 @@ def _split_domains(raw: str | None) -> list[str] | None:
     if not raw:
         return None
     return [d.strip() for d in raw.split(",") if d.strip()]
+
+
+def _parse_iso_date(value: str) -> date:
+    """严格解析 Tavily 使用的 YYYY-MM-DD 日期。"""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise ValueError("expected YYYY-MM-DD")
+    return date.fromisoformat(value)
+
+
+def _arg_iso_date(value: str) -> str:
+    """argparse 日期类型：保留原字符串，避免改变 API wire shape。"""
+    try:
+        _parse_iso_date(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"invalid date {value!r}: expected a real date in YYYY-MM-DD format"
+        ) from exc
+    return value
+
+
+def _validate_date_window(
+    *,
+    days: int | None,
+    start_date: str | None,
+    end_date: str | None,
+) -> str | None:
+    """校验相对/绝对日期参数；返回错误文本而不是替模型做任何判断。"""
+    if days is not None and (start_date is not None or end_date is not None):
+        return "days cannot be combined with start_date or end_date"
+
+    parsed_start: date | None = None
+    parsed_end: date | None = None
+    for label, value in (("start_date", start_date), ("end_date", end_date)):
+        if value is None:
+            continue
+        try:
+            parsed = _parse_iso_date(value)
+        except ValueError:
+            return f"{label} must be a real date in YYYY-MM-DD format"
+        if label == "start_date":
+            parsed_start = parsed
+        else:
+            parsed_end = parsed
+
+    if parsed_start is not None and parsed_end is not None and parsed_start > parsed_end:
+        return "start_date must be on or before end_date"
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -160,6 +229,18 @@ def main(argv: list[str] | None = None) -> int:
         "--days", type=int, default=None, help="时效窗口（天，仅 news topic 生效）"
     )
     parser.add_argument(
+        "--start-date",
+        type=_arg_iso_date,
+        default=None,
+        help="绝对检索窗口起点（YYYY-MM-DD），不可与 --days 同用",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=_arg_iso_date,
+        default=None,
+        help="绝对检索窗口终点（YYYY-MM-DD），不可与 --days 同用",
+    )
+    parser.add_argument(
         "--search-depth", choices=["basic", "advanced"], default="basic"
     )
     parser.add_argument(
@@ -170,11 +251,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    date_error = _validate_date_window(
+        days=args.days,
+        start_date=args.start_date,
+        end_date=args.end_date,
+    )
+    if date_error:
+        parser.error(date_error)
+
     result = tavily_search(
         args.query,
         max_results=args.max_results,
         topic=args.topic,
         days=args.days,
+        start_date=args.start_date,
+        end_date=args.end_date,
         search_depth=args.search_depth,
         include_domains=_split_domains(args.include_domains),
         exclude_domains=_split_domains(args.exclude_domains),

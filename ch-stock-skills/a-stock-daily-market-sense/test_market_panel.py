@@ -395,11 +395,21 @@ def test_build_money_effect_samples():
     codes = [item["ts_code"] for item in result["candidates"]]
     assert codes == ["B.SZ", "A.SZ"]
     assert summary["total_amount_100m_yuan"] == 8.0
+    assert summary["qualified_before_limit_count"] == 2
+    assert summary["market_total_amount_100m_yuan"] == 20.3
+    assert summary["candidate_amount_share_of_market_pct"] == 39.41
     # 合成帧没有 is_limit_up 列 → 退回 ±9.8% 近似口径
     assert summary["limit_up_count"] == 1
     assert summary["limit_detection"] == "pct_chg_approx"
+    capped = mp.build_money_effect_samples(
+        _synthetic_panel(), pct_chg_threshold=7.0, amount_threshold_100m_yuan=2.0, sample_limit=1
+    )
+    assert capped["summary"]["candidate_count"] == 1
+    assert capped["summary"]["qualified_before_limit_count"] == 2
+    assert capped["summary"]["candidate_amount_share_of_market_pct"] == 24.63
     empty = mp.build_money_effect_samples(None, 7.0, 2.0, 10)
     assert empty["available"] is False
+    assert empty["summary"]["candidate_amount_share_of_market_pct"] is None
 
 
 def test_build_volume_decline_samples():

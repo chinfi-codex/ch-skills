@@ -693,6 +693,13 @@ def test_cleanup_intermediates():
         (reports / "evidence_20260609_utf8.stderr.log").write_text("")
         (reports / "kline_20260609.json").write_text("{}")
         (reports / "report_context_20260609.json").write_text("{}")
+        (reports / "lifecycle_20260609.json").write_text("{}")
+        (reports / "strategy_picks_20260609.json").write_text("{}")
+        (reports / "calibration_20260609.json").write_text("{}")
+        (reports / "profile_refresh_20260609.json").write_text("{}")
+        (reports / "weekly_factor_pack_20260609.json").write_text("{}")
+        (reports / "factor_mining_discount_relaunch_20260609.json").write_text("{}")
+        (reports / "factor_mining_discount_relaunch_20260609_detail.json").write_text("{}")
         module_dir = reports / "module_context_20260609"
         module_dir.mkdir()
         (module_dir / "meta.json").write_text("{}")

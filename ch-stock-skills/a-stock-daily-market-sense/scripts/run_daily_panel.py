@@ -156,6 +156,14 @@ def cleanup_intermediates(reports_dir: Path, date: str) -> Dict[str, Any]:
         reports_dir / f"kline_{date}.json",
         reports_dir / f"report_context_{date}.json",
         reports_dir / f"lifecycle_{date}.json",
+        # Backward-compatible cleanup for artifacts produced before the
+        # strategy-pick / factor-lab lifecycle was removed.  Current runs no
+        # longer create these files, but upgrades should not strand old
+        # intermediates in reports/.
+        reports_dir / f"strategy_picks_{date}.json",
+        reports_dir / f"calibration_{date}.json",
+        reports_dir / f"profile_refresh_{date}.json",
+        reports_dir / f"weekly_factor_pack_{date}.json",
     ]
     for path in candidates:
         if path.exists():

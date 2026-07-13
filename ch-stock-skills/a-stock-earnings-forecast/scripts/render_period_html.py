@@ -188,6 +188,7 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
         # 跑过的候选上有，未取到就退回归母年化 PE。扣非本身随方向翻转不适用——
         # 扣非≤0(利润全为非经常性)时给不出 PE，但这本身是强信号，单独标注。
         total_mv_yi = val.get("total_mv_yi")
+        parent_ann_np_yi = val.get("annualized_np_yi")
         kf_med, kf_conf = _kf_median_yi(en_idx.get(ts_code))
         pe_ann_kf = kf_ann_np_yi = None
         if kf_med is not None and total_mv_yi:
@@ -195,6 +196,15 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
             kf_ann_np_yi = round(kf_ann, 4)
             if kf_ann > 0 and total_mv_yi > 0:
                 pe_ann_kf = round(total_mv_yi / kf_ann, 1)
+        # “利润主要靠非经常性损益”只适用于归母为正、扣非不为正的
+        # 口径反转。若归母本身也亏损，应保留“仍亏损，PE 无意义”，
+        # 不能用一次性损益提示覆盖它。
+        kf_nonrecurring = (
+            kf_med is not None
+            and kf_med <= 0
+            and parent_ann_np_yi is not None
+            and float(parent_ann_np_yi) > 0
+        )
 
         rec = {
             "ts_code": ts_code,
@@ -208,13 +218,14 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
             "pe_ann_note": val.get("pe_annualized_note"),
             "pe_roll": val.get("pe_rolling"),
             "total_mv_yi": total_mv_yi,
-            "ann_np_yi": val.get("annualized_np_yi"),
+            "ann_np_yi": parent_ann_np_yi,
             "ann_label": val.get("annualize_label"),
             "mv_asof": val.get("mv_asof"),
             "pe_ann_kf": pe_ann_kf,
             "kf_ann_np_yi": kf_ann_np_yi,
             "kf_median_yi": kf_med,
             "kf_conf": kf_conf,
+            "kf_nonrecurring": kf_nonrecurring,
             "kf": _kf_display(en_idx.get(ts_code)),
             "rev_yoy": _pct(rev.get("cum_yoy_pct")),
             "rev_period": (rev or {}).get("period_label"),
@@ -489,7 +500,7 @@ function mrow(k,v,cls){return `<div class="mrow"><span class="k">${k}</span><spa
 const fmtYi=v=>(v===null||v===undefined)?'—':(Math.abs(v)>=100?v.toFixed(0):(Math.abs(v)>=10?v.toFixed(1):v.toFixed(2)));
 function peHero(s){
   const hasKf=s.pe_ann_kf!==null&&s.pe_ann_kf!==undefined;
-  const kfNeg=!hasKf&&s.kf_median_yi!==null&&s.kf_median_yi!==undefined&&s.kf_median_yi<=0;
+  const kfNeg=Boolean(s.kf_nonrecurring);
   const asof=s.mv_asof?`(${s.mv_asof.slice(4,6)}-${s.mv_asof.slice(6)})`:'';
   let big='—',note='',label='年化PE·预告中值';
   const subs=[`总市值 ${s.total_mv_yi!==null&&s.total_mv_yi!==undefined?fmtYi(s.total_mv_yi)+'亿':'—'}${asof}`];

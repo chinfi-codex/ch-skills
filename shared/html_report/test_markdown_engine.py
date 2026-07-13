@@ -2,7 +2,35 @@ from __future__ import annotations
 
 import unittest
 
-from markdown_engine import render_markdown
+from markdown_engine import render_markdown, strip_front_matter
+
+
+class FrontMatterTests(unittest.TestCase):
+    def test_front_matter_is_removed_from_rendered_body(self) -> None:
+        markdown = """---
+title: 2026-07-13趋势复盘
+type: 日周报
+sources: 1
+---
+
+# A 股盘后市场复盘报告
+"""
+        self.assertEqual(
+            render_markdown(markdown),
+            "<h2>A 股盘后市场复盘报告</h2>",
+        )
+
+    def test_utf8_bom_before_front_matter_is_supported(self) -> None:
+        markdown = "\ufeff---\ntitle: 报告\n---\n\n正文"
+        self.assertEqual(strip_front_matter(markdown), "\n正文")
+
+    def test_unclosed_front_matter_is_preserved(self) -> None:
+        markdown = "---\ntitle: 报告\n正文"
+        self.assertEqual(strip_front_matter(markdown), markdown)
+
+    def test_leading_thematic_break_is_not_treated_as_front_matter(self) -> None:
+        markdown = "---\n\n正文\n\n---\n\n结尾"
+        self.assertEqual(strip_front_matter(markdown), markdown)
 
 
 class NestedListTests(unittest.TestCase):

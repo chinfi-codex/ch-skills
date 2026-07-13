@@ -14,6 +14,33 @@ import re
 from typing import List
 
 
+def strip_front_matter(markdown_text: str) -> str:
+    """Remove a leading YAML front matter block from Markdown.
+
+    A block is treated as front matter only when the document starts with an
+    exact ``---`` fence (optionally after a UTF-8 BOM), has a closing fence,
+    and contains at least one YAML-style mapping key.  The mapping check keeps
+    a leading Markdown thematic break from swallowing later report content.
+    """
+    text = markdown_text.removeprefix("\ufeff")
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return text
+
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() != "---":
+            continue
+        metadata_lines = lines[1:idx]
+        has_mapping = any(
+            re.match(r"^[^\s:#][^:]*:\s*.*$", line.strip())
+            for line in metadata_lines
+        )
+        if has_mapping:
+            return "".join(lines[idx + 1 :])
+        return text
+    return text
+
+
 def is_table_separator(line: str) -> bool:
     stripped = line.strip()
     return bool(stripped) and set(stripped) <= {"|", "-", ":", " "}
@@ -183,7 +210,7 @@ def render_list(lines: List[str]) -> str:
 
 
 def render_markdown(markdown_text: str) -> str:
-    lines = markdown_text.splitlines()
+    lines = strip_front_matter(markdown_text).splitlines()
     out: List[str] = []
     paragraph: List[str] = []
     idx = 0

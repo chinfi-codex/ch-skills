@@ -27,6 +27,7 @@ opportunities. Self-contained single file, no CDN, dark-mode aware.
 
 Usage:
     python3 scripts/render_period_html.py --period 20260630
+    python3 scripts/render_period_html.py --period 20260630 --require-ann-cutoff 20260714
 """
 
 from __future__ import annotations
@@ -50,6 +51,15 @@ POS_SPLIT = 50.0       # 公告前一年分位 >= split → 趋势加速型；< 
 MUTED_MAX_PCT = 3.0    # |公告后累计涨幅| < N% 且无断层 → 未反应观察
 TREND_NET = 2          # 主线内 净断层方向 |strong-weak| >= N → 偏强/偏弱
 KLINE_BARS = 130       # bars embedded per stock for the detail chart
+BEIJING_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
+
+
+def beijing_now() -> dt.datetime:
+    return dt.datetime.now(BEIJING_TZ)
+
+
+def beijing_today() -> dt.date:
+    return beijing_now().date()
 
 
 def quarter_of(period: str) -> int:
@@ -77,6 +87,46 @@ def _load_json(path: str) -> Optional[Dict[str, Any]]:
         return None
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def _validate_evidence_cutoff(evidence: Dict[str, Any], required: Optional[str] = None) -> Dict[str, Any]:
+    """Validate scan/render handoff and optionally require an exact cutoff date."""
+    meta = evidence.get("meta") or {}
+    stocks = evidence.get("stocks") or []
+    ann_window = meta.get("ann_window") or []
+    cutoff = str(meta.get("ann_cutoff") or (ann_window[-1] if ann_window else ""))
+    if not cutoff or len(cutoff) != 8 or not cutoff.isdigit():
+        raise ValueError("evidence.meta 缺少有效 ann_cutoff/ann_window 截止日，请重跑 forecast_scan。")
+    dt.datetime.strptime(cutoff, "%Y%m%d")
+
+    declared_total = meta.get("unique_stocks")
+    if declared_total is not None and int(declared_total) != len(stocks):
+        raise ValueError(f"evidence 股票数不一致: meta={declared_total}, stocks={len(stocks)}")
+
+    actual_cutoff_count = sum(1 for s in stocks if str(s.get("ann_date") or "") == cutoff)
+    declared_cutoff_count = meta.get("ann_cutoff_stock_count")
+    if declared_cutoff_count is not None and int(declared_cutoff_count) != actual_cutoff_count:
+        raise ValueError(
+            f"evidence 截止日股票数不一致: meta={declared_cutoff_count}, actual={actual_cutoff_count}"
+        )
+    max_ann = max((str(s.get("ann_date") or "") for s in stocks), default="")
+    if max_ann and max_ann > cutoff:
+        raise ValueError(f"evidence 存在晚于 ann_cutoff 的公告: max={max_ann}, cutoff={cutoff}")
+
+    if required:
+        dt.datetime.strptime(required, "%Y%m%d")
+        if cutoff != required:
+            raise ValueError(f"公告截止日门禁失败: evidence={cutoff}, required={required}")
+        if meta.get("ann_cutoff") != required or declared_cutoff_count is None:
+            raise ValueError("严格截止日门禁需要新版 forecast_scan 的 ann_cutoff 与 ann_cutoff_stock_count。")
+        if meta.get("clock_timezone") != "Asia/Shanghai":
+            raise ValueError("严格截止日门禁需要 clock_timezone=Asia/Shanghai，请重跑 forecast_scan。")
+
+    return {
+        "ann_cutoff": cutoff,
+        "ann_cutoff_stock_count": actual_cutoff_count,
+        "evidence_generated_at": meta.get("generated_at"),
+    }
 
 
 def _pct(v: Any) -> Optional[float]:
@@ -338,10 +388,14 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
             "stale": snap != cur,
         }
 
+    cutoff_info = _validate_evidence_cutoff(evidence)
     return {
         "period": period,
         "period_label": period_label(period),
         "updated_at": today.strftime("%Y-%m-%d"),
+        **cutoff_info,
+        "ann_cutoff_is_next_day": cutoff_info["ann_cutoff"] == (
+            today + dt.timedelta(days=1)).strftime("%Y%m%d"),
         "theme_registry_empty": len(themes) == 0,
         "pos_split": pos_split,
         "trend_net": TREND_NET,
@@ -627,6 +681,10 @@ def render_html(view: Dict[str, Any]) -> str:
                          f'<div class="ovtx">{escape(ov["text"])}</div></div>')
     else:
         overview_html = ""
+    cutoff = view["ann_cutoff"]
+    cutoff_display = f"{cutoff[:4]}-{cutoff[4:6]}-{cutoff[6:]}"
+    cutoff_mode = "北京时间次日口径" if view["ann_cutoff_is_next_day"] else "公告截止口径"
+    cutoff_text = f"公告扫描截至 {cutoff_display}（{cutoff_mode} · 截止日 {view['ann_cutoff_stock_count']} 家）"
     data_json = json.dumps({
         "pos_split": view["pos_split"], "trend_net": view["trend_net"],
         "stocks": view["stocks"], "theme_trends": view["theme_trends"], "klines": view["klines"],
@@ -638,10 +696,10 @@ def render_html(view: Dict[str, Any]) -> str:
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>{shared_theme}\n{_CSS}</style></head>
-<body><main class="page"><div class="doc-head"><span class="dh-title">Earnings Forecast</span><span class="dh-meta">{view['period_label']} · updated {view['updated_at']}</span></div>
+<body><main class="page"><div class="doc-head"><span class="dh-title">Earnings Forecast</span><span class="dh-meta">{view['period_label']} · 公告截止 {cutoff_display} · updated {view['updated_at']}</span></div>
 <section class="section report earnings-report"><div class="wrap">
 <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px">
-<div><h1>{view['period_label']} 业绩预告 · 报告期观察</h1><div class="sub">end_date {view['period']} · 业绩 × 股价断层 × 主线行业趋势 · 列表+详情 · 一期一页增量更新</div></div>
+<div><h1>{view['period_label']} 业绩预告 · 报告期观察</h1><div class="sub">end_date {view['period']} · {cutoff_text} · 业绩 × 股价断层 × 主线行业趋势 · 列表+详情</div></div>
 <div class="sub">更新于 {view['updated_at']}</div></div>
 {overview_html}
 <div class="ctrl">
@@ -682,10 +740,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--muted-max", type=float, default=MUTED_MAX_PCT,
                     help="未反应观察：已判强/中、无断层且 |公告后累计| < N%%(默认 3)。")
     ap.add_argument("--kline-days", type=int, default=KLINE_BARS, help="详情页K线根数(默认 130)。")
+    ap.add_argument("--require-ann-cutoff",
+                    help="严格要求 evidence 公告截止日为 YYYYMMDD；不一致或缺少北京时间截止元数据则停止渲染。")
     ap.add_argument("--out")
     args = ap.parse_args(argv)
 
-    today = dt.date.today()
+    today = beijing_today()
     period = args.period or latest_quarter_end(today)
     quarter_of(period)
 
@@ -693,6 +753,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     evidence = _load_json(ev_path)
     if evidence is None:
         print(json.dumps({"error": f"evidence 不存在: {ev_path}，请先运行 forecast_scan.py。"}, ensure_ascii=False))
+        return 2
+    try:
+        cutoff_info = _validate_evidence_cutoff(evidence, args.require_ann_cutoff)
+    except (TypeError, ValueError) as exc:
+        print(json.dumps({"error": str(exc), "evidence": ev_path}, ensure_ascii=False))
         return 2
     enrich = _load_json(args.enrich or os.path.join("reports", f"cninfo_enrich_{period}.json"))
 
@@ -715,6 +780,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                       "klines": len(view["klines"]), "themes_with_trend": len(trends),
                       "themes_judged": sum(1 for t in trends.values() if t.get("judged")),
                       "overview": bool(view.get("overview")),
+                      "ann_cutoff": cutoff_info["ann_cutoff"],
+                      "ann_cutoff_stock_count": cutoff_info["ann_cutoff_stock_count"],
+                      "evidence_generated_at": cutoff_info["evidence_generated_at"],
                       "out": out_path}, ensure_ascii=False, indent=2))
     return 0
 

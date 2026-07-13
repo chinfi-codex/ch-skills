@@ -90,6 +90,8 @@ SKILL.md 只放纲要，这里放判断锚点、拆解语义、字段字典和�
 
 ## 六、字段字典（`forecast_scan.py` 输出 JSON）
 
+日期口径先看 `meta`：`ann_window` 是完整公告扫描窗口；`ann_cutoff` 是本次公告截止日；`ann_cutoff_stock_count` 是 `stocks[]` 中 `ann_date==ann_cutoff` 的家数；`clock_timezone` 固定为 `Asia/Shanghai`；`generated_at` 带 `+08:00`。晚间自动化必须把 `ann_cutoff` 显式设为北京时间运行日+1，并在 HTML 渲染时用 `--require-ann-cutoff` 复核。公告日按日历日扫描，周末不能因交易日历关闭而跳过。
+
 - 单位：净利/营收类字段以**亿元**给出（`*_yi`），已从预告的万元、季报的元统一换算。
 - `net_profit.median_yi`：预告净利下限、上限中值（万元→亿元）。`last_parent_yi`：上年同期归母净利。
 - `profit_growth.cum_yoy_pct`：当年累计同比；`cum_yoy_source`：`p_change`（用预告披露的同比幅度中值）或 `derived`（用中值净利/上年同期推算）或 `na`。

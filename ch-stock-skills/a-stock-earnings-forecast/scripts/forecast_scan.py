@@ -6,8 +6,9 @@ Deterministic evidence builder. It does NOT decide which stocks are "excellent"
 sustainability) is the model's job. This script only:
 
   1. Scans forecasts for one reporting period by iterating forecast(ann_date=)
-     over a trading-day window (the API rejects range/period-only queries), then
-     keeps the latest forecast per stock.
+     over every calendar day (the API rejects range/period-only queries and
+     announcements can be dated on weekends), then keeps the latest forecast
+     per stock. The default cutoff is Beijing run date + 1 day.
   2. Computes the median net profit and the cumulative YoY from the forecast
      range (万元 basis).
   3. Pulls actual quarterly income to decompose the LATEST single quarter into
@@ -57,6 +58,7 @@ DAILY_BASIC_FIELDS = "ts_code,trade_date,total_mv"
 # for the 1y-position percentile, and the minimum bars to trust that percentile.
 PRICE_HISTORY_CAL_DAYS = 400
 POS_MIN_BARS = 60
+BEIJING_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
 
 
 # --------------------------------------------------------------------------- #
@@ -64,6 +66,15 @@ POS_MIN_BARS = 60
 # --------------------------------------------------------------------------- #
 _QUARTER_MMDD = {1: "0331", 2: "0630", 3: "0930", 4: "1231"}
 _MMDD_QUARTER = {v: k for k, v in _QUARTER_MMDD.items()}
+
+
+def beijing_now() -> dt.datetime:
+    """Timezone-aware clock used by all run-date and freshness semantics."""
+    return dt.datetime.now(BEIJING_TZ)
+
+
+def beijing_today() -> dt.date:
+    return beijing_now().date()
 
 
 def quarter_of(period: str) -> Tuple[int, int]:
@@ -188,6 +199,16 @@ def trading_days(pro: TushareProxy, start: str, end: str) -> List[str]:
     return sorted(str(d) for d in cal["cal_date"].tolist())
 
 
+def calendar_days(start: str, end: str) -> List[str]:
+    """Inclusive YYYYMMDD calendar days; announcement dates are not trade dates."""
+    d0 = dt.datetime.strptime(start, "%Y%m%d").date()
+    d1 = dt.datetime.strptime(end, "%Y%m%d").date()
+    if d1 < d0:
+        raise ValueError(f"公告日扫描窗口倒置: {start} > {end}")
+    return [(d0 + dt.timedelta(days=n)).strftime("%Y%m%d")
+            for n in range((d1 - d0).days + 1)]
+
+
 def _clean(v: Any) -> Any:
     return None if (v is None or (isinstance(v, float) and pd.isna(v))) else v
 
@@ -223,12 +244,7 @@ def scan_forecasts_incremental(pro: TushareProxy, store: Store, period: str, sta
     """Fetch only announcement-days not yet scanned (plus a small re-scan overlap
     for late/revised filings), persist them, then return the full accumulated set
     for the period from cache. Announcement-day calls run in a bounded thread pool."""
-    days = trading_days(pro, start_ann, end_ann)
-    if not days:
-        notes.append(f"交易日历为空({start_ann}~{end_ann})，改用逐日历日回退。")
-        d0 = dt.datetime.strptime(start_ann, "%Y%m%d").date()
-        d1 = dt.datetime.strptime(end_ann, "%Y%m%d").date()
-        days = [(d0 + dt.timedelta(n)).strftime("%Y%m%d") for n in range((d1 - d0).days + 1)]
+    days = calendar_days(start_ann, end_ann)
 
     logged = set() if rebuild else store.logged_ann_dates(period)
     recent = set(days[-refetch_days:]) if refetch_days > 0 else set()
@@ -569,7 +585,7 @@ def fetch_income_periods(pro: TushareProxy, ts_code: str, period: str,
     """ONE income range call → period-end -> {n_income_attr_p, revenue, ann_date}.
     Periods the API doesn't return are NULL-filled so newly-listed gaps aren't re-queried."""
     start = f"{quarter_of(period)[0] - 1}0101"
-    end = dt.date.today().strftime("%Y%m%d")
+    end = beijing_today().strftime("%Y%m%d")
     try:
         df = pro.income(ts_code=ts_code, start_date=start, end_date=end, fields=INCOME_FIELDS)
     except Exception:  # noqa: BLE001
@@ -818,7 +834,7 @@ def gather_price_reactions(pro: TushareProxy, store: Store, anchors: Dict[str, s
     if refresh_price:
         store.delete_bars_many(codes)
     cached = store.load_bars_many(codes)
-    today_str = dt.date.today().strftime("%Y%m%d")
+    today_str = beijing_today().strftime("%Y%m%d")
 
     plans = {c: _price_fetch_ranges(cached.get(c, []), anchors[c], today_str) for c in codes}
     to_fetch = [c for c in codes if plans[c]]
@@ -851,13 +867,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Scan A-share earnings forecasts for one period and decompose growth.")
     ap.add_argument("--period", help="Report period end YYYYMMDD (quarter-end). Default: latest quarter <= today.")
     ap.add_argument("--start-ann", help="Announcement-scan window start YYYYMMDD. Default: period_end - 45d.")
-    ap.add_argument("--end-ann", help="Announcement-scan window end YYYYMMDD. Default: min(today + 1d, period_end + 75d).")
+    ap.add_argument("--end-ann", help="Announcement-scan window end YYYYMMDD. Default: min(Beijing today + 1d, period_end + 75d).")
     ap.add_argument("--min-pchange", type=float, default=0.0, help="prefilter_pass threshold on 当年累计同比 %% (default 0).")
     ap.add_argument("--positive-only", action="store_true", help="Drop negative-type forecasts (预减/首亏/续亏/增亏/略减).")
     ap.add_argument("--fetch-workers", type=int, default=4,
                     help="Parallel workers for forecast/income calls (set 1 to serialize under rate limits).")
     ap.add_argument("--refetch-days", type=int, default=3,
-                    help="Always re-scan the most recent N trading days for late/revised filings (default 3).")
+                    help="Always re-scan the most recent N calendar days for late/revised filings (default 3).")
     ap.add_argument("--rebuild", action="store_true", help="Ignore the fetch log and re-scan the whole window + refresh income.")
     ap.add_argument("--refresh-income", action="store_true", help="Force re-fetch of cached income actuals.")
     ap.add_argument("--refresh-price", action="store_true", help="Drop and refetch cached daily bars for the period stocks (qfq basis).")
@@ -869,7 +885,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--stdout", action="store_true", help="Also print the full JSON to stdout.")
     args = ap.parse_args(argv)
 
-    today = dt.date.today()
+    run_now = beijing_now()
+    today = run_now.date()
     period = args.period or latest_quarter_end(today)
     quarter_of(period)  # validate
 
@@ -883,7 +900,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "业绩预告(forecast)接口只有净利润(min/max)与同比幅度，没有营收字段；"
         "收入取自最近实际报告期(income)，为 trailing 实际值，不是预告值。",
         "单季度同比/环比用实际季报拆解：单季净利 = 累计(预告中值) − 上一累计期(实际)。",
-        f"公告日扫描窗口默认截止到运行日+1({ann_today.strftime('%Y%m%d')})，用于覆盖盘后披露按次日公告日期入库的数据。",
+        f"公告日扫描使用北京时间(Asia/Shanghai)，窗口默认截止到运行日+1({ann_today.strftime('%Y%m%d')})，"
+        "逐日历日查询以覆盖盘后按次日入库及周末公告。",
         "已抓的预告/季报存入 DB(forecast_* 表)，每次只增量抓新公告日与新个股，不重复全量抓取。",
     ]
 
@@ -934,6 +952,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             stocks.append(rec)
 
     stocks.sort(key=_sort_key)
+    ann_cutoff_stock_count = sum(1 for s in stocks if str(s.get("ann_date") or "") == end_ann)
     fetch_stats["income_calls"] = income_calls
     fetch_stats["income_from_cache"] = max(len(forecasts) - income_calls, 0)
     fetch_stats["price_fetch_stocks"] = price_calls
@@ -954,7 +973,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             "period_label": period_label(period),
             "latest_quarter": f"Q{quarter_of(period)[1]}",
             "ann_window": [start_ann, end_ann],
-            "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "ann_cutoff": end_ann,
+            "ann_cutoff_stock_count": ann_cutoff_stock_count,
+            "clock_timezone": "Asia/Shanghai",
+            "generated_at": run_now.isoformat(timespec="seconds"),
             "unique_stocks": len(stocks),
             "positive_types": sorted(POSITIVE_TYPES),
             "negative_types": sorted(NEGATIVE_TYPES),
@@ -977,6 +999,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "positive": sum(1 for s in stocks if s["flags"]["positive_type"]),
         "accelerating": sum(1 for s in stocks if s["flags"]["accelerating"]),
         "income_missing": len(income_missing),
+        "ann_cutoff": end_ann,
+        "ann_cutoff_stock_count": ann_cutoff_stock_count,
         "fetch_stats": fetch_stats,
         "out": out_path,
     }

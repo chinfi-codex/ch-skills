@@ -13,6 +13,14 @@ import render_period_html as renderer  # noqa: E402
 
 def _view(parent_annualized: float, parent_pe: float | None, kf_median: float) -> dict:
     evidence = {
+        "meta": {
+            "ann_window": ["20260516", "20260714"],
+            "ann_cutoff": "20260714",
+            "ann_cutoff_stock_count": 0,
+            "unique_stocks": 1,
+            "clock_timezone": "Asia/Shanghai",
+            "generated_at": "2026-07-13T20:30:00+08:00",
+        },
         "stocks": [
             {
                 "ts_code": "000001.SZ",
@@ -73,6 +81,41 @@ class KfPeTests(unittest.TestCase):
         self.assertEqual(stock["kf_ann_np_yi"], 3.0)
         self.assertEqual(stock["pe_ann_kf"], 33.3)
         self.assertFalse(stock["kf_nonrecurring"])
+
+
+class AnnouncementCutoffTests(unittest.TestCase):
+    def test_strict_cutoff_accepts_matching_beijing_evidence(self) -> None:
+        evidence = {
+            "meta": {
+                "ann_window": ["20260516", "20260714"],
+                "ann_cutoff": "20260714",
+                "ann_cutoff_stock_count": 1,
+                "unique_stocks": 2,
+                "clock_timezone": "Asia/Shanghai",
+                "generated_at": "2026-07-13T20:30:00+08:00",
+            },
+            "stocks": [{"ann_date": "20260713"}, {"ann_date": "20260714"}],
+        }
+        info = renderer._validate_evidence_cutoff(evidence, "20260714")
+        self.assertEqual(info["ann_cutoff_stock_count"], 1)
+
+    def test_strict_cutoff_rejects_stale_evidence(self) -> None:
+        evidence = {
+            "meta": {
+                "ann_window": ["20260516", "20260713"],
+                "ann_cutoff": "20260713",
+                "ann_cutoff_stock_count": 1,
+                "unique_stocks": 1,
+                "clock_timezone": "Asia/Shanghai",
+            },
+            "stocks": [{"ann_date": "20260713"}],
+        }
+        with self.assertRaisesRegex(ValueError, "门禁失败"):
+            renderer._validate_evidence_cutoff(evidence, "20260714")
+
+    def test_html_surfaces_next_day_cutoff_even_when_count_is_zero(self) -> None:
+        html = renderer.render_html(_view(parent_annualized=4.0, parent_pe=25.0, kf_median=1.5))
+        self.assertIn("公告扫描截至 2026-07-14（北京时间次日口径 · 截止日 0 家）", html)
 
 
 if __name__ == "__main__":

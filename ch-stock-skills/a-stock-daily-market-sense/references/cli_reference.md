@@ -2,7 +2,7 @@
 
 本 skill 各脚本的常用参数集中在这里，SKILL.md 正文只留指引。
 
-## `run_daily_panel.py`（每日复盘证据 + 后处理）
+## `run_daily_panel.py`（每日复盘证据）
 
 | 参数 | 含义 | 默认 |
 |---|---|---:|
@@ -25,9 +25,7 @@
 | `--discount-low-recency-days` | 折扣启动回撤最低点须落在大涨日前几个交易日内（最低点新鲜度） | 5 |
 | `--discount-pre-contraction-max` | 折扣启动调整缩量上限（前5日均额/前20日均额） | 0.9 |
 | `--discount-volume-expansion-min` | 折扣启动当日重新放量下限（amount_vs_prev5_ratio，相对前5日缩量期） | 2.0 |
-| `--no-strategy` | 跳过策略选股后处理（score + module6 候选证据） | 关闭=默认执行 |
-| `--profiles-dir` | 策略画像目录 | `references/strategy_profiles` |
-| `--cleanup YYYYMMDD` | 删除该日期临时产物（evidence/kline/context/module_context + 因子实验室临时包），保留 report md/html | — |
+| `--cleanup YYYYMMDD` | 删除该日期临时产物（evidence/kline/context/module_context + 因子挖掘临时包），保留 report md/html | — |
 
 ## `factor_backtest.py`（特征因子挖掘）
 
@@ -35,17 +33,14 @@
 `--min-n`、`--entry/--horizon` 选目标格、`--skip-backfill` 快速冒烟、`--refresh-basic` 修脏缓存。
 产物：决策包 `factor_mining_<group>_<asof>.json`（≤150KB）+ `_detail.json`（整列 signals）。
 
-## `factor_lab.py`（因子实验室 · 慢循环验证）
+## `factor_lab.py`（因子实验台账）
 
-见 `references/methodology/factor_lab.md`。四个子命令：
+每次 `factor_backtest.py` 挖矿会把确定性摘要写入 PG `factor_experiment_log`。`factor_lab.py` 只负责查询实验和补人工 verdict：
 
 | 命令 | 作用 |
 |---|---|
-| `weekly [--asof YYYYMMDD] [--recent N]` | 一键体检包（refresh + calibrate + experiments 合并，≤150KB） |
-| `calibrate [--asof]` | 回测承诺 vs 实盘台账真实战绩对账 |
-| `refresh` | 每个画像用原 mining_spec 在滚动窗口重跑，旧条件 then/now 过闸对比 |
 | `experiments --recent N` | 列最近挖矿实验 |
-| `experiments --set-verdict <g>@<w>@<hash前缀> --verdict adopted\|rejected\|observing [--note ..] [--promoted ..]` | 人工判分（只改三列） |
+| `experiments --set-verdict <g>@<w>@<hash前缀> --verdict adopted\|rejected\|observing [--note ..]` | 人工判分（只改 verdict 与说明） |
 
 ## `render_report_html.py`（HTML 展示层）
 

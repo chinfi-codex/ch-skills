@@ -300,81 +300,16 @@ CREATE TABLE IF NOT EXISTS theme_market_day (
 
 
 -- -------------------------------------------------------------------------
--- 14. Strategy pick ledger (a-stock-daily-market-sense, 策略选股实盘台账)
--- -------------------------------------------------------------------------
--- One row per (asof signal day, ts_code): a model-confirmed 策略选股 watch
--- candidate for that day, written by strategy_picks.py record after the model
--- finalises section 6.  Carries a full fingerprint/snapshot (which profile
--- version + which matched conditions + the stock's feature values at T) so the
--- out-of-sample track record stays auditable even after profiles are updated.
--- Per-horizon (T+3 / T+5 / T+10) realized forward returns are backfilled by
--- strategy_picks.py score as data matures; each horizon has its own status so
--- partial maturity / suspension / index gaps never collapse into one flag and
--- re-runs stay idempotent.  Strategy profiles themselves live in
--- references/strategy_profiles/*.json (git, canonical) — NOT in PG.
--- conviction_tier is an enum strong/medium/watch; the report renders 强/中/观察.
--- hk_status ∈ pending/scored/missing_price/expired/error.  Markdown reports stay
--- the narrative truth source; this table is runtime track-record data only.
-CREATE TABLE IF NOT EXISTS strategy_pick_ledger (
-    asof                    DATE NOT NULL,
-    ts_code                 TEXT NOT NULL,
-    name                    TEXT,
-    board                   TEXT,
-    benchmark               TEXT,
-    benchmark_wide          TEXT,
-    groups_hit              JSONB,
-    conviction_tier         TEXT NOT NULL,
-    in_main_line            TEXT,
-    rationale               TEXT,
-    matched_conditions      JSONB,
-    feature_snapshot        JSONB,
-    profile_fingerprints    JSONB,
-    backtest_stats_snapshot JSONB,
-    source_evidence         TEXT,
-    source_report           TEXT,
-    t1_date                 DATE,
-    t1_open                 DOUBLE PRECISION,
-    t1_close                DOUBLE PRECISION,
-    -- horizon T+3
-    t3_date     DATE, t3_close DOUBLE PRECISION,
-    ro_3 DOUBLE PRECISION, rc_3 DOUBLE PRECISION,
-    relo_3 DOUBLE PRECISION, relc_3 DOUBLE PRECISION, relc_3_w DOUBLE PRECISION,
-    h3_status   TEXT NOT NULL DEFAULT 'pending', scored_at_3 TIMESTAMPTZ,
-    -- horizon T+5
-    t5_date     DATE, t5_close DOUBLE PRECISION,
-    ro_5 DOUBLE PRECISION, rc_5 DOUBLE PRECISION,
-    relo_5 DOUBLE PRECISION, relc_5 DOUBLE PRECISION, relc_5_w DOUBLE PRECISION,
-    h5_status   TEXT NOT NULL DEFAULT 'pending', scored_at_5 TIMESTAMPTZ,
-    -- horizon T+10
-    t10_date    DATE, t10_close DOUBLE PRECISION,
-    ro_10 DOUBLE PRECISION, rc_10 DOUBLE PRECISION,
-    relo_10 DOUBLE PRECISION, relc_10 DOUBLE PRECISION, relc_10_w DOUBLE PRECISION,
-    h10_status  TEXT NOT NULL DEFAULT 'pending', scored_at_10 TIMESTAMPTZ,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (asof, ts_code)
-);
-
-CREATE INDEX IF NOT EXISTS idx_strategy_pick_tier
-    ON strategy_pick_ledger(conviction_tier);
-
--- score scans for not-yet-scored horizons; index the earliest-maturing one.
-CREATE INDEX IF NOT EXISTS idx_strategy_pick_h3_status
-    ON strategy_pick_ledger(h3_status);
-
-
--- -------------------------------------------------------------------------
--- 15. Factor experiment log (a-stock-daily-market-sense, 因子挖掘实验台账)
+-- 14. Factor experiment log (a-stock-daily-market-sense, 因子挖掘实验台账)
 -- -------------------------------------------------------------------------
 -- One row per (group_key, window_end, spec_hash): a factor-mining run logged
 -- by factor_backtest.py so挖过什么组/什么参数/结论如何 stays auditable across
 -- sessions and repeated runs never re-mine the same thing blindly.  The script
 -- writes only the deterministic columns (counts, spec, evidence path).  The
--- three verdict columns are model judgement, filled later by a human via
+-- verdict columns are model judgement, filled later by a human via
 -- factor_lab.py experiments --set-verdict — the script never writes them.
 -- spec_json is the full builtin-threshold dict or custom spec so the run is
--- reproducible.  Strategy profiles themselves live in
--- references/strategy_profiles/*.json (git); this table is runtime log only.
+-- reproducible.
 CREATE TABLE IF NOT EXISTS factor_experiment_log (
     group_key        TEXT NOT NULL,
     window_end       TEXT NOT NULL,           -- YYYYMMDD
@@ -393,7 +328,6 @@ CREATE TABLE IF NOT EXISTS factor_experiment_log (
     -- model judgement, set by a human after reading the evidence (never by script):
     verdict          TEXT,                    -- adopted / rejected / observing / NULL=未判
     verdict_note     TEXT,
-    promoted_profile TEXT,                    -- e.g. discount_relaunch@2026-07-04.1
     PRIMARY KEY (group_key, window_end, spec_hash)
 );
 
@@ -402,11 +336,11 @@ CREATE INDEX IF NOT EXISTS idx_factor_experiment_group
 
 
 -- -------------------------------------------------------------------------
--- 16. Per-stock valuation-model tracking (a-stock-analyzer, 个股估值建模跟踪)
+-- 15. Per-stock valuation-model tracking (a-stock-analyzer, 个股估值建模跟踪)
 -- -------------------------------------------------------------------------
 -- Persistent, cross-analysis tracking of ONE stock's own valuation-model
 -- variables.  "每股一张跟踪表" is LOGICAL, not physical: like stock_daily /
--- theme_daily_state / strategy_pick_ledger, every stock's rows live in these
+-- theme_daily_state, every stock's rows live in these
 -- shared tables partitioned by ts_code — no DDL per stock.  Three tables mirror
 -- the analyst's mental model:
 --   stock_tracking_meta    — one row per tracked stock (company name + primary

@@ -4,12 +4,11 @@
 由 factor_backtest.py（挖矿收尾自动登记确定性列）与 factor_lab.py（查询 / 人工判分）
 共用。存储走仓库共享 shared/data/db_core（PostgreSQL 默认，sqlite 离线）。
 
-脑/手边界：脚本只写确定性列（组、窗口、spec、命中/过闸计数、证据路径）。三个判断列
-verdict / verdict_note / promoted_profile 是**模型判断后由人**经 set_verdict 落库，脚本
-从不自动写——挖矿采不采纳、提级到哪个画像，是人的决定。
+脑/手边界：脚本只写确定性列（组、窗口、spec、命中/过闸计数、证据路径）。判断列
+verdict / verdict_note 是**模型判断后由人**经 set_verdict 落库，脚本从不自动写。
 
-DDL 镜像 shared/data/init_alpha_data.sql §15；本模块自带 ensure_table，全新库不依赖先跑
-schema 文件（同 strategy_picks.py 惯例）。
+DDL 镜像 shared/data/init_alpha_data.sql §14；本模块自带 ensure_table，全新库不依赖先跑
+schema 文件。
 """
 from __future__ import annotations
 
@@ -27,7 +26,6 @@ sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHA
 from db_core import BACKEND, Backend, get_connection, placeholder  # noqa: E402
 
 VERDICT_ENUM = ("adopted", "rejected", "observing")
-_EDITABLE = ("verdict", "verdict_note", "promoted_profile")
 
 DDL = """
 CREATE TABLE IF NOT EXISTS factor_experiment_log (
@@ -47,7 +45,6 @@ CREATE TABLE IF NOT EXISTS factor_experiment_log (
     evidence_path    TEXT,
     verdict          TEXT,
     verdict_note     TEXT,
-    promoted_profile TEXT,
     PRIMARY KEY (group_key, window_end, spec_hash)
 )
 """
@@ -135,7 +132,7 @@ def log_experiment(evidence: Dict[str, Any], args: Any, group_key: str, asof: st
             _upsert(conn, cols)
         print(f"[experiment] logged {group_key}@{asof} spec={spec_hash[:8]} "
               f"(singles_passed={singles_passed}, pairs_passed={pairs_passed})")
-    except Exception as exc:  # noqa: BLE001  best-effort，与 strategy 后处理同惯例
+    except Exception as exc:  # noqa: BLE001 - 实验登记失败不阻断挖矿主产物
         print(f"[experiment] skip (best-effort, DB 不可用): {exc}")
 
 
@@ -147,7 +144,7 @@ def _upsert(conn: Any, cols: Dict[str, Any]) -> None:
     phlist = ", ".join([ph] * len(keys))
     cur = conn.cursor()
     if BACKEND == Backend.POSTGRESQL:
-        # 主键冲突 = 同组同窗同参重跑：刷新确定性列与 run_at，绝不动三个判断列。
+        # 主键冲突 = 同组同窗同参重跑：刷新确定性列与 run_at，绝不动人工判断列。
         upd = ", ".join(f"{k}=EXCLUDED.{k}" for k in keys
                         if k not in ("group_key", "window_end", "spec_hash"))
         sql = (f"INSERT INTO factor_experiment_log ({collist}) VALUES ({phlist}) "
@@ -156,13 +153,13 @@ def _upsert(conn: Any, cols: Dict[str, Any]) -> None:
     else:
         # sqlite：读出旧判断列后 REPLACE 回填，保住人工 verdict。
         cur.execute(
-            "SELECT verdict, verdict_note, promoted_profile FROM factor_experiment_log "
+            "SELECT verdict, verdict_note FROM factor_experiment_log "
             "WHERE group_key=? AND window_end=? AND spec_hash=?",
             (cols["group_key"], cols["window_end"], cols["spec_hash"]),
         )
         old = cur.fetchone()
         if old:
-            cols = {**cols, "verdict": old[0], "verdict_note": old[1], "promoted_profile": old[2]}
+            cols = {**cols, "verdict": old[0], "verdict_note": old[1]}
             keys = list(cols.keys())
             vals = [_json_param(cols[k]) if k == "spec_json" else cols[k] for k in keys]
             collist = ", ".join(keys)
@@ -180,14 +177,14 @@ def list_experiments(recent: int = 20) -> List[Dict[str, Any]]:
         cur.execute(
             "SELECT group_key, window_end, spec_hash, run_at, group_label, window_start, "
             "objective_cell, min_n, n_signals, n_unique_stocks, n_singles_passed, "
-            "n_pairs_passed, evidence_path, verdict, verdict_note, promoted_profile "
+            "n_pairs_passed, evidence_path, verdict, verdict_note "
             f"FROM factor_experiment_log ORDER BY run_at DESC LIMIT {ph}",
             (recent,),
         )
         rows = cur.fetchall()
     fields = ["group_key", "window_end", "spec_hash", "run_at", "group_label", "window_start",
               "objective_cell", "min_n", "n_signals", "n_unique_stocks", "n_singles_passed",
-              "n_pairs_passed", "evidence_path", "verdict", "verdict_note", "promoted_profile"]
+              "n_pairs_passed", "evidence_path", "verdict", "verdict_note"]
     out = []
     for r in rows:
         rec = dict(zip(fields, r))
@@ -196,9 +193,8 @@ def list_experiments(recent: int = 20) -> List[Dict[str, Any]]:
     return out
 
 
-def set_verdict(selector: str, verdict: Optional[str], note: Optional[str] = None,
-                promoted: Optional[str] = None) -> Dict[str, Any]:
-    """人工判分：更新 verdict/verdict_note/promoted_profile 三列，其余列一律不动。
+def set_verdict(selector: str, verdict: Optional[str], note: Optional[str] = None) -> Dict[str, Any]:
+    """人工判分：更新 verdict/verdict_note 两列，其余列一律不动。
 
     selector = "<group_key>@<window_end>@<spec_hash 前缀>"（前缀 ≥6 位，唯一即可）。
     """
@@ -225,11 +221,11 @@ def set_verdict(selector: str, verdict: Optional[str], note: Optional[str] = Non
         if len(matches) > 1:
             raise SystemExit(f"前缀 {hash_prefix} 匹配到多条 {matches}，请给更长前缀")
         full_hash = matches[0]
-        # 只更新三个判断列（白名单硬编码，杜绝脚本改确定性列）。
+        # 只更新两个判断列（白名单硬编码，杜绝脚本改确定性列）。
         cur.execute(
-            f"UPDATE factor_experiment_log SET verdict={ph}, verdict_note={ph}, promoted_profile={ph} "
+            f"UPDATE factor_experiment_log SET verdict={ph}, verdict_note={ph} "
             f"WHERE group_key={ph} AND window_end={ph} AND spec_hash={ph}",
-            (verdict, note, promoted, group_key, window_end, full_hash),
+            (verdict, note, group_key, window_end, full_hash),
         )
     return {"group_key": group_key, "window_end": window_end, "spec_hash": full_hash,
-            "verdict": verdict, "verdict_note": note, "promoted_profile": promoted}
+            "verdict": verdict, "verdict_note": note}

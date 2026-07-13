@@ -75,8 +75,8 @@ from returns_core import (  # noqa: E402
 REPORTS_DIR = HERE.parent / "reports"
 
 # 规模/板块匹配基准、后复权前向收益、小工具（_f/_r/_ymd）与 DB 价格加载
-# （load_calendar/load_daily/load_adj/load_index）已抽到 returns_core，回测与实盘
-# 选股台账共用同尺，见文件顶部 import。本文件只保留回测特有的 daily_basic 加载与回补。
+# （load_calendar/load_daily/load_adj/load_index）已抽到 returns_core。本文件只保留
+# 因子挖掘特有的 daily_basic 加载与回补。
 
 
 _OPS = {">": lambda s, v: s > v, ">=": lambda s, v: s >= v,
@@ -667,8 +667,7 @@ SIGNAL_FACTOR_COLS = [
 
 def run_mining(args: argparse.Namespace) -> Dict[str, Any]:
     """执行一次因子挖掘，返回组装好的 evidence/detail —— 纯取数 + 计算，不做文件 I/O、
-    不登记实验、不打印摘要。CLI（main）与画像重检（factor_lab refresh）共用此函数，保证
-    「回测画像表现」与「refresh 重算」走完全一致的统计路径，不靠跨脚本借用研究入口。
+    不登记实验、不打印摘要，供 CLI 主流程与测试复用。
 
     返回 dict：evidence / detail(None if empty) / group_key / asof / obj_col / sig_df / empty。
     """

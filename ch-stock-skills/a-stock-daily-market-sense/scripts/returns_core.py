@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 """前向相对收益度量层（skill 本地公共能力）。
 
-这是回测引擎（factor_backtest.py）与实盘选股台账（strategy_picks.py）共用的
-**同尺**度量原子：规模/板块匹配基准、后复权前向收益、6 格相对收益。两边都调用
-这里，保证「回测画像表现」与「样本外台账表现」用完全一致的口径，不靠跨脚本借用
-研究入口。
+这是回测引擎（factor_backtest.py）使用的度量原子：规模/板块匹配基准、
+后复权前向收益与 6 格相对收益。
 
 为什么放 skill 本地 scripts/ 而不是 _shared/：`matched_benchmark` 编码了
 「板块→基准、主板内按市值档」这类**领域判断**，按本仓库 shared-vs-skill 边界
@@ -238,7 +236,3 @@ def compute_forward_returns(sig_df: pd.DataFrame, calendar: List[str]) -> pd.Dat
 
     fwd = pd.DataFrame(rows)
     return sig_df.merge(fwd, on=["ts_code", "signal_date"], how="left", suffixes=("", "_fwd"))
-
-
-# 别名：实盘台账与回测都从此模块取同一函数，语义更直白。
-compute_forward_returns_for_signals = compute_forward_returns

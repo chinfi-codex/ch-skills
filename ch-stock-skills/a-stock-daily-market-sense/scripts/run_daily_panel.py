@@ -14,7 +14,6 @@ import contextlib
 import io
 import json
 import os
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -75,8 +74,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--context-out", default=None, help="Legacy compact report_context JSON path; written only when set.")
     parser.add_argument("--module-context-dir", default=None, help="Directory for module-level subagent JSON files.")
     parser.add_argument("--no-module-context", action="store_true", help="Skip module-level subagent JSON files.")
-    parser.add_argument("--no-strategy", action="store_true", help="Skip the 策略选股 post-processing (score + module6 candidates).")
-    parser.add_argument("--profiles-dir", default=None, help="Strategy profiles dir (default references/strategy_profiles).")
     parser.add_argument("--stderr-out", default=None, help="Stderr log output path.")
     parser.add_argument("--money-context-limit", type=int, default=80, help="Money-effect rows in context.")
     parser.add_argument("--decline-context-limit", type=int, default=20, help="Volume-decline rows in context.")
@@ -145,49 +142,6 @@ def write_module_contexts(evidence: dict, module_dir: Path) -> None:
         )
 
 
-def run_strategy_postprocess(
-    evidence_path: Path,
-    module_context_dir: Path,
-    resolved_date: str,
-    profiles_dir: Optional[str],
-    env: Dict[str, str],
-) -> Dict[str, Any]:
-    """策略选股后处理：先回填过去票成熟 horizon（score），再生成当日候选证据（context）。
-
-    这是 build_panel 之外的独立后处理，**best-effort**：策略层是增量层，任何失败都只
-    告警、不影响每日复盘主产物。score/context 只读 DB 与缓存，不需要 TUSHARE_TOKEN。
-    脚本只铺候选证据、不定信心档——强/中/观察由模型写第 6 节时判定。
-    """
-    script = str(SCRIPT_ROOT / "strategy_picks.py")
-    out_path = module_context_dir / "module6_strategy_candidates.json"
-    result: Dict[str, Any] = {"candidates_out": str(out_path)}
-    profiles_args = ["--profiles", profiles_dir] if profiles_dir else []
-    try:
-        score = subprocess.run(
-            [sys.executable, script, "score", "--asof", resolved_date],
-            capture_output=True, text=True, env=env, cwd=str(SCRIPT_ROOT.parent),
-        )
-        result["score_ok"] = score.returncode == 0
-        if score.returncode != 0:
-            result["score_error"] = (score.stderr or score.stdout or "").strip()[-500:]
-
-        ctx = subprocess.run(
-            [sys.executable, script, "context", "--evidence", str(evidence_path),
-             "--out", str(out_path), *profiles_args],
-            capture_output=True, text=True, env=env, cwd=str(SCRIPT_ROOT.parent),
-        )
-        result["context_ok"] = ctx.returncode == 0
-        if ctx.returncode != 0:
-            result["context_error"] = (ctx.stderr or ctx.stdout or "").strip()[-500:]
-            result["ok"] = False
-        else:
-            result["ok"] = True
-    except Exception as exc:  # noqa: BLE001 - 策略层失败绝不阻断日报
-        result["ok"] = False
-        result["error"] = str(exc)
-    return result
-
-
 def cleanup_intermediates(reports_dir: Path, date: str) -> Dict[str, Any]:
     """Deterministically remove intermediate artifacts for one date.
 
@@ -202,11 +156,6 @@ def cleanup_intermediates(reports_dir: Path, date: str) -> Dict[str, Any]:
         reports_dir / f"kline_{date}.json",
         reports_dir / f"report_context_{date}.json",
         reports_dir / f"lifecycle_{date}.json",
-        reports_dir / f"strategy_picks_{date}.json",
-        # 因子实验室（慢循环）同日期临时包
-        reports_dir / f"calibration_{date}.json",
-        reports_dir / f"profile_refresh_{date}.json",
-        reports_dir / f"weekly_factor_pack_{date}.json",
     ]
     for path in candidates:
         if path.exists():
@@ -298,19 +247,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         module_context_dir = Path(args.module_context_dir) if args.module_context_dir else reports_dir / f"module_context_{resolved_date}"
         write_module_contexts(evidence, module_context_dir)
 
-    strategy = None
-    if module_context_dir is not None and not args.no_strategy:
-        strategy = run_strategy_postprocess(
-            evidence_path, module_context_dir, resolved_date, args.profiles_dir, env
-        )
-
     print(json.dumps({
         "resolved_trade_date": resolved_date,
         "evidence": str(evidence_path),
         "stock_klines": str(kline_path) if kline_payload is not None else None,
         "report_context": str(context_path) if context_path else None,
         "module_context_dir": str(module_context_dir) if module_context_dir else None,
-        "strategy_candidates": strategy,
         "stderr": str(stderr_path),
     }, ensure_ascii=False, indent=2))
     return 0

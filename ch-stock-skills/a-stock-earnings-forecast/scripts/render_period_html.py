@@ -3,7 +3,10 @@
 """Render one self-contained HTML page per report period (master-detail view).
 
 Layout: title → 产业结构综述 (model text from forecast_period_overview, stale-
-badged when the sample fingerprint moved) → filter bar → two panes. Left pane is
+badged when the sample fingerprint moved) → filter bar → two panes. The filter
+bar is one single-select 排序/分组 dropdown plus multi-select checkbox popovers for
+主线 / 反应 / 年化PE分段 / 分档 (within a group OR, across groups AND; empty = no
+filter), with a live match count and a 清空筛选 reset. Left pane is
 the stock LIST, grouped by 主线 (default), sorted by 公告发布时间, or flat;
 净利润断层 rows are strongly marked (向上=业绩超预期跳空↑/强表现, 向下=不及预期跳空↓/弱表现).
 Right pane is the DETAIL for
@@ -52,6 +55,34 @@ MUTED_MAX_PCT = 3.0    # |公告后累计涨幅| < N% 且无断层 → 未反应
 TREND_NET = 2          # 主线内 净断层方向 |strong-weak| >= N → 偏强/偏弱
 KLINE_BARS = 130       # bars embedded per stock for the detail chart
 BEIJING_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
+
+# 年化PE 分段（筛选用，口径与详情页 hero 同源：扣非优先、无扣非退归母）。
+# 每段以 (id, 显示名, 上界含) 表示，上界 None = 该段无上界；亏损/未取到 PE 单列一档。
+PE_BUCKETS: List[Tuple[str, str, Optional[float]]] = [
+    ("pe_le15", "≤15", 15.0),
+    ("pe_15_30", "15–30", 30.0),
+    ("pe_30_50", "30–50", 50.0),
+    ("pe_50_100", "50–100", 100.0),
+    ("pe_gt100", ">100", None),
+]
+PE_BUCKET_NA: Tuple[str, str] = ("pe_na", "无PE/亏损")
+
+
+def _pe_bucket(pe: Optional[float]) -> str:
+    """Deterministic 年化PE 分段 id. 上界含（如 15 归入 ≤15），None → 无PE/亏损档。"""
+    if pe is None:
+        return PE_BUCKET_NA[0]
+    for bid, _label, hi in PE_BUCKETS:
+        if hi is None or pe <= hi:
+            return bid
+    return PE_BUCKETS[-1][0]
+
+
+def pe_bucket_options() -> List[Dict[str, str]]:
+    """筛选下拉用的分段项（含无PE档），供前端渲染多选。"""
+    return [{"v": bid, "t": label} for bid, label, _ in PE_BUCKETS] + [
+        {"v": PE_BUCKET_NA[0], "t": PE_BUCKET_NA[1]}
+    ]
 
 
 def beijing_now() -> dt.datetime:
@@ -255,6 +286,9 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
             and parent_ann_np_yi is not None
             and float(parent_ann_np_yi) > 0
         )
+        # 头条年化PE：扣非优先，扣非取不到或≤0 时退回归母（与 peHero 同口径），
+        # 分段筛选就锚在这个头条 PE 上，保证筛选结果和详情页展示一致。
+        pe_headline = pe_ann_kf if pe_ann_kf is not None else val.get("pe_annualized")
 
         rec = {
             "ts_code": ts_code,
@@ -272,6 +306,8 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
             "ann_label": val.get("annualize_label"),
             "mv_asof": val.get("mv_asof"),
             "pe_ann_kf": pe_ann_kf,
+            "pe_headline": pe_headline,
+            "pe_bucket": _pe_bucket(pe_headline),
             "kf_ann_np_yi": kf_ann_np_yi,
             "kf_median_yi": kf_med,
             "kf_conf": kf_conf,
@@ -399,6 +435,7 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
         "theme_registry_empty": len(themes) == 0,
         "pos_split": pos_split,
         "trend_net": TREND_NET,
+        "pe_buckets": pe_bucket_options(),
         "stocks": stocks,
         "theme_trends": theme_trends,
         "overview": overview,
@@ -423,7 +460,27 @@ h1{font-size:24px;font-weight:500;margin:0}.sub{color:var(--tx2);font-size:14px;
 .ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:16px 0 12px}
 input,select{font:inherit;font-size:14px;padding:9px 11px;border:1px solid var(--line-1);border-radius:var(--r-sm);background:var(--s2);color:var(--tx);outline:none}
 input:focus,select:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--accbg)}
-input{flex:1;min-width:130px}
+.msbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ms{position:relative}
+.ms-btn{font:inherit;font-size:14px;padding:9px 11px;border:1px solid var(--line-1);border-radius:var(--r-sm);background:var(--s2);color:var(--tx);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.ms-btn:hover{border-color:var(--acc)}
+.ms.on .ms-btn{border-color:var(--acc);background:var(--accbg);color:var(--acc)}
+.ms-sum{color:var(--tx3);font-weight:500}
+.ms.on .ms-sum{color:var(--acc)}
+.ms-caret{color:var(--tx3);font-size:10px}
+.ms-pop{position:absolute;z-index:30;top:calc(100% + 4px);left:0;min-width:190px;max-height:340px;overflow:auto;background:var(--s2);border:1px solid var(--line-1);border-radius:var(--r-sm);box-shadow:var(--shadow-2);padding:6px}
+.ms-pop.rt{left:auto;right:0}
+.ms-search{width:100%;box-sizing:border-box;margin-bottom:5px;padding:7px 9px;font-size:13px}
+.ms-pop label{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:6px;font-size:13.5px;cursor:pointer;white-space:nowrap}
+.ms-pop label:hover{background:var(--s1)}
+.ms-pop label input{flex:none;margin:0;accent-color:var(--acc)}
+.ms-pop label .cnt{margin-left:auto;color:var(--tx3);font-size:12px;font-family:'Roboto Mono',monospace}
+.ms-empty{color:var(--tx3);font-size:12px;padding:6px 8px}
+.fbar-x{font:inherit;font-size:13px;padding:9px 11px;border:1px solid var(--line-1);border-radius:var(--r-sm);background:transparent;color:var(--tx2);cursor:pointer}
+.fbar-x:hover{border-color:var(--acc);color:var(--acc)}
+.fbar-x[hidden]{display:none}
+.fcount{font-size:13px;color:var(--tx2);margin-left:auto;white-space:nowrap}
+.fcount b{color:var(--tx);font-weight:600}
 .panes{display:grid;grid-template-columns:minmax(340px,44%) 1fr;gap:14px;align-items:start}
 @media (max-width:860px){.panes{grid-template-columns:1fr}.detail{position:static!important}}
 .list{min-width:0}
@@ -506,22 +563,71 @@ function judgedPill(tr){
   const cls=j.direction==='向上'?'t-up':(j.direction==='向下'?'t-dn':(j.direction==='分化'?'t-mix':'t-flat'));
   return `<span class="trend ${cls}" title="${(j.cross_validation||'').replace(/"/g,'&quot;')}">判·${j.direction}${j.stale?'†':''}</span>`;
 }
+// 多选筛选：每组内 OR、组间 AND；不选=不过滤该组。排序(grp)不在此列。
+const REACT_PRED={
+  up:s=>s.gap_dir==='up',
+  down:s=>s.gap_dir==='down',
+  intact:s=>s.gap_dir==='up'&&s.gap_status==='intact',
+  muted:s=>s.facet==='muted',
+  intheme:s=>Boolean(s.theme_hot),
+};
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// 主线选项由样本内出现过的主线动态汇总（含「无归属主线」一档）
+const THEME_OPTS=(()=>{
+  const seen=new Map();let hasNone=false;
+  for(const s of DATA.stocks){
+    if(s.theme_id){if(!seen.has(s.theme_id))seen.set(s.theme_id,s.theme_name||s.theme_id);}
+    else hasNone=true;}
+  const opts=[...seen.entries()].sort((a,b)=>String(a[1]).localeCompare(String(b[1]),'zh')).map(([v,t])=>({v,t}));
+  if(hasNone)opts.push({v:'__none__',t:'无归属主线'});
+  return opts;})();
+const PE_OPTS=DATA.pe_buckets||[];
+const MS_DEFS=[
+  {key:'theme',label:'主线',opts:THEME_OPTS,match:(s,v)=>(s.theme_id||'__none__')===v,searchable:true},
+  {key:'react',label:'反应',opts:[{v:'up',t:'向上断层(强)'},{v:'down',t:'向下断层(弱)'},{v:'intact',t:'跳空未回补'},{v:'muted',t:'未反应'},{v:'intheme',t:'主线内'}],match:(s,v)=>REACT_PRED[v](s)},
+  {key:'pe',label:'年化PE',opts:PE_OPTS,match:(s,v)=>s.pe_bucket===v},
+  {key:'tier',label:'分档',opts:[{v:'强',t:'强'},{v:'中',t:'中'},{v:'观察',t:'观察'},{v:'剔除',t:'剔除'}],match:(s,v)=>s.tier===v},
+];
+function optCount(def,v){let n=0;for(const s of DATA.stocks)if(def.match(s,v))n++;return n;}
+function groupSel(key){const m=document.querySelector('.ms[data-key="'+key+'"]');return m?[...m.querySelectorAll('input:checked')].map(cb=>cb.value):[];}
 function filtered(){
-  const q=document.getElementById('q').value.trim().toLowerCase();
-  const tf=document.getElementById('tier').value, rf=document.getElementById('react').value;
-  return DATA.stocks.filter(s=>{
-    if(tf&&s.tier!==tf)return false;
-    if(rf==='up'&&s.gap_dir!=='up')return false;
-    if(rf==='down'&&s.gap_dir!=='down')return false;
-    if(rf==='intact'&&!(s.gap_dir==='up'&&s.gap_status==='intact'))return false;
-    if(rf==='muted'&&s.facet!=='muted')return false;
-    if(rf==='intheme'&&!s.theme_hot)return false;
-    if(q&&!(s.name.toLowerCase().includes(q)||s.ts_code.toLowerCase().includes(q)||(s.theme_name||'').toLowerCase().includes(q)))return false;
-    return true;});
+  const sel={};MS_DEFS.forEach(d=>sel[d.key]=groupSel(d.key));
+  return DATA.stocks.filter(s=>MS_DEFS.every(d=>!sel[d.key].length||sel[d.key].some(v=>d.match(s,v))));
 }
+function updateMS(m){
+  const checked=[...m.querySelectorAll('input:checked')];
+  const sum=m.querySelector('.ms-sum');
+  m.classList.toggle('on',checked.length>0);
+  if(!checked.length)sum.textContent='全部';
+  else{const labels=checked.map(cb=>cb.closest('label').querySelector('.tt').textContent);
+    sum.textContent=checked.length<=2?labels.join('、'):checked.length+' 项';}
+  const clr=document.getElementById('fclear');if(clr)clr.hidden=!document.querySelector('.ms.on');
+}
+function closeAllPops(except){document.querySelectorAll('.ms .ms-pop').forEach(p=>{if(!except||p.parentElement!==except)p.hidden=true;});}
+function buildMS(){
+  const bar=document.getElementById('msbar');bar.innerHTML='';
+  for(const def of MS_DEFS){
+    const wrap=document.createElement('div');wrap.className='ms';wrap.dataset.key=def.key;
+    const search=def.searchable?`<input class="ms-search" placeholder="过滤${esc(def.label)}…">`:'';
+    const rows=def.opts.map(o=>`<label data-t="${esc(String(o.t).toLowerCase())}"><input type="checkbox" value="${esc(o.v)}"><span class="tt">${esc(o.t)}</span><span class="cnt">${optCount(def,o.v)}</span></label>`).join('');
+    wrap.innerHTML=`<button class="ms-btn" type="button">${esc(def.label)} <span class="ms-sum">全部</span><span class="ms-caret">▾</span></button>`+
+      `<div class="ms-pop" hidden>${search}<div class="ms-list">${rows||'<div class="ms-empty">本期无</div>'}</div></div>`;
+    bar.appendChild(wrap);
+    const btn=wrap.querySelector('.ms-btn'),pop=wrap.querySelector('.ms-pop');
+    btn.addEventListener('click',e=>{e.stopPropagation();const willOpen=pop.hidden;closeAllPops(willOpen?wrap:null);pop.hidden=!willOpen;
+      if(willOpen){pop.classList.remove('rt');if(pop.getBoundingClientRect().right>window.innerWidth-8)pop.classList.add('rt');
+        const sb=pop.querySelector('.ms-search');if(sb){sb.value='';pop.querySelectorAll('.ms-list label').forEach(l=>l.style.display='');sb.focus();}}});
+    pop.addEventListener('click',e=>e.stopPropagation());
+    wrap.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.addEventListener('change',()=>{updateMS(wrap);renderList();}));
+    const sb=pop.querySelector('.ms-search');
+    if(sb)sb.addEventListener('input',()=>{const q=sb.value.trim().toLowerCase();pop.querySelectorAll('.ms-list label').forEach(l=>{l.style.display=(!q||l.dataset.t.includes(q))?'':'none';});});
+  }
+}
+function clearFilters(){document.querySelectorAll('.ms input:checked').forEach(cb=>cb.checked=false);document.querySelectorAll('.ms').forEach(updateMS);closeAllPops(null);renderList();}
 function renderList(){
   const mode=document.getElementById('grp').value;
   const rows=filtered();
+  const fc=document.getElementById('fcount');if(fc)fc.innerHTML=`<b>${rows.length}</b> / ${DATA.stocks.length} 只`;
   let h='';
   if(mode==='theme'){
     const seen=new Map();
@@ -665,7 +771,10 @@ function drawKline(el,bars,s){
     `<text x="${W-PADR}" y="${H-4}" font-size="10" fill="var(--tx3)" text-anchor="end">${d1.slice(0,4)}-${d1.slice(4,6)}-${d1.slice(6)}</text>`;
   el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img" aria-label="${s.name} 日K线，公告日标注在公告日前一交易日，并标注公告前收盘">${g}${k}${v}${m}${ax}</svg>`;
 }
-['q','tier','react','grp'].forEach(id=>document.getElementById(id).addEventListener('input',renderList));
+buildMS();
+document.getElementById('grp').addEventListener('change',renderList);
+document.getElementById('fclear').addEventListener('click',clearFilters);
+document.addEventListener('click',e=>{if(!e.target.closest('.ms'))closeAllPops(null);});
 renderList();
 """
 
@@ -687,6 +796,7 @@ def render_html(view: Dict[str, Any]) -> str:
     cutoff_text = f"公告扫描截至 {cutoff_display}（{cutoff_mode} · 截止日 {view['ann_cutoff_stock_count']} 家）"
     data_json = json.dumps({
         "pos_split": view["pos_split"], "trend_net": view["trend_net"],
+        "pe_buckets": view["pe_buckets"],
         "stocks": view["stocks"], "theme_trends": view["theme_trends"], "klines": view["klines"],
     }, ensure_ascii=False, separators=(",", ":"))
     shared_theme = _load_shared_theme("default")
@@ -703,10 +813,10 @@ def render_html(view: Dict[str, Any]) -> str:
 <div class="sub">更新于 {view['updated_at']}</div></div>
 {overview_html}
 <div class="ctrl">
-<input id="q" placeholder="搜索 名称 / 代码 / 主线">
-<select id="grp"><option value="ann">按发布时间排序</option><option value="theme">按主线分组</option><option value="flat">平铺</option></select>
-<select id="react"><option value="">全部反应</option><option value="up">向上断层(强)</option><option value="down">向下断层(弱)</option><option value="intact">跳空未回补</option><option value="muted">未反应</option><option value="intheme">主线内</option></select>
-<select id="tier"><option value="">全部分档</option><option>强</option><option>中</option><option>观察</option><option>剔除</option></select>
+<select id="grp" title="排序 / 分组（单选）"><option value="ann">按发布时间排序</option><option value="theme">按主线分组</option><option value="flat">平铺</option></select>
+<div id="msbar" class="msbar"></div>
+<button id="fclear" class="fbar-x" type="button" hidden>清空筛选</button>
+<span id="fcount" class="fcount"></span>
 </div>
 <div class="panes">
 <div class="list" id="list"></div>

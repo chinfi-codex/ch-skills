@@ -83,6 +83,48 @@ class KfPeTests(unittest.TestCase):
         self.assertFalse(stock["kf_nonrecurring"])
 
 
+class PeBucketTests(unittest.TestCase):
+    def test_upper_bound_is_inclusive(self) -> None:
+        self.assertEqual(renderer._pe_bucket(15.0), "pe_le15")
+        self.assertEqual(renderer._pe_bucket(15.01), "pe_15_30")
+        self.assertEqual(renderer._pe_bucket(50.0), "pe_30_50")
+        self.assertEqual(renderer._pe_bucket(100.0), "pe_50_100")
+        self.assertEqual(renderer._pe_bucket(100.01), "pe_gt100")
+
+    def test_missing_pe_is_na_bucket(self) -> None:
+        self.assertEqual(renderer._pe_bucket(None), "pe_na")
+
+    def test_bucket_follows_kf_headline_pe(self) -> None:
+        # 扣非年化 PE = 33.3 → 30–50 档（头条口径），而非归母 25
+        stock = _view(parent_annualized=4.0, parent_pe=25.0, kf_median=1.5)["stocks"][0]
+        self.assertEqual(stock["pe_headline"], 33.3)
+        self.assertEqual(stock["pe_bucket"], "pe_30_50")
+
+    def test_bucket_falls_back_to_parent_when_kf_nonpositive(self) -> None:
+        # 扣非≤0 → 头条退回归母 25 → 15–30 档
+        stock = _view(parent_annualized=4.0, parent_pe=25.0, kf_median=-0.2)["stocks"][0]
+        self.assertEqual(stock["pe_headline"], 25.0)
+        self.assertEqual(stock["pe_bucket"], "pe_15_30")
+
+    def test_loss_stock_is_na_bucket(self) -> None:
+        stock = _view(parent_annualized=-1.0, parent_pe=None, kf_median=-0.2)["stocks"][0]
+        self.assertEqual(stock["pe_bucket"], "pe_na")
+
+
+class FilterBarTests(unittest.TestCase):
+    def test_multiselect_bar_present_and_search_removed(self) -> None:
+        html = renderer.render_html(_view(parent_annualized=4.0, parent_pe=25.0, kf_median=1.5))
+        self.assertIn('id="msbar"', html)          # multi-select container built by JS
+        self.assertIn('id="fclear"', html)          # 清空筛选 reset
+        self.assertIn('"pe_buckets"', html)         # PE 分段项进了 DATA
+        self.assertNotIn('id="q"', html)            # 旧的自由搜索框已移除
+
+    def test_pe_bucket_options_cover_all_segments(self) -> None:
+        opts = renderer.pe_bucket_options()
+        self.assertEqual([o["v"] for o in opts],
+                         ["pe_le15", "pe_15_30", "pe_30_50", "pe_50_100", "pe_gt100", "pe_na"])
+
+
 class AnnouncementCutoffTests(unittest.TestCase):
     def test_strict_cutoff_accepts_matching_beijing_evidence(self) -> None:
         evidence = {

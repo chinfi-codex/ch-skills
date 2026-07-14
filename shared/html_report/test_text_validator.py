@@ -26,6 +26,15 @@ sources: 1
         html = render_markdown(markdown)
         validate_text_preserved(markdown, html)
 
+    def test_line_start_inline_highlight_preserves_the_rest_of_the_document(self) -> None:
+        markdown = """==深度调研发现==【W3】正文判断。
+
+## 下一节
+
+后续正文。"""
+        html = render_markdown(markdown)
+        validate_text_preserved(markdown, html)
+
 
 if __name__ == "__main__":
     unittest.main()

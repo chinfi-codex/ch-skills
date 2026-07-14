@@ -58,5 +58,29 @@ class NestedListTests(unittest.TestCase):
         self.assertEqual(rendered, "<ul><li>一级<ul><li>二级</li></ul></li></ul>")
 
 
+class HighlightAndCalloutTests(unittest.TestCase):
+    def test_line_start_inline_highlight_does_not_swallow_following_sections(self) -> None:
+        markdown = """==深度调研发现==【W3】正文判断。
+
+### 下一节
+
+后续正文。"""
+        rendered = render_markdown(markdown)
+        self.assertIn("<p><mark>深度调研发现</mark>【W3】正文判断。</p>", rendered)
+        self.assertIn("<h4>下一节</h4>", rendered)
+        self.assertIn("<p>后续正文。</p>", rendered)
+        self.assertNotIn("deep-finding-card", rendered)
+
+    def test_multiline_structured_tracking_block_still_renders_as_card(self) -> None:
+        markdown = """==跟踪事项｜T1｜观察中
+事项：验证订单兑现
+变量：季度收入
+=="""
+        rendered = render_markdown(markdown)
+        self.assertIn('<aside class="todo-card">', rendered)
+        self.assertIn("验证订单兑现", rendered)
+        self.assertIn("季度收入", rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

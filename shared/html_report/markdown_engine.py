@@ -262,6 +262,18 @@ def render_markdown(markdown_text: str) -> str:
             idx += 1
             continue
 
+        # A paired marker at the start of an otherwise normal line is an
+        # inline highlight, not the opener of a multiline callout.  Without
+        # this guard, text such as ``==深度调研发现==【W3】...`` consumes every
+        # following line until another line happens to end in ``==``.
+        # Keep the legacy bare ``==深度调研发现==`` opener working because old
+        # analyzer reports use it to introduce a short finding block.
+        has_inline_pair = re.match(r"^==[^=\n]+==", stripped) is not None
+        if has_inline_pair and stripped != "==深度调研发现==":
+            paragraph.append(stripped)
+            idx += 1
+            continue
+
         if stripped.startswith("=="):
             flush_paragraph(paragraph, out)
             callout_parts = [stripped]

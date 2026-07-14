@@ -2,9 +2,15 @@
 
 Pure standard library. Supports the subset of Markdown that research reports
 need: headings, paragraphs, indentation-aware nested bullet lists, blockquotes, tables (with
-alignment), inline code/bold/italic/links, fenced code blocks, and the
-``==highlighted text==`` callout sugar. Analyzer Deep-mode finding
-cards use a structured ``==深度调研发现｜...`` block.
+alignment), inline code/bold/italic/links, inline ``==text==`` highlights
+(``<mark>``), fenced code blocks, and the ``==...==`` callout sugar.
+
+Structured callout blocks render as typed cards. Each registered type in
+``_STRUCTURED_BLOCKS`` maps a first-line prefix (e.g. ``==深度调研发现｜...``,
+``==跟踪事项｜...``) to a CSS class prefix and the labelled rows it accepts;
+the first line carries ``｜``-separated badge segments, following ``标签：值``
+lines become labelled rows, anything else becomes a note line. The CSS for
+each card type ships with the skill that writes the block.
 """
 
 from __future__ import annotations
@@ -55,6 +61,7 @@ def inline_markdown(text: str) -> str:
         return f"@@CODE{len(code_values) - 1}@@"
 
     escaped = re.sub(r"`([^`]+)`", keep_code, escaped)
+    escaped = re.sub(r"==([^=\n]+)==", r"<mark>\1</mark>", escaped)
     escaped = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", escaped)
     escaped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", escaped)
     escaped = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', escaped)
@@ -73,49 +80,62 @@ def _strip_callout_markers(lines: List[str]) -> List[str]:
     return [line for line in cleaned if line]
 
 
-def _render_deep_finding(lines: List[str]) -> str:
+# Registered structured-callout types: first-line prefix → CSS class prefix +
+# the labelled rows the card accepts (in display order). CSS ships per skill.
+_STRUCTURED_BLOCKS = {
+    "深度调研发现": {"css": "deep-finding", "rows": ("来源", "原文", "判断", "影响")},
+    "跟踪事项": {"css": "todo", "rows": ("事项", "变量", "验证", "反证", "来源")},
+}
+
+
+def _render_structured_block(kind: str, spec: dict, lines: List[str]) -> str:
     cleaned = _strip_callout_markers(lines)
-    header = cleaned[0] if cleaned else "深度调研发现"
+    header = cleaned[0] if cleaned else kind
     parts = [part.strip() for part in re.split(r"[|｜]", header) if part.strip()]
-    badges = parts[1:] if parts and parts[0] == "深度调研发现" else parts
+    badges = parts[1:] if parts and parts[0] == kind else parts
+    css = spec["css"]
+    row_labels = spec["rows"]
+    label_re = re.compile(r"^(" + "|".join(row_labels) + r")[：:]\s*(.+)$")
 
     rows = {}
     notes: List[str] = []
     for line in cleaned[1:]:
-        match = re.match(r"^(来源|原文|判断|影响)[：:]\s*(.+)$", line)
+        match = label_re.match(line)
         if match:
             rows[match.group(1)] = match.group(2).strip()
         else:
             notes.append(line)
 
     out = [
-        '<aside class="deep-finding-card">',
-        '<div class="deep-finding-head"><span class="deep-finding-title">深度调研发现</span>',
+        f'<aside class="{css}-card">',
+        f'<div class="{css}-head"><span class="{css}-title">{kind}</span>',
     ]
     for badge in badges:
-        out.append('<span class="deep-finding-sep">｜</span>')
-        out.append(f'<span class="deep-finding-badge">{inline_markdown(badge)}</span>')
+        out.append(f'<span class="{css}-sep">｜</span>')
+        out.append(f'<span class="{css}-badge">{inline_markdown(badge)}</span>')
     out.append("</div>")
-    out.append('<div class="deep-finding-body">')
-    for label in ("来源", "原文", "判断", "影响"):
+    out.append(f'<div class="{css}-body">')
+    for label in row_labels:
         value = rows.get(label)
         if value:
             out.append(
-                f'<div class="deep-finding-row deep-finding-row-{label}">'
-                f'<span class="deep-finding-label">{label}：</span>'
-                f'<span class="deep-finding-value">{inline_markdown(value)}</span>'
+                f'<div class="{css}-row {css}-row-{label}">'
+                f'<span class="{css}-label">{label}：</span>'
+                f'<span class="{css}-value">{inline_markdown(value)}</span>'
                 "</div>"
             )
     for note in notes:
-        out.append(f'<p class="deep-finding-note">{inline_markdown(note)}</p>')
+        out.append(f'<p class="{css}-note">{inline_markdown(note)}</p>')
     out.append("</div></aside>")
     return "".join(out)
 
 
 def render_callout(lines: List[str]) -> str:
     cleaned = _strip_callout_markers(lines)
-    if cleaned and cleaned[0].startswith("深度调研发现"):
-        return _render_deep_finding(lines)
+    first = cleaned[0] if cleaned else ""
+    for kind, spec in _STRUCTURED_BLOCKS.items():
+        if first.startswith(kind):
+            return _render_structured_block(kind, spec, lines)
     callout = " ".join(cleaned).strip()
     return f"<div class=\"callout\">{inline_markdown(callout)}</div>"
 

@@ -129,6 +129,7 @@ class HtmlReportBuilder:
         self._theme_css = _load_theme_css(theme)
         self._hooks: List[ChartHook] = []
         self._ui_decorations: List[str] = []
+        self._decoration_css: List[str] = []
 
     def add_chart_hook(self, hook: ChartHook) -> None:
         self._hooks.append(hook)
@@ -144,10 +145,15 @@ class HtmlReportBuilder:
     def add_decoration(self, decoration: object) -> None:
         """Append a typed decoration (e.g. ``PillDecoration`` / ``HeroDecoration``)
         or a raw JS string. Typed decorations expose a ``.js`` property; this is
-        sugar over :meth:`add_ui_decoration`.
+        sugar over :meth:`add_ui_decoration`. Decorations that also expose a
+        ``.css`` property (e.g. ``TimelineDecoration``) get their styles merged
+        into the page <style> block.
         """
         js = getattr(decoration, "js", decoration)
         self._ui_decorations.append(js)
+        css = getattr(decoration, "css", "")
+        if isinstance(css, str) and css.strip():
+            self._decoration_css.append(css)
 
     def render(self, markdown_text: str, *, validate: bool = True) -> str:
         body_html = render_markdown(markdown_text)
@@ -184,6 +190,7 @@ class HtmlReportBuilder:
   <style>
 {self._theme_css}
 {self.extra_css}
+{chr(10).join(self._decoration_css)}
   </style>
   {self.extra_head}
 </head>

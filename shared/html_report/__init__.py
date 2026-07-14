@@ -16,7 +16,12 @@ from .builder import HtmlReportBuilder, list_themes
 from .chart_hook import ChartHook
 from .chartkit import chartkit_js
 from .cli import RenderJob, render_report
-from .decorations import HeroDecoration, PillDecoration
+from .decorations import (
+    CollapsibleUpdatesDecoration,
+    HeroDecoration,
+    PillDecoration,
+    TimelineDecoration,
+)
 from .markdown_engine import render_markdown
 from .text_validator import validate_text_preserved
 
@@ -27,6 +32,8 @@ __all__ = [
     "render_report",
     "PillDecoration",
     "HeroDecoration",
+    "CollapsibleUpdatesDecoration",
+    "TimelineDecoration",
     "chartkit_js",
     "list_themes",
     "render_markdown",

@@ -64,6 +64,7 @@ def clean_markdown_text(text: str) -> str:
     cleaned = re.sub(r"^#{1,6}\s+", "", cleaned)
     cleaned = re.sub(r"^>\s*", "", cleaned)
     cleaned = re.sub(r"^[-*]\s+", "", cleaned)
+    cleaned = re.sub(r"==([^=\n]+)==", r"\1", cleaned)  # inline highlight → <mark> (before strip, so paired == survive)
     cleaned = cleaned.strip("= ")
     cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
     cleaned = cleaned.replace("**", "").replace("*", "").replace("`", "")

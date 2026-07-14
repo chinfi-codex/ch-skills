@@ -45,7 +45,7 @@ if __name__ == "__main__":
 | 层 | 模块 | 职责 |
 |---|---|---|
 | CLI | `cli.py` | `render_report` / `RenderJob`,吃掉每个 skill 重复的 argparse + main 编排 |
-| 装饰 | `decorations.py` | `PillDecoration` / `HeroDecoration`,数据驱动,机制只一份 |
+| 装饰 | `decorations.py` | `PillDecoration` / `HeroDecoration` / `CollapsibleUpdatesDecoration` / `TimelineDecoration`,数据驱动,机制只一份 |
 | 图表 | `chartkit.js` (`window.CK`) + `ChartHook` | 共享 SVG/DOM 工具 + 各 skill 自带的画图 JS |
 | 外壳 | `builder.py` `markdown_engine.py` `text_validator.py` `themes/` | HTML 骨架、Markdown→HTML、文本保全校验、CSS 主题 |
 
@@ -58,9 +58,17 @@ HeroDecoration(heading_prefix="一句话盘面判断",
                collect_tags=("P",), max_blocks=3,
                stop_at_numbered=True, number_units="%|pct|倍",
                keyword_pattern="上证|创业板|科创50")          # 把摘要标题升格成 hero 卡
+CollapsibleUpdatesDecoration()      # ## 更新 YYYY-MM-DD：摘要 → 折叠卡(默认最新展开)
+TimelineDecoration()                # 顶部 日期|版本号 表 + 文末 版本变更记录 表 → 可点版本时间轴
 ```
 
+活报告(同一报告随时间多轮更新)用后两个装饰:更新章节折叠成带日期徽标 + 一句话摘要的卡片(id 为 `upd-<date>`,供其它组件跳转),两张版本表合成一条时间轴(节点弹出该版本主要变更/关键数字,可跳转对应更新卡;时间轴挂上后隐藏顶部两列表,不足 2 个版本不动作)。**添加顺序**:CollapsibleUpdates 在 Hero 之前(hero 收集遇 section/aside/blockquote 停止,不会吞卡),Timeline 在两者之后。带 `.css` 的装饰由 `add_decoration` 自动合并样式。
+
 裸 JS 逃生舱仍在:`builder.add_ui_decoration(js_string)`。
+
+## 结构化 callout 块
+
+`markdown_engine` 认识注册在 `_STRUCTURED_BLOCKS` 的多行块——`==深度调研发现｜徽标A｜徽标B` 与 `==跟踪事项｜ID｜类型｜状态：…`(以 `==` 行收尾),渲染成 `<aside class="<prefix>-card">`(头部徽标 + `标签：值` 行)。卡片 CSS 由使用该块的 skill 随 `extra_css` 提供;行内 `==文字==` 渲染成 `<mark>`。
 
 ## 图表工具 `window.CK`
 

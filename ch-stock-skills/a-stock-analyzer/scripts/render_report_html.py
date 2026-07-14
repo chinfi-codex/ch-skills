@@ -727,7 +727,8 @@ function mountUpdateStrips() {
         chip.type = "button";
         chip.className = "track-chip upd-change";
         chip.textContent = (c.f.label || c.f.id) + "：" +
-          (c.prev ? esc(c.prev.value) + " → " : "新增 ") + esc(c.cur.value) +
+          (c.prev ? String(c.prev.value == null ? "" : c.prev.value) + " → " : "新增 ") +
+          String(c.cur.value == null ? "" : c.cur.value) +
           (c.f.unit ? " " + c.f.unit : "");
         chip.addEventListener("click", ev => { ev.stopPropagation(); openPopover(c.f, chip); });
         strip.appendChild(chip);

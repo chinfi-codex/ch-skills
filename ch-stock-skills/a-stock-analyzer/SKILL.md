@@ -55,6 +55,7 @@ python scripts/data_fetcher.py fetch report-text 600519.SH --report-type annual 
 python scripts/data_fetcher.py fetch announcements 600519.SH --date 2026-01-01~2026-05-16 --searchkey 回购 --limit 20
 python scripts/data_fetcher.py fetch announcement-text 600519.SH --date 2026-01-01~2026-05-16 --searchkey 监管函 --announcement-index 1
 python scripts/data_fetcher.py fetch institutional-research 600519.SH --start-date 20250101 --end-date 20260516 --limit 30
+python scripts/data_fetcher.py fetch interactive-qa 300308.SZ --keyword CPO --date-from 2026-01-01 --limit 20
 
 python scripts/data_fetcher.py pack 600519.SH --date 2026-01-01~2026-05-16 --evidence-out reports/evidence_600519.json --context-out reports/context_600519.json --module-context-dir reports/module_context_600519
 ```
@@ -78,13 +79,14 @@ python scripts/data_fetcher.py pack 600519.SH --date 2026-01-01~2026-05-16 --evi
 | 年报季报 | `report-list`、`report-raw`、`report-text` | 巨潮定期报告列表、PDF 下载、PDF 文本抽取 |
 | 个股公告 | `announcements`、`announcement-raw`、`announcement-text` | 仅按个股查询巨潮公告，按标题规则标记问询回复、监管函、回购、减持、股权激励、定增、重大合作、业绩快报等 |
 | 机构调研 | `institutional-research` | Tushare `stk_surv`，用于观察调研频率、参与机构、接待方式和调研内容关键词 |
+| 互动问答 | `interactive-qa` | 互动易/P5W 投资者问答，按 6 位代码锚定单家公司拉问答（可选 `--keyword`/`--date-from`/`--date-to` 过滤），看公司对 AI/算力/订单/客户/产能等主题的公开口径；默认剔除股东户数类低信息问题 |
 | 上下文包 | `pack` | 单股完整 evidence、轻量 `analysis_context` 和模块级 JSON，供 subagent 或低上下文顺序分析 |
 
 ### 2.2 公告查询边界
 
 - `announcements` 只支持按个股查询。不要用本 skill 做全市场公告扫描。
 - 标题规则只负责定位事件类型，不负责判断影响大小。
-- `tabtype=fulltext` 用于公告全文列表；`tabtype=relation` 仅作为互动易/调研相关列表的辅助入口。
+- `tabtype=fulltext` 用于公告全文列表；`tabtype=relation` 仅作为互动易/调研相关**公告**列表的辅助入口——投资者问答正文用 `interactive-qa` 数据集直接抓取（见 §7.3），不靠 relation 列表。
 - PDF 原文读取使用本 skill 内置下载与 `PyPDF2` 文本抽取，不跨 skill 引用。
 
 ### 2.3 把研报渲染成 HTML（可选）
@@ -230,7 +232,7 @@ python3 scripts/tracking_table.py list
 同一只股票的第 2 次及以后分析是"活报告"更新——**报告怎么随时间生长的完整结构契约见 `references/living_report.md`**（三层分工、更新章节格式、状态型小节刷新、ID 闭环、自检清单）。操作主线：
 
 1. **先看基线**：`tracking_table.py show <ts_code>` 拉出上次记录的建模字段与现值，作为"这次相对上次变了什么"的锚。
-2. **分析**：照常走定性/定量框架。
+2. **扫增量信源 + 分析**：拉自上次更新日以来的新证据——新公告 / 定期报告、机构调研，**并默认加拉互动易 QA**（`fetch interactive-qa <code> --date-from <上次更新日>`，看公司对跟踪看点与市场新关切的最新公开表态）。互动 QA 是追踪更新的**默认信源范围**，用来和公告/研报叙事**交叉印证**（防单一来源偏差），但它是单方口径、非承诺，冲突时以公告/定期报告为准（见 §7.3）。据此照常走定性/定量框架。
 3. **写更新章节**：在核心判断之后新增 `## 更新 YYYY-MM-DD：一句话摘要`，固定三块——快照表（`维度|最新值|相对上次|对模型的影响`，没变的关键维度也列"不变"）、增量叙事、本轮结论 + 跟踪事项状态核销。
 4. **刷新正文**：状态型小节（速览/近期动态/估值结论/主线/对标表/核心判断）改成最新口径；论证型小节可冻结但标 `（论证基准：YYYY-MM-DD）`；三情景表只保留现行口径，不做新旧对照列。
 5. **落台账**：变化字段 `set` 一条当日记录（没变的不动；首次分析按 §2.5 建基线）；「版本变更记录」表和标题下两列版本表各加一行。
@@ -349,6 +351,17 @@ python scripts/data_fetcher.py fetch daily-basic <peer_code> --limit 1
 - **调研内容关键词**：提取 AI/算力/出海/订单/价格/产能/客户/毛利率等关键词，验证公司是否被市场放入当前主线。
 - **风险边界**：机构调研记录是公开披露信息，不能当作业绩承诺或内幕信息。
 
+### 7.3 互动易投资者问答使用方法
+
+使用 `interactive-qa` 拉取互动易/P5W 投资者问答，按 6 位代码锚定单家公司，观察公司对具体主题的**公开口径**。它是介于"公告"和"机构调研"之间的一路轻信源：比公告碎、更新快、能直接问到公司对市场关切的回应，尤其适合验证 B 型期权类看点（新业务/新客户/订单/产能进展公司认不认、口径松还是紧）。
+
+- **持续跟踪更新默认查（信源范围内）**：第 2 次及以后的追踪更新，把互动易 QA 列为**默认必扫信源**——每轮 `fetch interactive-qa <code> --date-from <上次更新日>` 拉增量问答，和公告/研报叙事交叉印证；首次分析（v1.0 建基线）可按需。
+- **按主题查回应**：验证某条具体看点时带 `--keyword`（如 CPO/算力/订单/客户/海外产能），只看公司对这条线的表态，别把整页问答倒进报告。
+- **口径松紧比事实增量更值钱**：互动回复大量是"感谢关注"式套话，信息密度低；真正有用的是公司**首次确认/否认/给出数量级**的那几条，把它们摘出来、套话丢掉。
+- **默认已过滤股东户数类问题**（低信息噪音）；确需看筹码情绪时再加 `--include-shareholder-count`。
+- **落位**：归入报告第一部分「近期动态」；涉及跟踪看点时进入对应「==跟踪事项==」卡的「验证/来源」，作交叉印证的一路证据。
+- **可信度边界**：互动回复是公司**单方口径**，不是公告级承诺、更不是内幕；与公告或定期报告冲突时以后者为准，回复只作"公司当下怎么说"的时间戳证据，务必标注问答日期与出处。
+
 ---
 
 ## 八、输出模板
@@ -427,7 +440,7 @@ python scripts/data_fetcher.py fetch daily-basic <peer_code> --limit 1
 综合成**档位：高成功率 / 中性 / 低成功率**，标注置信度与数据缺口（治理硬伤可单独压到低档）。一句话说明它如何调整下方定量的三情景概率权重与 B 型期权计入。详见 references/growth_success_rate.md]
 
 ### 7. 近期动态：公告事件与机构调研
-[作为对公司现状的补充：近期重大公告事件（区分原文事实 vs 推断，必要时读原文）；机构调研频率、参与机构、问题关键词。注明这些只反映关注度与现状，不等同业绩改善]
+[作为对公司现状的补充：近期重大公告事件（区分原文事实 vs 推断，必要时读原文）；机构调研频率、参与机构、问题关键词；互动易投资者问答里公司对关键看点的公开口径（**跟踪更新默认纳入**，标注日期，属单方表态、非承诺，作交叉印证）。注明这些只反映关注度与现状，不等同业绩改善]
 
 ---
 

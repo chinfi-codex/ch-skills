@@ -59,6 +59,18 @@ def _dataset_handlers() -> Dict[str, DatasetHandler]:
                 limit=args.limit,
             )
         ),
+        "interactive-qa": (
+            lambda fetcher, args: fetcher.get_interactive_qa(
+                args.query,
+                keyword=args.keyword,
+                date_from=args.date_from,
+                date_to=args.date_to,
+                limit=args.limit,
+                max_pages=args.max_pages,
+                include_shareholder_count=args.include_shareholder_count,
+                timeout=args.timeout,
+            )
+        ),
         "announcements": (
             lambda fetcher, args: fetcher.get_announcements(
                 args.query,
@@ -205,6 +217,10 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--section", default=None, help="Extract a periodic-report chapter (mda/财务报告/重要事项/治理/股东) or keyword window instead of the first-N-pages slice.")
     fetch.add_argument("--years", type=int, default=5, help="Years of history for valuation-band.")
     fetch.add_argument("--report-index", type=int, default=1)
+    fetch.add_argument("--keyword", default="", help="互动易问答关键词过滤 (interactive-qa)。")
+    fetch.add_argument("--date-from", default="", help="互动易问答起始日期 YYYY-MM-DD (interactive-qa)。")
+    fetch.add_argument("--date-to", default="", help="互动易问答结束日期 YYYY-MM-DD (interactive-qa)。")
+    fetch.add_argument("--include-shareholder-count", action="store_true", help="保留股东户数/人数类互动问答（默认过滤，interactive-qa）。")
     _add_shared_args(fetch)
 
     pack = subparsers.add_parser("pack", help="Build full evidence, compact context, and module contexts for one stock.")

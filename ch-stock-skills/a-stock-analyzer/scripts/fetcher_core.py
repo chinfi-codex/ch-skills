@@ -41,6 +41,7 @@ from common import (
     sanitize_filename,
     _num,
 )
+from interactive_qa import DEFAULT_QA_TIMEOUT, fetch_interactive_qa
 from pdf_extractor import extract_pdf_text
 from retry import request_with_retry
 from tushare_client import _TushareProxy, get_tushare_pro
@@ -232,6 +233,41 @@ class StockDataFetcher:
         df = self.pro.stk_surv(**request_args)
         df = self._sort_by_date(df, "trade_date", ascending=False)
         return df.head(limit) if not df.empty else df
+
+    def get_interactive_qa(
+        self,
+        ts_code: str,
+        *,
+        keyword: str = "",
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        limit: int = 20,
+        max_pages: int = 30,
+        include_shareholder_count: bool = False,
+        timeout: int = DEFAULT_QA_TIMEOUT,
+    ) -> Dict[str, Any]:
+        """Fetch investor interactive Q&A (互动易/P5W) for one stock.
+
+        Anchors on the six-digit code so only this company's Q&A is returned;
+        optional keyword/date filters and shareholder-count noise removal are
+        applied inside ``fetch_interactive_qa``.
+        """
+        normalized = normalize_ts_code(ts_code)
+        stock_code = normalized.split(".", 1)[0]
+        session = self._session or require_requests().Session()
+        result = fetch_interactive_qa(
+            session=session,
+            company=stock_code,
+            keyword=keyword or "",
+            date_from=date_from or "",
+            date_to=date_to or "",
+            limit=limit,
+            max_pages=max_pages,
+            include_shareholder_count=include_shareholder_count,
+            timeout=timeout,
+        )
+        result["query"]["ts_code"] = normalized
+        return result
 
     def get_daily(self, ts_code: str, limit: int = 120) -> pd.DataFrame:
         """Fetch daily OHLCV bars."""

@@ -87,7 +87,7 @@
 
 ## 待跟踪 & 本期变更
 
-**未来 24-72h 待跟踪**(这三栏就是本期 watchboard 的投影,也是下一期的输入:待印证矢量 = `agent_eng_vectors`、待观察渗透 = `product_forms`、待发布 / 验证 = `watch_companies` + `watch_projects`):
+**未来 24-72h 待跟踪**(这三栏就是本期 watchboard 的投影,也是下一期的输入:待印证矢量 = `agent_eng_vectors`、待观察渗透 = `product_forms`、待发布 / 验证 = `watch_companies` + `watch_projects`;矢量 / 形态一律用 canonical id 引用,显示名可变、id 认人):
 
 | 待印证的能力矢量(纵轴) | 待观察的渗透(横轴) | 待发布动作 / 待验证项目 |
 |---|---|---|

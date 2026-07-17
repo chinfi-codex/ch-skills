@@ -90,6 +90,55 @@ def test_market_history_backfill_dates():
     assert dates == ["20260609"]
 
 
+def test_market_data_for_report_rejects_stale_and_filters_future_rows():
+    source = Path("market_data.json")
+    stale = {
+        "metadata": {"window_end": "20260626"},
+        "records": [{"trade_date": "20260626", "成交额": 1.0}],
+        "quality": {"records_available": 1, "has_120_records": False},
+    }
+    try:
+        rrh.market_data_for_report(stale, "20260717", source)
+        raise AssertionError("expected stale market chart data to fail closed")
+    except RuntimeError as exc:
+        assert "required trade_date=20260717" in str(exc)
+        assert "window_end=20260626" in str(exc)
+
+    current = {
+        "metadata": {"window_end": "20260718"},
+        "records": [
+            {"trade_date": "20260716", "成交额": 1.0},
+            {"trade_date": "20260717", "成交额": 2.0},
+            {"trade_date": "20260718", "成交额": 3.0},
+        ],
+        "quality": {"records_available": 3, "has_120_records": False},
+    }
+    scoped = rrh.market_data_for_report(current, "20260717", source)
+    assert scoped["metadata"]["window_end"] == "20260717"
+    assert scoped["quality"]["records_available"] == 2
+    assert [row["trade_date"] for row in scoped["records"]] == ["20260716", "20260717"]
+
+
+def test_refresh_and_verify_market_chart_data_checks_resolved_date():
+    original = rdp.market_panel.write_market_history_json
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            chart_path = Path(tmp) / "market_data.json"
+            chart_path.write_text(json.dumps({
+                "metadata": {"window_end": "20260717"},
+                "records": [{"trade_date": "20260717"}],
+            }), encoding="utf-8")
+            rdp.market_panel.write_market_history_json = lambda: chart_path
+            assert rdp.refresh_and_verify_market_chart_data("20260717") == chart_path
+            try:
+                rdp.refresh_and_verify_market_chart_data("20260718")
+                raise AssertionError("expected missing resolved date to fail closed")
+            except RuntimeError as exc:
+                assert "required trade_date=20260718" in str(exc)
+    finally:
+        rdp.market_panel.write_market_history_json = original
+
+
 # --------------------------------------------------------------------------- #
 # Sentiment
 # --------------------------------------------------------------------------- #

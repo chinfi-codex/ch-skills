@@ -121,6 +121,31 @@ def default_stem(asof: Optional[str]) -> str:
     return f"evidence_{date}_utf8"
 
 
+def refresh_and_verify_market_chart_data(resolved_date: str) -> Path:
+    """Rebuild the HTML chart derivative from PostgreSQL and gate its date.
+
+    The market-history update can legitimately be a no-op when the requested
+    row is already present.  The chart JSON is still a derived artifact and
+    therefore must be refreshed independently on every report run.
+    """
+    chart_path = market_panel.write_market_history_json()
+    payload = json.loads(chart_path.read_text(encoding="utf-8"))
+    records = payload.get("records") or []
+    record_dates = {
+        str(row.get("trade_date") or "")
+        for row in records
+        if isinstance(row, dict)
+    }
+    window_end = str((payload.get("metadata") or {}).get("window_end") or "")
+    if resolved_date not in record_dates:
+        raise RuntimeError(
+            "market chart data freshness gate failed: "
+            f"required trade_date={resolved_date}, window_end={window_end or 'missing'}, "
+            f"path={chart_path}"
+        )
+    return chart_path
+
+
 @contextlib.contextmanager
 def patched_environment(env: Dict[str, str]):
     original = os.environ.copy()
@@ -222,6 +247,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         stderr_path.write_text(stderr_buffer.getvalue(), encoding="utf-8")
 
     resolved_date = evidence.get("metadata", {}).get("resolved_trade_date") or market_panel.normalize_date(args.asof)
+    market_chart_path = refresh_and_verify_market_chart_data(resolved_date)
     evidence_path = Path(args.evidence_out) if args.evidence_out else reports_dir / f"evidence_{resolved_date}_utf8.json"
     if args.stderr_out is None:
         stderr_path = sibling_stderr_path(evidence_path)
@@ -261,6 +287,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "stock_klines": str(kline_path) if kline_payload is not None else None,
         "report_context": str(context_path) if context_path else None,
         "module_context_dir": str(module_context_dir) if module_context_dir else None,
+        "market_chart_data": str(market_chart_path),
         "stderr": str(stderr_path),
     }, ensure_ascii=False, indent=2))
     return 0

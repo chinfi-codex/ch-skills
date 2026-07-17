@@ -53,6 +53,48 @@ def load_market_data(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def report_trade_date(input_path: Path) -> Optional[str]:
+    match = re.match(r"^report_(\d{8})$", input_path.stem)
+    return match.group(1) if match else None
+
+
+def market_data_for_report(payload: dict, trade_date: Optional[str], source_path: Path) -> dict:
+    """Date-scope chart data and reject stale derivatives.
+
+    A global market_data.json may extend beyond a historical report date, so
+    the renderer filters future rows.  For dated daily reports, the requested
+    date itself is mandatory; otherwise a stale JSON must fail closed.
+    """
+    if not trade_date:
+        return payload
+    records = payload.get("records") or []
+    eligible = [
+        row for row in records
+        if isinstance(row, dict)
+        and str(row.get("trade_date") or "")
+        and str(row.get("trade_date")) <= trade_date
+    ]
+    eligible_dates = {str(row.get("trade_date")) for row in eligible}
+    source_window_end = str((payload.get("metadata") or {}).get("window_end") or "")
+    if trade_date not in eligible_dates:
+        raise RuntimeError(
+            "market chart data freshness gate failed: "
+            f"required trade_date={trade_date}, window_end={source_window_end or 'missing'}, "
+            f"path={source_path}"
+        )
+    scoped = dict(payload)
+    scoped_metadata = dict(payload.get("metadata") or {})
+    scoped_metadata["report_trade_date"] = trade_date
+    scoped_metadata["window_end"] = trade_date
+    scoped["metadata"] = scoped_metadata
+    scoped["records"] = eligible
+    scoped_quality = dict(payload.get("quality") or {})
+    scoped_quality["records_available"] = len(eligible)
+    scoped_quality["has_120_records"] = len(eligible) >= 120
+    scoped["quality"] = scoped_quality
+    return scoped
+
+
 def default_evidence_path(input_path: Path) -> Optional[Path]:
     match = re.match(r"^report_(\d{8})$", input_path.stem)
     if not match:
@@ -1257,7 +1299,11 @@ def build_job(args) -> RenderJob:
     kline_path = Path(args.stock_klines) if args.stock_klines else default_kline_path(input_path)
     markdown_text = input_path.read_text(encoding="utf-8")
     title = args.title or input_path.stem
-    market_data = load_market_data(market_data_path)
+    market_data = market_data_for_report(
+        load_market_data(market_data_path),
+        report_trade_date(input_path),
+        market_data_path,
+    )
     evidence = load_evidence(evidence_path)
     index_kline_data = extract_index_kline_payload(evidence, evidence_path)
     stock_klines_raw = load_stock_klines(evidence, kline_path)
@@ -1318,6 +1364,7 @@ def build_job(args) -> RenderJob:
                 for item in (style_series_payload or {}).get("indices", [])
             },
             "records_available": (market_data.get("quality") or {}).get("records_available", 0),
+            "market_data_window_end": (market_data.get("metadata") or {}).get("window_end"),
             "theme_lifecycle_themes": len(lifecycle_payload["themes"]) if lifecycle_payload else 0,
         },
     )

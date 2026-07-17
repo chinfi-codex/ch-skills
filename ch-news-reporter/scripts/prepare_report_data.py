@@ -173,6 +173,14 @@ def query_items(
     date_key: str | None,
     limit: int,
 ) -> list[dict[str, Any]]:
+    """Fetch a bounded pool per configured source; selection happens later.
+
+    The old path sorted all sources together by timestamp and then cut the global
+    ``limit``.  Snapshot-style sources such as Product Hunt and GitHub Trending
+    use midnight timestamps, so a busy Jin10 day could evict them before the
+    Agent ever saw them.  Keep up to ``limit`` rows *per source* here, apply the
+    profile filters, then let ``select_report_items`` build a source-aware packet.
+    """
     sources = profile_sources(profile)
     order_by = "COALESCE(published_at, fetched_at) DESC"
     if sources:
@@ -187,11 +195,6 @@ def query_items(
                     order_by=order_by,
                 )
             )
-        raw_rows = sorted(
-            raw_rows,
-            key=lambda item: str(item.get("published_at") or item.get("fetched_at") or ""),
-            reverse=True,
-        )[:limit]
     else:
         raw_rows = db_query_items(
             con,
@@ -333,7 +336,136 @@ def select_source_items(
     items: list[dict[str, Any]], source_type: str, max_items: int
 ) -> list[dict[str, Any]]:
     source_items = [item for item in items if item.get("source_type") == source_type]
-    return sorted(source_items, key=source_rank_key)[:max_items]
+    if source_type in {"product_hunt", "github_trending", "hacker_news"}:
+        return sorted(source_items, key=source_rank_key)[:max_items]
+    return sorted(
+        source_items,
+        key=lambda item: str(item.get("published_at") or item.get("fetched_at") or ""),
+        reverse=True,
+    )[:max_items]
+
+
+def source_selection_config(profile: dict[str, Any]) -> dict[str, Any]:
+    configured = profile.get("source_selection") or {}
+    if not isinstance(configured, dict):
+        raise SystemExit(
+            f"profile {profile.get('_name') or '?'} source_selection must be a map"
+        )
+    preferred = configured.get("preferred_limits") or {}
+    if not isinstance(preferred, dict):
+        raise SystemExit(
+            f"profile {profile.get('_name') or '?'} "
+            "source_selection.preferred_limits must be a map"
+        )
+    normalized: dict[str, int] = {}
+    for source, value in preferred.items():
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            raise SystemExit(
+                f"profile {profile.get('_name') or '?'} source_selection "
+                f"limit for {source} must be an integer"
+            ) from None
+        if parsed < 0:
+            raise SystemExit(
+                f"profile {profile.get('_name') or '?'} source_selection "
+                f"limit for {source} must be >= 0"
+            )
+        normalized[str(source)] = parsed
+    try:
+        hard_max_share = float(configured.get("hard_max_share", 1.0))
+    except (TypeError, ValueError):
+        raise SystemExit(
+            f"profile {profile.get('_name') or '?'} "
+            "source_selection.hard_max_share must be numeric"
+        ) from None
+    if not 0 < hard_max_share <= 1:
+        raise SystemExit(
+            f"profile {profile.get('_name') or '?'} "
+            "source_selection.hard_max_share must be in (0, 1]"
+        )
+    return {
+        "preferred_limits": normalized,
+        "hard_max_share": hard_max_share,
+    }
+
+
+def select_report_items(
+    items: list[dict[str, Any]], profile: dict[str, Any], limit: int
+) -> list[dict[str, Any]]:
+    """Build the final packet with preferred per-source budgets and refill.
+
+    Preferred limits reserve room for discovery sources; they are deliberately
+    soft.  Unused room is refilled by global recency while the configured hard
+    share prevents one high-volume source from swallowing the whole packet.
+    """
+    if limit <= 0:
+        return []
+    selection = source_selection_config(profile)
+    preferred = selection["preferred_limits"]
+    if not preferred:
+        return sorted(
+            items,
+            key=lambda item: str(
+                item.get("published_at") or item.get("fetched_at") or ""
+            ),
+            reverse=True,
+        )[:limit]
+
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[str] = set()
+    by_source: dict[str, int] = {}
+
+    def add(item: dict[str, Any]) -> None:
+        item_id = str(item.get("id") or "")
+        if not item_id or item_id in selected_ids or len(selected) >= limit:
+            return
+        selected.append(item)
+        selected_ids.add(item_id)
+        source = str(item.get("source_type") or "")
+        by_source[source] = by_source.get(source, 0) + 1
+
+    hard_cap = max(1, int(limit * selection["hard_max_share"]))
+    source_order = profile_sources(profile)
+    for source in source_order:
+        budget = min(
+            preferred.get(source, 0), hard_cap, limit - len(selected)
+        )
+        for item in select_source_items(items, source, budget):
+            add(item)
+
+    remaining = sorted(
+        (item for item in items if str(item.get("id") or "") not in selected_ids),
+        key=lambda item: str(
+            item.get("published_at") or item.get("fetched_at") or ""
+        ),
+        reverse=True,
+    )
+    for item in remaining:
+        if len(selected) >= limit:
+            break
+        source = str(item.get("source_type") or "")
+        if by_source.get(source, 0) >= hard_cap:
+            continue
+        add(item)
+    return selected
+
+
+def packet_selection_summary(
+    items: list[dict[str, Any]], profile: dict[str, Any], limit: int
+) -> dict[str, Any]:
+    selection = source_selection_config(profile)
+    counts: dict[str, int] = {}
+    for item in items:
+        source = str(item.get("source_type") or "")
+        counts[source] = counts.get(source, 0) + 1
+    return {
+        "limit": limit,
+        "selected": len(items),
+        "by_source": counts,
+        "preferred_limits": selection["preferred_limits"],
+        "hard_max_share": selection["hard_max_share"],
+    }
 
 
 def item_search_text(item: dict[str, Any]) -> str:
@@ -628,6 +760,51 @@ def build_coverage(
     }
 
 
+def query_collection_failures(
+    con: Any, date_key: str | None, profile: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Return profile-relevant per-feed collection failures for diagnostics."""
+    if date_key is None:
+        return []
+    rows = normalize_item_rows(
+        db_query_items(
+            con,
+            date_key=date_key,
+            source_type="error",
+            limit=None,
+            order_by="COALESCE(published_at, fetched_at) DESC",
+        )
+    )
+    categories = rss_categories(profile)
+    expected_sources = set(profile_sources(profile))
+    failures: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in rows:
+        metadata = item.get("metadata") or {}
+        category = str(metadata.get("category") or "")
+        source_name = str(item.get("source_name") or "")
+        if source_name.startswith("rss:") and categories and category not in categories:
+            continue
+        source = "rss" if source_name.startswith("rss:") else source_name.split(":", 1)[0]
+        if source not in expected_sources:
+            continue
+        feed_name = source_name.split(":", 1)[1] if ":" in source_name else source_name
+        key = (source_name, str(item.get("url") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        failures.append(
+            {
+                "source": source,
+                "feed_name": feed_name,
+                "category": category or None,
+                "url": item.get("url"),
+                "error": compact_text(str(item.get("content") or ""), max_len=240),
+            }
+        )
+    return failures
+
+
 def apply_profile_coverage_filters(
     coverage: dict[str, Any],
     base_items: list[dict[str, Any]],
@@ -736,7 +913,8 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     db_ensure_connectable(db_path)
     with get_connection(db_path) as con:
         base_items = query_items(con, profile, date_key, args.limit)
-        items = apply_profile_filters(base_items, profile)
+        filtered_items = apply_profile_filters(base_items, profile)
+        items = select_report_items(filtered_items, profile, args.limit)
         coverage_items = query_coverage_items(con, profile, date_key)
         enrichments = (
             query_enrichments(con, [str(item["id"]) for item in items])
@@ -747,6 +925,13 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
             build_coverage(con, profile, date_key),
             coverage_items,
             profile,
+        )
+        feed_failures = query_collection_failures(con, date_key, profile)
+        coverage["feed_failures"] = feed_failures
+        coverage["degraded"] = bool(feed_failures)
+        coverage["complete"] = bool(coverage.get("all_present")) and not feed_failures
+        coverage["packet_selection"] = packet_selection_summary(
+            items, profile, args.limit
         )
         prior_state = (
             load_prior_state(con, args.profile, date_key) if state_enabled else None
@@ -777,6 +962,7 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         "prior_state": prior_state,
         "framework_review": framework_review,
         "base_items_count": len(base_items),
+        "filtered_items_count": len(filtered_items),
         "items_count": len(items),
         "items": items,
         "enrichment_candidates": build_enrichment_candidates(items),
@@ -907,6 +1093,8 @@ def emit_markdown(packet: dict[str, Any]) -> None:
     print(f"- Sources: {', '.join(packet['sources'])}")
     if "base_items_count" in packet:
         print(f"- Base items before profile filters: {packet['base_items_count']}")
+    if "filtered_items_count" in packet:
+        print(f"- Items after profile filters: {packet['filtered_items_count']}")
     print(f"- Items: {packet['items_count']}")
     print(f"- Enrichment candidates: {len(packet['enrichment_candidates'])}\n")
 
@@ -919,6 +1107,27 @@ def emit_markdown(packet: dict[str, Any]) -> None:
         print(f"- By source: {present}")
         missing = coverage.get("missing") or []
         print(f"- Missing sources: {', '.join(missing) if missing else '(none)'}\n")
+        selection = coverage.get("packet_selection") or {}
+        if selection.get("by_source"):
+            selected = "; ".join(
+                f"{source}={count}"
+                for source, count in selection["by_source"].items()
+            )
+            print(f"- Packet selection: {selected}")
+            print(
+                "- Selection policy: "
+                f"preferred={selection.get('preferred_limits')}; "
+                f"hard_max_share={selection.get('hard_max_share')}\n"
+            )
+        failures = coverage.get("feed_failures") or []
+        if failures:
+            print("### Feed failures (profile-relevant)\n")
+            for failure in failures:
+                print(
+                    f"- {failure.get('source')} / {failure.get('feed_name')}: "
+                    f"{failure.get('error')}"
+                )
+            print()
 
     if packet.get("state_enabled"):
         prior = packet.get("prior_state")

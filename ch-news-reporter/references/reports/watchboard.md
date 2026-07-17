@@ -35,6 +35,7 @@ watchboard 是一个 JSON 对象,通用骨架(所有 profile 一致):
   "tracking_items": [ ...见第 4 节... ],
   "next_nodes": [ {"name": "...", "date": "YYYY-MM-DD", "affects": "..."} ],
   "falsifiers": ["出现 X 则当前判断不成立", "..."],
+  "grading_audit": [ ...仅启用价值定级审计的 profile，如 ai_daily... ],
   "frame": { ...本 profile 特有字段,见各自 methodology... },
   "frame_change": "今天 path/概率/权重为何这么挪(框架移动了就必填,见下)"
 }
@@ -45,6 +46,39 @@ watchboard 是一个 JSON 对象,通用骨架(所有 profile 一致):
 - `frame`:profile 特有的快变量(如地缘日报的 path/区域/传导渠道、宏观的 swing_factor/位置档位、AI 的工程演进矢量/产品形态),字段清单和约束写在该 profile 的 `framework.md` 机器区。
 - `frame_change`:**框架移动的意图**。只要相对上一期 `path` 变了、或任一概率桶移动 ≥ 0.5,就**必须**写明为什么这么挪(可以是一句话,也可以是按 path/概率/权重分条的 map)——否则 `save_report_state.py` 报错。框架没动时可省略。这是把"概率为什么从 45 挪到 40"从散文里捞出来、焊进状态的字段;冷启动(无上一期)不要求。
 - `as_of` / `carried_from` 你不填时脚本会按日期自动补,但建议你显式写清。
+- `grading_audit`:仅当 profile 的 `value_grading.audit_required=true` 时必填；它是候选定级的后台审计，不是正文。当天没有 S-candidate 也必须写空数组 `[]`，表示已完成候选检查。
+
+### 价值定级审计结构（启用它的 profile）
+
+`grading_audit` 每条只对应一个真正进入候选评审的实体，数量不得超过 profile 的 `candidate_budget`。脚本只校验流程和证据结构，不判断模型给出的等级是否“聪明”。推荐结构：
+
+```json
+{
+  "entity_id": "kimi-k3",
+  "entity": "Kimi K3",
+  "provisional_grade": "s_candidate",
+  "final_grade": "s_candidate",
+  "trigger_conditions": ["重点厂商旗舰模型，可能同时改变能力与开放性"],
+  "candidate_exclusions": [],
+  "evidence_sources": [
+    {"source_family": "rss", "type": "official", "url": "https://example.com/official"},
+    {"source_family": "hacker_news", "type": "independent", "url": "https://example.com/review"}
+  ],
+  "confirmation_blockers": ["权重尚未开放，独立复现不足"],
+  "evidence_gaps": ["等待官方 model card 与可下载权重页"],
+  "deep_enrichment": {
+    "status": "partial",
+    "target_urls": ["https://example.com/official", "https://example.com/review"],
+    "note": "已确认发布动作，但可用性门槛尚未满足"
+  },
+  "rationale": "保留重点候选，24-72h 后按权重可用性和独立复现复核"
+}
+```
+
+- `provisional_grade` 固定为 `s_candidate`；`final_grade` 只能是 `s_confirmed` / `s_candidate` / `a` / `b`。
+- `candidate_exclusions` 与 `confirmation_blockers` 必须分开：前者命中会让对象失去候选资格，后者只阻止它升级为 S-confirmed。
+- `evidence_sources[].type` 使用 `official` / `independent` / `supporting`；S-confirmed 必须同时具备 official 与 independent。
+- `deep_enrichment.status=complete` 需要达到 profile 的最少 URL 数；`partial` 可提前停止，但至少记录一个已尝试 URL，并用 `note` 解释缺口。
 
 ## 4. 跟踪项台账(让报告跨天连贯的核心)
 
@@ -101,7 +135,7 @@ watchboard 是一个 JSON 对象,通用骨架(所有 profile 一致):
 - 没有上一期(冷启动):按本 profile methodology 的默认/种子构造第一份 watchboard。注意**当前判断要用今天证据现判**,种子里的旧值只当结构脚手架。
 - 有上一期:列出 `state date`、`regime`、以及今天**必须逐条结算的 open 跟踪项**,后面附完整 JSON。
 
-同段还有 `## Coverage (DB-first)`,告诉你今天各信源在库里有多少条、哪个源缺数。某源 missing 时,报告里相应判断要降级标注"今日该源无数据"。
+同段还有 `## Coverage (DB-first)`,告诉你今天各信源在库里有多少条、哪个源缺数、最终 evidence packet 的分源数量，以及与本 profile 有关的具体 feed 失败。某源 missing 或 feed 失败时,报告里相应判断要降级标注，不能只凭“源有总行数”就写成完整覆盖。
 
 ## 6. 怎么回写
 
@@ -121,6 +155,7 @@ python scripts/save_report_state.py --profile <profile> --date today \
 
 - 信封必填:`as_of` / `regime` / `tracking_items` / `next_nodes` 缺任一。
 - `falsifiers` 缺失或为空 —— 必须至少给一条可证伪条件(不再是 warning)。
+- profile 要求价值定级审计时，`grading_audit` 缺失、超过候选预算、深挖 URL / 状态不完整，或把缺官方 / 独立证据的对象写成 `s_confirmed`。
 - 每条跟踪项缺 `id` / `opened` / `statement`,或 id 重复,或 `status` 不在四值内。
 - 结算项(status 非 `open`)没写 `resolution`。
 - carry 过来仍 `open` 的项改了 `statement` 却没写 `update`(动了就得说为什么动)。

@@ -7,7 +7,7 @@ Enrichment 用来补足基础 evidence packet 无法提供的上下文，例如 
 本文件描述**两轮 enrichment**，区别在广度还是深度：
 
 - **广度 pass（默认）**：覆盖当天全部候选，5-15 个 target、每个抓一个 URL，目的是核实每个对象是什么、够两轴归类。下面「什么时候需要 enrichment / 选择 target 的方法 / 解读方法」讲的都是它。
-- **深挖 pass（价值定级判出 S 级重点后触发）**：只对 0-2 个 S 级对象跑，每个抓 3-6 个 URL，目的是把这一个对象挖到能写 300-500 字深度拆解。单列「深挖 pass」一节。
+- **深挖 pass（价值定级判出 S-candidate 后触发）**：只对候选预算内的 0-2 个对象跑，每个抓 3-6 个 URL；先补齐确认门槛，再把对象定为 S-confirmed 或保留 S-candidate。单列「深挖 pass」一节。
 
 Agent 先阅读基础 evidence packet，再用本文件判断哪些对象值得二次加工；脚本只执行 Agent 明确给出的 target。
 
@@ -53,15 +53,15 @@ Agent 先阅读基础 evidence packet，再用本文件判断哪些对象值得�
 
 默认控制在 5-15 个 target。日报很短或证据很清楚时可以少于 5 个；深度复盘或重大事件日可以更多，但要避免机械抓全量。
 
-## 深挖 pass（S 级重点，深度而非广度）
+## 深挖 pass（S-candidate / S-confirmed，深度而非广度）
 
 上面讲的是**广度 pass**——把当天证据核实清楚、看清每个对象是什么。它服务两轴归类，不负责把某个对象挖透。
 
-价值定级（见 `framework.md`）判出 **S 级今日重点** 后，对这 0-2 个对象再跑一轮**深挖 pass**：目标不是"多核实几个对象"，而是"把这一个对象挖到能写 300-500 字深度拆解"。两轮用的是同一个 `enrich_targets.py`，区别只在广度还是深度。
+价值定级（见 `framework.md`）判出 **S-candidate / A+ 重点候选** 后，对候选预算内的 0-2 个对象再跑一轮**深挖 pass**：目标不是"多核实几个对象"，而是补齐官方一手、真实可用性与独立复核，判断它能否升级为 S-confirmed。两轮用的是同一个 `enrich_targets.py`，区别只在广度还是深度。
 
-**触发条件**：只有 S 级对象触发深挖。A / B 级不进这一轮——否则又摊回广度，深度就没了。今天没有 S 级，就没有深挖 pass，正常。
+**触发条件**：S-candidate 一经成立就触发深挖，不能等到“已确认 S”才找证据。普通 A / B 不进这一轮。候选与已确认重点共用每天 2 个对象的硬预算；超过预算者按 A 处理并在 `grading_audit` 写明排序理由。
 
-**每个 S 级对象抓 3-6 个 target**（`enrich_targets.py` 支持同一 `item_id` 挂多个 URL，去重键含 URL，不会互相覆盖），按下面三类凑齐证据面：
+**每个候选抓 3-6 个 target**（`enrich_targets.py` 支持同一 `item_id` 挂多个 URL，去重键含 URL，不会互相覆盖），按下面三类凑齐证据面。若已明确某类证据客观不可得，可在 3 个 URL 前提前停止，但必须在 `grading_audit.deep_enrichment.note` 和 `evidence_gaps` 写清缺口，最终级别只能保留 S-candidate / A+，不能升级为 S-confirmed：
 
 - **官方一手**：厂商公告页 / 发布博客 / model card / changelog（`article_url` 或 `product_website`）——规格、许可、上下文长度、参数规模、定价、可用区域，以官方页为准。
 - **代码与文档**：若涉及开源项目，抓 repo（`github_repo`）拿 README / release / license / 语言占比 / pushed_at；若是产品，抓 docs / pricing / API 入口页。
@@ -75,7 +75,7 @@ Agent 先阅读基础 evidence packet，再用本文件判断哪些对象值得�
 4. **产业位置**：上游依赖谁（算力 / 底座模型 / 数据）、下游替代或赋能了谁、对成本结构和分发格局意味着什么、中美对照里它站哪。
 5. **集成入口**：它通过什么载体被用上（IDE / 浏览器 / 办公软件 / API），入口摩擦有多低——这决定横轴渗透判断。
 
-分工写死：Tavily 负责**发现** URL（搜到第三方评测和竞品回应在哪），`enrich_targets.py` 负责**抓取落库**（把这些页面持久化进 `enrichments` 表，可复现）。搜索不下结论、抓取不做判断，深挖的结论由模型在「今日重点·深度拆解」板块里写。
+分工写死：Tavily 负责**发现** URL（搜到第三方评测和竞品回应在哪），`enrich_targets.py` 负责**抓取落库**（把这些页面持久化进 `enrichments` 表，可复现）。搜索不下结论、抓取不做判断；模型把最终等级和缺口写进 `grading_audit`，S-confirmed 在「今日重点·深度拆解」展开，仍未确认的候选在「重点候选·待验证」短写。
 
 ## 执行契约
 

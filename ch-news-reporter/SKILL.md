@@ -100,7 +100,7 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --format j
 
 evidence packet 现在还带两块新内容(DB-first 与活动状态):
 
-- `coverage`：本 profile 各期望源在库里当天的行数与缺失源清单。某源缺数时,报告里相应判断要降级标注"今日该源无数据"。
+- `coverage`：本 profile 各期望源在库里当天的行数、缺失源、profile 相关 feed 失败，以及最终 packet 的分源选择摘要。某源缺数或具体 feed 失败时,报告里相应判断要降级标注；不能用 RSS 总行数掩盖关键官方源抓取失败。
 - `prior_state`：`state_enabled` 的 profile(三个日报都已开启)会带上**最近一期 watchboard**(date < 今天)。markdown 输出里是 `## Prior Watchboard` 段,列出今天必须逐条结算的 open 跟踪项;冷启动(无上一期)时按各 profile methodology 的种子/默认构造第一份。机制见 `references/reports/watchboard.md`。
 
 `prepare_report_data.py` 会按 profile 的 `rss_categories` 过滤 RSS，避免地缘 RSS 污染 AI 日报。`macro_daily` 会先从当天金十和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
@@ -120,7 +120,7 @@ CPI、PPI、社融、PMI 等中国月度数据只在电报识别到当天发布/
 
 Agent 从 evidence packet 的 `enrichment_candidates` 中挑选目标，再把明确 target 交给脚本执行。脚本只做抓取和写库，不负责判断哪些对象值得抓。
 
-AI 日报走**两轮 enrichment**：**广度 pass**（默认，5-15 个候选、每个抓一个 URL，核实每个对象是什么）跑完并做完价值定级后，对判为 **S 级今日重点** 的 0-2 个对象再跑一轮**深挖 pass**——用 `scripts/_shared/web_search/tavily_search.py` 搜第三方评测 / 竞品回应 / benchmark 复核，把命中 URL 连同官方公告页、docs、pricing 一起喂给 `enrich_targets.py`（同一 item 可挂多个 URL、去重键含 URL，不会互相覆盖），抓到能写 300-500 字深度拆解为止。判级标准见 `references/reports/ai_daily/framework.md`（价值定级），深挖清单见 `references/reports/ai_daily/enrichment.md`（深挖 pass）。
+AI 日报走**两轮 enrichment**：**广度 pass**（默认，5-15 个对象、每个抓一个 URL，核实对象是什么）跑完并完成实体 / 事件聚类后，先按 `framework.md` 判 **S-candidate / A+**；候选一成立就进入**深挖 pass**，不能等到“已确认 S”才补证。候选与 S-confirmed 共用每天 0-2 个对象的硬预算，每个对象目标 3-6 个 URL——用 `scripts/_shared/web_search/tavily_search.py` 搜第三方评测 / 竞品回应 / benchmark 复核，把命中 URL 连同官方公告页、docs、pricing 一起喂给 `enrich_targets.py`。深挖后再定为 S-confirmed 或保留 S-candidate；证据客观不可得可提前停止，但必须记录阻断项与缺口。判级标准见 `references/reports/ai_daily/framework.md`（价值定级），深挖清单见 `references/reports/ai_daily/enrichment.md`（深挖 pass）。
 
 ```powershell
 $json = '{"item_id":"...","target_type":"github_repo","target_url":"https://github.com/owner/repo"}'
@@ -223,7 +223,7 @@ cat today_watchboard.json | python scripts/save_report_state.py \
     --profile geopolitical_daily --date today --state-file -
 ```
 
-watchboard 的 JSON 结构(regime / tracking_items / next_nodes / falsifiers / frame)通用骨架见 `references/reports/watchboard.md`;各 profile 的 frame schema 见各自 `framework.md` 机器区(脚本即从这里读取校验规则,读不到才回退 `report_profiles.yaml`)。脚本做结构校验(必填字段、frame 字段齐全、概率求和、**上一期 open 项有没有被漏结算**),报错就按提示补全再存——它只查结构,不评判分析内容。`--check-only` 可只验证不写。
+watchboard 的 JSON 结构(regime / tracking_items / next_nodes / falsifiers / frame)通用骨架见 `references/reports/watchboard.md`;各 profile 的 frame schema 见各自 `framework.md` 机器区(脚本即从这里读取校验规则,读不到才回退 `report_profiles.yaml`)。`ai_daily` 还必须回写顶层 `grading_audit`：当天无候选写 `[]`，有候选则记录触发条件、候选排除检查、证据类型、确认阻断项和深挖 URL / 状态。脚本做结构校验(必填字段、frame 字段齐全、概率求和、定级审计、**上一期 open 项有没有被漏结算**),报错就按提示补全再存——它只查结构,不评判分析内容。`--check-only` 可只验证不写。
 
 若 profile 重命名，需要先迁移历史状态，避免 watchboard 冷启动断链。迁移脚本会检查同日期冲突，冲突时停止且不覆盖：
 
@@ -308,7 +308,7 @@ python scripts/render_report_html.py -i reports/geopolitical_daily_2026-06-04.md
 - 每个关键判断都要能回到数据表中的新闻或项目。
 - 对传闻、单源消息、未确认说法必须降级表述。
 - 财经内容避免直接给交易指令；AI 内容避免把 GitHub star 变化直接等同于商业成功。
-- 默认控制在 1500-2500 字；`ai_daily` 当天有 S 级今日重点、带深度拆解板块时正文可到 3000+ 字（深拆本身就是深度研究，不必压字数）；用户要求深度研究时也可扩展。当用户要“简版 / 精简 / 速览 / 短版”时改走简版输出（见工作流程「5b. 简版输出」）：**仅 `geopolitical_daily` / `macro_daily`，正文 ≤600 字**；`ai_daily` 不提供简版。
+- 默认控制在 1500-2500 字；`ai_daily` 当天有 S-confirmed 今日重点、带深度拆解板块时正文可到 3000+ 字（深拆本身就是深度研究，不必压字数）；用户要求深度研究时也可扩展。当用户要“简版 / 精简 / 速览 / 短版”时改走简版输出（见工作流程「5b. 简版输出」）：**仅 `geopolitical_daily` / `macro_daily`，正文 ≤600 字**；`ai_daily` 不提供简版。
 
 ## 示例
 
@@ -332,8 +332,9 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 
 输出应包含：
 
-- 一句话结论（唯一速读层）：第一句给框架移动——哪条矢量 / 渗透进档、新开或被证伪，以及这对两轴大图意味着什么的关系级判断（地图没动就直说是证据积累日）；再点 S 级重点与 24-72h 最该盯的对象。
-- 今日重点 · 深度拆解：当天有 S 级对象（推动某条轴进档 / 跨档，或 flagship 级且影响多个 frame 维度，且有一手证据）时，对 0-2 个重点做 300-500 字拆解（是什么 → 方法论落点 → 产业位置 → 证据与反例 → 兑现路径）；没有 S 级就省略整节。
+- 一句话结论（唯一速读层）：第一句给框架移动——哪条矢量 / 渗透进档、新开或被证伪，以及这对两轴大图意味着什么的关系级判断（地图没动就直说是证据积累日）；再点 S-confirmed 或 S-candidate 的当前状态与 24-72h 最该盯的对象。
+- 今日重点 · 深度拆解：只放通过结构影响、一手证据、真实可用、独立复核四道门槛的 S-confirmed；对 0-2 个重点做 300-500 字拆解，没有就省略整节。
+- 重点候选 · 待验证：深挖后仍缺官方证据、真实可用性或独立复核的 S-candidate / A+ 在这里短写，明确阻断项和 24-72h 验证点；不得静默降成普通 A，也不得冒充已确认重点。
 - 纵轴 · 能力与技术演进：逐条矢量，实验室证据 + 开源证据并在一处，写档位（实验 / 收敛中 / 事实标准）+ 卡点；同一矢量 ≥2 证据才判收敛。
 - 横轴 · 渗透率：有没有新形态 / 新入口让更多人真用上（载体 / 用户段 / 自主度 / 真实使用信号 + 萌芽 / 早期采用 / 主流化档位）；没有就直说"今日无新渗透信号"。
 - 证据随正文走：不再单列「原始证据附录」。每个对象只在它唯一展开的位置——今日重点、纵轴、横轴或资本与政策——附上来源、热度 / 体量和可点击的原文链接；不要为了补附录再重复一次。

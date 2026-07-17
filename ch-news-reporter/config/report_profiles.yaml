@@ -12,6 +12,21 @@ profiles:
     rss_categories: [ai]
     state_enabled: true
     open_budget: 10
+    # Evidence packet 先按来源保留代表性样本，再把剩余额度按全局新鲜度回填。
+    # preferred_limits 是优先配额，不是硬裁剪；某源不足时额度可让给其他源。
+    source_selection:
+      preferred_limits:
+        product_hunt: 20
+        hacker_news: 20
+        github_trending: 30
+        rss: 60
+        jin10: 70
+      hard_max_share: 0.70
+    value_grading:
+      audit_required: true
+      candidate_budget: 2
+      deep_url_min: 3
+      deep_url_max: 6
     render:
       pill_set: ai
     # frame schema 已迁入 references/reports/ai_daily/framework.md 机器区(唯一可信源)
@@ -36,7 +51,7 @@ profiles:
           keywords: [HuggingFace, Hugging Face, Transformers, "HF Hub"]
       china:
         Kimi:
-          keywords: [Kimi, Moonshot, 月之暗面, K2]
+          keywords: [Kimi, Moonshot, 月之暗面, K2, K3]
         智谱:
           keywords: [智谱, 智谱AI, ChatGLM, GLM, GLM-4, Zhipu]
         Minimax:

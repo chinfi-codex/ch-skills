@@ -57,6 +57,9 @@ DEFAULT_SUM_TOL = 0.2
 FRAME_MOVE_EPS = 0.5
 # Valid responses to a framework-challenge raised by the slow-thinking layer.
 CHALLENGE_RESPONSE = {"accepted", "rejected", "pending"}
+VALUE_GRADES = {"s_confirmed", "s_candidate", "a", "b"}
+ENRICHMENT_STATUS = {"complete", "partial"}
+EVIDENCE_TYPES = {"official", "independent", "supporting"}
 
 
 def _is_empty(value: Any) -> bool:
@@ -141,6 +144,199 @@ def read_state_payload(state_file: str) -> Any:
         raise SystemExit(f"State payload is not valid JSON: {exc}") from exc
 
 
+def _validate_value_grading(
+    payload: dict[str, Any], profile: dict[str, Any], errors: list[str]
+) -> None:
+    """Validate the audit trail, never the analytical grade itself."""
+    configured = profile.get("value_grading")
+    if configured is None:
+        return
+    if not isinstance(configured, dict):
+        errors.append("profile value_grading must be a map")
+        return
+
+    try:
+        candidate_budget = int(configured.get("candidate_budget", 0))
+        deep_url_min = int(configured.get("deep_url_min", 3))
+        deep_url_max = int(configured.get("deep_url_max", 6))
+    except (TypeError, ValueError):
+        errors.append(
+            "profile value_grading candidate_budget/deep_url_min/deep_url_max "
+            "must be integers"
+        )
+        return
+    if candidate_budget < 0 or deep_url_min < 1 or deep_url_max < deep_url_min:
+        errors.append(
+            "profile value_grading requires candidate_budget >= 0 and "
+            "1 <= deep_url_min <= deep_url_max"
+        )
+        return
+
+    if "grading_audit" not in payload:
+        if configured.get("audit_required"):
+            errors.append(
+                "missing 'grading_audit' — use [] when no S-candidate was found"
+            )
+        return
+    audit = payload.get("grading_audit")
+    if not isinstance(audit, list):
+        errors.append("grading_audit must be a list")
+        return
+    if len(audit) > candidate_budget:
+        errors.append(
+            f"grading_audit has {len(audit)} entries, exceeding candidate budget "
+            f"{candidate_budget}"
+        )
+
+    seen_entities: set[str] = set()
+    for idx, entry in enumerate(audit):
+        label = f"grading_audit[{idx}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        for field in (
+            "entity_id",
+            "entity",
+            "provisional_grade",
+            "final_grade",
+            "trigger_conditions",
+            "candidate_exclusions",
+            "evidence_sources",
+            "confirmation_blockers",
+            "evidence_gaps",
+            "deep_enrichment",
+            "rationale",
+        ):
+            if field not in entry:
+                errors.append(f"{label} missing {field}")
+
+        entity_id = str(entry.get("entity_id") or "").strip()
+        if not entity_id:
+            errors.append(f"{label}.entity_id must be non-empty")
+        elif entity_id in seen_entities:
+            errors.append(f"duplicate grading_audit entity_id: {entity_id}")
+        else:
+            seen_entities.add(entity_id)
+        if _is_empty(entry.get("entity")):
+            errors.append(f"{label}.entity must be non-empty")
+        if entry.get("provisional_grade") != "s_candidate":
+            errors.append(f"{label}.provisional_grade must be 's_candidate'")
+        final_grade = entry.get("final_grade")
+        if final_grade not in VALUE_GRADES:
+            errors.append(
+                f"{label}.final_grade={final_grade!r} not in {sorted(VALUE_GRADES)}"
+            )
+
+        for field in (
+            "trigger_conditions",
+            "candidate_exclusions",
+            "confirmation_blockers",
+            "evidence_gaps",
+        ):
+            value = entry.get(field)
+            if not isinstance(value, list):
+                errors.append(f"{label}.{field} must be a list")
+        if _is_empty(entry.get("trigger_conditions")):
+            errors.append(f"{label}.trigger_conditions must be non-empty")
+        if _is_empty(entry.get("rationale")):
+            errors.append(f"{label}.rationale must be non-empty")
+
+        exclusions = entry.get("candidate_exclusions")
+        blockers = entry.get("confirmation_blockers")
+        if final_grade in {"s_candidate", "s_confirmed"} and exclusions:
+            errors.append(
+                f"{label} cannot remain {final_grade} with candidate_exclusions"
+            )
+        if final_grade == "s_candidate" and not blockers:
+            errors.append(
+                f"{label} remains s_candidate but has no confirmation_blockers"
+            )
+        if final_grade == "s_confirmed" and blockers:
+            errors.append(
+                f"{label} is s_confirmed but confirmation_blockers is not empty"
+            )
+
+        sources = entry.get("evidence_sources")
+        source_types: set[str] = set()
+        if not isinstance(sources, list):
+            errors.append(f"{label}.evidence_sources must be a list")
+            sources = []
+        elif not sources:
+            errors.append(f"{label}.evidence_sources must be non-empty")
+        for sidx, source in enumerate(sources):
+            slabel = f"{label}.evidence_sources[{sidx}]"
+            if not isinstance(source, dict):
+                errors.append(f"{slabel} must be an object")
+                continue
+            if _is_empty(source.get("source_family")):
+                errors.append(f"{slabel}.source_family must be non-empty")
+            evidence_type = source.get("type")
+            if evidence_type not in EVIDENCE_TYPES:
+                errors.append(
+                    f"{slabel}.type={evidence_type!r} not in "
+                    f"{sorted(EVIDENCE_TYPES)}"
+                )
+            else:
+                source_types.add(str(evidence_type))
+            url = str(source.get("url") or "")
+            if not url.startswith(("http://", "https://")):
+                errors.append(f"{slabel}.url must be an absolute HTTP(S) URL")
+
+        deep = entry.get("deep_enrichment")
+        if not isinstance(deep, dict):
+            errors.append(f"{label}.deep_enrichment must be an object")
+            deep = {}
+        status = deep.get("status")
+        if status not in ENRICHMENT_STATUS:
+            errors.append(
+                f"{label}.deep_enrichment.status={status!r} not in "
+                f"{sorted(ENRICHMENT_STATUS)}"
+            )
+        target_urls = deep.get("target_urls")
+        if not isinstance(target_urls, list):
+            errors.append(f"{label}.deep_enrichment.target_urls must be a list")
+            target_urls = []
+        normalized_urls = [str(url) for url in target_urls]
+        if len(normalized_urls) != len(set(normalized_urls)):
+            errors.append(f"{label}.deep_enrichment.target_urls contains duplicates")
+        if len(normalized_urls) > deep_url_max:
+            errors.append(
+                f"{label}.deep_enrichment has {len(normalized_urls)} URLs; max is "
+                f"{deep_url_max}"
+            )
+        for url in normalized_urls:
+            if not url.startswith(("http://", "https://")):
+                errors.append(
+                    f"{label}.deep_enrichment.target_urls must use absolute HTTP(S) URLs"
+                )
+                break
+        if status == "complete" and len(normalized_urls) < deep_url_min:
+            errors.append(
+                f"{label}.deep_enrichment complete requires at least "
+                f"{deep_url_min} URLs"
+            )
+        if status == "partial":
+            if not normalized_urls:
+                errors.append(
+                    f"{label}.deep_enrichment partial requires at least one attempted URL"
+                )
+            if _is_empty(deep.get("note")):
+                errors.append(
+                    f"{label}.deep_enrichment partial requires note explaining the gap"
+                )
+
+        if final_grade == "s_confirmed":
+            if status != "complete":
+                errors.append(
+                    f"{label} is s_confirmed but deep_enrichment is not complete"
+                )
+            if not {"official", "independent"}.issubset(source_types):
+                errors.append(
+                    f"{label} is s_confirmed but lacks both official and independent "
+                    "evidence types"
+                )
+
+
 def load_prior_state(con: Any, profile_name: str, date_key: str) -> dict[str, Any] | None:
     row = db_get_latest_report_state(con, profile_name, before_date_key=date_key)
     if not row:
@@ -179,6 +375,8 @@ def validate(
         )
     elif not isinstance(falsifiers, list):
         errors.append("falsifiers must be a list")
+
+    _validate_value_grading(payload, profile, errors)
 
     if not profile.get("state_enabled"):
         warnings.append(

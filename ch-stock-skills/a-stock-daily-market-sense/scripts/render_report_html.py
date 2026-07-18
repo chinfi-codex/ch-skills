@@ -284,6 +284,17 @@ MARKET_SENSE_PILL_RULES = [
 
 HERO_KEYWORDS = "上证|创业板|科创50|国证2000|中证红利|半导体设备与材料|电力能源"
 MARKET_SENSE_EXTRA_CSS = """
+.trend-state-card { border: 1px solid var(--line-2); border-radius: 12px; padding: 14px 18px; margin: 14px 0 22px; background: rgba(127,127,127,.05); }
+.trend-state-card .tsc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.trend-state-card .tsc-state { font-weight: 700; font-size: 14px; padding: 2px 12px; border-radius: 999px; }
+.trend-state-card .tsc-state.s-pos { background: rgba(40,160,90,.14); color: #1e8449; }
+.trend-state-card .tsc-state.s-std { background: rgba(127,127,127,.14); color: var(--ink-2, #555); }
+.trend-state-card .tsc-state.s-warn { background: rgba(230,160,30,.16); color: #b9770e; }
+.trend-state-card .tsc-state.s-neg { background: rgba(220,60,60,.14); color: #c0392b; }
+.trend-state-card .tsc-state.s-ice { background: rgba(70,120,220,.16); color: #2e5fb8; }
+.trend-state-card ul { margin: 0; padding: 0; list-style: none; }
+.trend-state-card li { padding: 5px 0; border-top: 1px dashed var(--line-2); font-size: 13px; line-height: 1.65; }
+.trend-state-card li:first-child { border-top: 0; }
 .kline-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .style-compare-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 12px 0 22px; }
 .style-compare-card { min-width: 0; margin: 0; }
@@ -295,6 +306,48 @@ MARKET_SENSE_EXTRA_CSS = """
 @media (max-width: 900px) { .kline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .kline-grid { grid-template-columns: 1fr; } }
 """
+
+
+# Upgrade the trend-state readings at the top of "1.1 情绪趋势" (the ULs whose
+# first item is 趋势状态) into a styled state card with a coloured state badge;
+# the sentiment table and the ==趋势判断== highlight stay outside the card.
+TREND_STATE_CARD_JS = r"""(function () {
+  const root = document.getElementById("report-body");
+  if (!root) return;
+  const heading = Array.from(root.querySelectorAll("h2, h3")).find(
+    h => /情绪趋势/.test(h.textContent));
+  if (!heading) return;
+  const uls = [];
+  let cur = heading.nextElementSibling;
+  while (cur && !/^H[1-6]$/.test(cur.tagName)) {
+    const next = cur.nextElementSibling;
+    if (cur.tagName === "UL") { uls.push(cur); cur = next; continue; }
+    break;
+  }
+  if (!uls.length || !/趋势状态[：:]/.test(uls[0].textContent)) return;
+  const card = document.createElement("aside");
+  card.className = "trend-state-card";
+  const head = document.createElement("div");
+  head.className = "tsc-head";
+  card.appendChild(head);
+  heading.after(card);
+  uls.forEach(ul => card.appendChild(ul));
+
+  const text = card.textContent;
+  const m = /趋势状态[：:]\s*(深度退潮|退潮|冰点|谨慎|标准|进攻)/.exec(text);
+  if (m) {
+    const cls = { "进攻": "s-pos", "标准": "s-std", "谨慎": "s-warn", "退潮": "s-neg", "深度退潮": "s-neg", "冰点": "s-ice" }[m[1]];
+    const badge = document.createElement("span");
+    badge.className = "tsc-state " + cls;
+    const dm = /（第\s*(\d+)\s*日）/.exec(text);
+    badge.textContent = m[1] + (dm ? "（第 " + dm[1] + " 日）" : "");
+    head.appendChild(badge);
+    const li = card.querySelector("li");
+    if (li && /^\s*趋势状态[：:]/.test(li.textContent)) li.remove();
+  } else {
+    head.remove();
+  }
+})();"""
 
 
 # --------------------------------------------------------------------------- #
@@ -1317,6 +1370,7 @@ def build_job(args) -> RenderJob:
 
     builder = HtmlReportBuilder(title=title, theme=args.theme, extra_css=MARKET_SENSE_EXTRA_CSS)
     builder.add_decoration(PillDecoration(MARKET_SENSE_PILL_RULES))
+    builder.add_ui_decoration(TREND_STATE_CARD_JS)
     builder.add_decoration(HeroDecoration(
         heading_prefix="一句话盘面判断",
         collect_tags=("P",),

@@ -20,7 +20,7 @@ description: 基于 Tushare Pro A 股日线与 Baostock 风格指数生成盘后
 ## 工作流程
 
 1. 确定交易日：解析“今天/最近”或具体日期，默认只使用 `D` 及以前数据；只有用户明确要求后验时才允许 `--allow-future`。
-2. 生成证据包：运行 `scripts/run_daily_panel.py`。脚本会直接调用数据管线，写出完整 evidence、个股 K 线展示数据（`kline_YYYYMMDD.json`）和模块级 JSON。
+2. 生成证据包：运行 `scripts/run_daily_panel.py`。脚本会直接调用数据管线，写出完整 evidence、个股 K 线展示数据（`kline_YYYYMMDD.json`）和模块级 JSON；同时调用 `scripts/trend_state_card.py`（PG `market_history` 趋势轴：五计数器 + 六档状态机，与 AlphaVault 盘前工具同参）把 `trend_state_card` 区块注入 `module1_market_trend.json`，PG 不可达时该区块降级为 `available: false`，不阻断研报。
 3. 生成首轮模块产物：模块 1、2、4、5 继续各自只读自己的 JSON、方法论与模板。模块 3 首轮只根据 `module3_money_effect.json` 归纳临时主题、父主题成员与候选细分成员，先写 `stars: null` 的 `module3_theme_map.json`；不要搜索，也不要在统计前凭手算锁星。有 subagent 时分发最小上下文，没有时按相同边界顺序执行。
 4. 统计并锁定模块 3 星级：运行 `theme_group_stats.py` 生成 `module3_theme_stats.json`，再由模型严格按 Market Evidence Pack 与统计结果写回 `stars: 1/2/3`。星级锁定后，只对当日 ★★/★★★ 主线强制尝试搜索，并按宿主能力选读知识库或产业链资料；★ 级方向不搜索、不做产业推演、不进入 3.2。主 agent 将 Web 结果、可选的宿主知识证据与查询错误压缩成 `module3_enrichment_pack.json`。外部资料只用于解释催化、推演产业变量与挖掘细分线路，绝不回写或上调 3.1 星级。详细搜索、证据和评级纪律见 `references/methodology/catalyst_subline_mining.md`。
 5. 聚合成稿：模块 3 第二阶段只读取 theme map、统计结果、enrichment pack、方法论与模板，完成 3.1 主线判定、3.2 催化与细分线路推演、3.3 领导股与弹性股。主 agent 再读取模块 1-5 输出、`assembled_checks.json` 与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。搜索或知识查询失败不阻断日报，但要披露证据缺口并降低产业推演确定性。

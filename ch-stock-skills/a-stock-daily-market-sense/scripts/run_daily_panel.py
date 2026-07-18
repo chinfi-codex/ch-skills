@@ -158,9 +158,21 @@ def patched_environment(env: Dict[str, str]):
         os.environ.update(original)
 
 
-def write_module_contexts(evidence: dict, module_dir: Path) -> None:
+def build_trend_state_card(resolved_date: str) -> Dict[str, Any]:
+    """趋势轴状态卡（PG market_history 五计数器 + 六档状态机），失败不阻断研报。"""
+    try:
+        import trend_state_card
+
+        return trend_state_card.build_block(resolved_date)
+    except Exception as exc:
+        return {"available": False, "reason": f"trend_state_card failed: {exc}"}
+
+
+def write_module_contexts(evidence: dict, module_dir: Path, trend_card: Optional[Dict[str, Any]] = None) -> None:
     module_dir.mkdir(parents=True, exist_ok=True)
     for name, payload in market_panel.build_module_contexts(evidence).items():
+        if name == "module1_market_trend" and trend_card is not None:
+            payload["trend_state_card"] = trend_card
         (module_dir / f"{name}.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -277,12 +289,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         context_path.write_text(json.dumps(report_context, ensure_ascii=False, indent=2), encoding="utf-8")
 
     module_context_dir = None
+    trend_card: Optional[Dict[str, Any]] = None
     if not args.no_module_context:
+        trend_card = build_trend_state_card(resolved_date)
         module_context_dir = Path(args.module_context_dir) if args.module_context_dir else reports_dir / f"module_context_{resolved_date}"
-        write_module_contexts(evidence, module_context_dir)
+        write_module_contexts(evidence, module_context_dir, trend_card)
 
     print(json.dumps({
         "resolved_trade_date": resolved_date,
+        "trend_state": (trend_card or {}).get("state") if (trend_card or {}).get("available") else (trend_card or {}).get("reason"),
         "evidence": str(evidence_path),
         "stock_klines": str(kline_path) if kline_payload is not None else None,
         "report_context": str(context_path) if context_path else None,

@@ -59,7 +59,7 @@ Agent 先阅读基础 evidence packet，再用本文件判断哪些对象值得�
 
 价值定级（见 `framework.md`）判出 **S-candidate / A+ 重点候选** 后，对候选预算内的 0-2 个对象再跑一轮**深挖 pass**：目标不是"多核实几个对象"，而是补齐官方一手、真实可用性与独立复核，判断它能否升级为 S-confirmed。两轮用的是同一个 `enrich_targets.py`，区别只在广度还是深度。
 
-**触发条件**：S-candidate 一经成立就触发深挖，不能等到“已确认 S”才找证据。普通 A / B 不进这一轮。候选与已确认重点共用每天 2 个对象的硬预算；超过预算者按 A 处理并在 `grading_audit` 写明排序理由。
+**触发条件**：先把达到结构门槛的对象排序，只有排序前 2 个进入 S-candidate、`grading_audit` 与深挖；不能等到“已确认 S”才找证据。普通 A / B 不进这一轮，超出预算的对象也按 A 处理且不额外创建审计条目，否则会突破 `candidate_budget` 硬门禁。入选对象为什么优先于其他潜在候选，要写进各自 `grading_audit.rationale`，让资源分配仍可复核。
 
 **每个候选抓 3-6 个 target**（`enrich_targets.py` 支持同一 `item_id` 挂多个 URL，去重键含 URL，不会互相覆盖），按下面三类凑齐证据面。若已明确某类证据客观不可得，可在 3 个 URL 前提前停止，但必须在 `grading_audit.deep_enrichment.note` 和 `evidence_gaps` 写清缺口，最终级别只能保留 S-candidate / A+，不能升级为 S-confirmed：
 

@@ -114,6 +114,13 @@ class PeBucketTests(unittest.TestCase):
 
 
 class FilterBarTests(unittest.TestCase):
+    def test_legacy_evidence_is_not_mislabeled_as_tushare_exception(self) -> None:
+        html = renderer.render_html(
+            _view(parent_annualized=4.0, parent_pe=25.0, kf_median=1.5)
+        )
+        self.assertIn("来源未标注（旧版证据）", html)
+        self.assertIn("else if(s.source_authority==='tushare_exception')", html)
+
     def test_multiselect_bar_present_and_search_removed(self) -> None:
         html = renderer.render_html(_view(parent_annualized=4.0, parent_pe=25.0, kf_median=1.5))
         self.assertIn('id="msbar"', html)          # multi-select container built by JS

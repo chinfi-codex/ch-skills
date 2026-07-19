@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +14,15 @@ import cninfo_enrich  # noqa: E402
 
 
 class CninfoDiscoveryTests(unittest.TestCase):
+    def test_announcement_epoch_is_always_interpreted_in_beijing(self) -> None:
+        # This epoch is 2026-07-18 00:00 in Shanghai but still 07-17 in UTC.
+        with patch.object(
+            cninfo_client.time,
+            "localtime",
+            return_value=time.struct_time((2026, 7, 17, 16, 0, 0, 4, 198, 0)),
+        ):
+            self.assertEqual(cninfo_client._epoch_to_date(1784304000000), "2026-07-18")
+
     def test_period_title_variants_and_noise(self) -> None:
         period = "20260630"
         self.assertTrue(cninfo_client.is_forecast_announcement_title(
@@ -24,9 +34,19 @@ class CninfoDiscoveryTests(unittest.TestCase):
         self.assertTrue(cninfo_client.is_forecast_announcement_title(
             "九牧王2026年半度业绩预减的公告", period,
         ))
+        self.assertTrue(cninfo_client.is_forecast_announcement_title(
+            "样例公司2026年1-6月业绩预告", period,
+        ))
         self.assertFalse(cninfo_client.is_forecast_announcement_title(
             "2026年半年度业绩快报", period,
         ))
+
+    def test_security_code_mapping_rejects_non_equity_prefixes(self) -> None:
+        self.assertEqual(cninfo_client.to_ts_code("300394"), "300394.SZ")
+        self.assertEqual(cninfo_client.to_ts_code("688205"), "688205.SH")
+        self.assertEqual(cninfo_client.to_ts_code("920809"), "920809.BJ")
+        self.assertIsNone(cninfo_client.to_ts_code("110059"))  # 沪市转债
+        self.assertIsNone(cninfo_client.to_ts_code("500001"))  # 基金
 
     @patch("cninfo_client._post_json")
     def test_category_discovery_keeps_a_share_forecast_only(self, post_json) -> None:

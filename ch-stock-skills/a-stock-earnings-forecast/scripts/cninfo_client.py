@@ -13,6 +13,7 @@ from __future__ import annotations
 import threading
 import time
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -33,6 +34,7 @@ TOPSEARCH_URL = "http://www.cninfo.com.cn/new/information/topSearch/query"
 QUERY_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 STATIC_PREFIX = "http://static.cninfo.com.cn/"
 FORECAST_CATEGORY = "category_yjygjxz_szsh"  # 业绩预告
+BEIJING_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
@@ -45,7 +47,8 @@ _HEADERS = {
 # Period end (mmdd) -> title keywords that must / must-not appear.
 _PERIOD_TITLE = {
     "0331": (("一季", "第一季"), ("半年", "三季", "年度业绩", "第三季")),
-    "0630": (("半年", "半度", "中期"), ("三季", "第三季")),
+    "0630": (("半年", "半度", "中期", "1-6月", "1至6月", "1—6月", "1–6月"),
+             ("三季", "第三季")),
     "0930": (("三季", "第三季"), ("半年",)),
     "1231": (("年度", "年报"), ("半年", "季度", "一季", "三季")),
 }
@@ -134,7 +137,9 @@ def to_ts_code(code: str) -> Optional[str]:
         return f"{code}.SH"
     if code.startswith(("4", "8", "920", "430")):
         return f"{code}.BJ"
-    return f"{code}.SZ"
+    if code.startswith(("000", "001", "002", "003", "300", "301")):
+        return f"{code}.SZ"
+    return None
 
 
 def _announcement_payload(page_num: int, se_date: str, stock: str = "",
@@ -231,7 +236,10 @@ def find_forecast_announcement(code: str, orgid: str, period: str,
 
 def _epoch_to_date(ms: Any) -> str:
     try:
-        return time.strftime("%Y-%m-%d", time.localtime(int(ms) / 1000))
+        # CNInfo announcementTime is an epoch value, while the report contract
+        # uses the exchange disclosure date in Asia/Shanghai. Never let the
+        # host timezone (commonly UTC in CI/servers) shift the date backward.
+        return datetime.fromtimestamp(int(ms) / 1000, BEIJING_TZ).strftime("%Y-%m-%d")
     except Exception:  # noqa: BLE001
         return ""
 

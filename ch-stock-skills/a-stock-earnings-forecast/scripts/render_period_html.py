@@ -815,7 +815,9 @@ function renderDetail(){
   h+=mrow('单季度同比',fmtPct(s.single_q_yoy,s.type)+(s.accelerating?' ↑加速':''),cls(s.single_q_yoy));
   h+=mrow('环比',fmtPct(s.qoq,s.type),cls(s.qoq));
   h+=mrow('扣非净利(cninfo)',s.kf||'—');
-  const src=s.source_authority==='cninfo'?'CNInfo官方公告 · '+(s.structured_source||'公告发现'):'Tushare例外 · '+(s.structured_source||'结构化记录');
+  let src='来源未标注（旧版证据）';
+  if(s.source_authority==='cninfo')src='CNInfo官方公告 · '+(s.structured_source||'公告发现');
+  else if(s.source_authority==='tushare_exception')src='Tushare例外 · '+(s.structured_source||'结构化记录');
   h+=mrow('预告来源',src);
   h+=mrow('营收'+(s.rev_period?`(${s.rev_period}实际)`:''),s.rev_yoy===null?'—':sign(s.rev_yoy)+'%',cls(s.rev_yoy));
   h+='</div>';

@@ -39,6 +39,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 
+from cninfo_client import list_forecast_announcements
+from cninfo_enrich import enrich_announcement, forecast_row_from_enrich
 from store import FORECAST_COLS, Store
 from tushare_client import TushareProxy, get_tushare_pro
 
@@ -246,7 +248,10 @@ def scan_forecasts_incremental(pro: TushareProxy, store: Store, period: str, sta
     for the period from cache. Announcement-day calls run in a bounded thread pool."""
     days = calendar_days(start_ann, end_ann)
 
-    logged = set() if rebuild else store.logged_ann_dates(period)
+    cached_tushare = store.load_tushare_forecasts(period)
+    # First run after the CNInfo-primary migration must seed the dedicated
+    # reconciliation table even when the legacy fetch log already has watermarks.
+    logged = set() if rebuild or (store.available and not cached_tushare) else store.logged_ann_dates(period)
     recent = set(days[-refetch_days:]) if refetch_days > 0 else set()
     to_fetch = [d for d in days if d not in logged or d in recent]
 
@@ -270,13 +275,13 @@ def scan_forecasts_incremental(pro: TushareProxy, store: Store, period: str, sta
     # multiple announcement days; the batch upsert must not carry duplicate keys.
     # Only record the fetch-log watermark if the rows actually persisted — never
     # mark a day scanned when its forecasts failed to write (would drop them).
-    if store.upsert_forecasts(_dedupe_latest(new_rows)):
+    if store.upsert_tushare_forecasts(_dedupe_latest(new_rows)):
         store.record_fetch_days(period, day_counts)
     elif store.available:
         notes.append("预告落库失败，本次不记录公告日水位(下次将重扫)。")
 
     if store.available:
-        full = store.load_forecasts(period)
+        full = store.load_tushare_forecasts(period)
     else:
         full = _dedupe_latest(new_rows)
 
@@ -290,6 +295,309 @@ def scan_forecasts_incremental(pro: TushareProxy, store: Store, period: str, sta
         "cache": "on" if store.available else f"off ({store.reason})",
     }
     return full, stats
+
+
+def _cninfo_date_ranges(days: List[str]) -> List[Tuple[str, str]]:
+    """Collapse sorted YYYYMMDD days into contiguous ranges."""
+    if not days:
+        return []
+    ordered = sorted(set(days))
+    groups: List[Tuple[str, str]] = []
+    start = prev = ordered[0]
+    for day in ordered[1:]:
+        expected = (dt.datetime.strptime(prev, "%Y%m%d").date() + dt.timedelta(days=1)).strftime("%Y%m%d")
+        if day != expected:
+            groups.append((start, prev))
+            start = day
+        prev = day
+    groups.append((start, prev))
+    return groups
+
+
+def scan_cninfo_incremental(store: Store, period: str, start_ann: str, end_ann: str,
+                            refetch_days: int, rebuild: bool, workers: int,
+                            notes: List[str]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Discover the authoritative announcement universe from CNInfo by day."""
+    days = calendar_days(start_ann, end_ann)
+    logged = set() if rebuild else store.logged_cninfo_ann_dates(period)
+    recent = set(days[-refetch_days:]) if refetch_days > 0 else set()
+    to_fetch = [day for day in days if day not in logged or day in recent]
+    rows: List[Dict[str, Any]] = []
+    counts: Dict[str, int] = {}
+    failed = 0
+    # CNInfo list API is sensitive to burst concurrency. Query contiguous date
+    # ranges sequentially and let its paginator pace requests; one full-window
+    # migration is ~59 pages, while a normal daily run is a single short range.
+    for range_start, range_end in _cninfo_date_ranges(to_fetch):
+        start_dash = f"{range_start[:4]}-{range_start[4:6]}-{range_start[6:]}"
+        end_dash = f"{range_end[:4]}-{range_end[4:6]}-{range_end[6:]}"
+        try:
+            found = list_forecast_announcements(period, f"{start_dash}~{end_dash}", timeout=30)
+        except Exception as exc:  # noqa: BLE001
+            failed += len(calendar_days(range_start, range_end))
+            notes.append(f"CNInfo公告扫描({range_start}~{range_end})失败: {str(exc)[:100]}")
+            continue
+        range_days = calendar_days(range_start, range_end)
+        range_counts = {day: 0 for day in range_days}
+        for row in found:
+            day = _date_digits(row.get("ann_date"))
+            if day in range_counts:
+                range_counts[day] += 1
+        counts.update(range_counts)
+        rows.extend(found)
+    if store.upsert_cninfo_announcements(period, rows):
+        store.record_cninfo_fetch_days(period, counts)
+    elif store.available:
+        notes.append("CNInfo公告元数据落库失败，本次不记录CNInfo水位。")
+    full = store.load_cninfo_announcements(period) if store.available else rows
+    return full, {
+        "cninfo_ann_days_in_window": len(days),
+        "cninfo_ann_days_fetched": len(to_fetch),
+        "cninfo_ann_days_skipped_cached": len(days) - len(to_fetch),
+        "cninfo_fetch_failed": failed,
+        "cninfo_new_announcement_rows": len(rows),
+        "cninfo_announcement_rows_total": len(full),
+    }
+
+
+def _date_digits(value: Any) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())[:8]
+
+
+def _latest_cninfo_by_code(rows: List[Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
+    latest: Dict[str, Dict[str, Any]] = {}
+    first: Dict[str, str] = {}
+    for row in rows:
+        code = str(row.get("ts_code") or "")
+        ann_date = _date_digits(row.get("ann_date"))
+        if not code or not ann_date:
+            continue
+        first[code] = min(first.get(code, ann_date), ann_date)
+        cur = latest.get(code)
+        key = (ann_date, str(row.get("announcement_id") or ""))
+        if cur is None or key >= (_date_digits(cur.get("ann_date")), str(cur.get("announcement_id") or "")):
+            normalized = dict(row)
+            normalized["ann_date"] = ann_date
+            latest[code] = normalized
+    return latest, first
+
+
+def _cached_enrich_record(ts_code: str, cached: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "ts_code": ts_code, "code": ts_code[:6], "found": True,
+        "announcement": cached.get("announcement") or {},
+        "parsed": cached.get("parsed") or {}, "text": cached.get("text") or "",
+        "notes": [], "from_cache": True,
+    }
+
+
+def _amount_mid_raw(row: Dict[str, Any]) -> Optional[float]:
+    vals = [row.get("net_profit_min"), row.get("net_profit_max")]
+    vals = [float(v) for v in vals if v is not None and pd.notna(v)]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _same_day_structured_conflict(cn_row: Dict[str, Any], ts_row: Dict[str, Any]) -> bool:
+    """Detect an unstable PDF table parse against the same official disclosure.
+
+    CNInfo remains the discovery/authority source.  Tushare is used here only as
+    an independent structured representation of the *same announcement*.  A
+    sign disagreement is always unsafe; a midpoint difference above 25% is
+    also treated as a parser-row mismatch. This catches PDF cell concatenation
+    such as a current upper bound ``600`` followed immediately by prior-period
+    ``176.80``, which text extraction exposes as the false number ``600176.80``.
+    """
+    if _date_digits(cn_row.get("ann_date")) != _date_digits(ts_row.get("ann_date")):
+        return False
+    cn_mid, ts_mid = _amount_mid_raw(cn_row), _amount_mid_raw(ts_row)
+    if cn_mid is None or ts_mid is None:
+        return False
+    if abs(cn_mid) > 100 and abs(ts_mid) > 100 and (cn_mid > 0) != (ts_mid > 0):
+        return True
+    relative = abs(cn_mid - ts_mid) / max(abs(ts_mid), 100.0)
+    return relative > 0.25
+
+
+def _force_negative_amount(amount: Any) -> None:
+    """Normalize unsigned loss cells in an in-memory CNInfo parsed record."""
+    if not isinstance(amount, dict):
+        return
+    vals = [amount.get("low"), amount.get("high")]
+    if all(v is not None for v in vals):
+        negative = sorted((-abs(float(vals[0])), -abs(float(vals[1]))))
+        amount["low"], amount["high"] = negative
+    if amount.get("point") is not None:
+        amount["point"] = -abs(float(amount["point"]))
+
+
+def build_cninfo_primary_forecasts(store: Store, period: str, announcements: List[Dict[str, Any]],
+                                   tushare_rows: List[Dict[str, Any]], workers: int,
+                                   notes: List[str]) -> Tuple[List[Dict[str, Any]], Dict[str, Any],
+                                                              Dict[str, Any], Dict[str, Dict[str, Any]]]:
+    """Build the final forecast universe: CNInfo authority + explicit TS exceptions.
+
+    All discovered CNInfo PDFs are cached once.  Parsed CNInfo fields win; a
+    Tushare value is used only to fill a field that the PDF parser could not
+    stabilize.  Tushare-only rows remain visible as labeled exception records
+    (mainly prospectus-embedded forecasts) and are counted in reconciliation.
+    """
+    latest, first_dates = _latest_cninfo_by_code(announcements)
+    cn_codes = sorted(latest)
+    ts_map = {str(row["ts_code"]): dict(row) for row in tushare_rows}
+    cached = store.get_enrich_many(cn_codes, period)
+    to_fetch = []
+    for code in cn_codes:
+        current = cached.get(code)
+        cached_date = _date_digits((current or {}).get("announcement", {}).get("ann_date"))
+        if not current or current.get("parsed") is None or cached_date < latest[code]["ann_date"]:
+            to_fetch.append(code)
+
+    fetched: Dict[str, Dict[str, Any]] = {}
+    if to_fetch:
+        with ThreadPoolExecutor(max_workers=max(1, min(workers, len(to_fetch)))) as ex:
+            for code, rec in zip(to_fetch, ex.map(lambda c: enrich_announcement(latest[c], period), to_fetch)):
+                rec["from_cache"] = False
+                fetched[code] = rec
+
+    upsert_enrich: List[Dict[str, Any]] = []
+    enrich_records: Dict[str, Dict[str, Any]] = {}
+    for code in cn_codes:
+        rec = fetched.get(code)
+        if rec is None:
+            rec = _cached_enrich_record(code, cached[code])
+        enrich_records[code] = rec
+        if rec.get("found") and not rec.get("from_cache"):
+            ann = rec.get("announcement") or {}
+            upsert_enrich.append({
+                "ts_code": code, "period": period, "ann_date": ann.get("ann_date", ""),
+                "title": ann.get("title", ""), "url": ann.get("url", ""),
+                "parsed": rec.get("parsed"), "text": rec.get("text", ""),
+            })
+    store.upsert_enrich_many(upsert_enrich)
+
+    cn_rows: Dict[str, Dict[str, Any]] = {}
+    source_index: Dict[str, Dict[str, Any]] = {}
+    parsed_rows = 0
+    parse_fallback = 0
+    conflict_fallback = 0
+    missing_no_fallback: List[str] = []
+    rejected_unparsed: List[str] = []
+    for code in cn_codes:
+        ann = latest[code]
+        rec = enrich_records[code]
+        ts_row = ts_map.get(code)
+        parsed = rec.get("parsed") or {}
+        effective_type = str(parsed.get("forecast_type") or (ts_row or {}).get("type") or "")
+        if effective_type in ("首亏", "续亏", "增亏", "减亏"):
+            _force_negative_amount(parsed.get("parent_net_yi"))
+            _force_negative_amount(parsed.get("kf_net_profit_yi"))
+        row = forecast_row_from_enrich(rec, period) if rec.get("found") else None
+        structured_source = "cninfo_pdf"
+        if row is not None:
+            parsed_rows += 1
+            if ts_row:
+                # CNInfo facts have priority; Tushare only fills parser gaps and
+                # preserves the earliest known disclosure date.
+                for field in ("type", "p_change_min", "p_change_max", "last_parent_net", "change_reason"):
+                    if row.get(field) in (None, ""):
+                        row[field] = ts_row.get(field)
+                prior_first = _date_digits(ts_row.get("first_ann_date") or ts_row.get("ann_date"))
+                if prior_first:
+                    row["first_ann_date"] = min(first_dates[code], prior_first)
+                row["update_flag"] = row.get("update_flag") or ts_row.get("update_flag")
+                if _same_day_structured_conflict(row, ts_row):
+                    # The two rows describe the same official announcement; a
+                    # material mismatch indicates that the PDF table parser
+                    # selected a prior-period/adjacent row. Keep CNInfo reason
+                    # and provenance, but use the reconciled structured amounts.
+                    cn_reason = row.get("change_reason")
+                    first_ann_date = row.get("first_ann_date")
+                    row = dict(ts_row)
+                    if cn_reason:
+                        row["change_reason"] = cn_reason
+                    if first_ann_date:
+                        row["first_ann_date"] = first_ann_date
+                    structured_source = "tushare_reconciliation_fallback"
+                    conflict_fallback += 1
+            else:
+                row["first_ann_date"] = first_dates[code]
+        elif ts_row is not None:
+            row = dict(ts_row)
+            structured_source = "tushare_parse_fallback"
+            parse_fallback += 1
+        else:
+            missing_no_fallback.append(code)
+            title = str(ann.get("title") or "")
+            explicit_forecast = any(token in title for token in (
+                "业绩预告", "业绩预增", "业绩预减", "业绩预盈", "业绩预亏", "业绩公告",
+            ))
+            if not explicit_forecast:
+                # Supplemental search intentionally has high recall. A generic
+                # 经营情况公告 with neither parsed profit nor Tushare corroboration
+                # is not stable evidence of an earnings forecast (e.g. contract
+                # operating statistics), so reject it from the report universe.
+                rejected_unparsed.append(code)
+                continue
+            ftype = next((token for token in (*POSITIVE_TYPES, *NEGATIVE_TYPES) if token in title), "")
+            row = {
+                "ts_code": code, "end_date": period, "ann_date": ann["ann_date"],
+                "type": ftype, "p_change_min": None, "p_change_max": None,
+                "net_profit_min": None, "net_profit_max": None, "last_parent_net": None,
+                "first_ann_date": first_dates[code], "summary": f"CNInfo公告待稳定解析：{title}",
+                "change_reason": "", "update_flag": "1" if any(t in title for t in ("修正", "更正")) else "0",
+            }
+            structured_source = "cninfo_unparsed"
+        cn_rows[code] = row
+        source_index[code] = {
+            "authority": "cninfo", "discovery_source": "cninfo",
+            "structured_source": structured_source,
+            "announcement_id": ann.get("announcement_id"),
+            "title": ann.get("title"), "url": ann.get("url"),
+        }
+
+    accepted_cn_codes = set(cn_rows)
+    ts_only = sorted(set(ts_map) - accepted_cn_codes)
+    final_map = dict(cn_rows)
+    for code in ts_only:
+        final_map[code] = ts_map[code]
+        source_index[code] = {
+            "authority": "tushare_exception", "discovery_source": "tushare_reconciliation",
+            "structured_source": "tushare", "reason": "CNInfo独立预告公告未命中（常见于IPO文件内嵌预测）",
+        }
+    final_rows = _dedupe_latest(list(final_map.values()))
+    if store.available and not store.upsert_forecasts(final_rows):
+        notes.append("CNInfo主源合并结果写入forecast_cache失败；本次仍使用内存结果。")
+
+    enrich_payload = {
+        "meta": {
+            "period": period, "period_label": period_label(period),
+            "generated_at": beijing_now().isoformat(timespec="seconds"),
+            "requested": len(cn_codes),
+            "found": sum(1 for rec in enrich_records.values() if rec.get("found")),
+            "from_cache": len(cn_codes) - len(to_fetch),
+            "downloaded": len(to_fetch),
+            "missing": [code for code, rec in enrich_records.items() if not rec.get("found")],
+            "source_role": "CNInfo official announcement facts; generated by forecast_scan",
+        },
+        "stocks": [enrich_records[code] for code in cn_codes if enrich_records[code].get("found")],
+    }
+    stats = {
+        "primary_source": "cninfo",
+        "cninfo_discovery_candidates": len(cn_codes),
+        "cninfo_unique_stocks": len(accepted_cn_codes),
+        "tushare_reconciliation_stocks": len(ts_map),
+        "source_intersection": len(accepted_cn_codes & set(ts_map)),
+        "cninfo_only_stocks": len(accepted_cn_codes - set(ts_map)),
+        "tushare_only_exceptions": len(ts_only),
+        "cninfo_pdf_structured": parsed_rows,
+        "cninfo_pdf_parse_fallback": parse_fallback,
+        "cninfo_pdf_conflict_fallback": conflict_fallback,
+        "cninfo_unparsed_without_fallback": [code for code in missing_no_fallback if code not in rejected_unparsed],
+        "cninfo_rejected_unparsed": rejected_unparsed,
+        "cninfo_pdf_downloaded": len(to_fetch),
+        "cninfo_pdf_from_cache": len(cn_codes) - len(to_fetch),
+    }
+    return final_rows, stats, enrich_payload, source_index
 
 
 def _median(lo: Any, hi: Any) -> Optional[float]:
@@ -371,7 +679,8 @@ def build_stock_record(row: pd.Series, cache: CumCache, period: str,
                        basic: Dict[str, Dict[str, str]], min_pchange: float,
                        price_reaction: Optional[Dict[str, Any]] = None,
                        total_mv: Optional[float] = None,
-                       mv_asof: Optional[str] = None) -> Dict[str, Any]:
+                       mv_asof: Optional[str] = None,
+                       source_info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     ts_code = str(row["ts_code"])
     ftype = str(row["type"]) if pd.notna(row.get("type")) else ""
 
@@ -380,6 +689,23 @@ def build_stock_record(row: pd.Series, cache: CumCache, period: str,
     np_max = None if pd.isna(row.get("net_profit_max")) else float(row["net_profit_max"]) * WAN
     np_med = _median(np_min, np_max)
     last_parent = None if pd.isna(row.get("last_parent_net")) else float(row["last_parent_net"]) * WAN
+    py = prev_year_period(period)
+    if last_parent is None:
+        last_parent = cache.np(py)
+
+    # CNInfo title templates do not always carry the forecast-type word. Infer
+    # only the mechanical direction from the disclosed amount versus the actual
+    # prior-year base; this remains evidence classification, not a quality verdict.
+    if not ftype and np_med is not None and last_parent is not None:
+        if last_parent <= 0 < np_med:
+            ftype = "扭亏"
+        elif last_parent < 0 and np_med <= 0:
+            ftype = "减亏" if np_med > last_parent else "增亏"
+        elif last_parent > 0 and np_med < 0:
+            ftype = "首亏"
+        elif last_parent > 0:
+            ratio = np_med / last_parent
+            ftype = "预增" if ratio >= 1.3 else "略增" if ratio > 1 else "预减" if ratio <= 0.7 else "略减"
 
     if np_med is not None:
         cache.set_forecast(period, np_med)
@@ -396,7 +722,6 @@ def build_stock_record(row: pd.Series, cache: CumCache, period: str,
         cum_source = "na"
 
     # --- single-quarter decomposition on 归母净利 ---
-    py = prev_year_period(period)
     single_cur = cache.single_np(period)
     single_prev = cache.single_np(py)
     # single value of the previous quarter (for QoQ). For Q2 that's Q1 (= its cumulative).
@@ -452,6 +777,7 @@ def build_stock_record(row: pd.Series, cache: CumCache, period: str,
         "industry": info.get("industry", ""),
         "area": info.get("area", ""),
         "market": info.get("market", ""),
+        "source": source_info or {},
         "type": ftype,
         "ann_date": str(row.get("ann_date") or ""),
         "first_ann_date": str(row.get("first_ann_date", "")) if pd.notna(row.get("first_ann_date")) else "",
@@ -834,7 +1160,14 @@ def gather_price_reactions(pro: TushareProxy, store: Store, anchors: Dict[str, s
     if refresh_price:
         store.delete_bars_many(codes)
     cached = store.load_bars_many(codes)
-    today_str = beijing_today().strftime("%Y%m%d")
+    today = beijing_today()
+    market_days = trading_days(
+        pro, (today - dt.timedelta(days=15)).strftime("%Y%m%d"), today.strftime("%Y%m%d"),
+    )
+    # Use the latest actual trading day, not a weekend/holiday calendar date.
+    # Otherwise every rerun plans an empty tail request for every stock and the
+    # cache can never prove that it is current.
+    today_str = market_days[-1] if market_days else today.strftime("%Y%m%d")
 
     plans = {c: _price_fetch_ranges(cached.get(c, []), anchors[c], today_str) for c in codes}
     to_fetch = [c for c in codes if plans[c]]
@@ -897,21 +1230,46 @@ def main(argv: Optional[List[str]] = None) -> int:
     end_ann = args.end_ann or default_end.strftime("%Y%m%d")
 
     notes: List[str] = [
-        "业绩预告(forecast)接口只有净利润(min/max)与同比幅度，没有营收字段；"
-        "收入取自最近实际报告期(income)，为 trailing 实际值，不是预告值。",
+        "业绩预告以CNInfo官方公告为主发现源和事实权威；公告PDF解析失败，或同公告日解析值出现"
+        "正负号/重大数值冲突时才使用Tushare forecast结构化值显式回退，Tushare独有记录仅作为"
+        "显式例外（常见于IPO文件内嵌预测）。",
+        "业绩预告通常没有营收字段；收入取自最近实际报告期(income)，为 trailing 实际值，不是预告值。",
         "单季度同比/环比用实际季报拆解：单季净利 = 累计(预告中值) − 上一累计期(实际)。",
         f"公告日扫描使用北京时间(Asia/Shanghai)，窗口默认截止到运行日+1({ann_today.strftime('%Y%m%d')})，"
         "逐日历日查询以覆盖盘后按次日入库及周末公告。",
-        "已抓的预告/季报存入 DB(forecast_* 表)，每次只增量抓新公告日与新个股，不重复全量抓取。",
+        "CNInfo公告水位、公告元数据、PDF解析、Tushare差异对照和季报均存入PostgreSQL forecast_*表；"
+        "日更只重扫最近公告日与新个股。",
     ]
 
     store = Store(enabled=not args.no_cache)
     refresh_income = args.refresh_income or args.rebuild
     workers = max(1, args.fetch_workers)
     pro = TushareProxy(get_tushare_pro())
-    forecasts, fetch_stats = scan_forecasts_incremental(
+    cninfo_announcements, cninfo_stats = scan_cninfo_incremental(
+        store, period, start_ann, end_ann, args.refetch_days, args.rebuild, workers, notes,
+    )
+    if cninfo_stats.get("cninfo_fetch_failed"):
+        print(json.dumps({
+            "error": "cninfo_primary_discovery_failed",
+            "period": period,
+            "failed_days": cninfo_stats["cninfo_fetch_failed"],
+            "message": "CNInfo是主发现源；公告扫描未完整成功，已停止且不会用Tushare替代生成新报告。",
+        }, ensure_ascii=False, indent=2), file=sys.stderr)
+        return 3
+    tushare_rows, tushare_stats = scan_forecasts_incremental(
         pro, store, period, start_ann, end_ann, args.refetch_days, args.rebuild, workers, notes,
     )
+    forecasts, source_stats, enrich_payload, source_index = build_cninfo_primary_forecasts(
+        store, period, cninfo_announcements, tushare_rows, workers, notes,
+    )
+    fetch_stats = {**tushare_stats, **cninfo_stats, **source_stats}
+    fetch_stats["tushare_reconciliation_total"] = tushare_stats.get("forecasts_total", 0)
+    fetch_stats["forecasts_total"] = len(forecasts)
+
+    enrich_path = os.path.join("reports", f"cninfo_enrich_{period}.json")
+    os.makedirs(os.path.dirname(enrich_path), exist_ok=True)
+    with open(enrich_path, "w", encoding="utf-8") as fh:
+        json.dump(enrich_payload, fh, ensure_ascii=False, indent=2)
 
     stocks: List[Dict[str, Any]] = []
     income_missing: List[str] = []
@@ -946,7 +1304,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 income_missing.append(ts_code)
             rec = build_stock_record(row, cache, period, basic, args.min_pchange,
                                      price_reaction=reactions.get(ts_code),
-                                     total_mv=mv_map.get(ts_code), mv_asof=mv_asof)
+                                     total_mv=mv_map.get(ts_code), mv_asof=mv_asof,
+                                     source_info=source_index.get(ts_code))
             if args.positive_only and rec["flags"]["negative_type"]:
                 continue
             stocks.append(rec)
@@ -984,6 +1343,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             "fetch_stats": fetch_stats,
             "income_missing": income_missing,
             "data_notes": notes,
+            "primary_source": "cninfo",
+            "tushare_role": "reconciliation_and_exception_fallback",
         },
         "industry_summary": build_industry_summary(stocks),
         "stocks": stocks,

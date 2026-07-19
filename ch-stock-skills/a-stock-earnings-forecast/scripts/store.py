@@ -9,7 +9,10 @@ are namespaced `forecast_*` inside the shared alpha_data database.
 Cache tables
 ------------
 - forecast_cache      : latest forecast per (ts_code, end_date)
+- forecast_tushare_cache: Tushare structured reconciliation rows (not discovery authority)
 - forecast_fetch_log  : which (period, ann_date) announcement-days were scanned
+- forecast_cninfo_fetch_log: official CNInfo discovery watermarks by day
+- forecast_cninfo_announcement: official announcement metadata/provenance
 - forecast_income_cache: actual quarterly income per (ts_code, period); NULL rows
                          record "fetched, no data" so newly-listed gaps aren't
                          re-queried every run
@@ -66,6 +69,22 @@ _SCHEMA: Dict[str, str] = {
             fetched_at TEXT,
             PRIMARY KEY (ts_code, end_date)
         )""",
+    "forecast_tushare_cache": """
+        CREATE TABLE IF NOT EXISTS forecast_tushare_cache (
+            ts_code TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            ann_date TEXT,
+            type TEXT,
+            p_change_min REAL, p_change_max REAL,
+            net_profit_min REAL, net_profit_max REAL,
+            last_parent_net REAL,
+            first_ann_date TEXT,
+            summary TEXT,
+            change_reason TEXT,
+            update_flag TEXT,
+            fetched_at TEXT,
+            PRIMARY KEY (ts_code, end_date)
+        )""",
     "forecast_fetch_log": """
         CREATE TABLE IF NOT EXISTS forecast_fetch_log (
             period TEXT NOT NULL,
@@ -73,6 +92,24 @@ _SCHEMA: Dict[str, str] = {
             row_count INTEGER,
             fetched_at TEXT,
             PRIMARY KEY (period, ann_date)
+        )""",
+    "forecast_cninfo_fetch_log": """
+        CREATE TABLE IF NOT EXISTS forecast_cninfo_fetch_log (
+            period TEXT NOT NULL,
+            ann_date TEXT NOT NULL,
+            row_count INTEGER,
+            fetched_at TEXT,
+            PRIMARY KEY (period, ann_date)
+        )""",
+    "forecast_cninfo_announcement": """
+        CREATE TABLE IF NOT EXISTS forecast_cninfo_announcement (
+            announcement_id TEXT PRIMARY KEY,
+            period TEXT NOT NULL,
+            ts_code TEXT NOT NULL,
+            ann_date TEXT NOT NULL,
+            title TEXT,
+            url TEXT,
+            fetched_at TEXT
         )""",
     "forecast_income_cache": """
         CREATE TABLE IF NOT EXISTS forecast_income_cache (
@@ -155,6 +192,9 @@ _SCHEMA: Dict[str, str] = {
 # period scan can't use it. Index end_date for multi-period accumulation.
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_forecast_cache_end_date ON forecast_cache(end_date)",
+    "CREATE INDEX IF NOT EXISTS idx_forecast_tushare_end_date ON forecast_tushare_cache(end_date)",
+    "CREATE INDEX IF NOT EXISTS idx_forecast_cninfo_period ON forecast_cninfo_announcement(period)",
+    "CREATE INDEX IF NOT EXISTS idx_forecast_cninfo_ann_date ON forecast_cninfo_announcement(period, ann_date)",
 ]
 
 FORECAST_COLS = [
@@ -280,6 +320,61 @@ class Store:
         except Exception:  # noqa: BLE001
             pass
 
+    # -- authoritative CNInfo announcement discovery ----------------------
+    def logged_cninfo_ann_dates(self, period: str) -> Set[str]:
+        if not self.available:
+            return set()
+        try:
+            rows = self._rows(
+                "SELECT ann_date FROM forecast_cninfo_fetch_log WHERE period = ?",
+                [period], ["ann_date"],
+            )
+            return {str(r["ann_date"]) for r in rows}
+        except Exception:  # noqa: BLE001
+            return set()
+
+    def record_cninfo_fetch_days(self, period: str, day_counts: Dict[str, int]) -> None:
+        if not self.available or not day_counts:
+            return
+        try:
+            self._batch_upsert(
+                "forecast_cninfo_fetch_log", ["period", "ann_date", "row_count", "fetched_at"],
+                ["period", "ann_date"],
+                [(period, day, count, _now()) for day, count in day_counts.items()],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    def upsert_cninfo_announcements(self, period: str, rows: Sequence[Dict[str, Any]]) -> bool:
+        if not self.available:
+            return False
+        if not rows:
+            return True
+        try:
+            self._batch_upsert(
+                "forecast_cninfo_announcement",
+                ["announcement_id", "period", "ts_code", "ann_date", "title", "url", "fetched_at"],
+                ["announcement_id"],
+                [(r["announcement_id"], period, r["ts_code"], r["ann_date"], r.get("title"),
+                  r.get("url"), _now()) for r in rows],
+            )
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def load_cninfo_announcements(self, period: str) -> List[Dict[str, Any]]:
+        if not self.available:
+            return []
+        cols = ["announcement_id", "ts_code", "ann_date", "title", "url"]
+        try:
+            return self._rows(
+                f"SELECT {', '.join(cols)} FROM forecast_cninfo_announcement "
+                "WHERE period = ? ORDER BY ann_date, announcement_id",
+                [period], cols,
+            )
+        except Exception:  # noqa: BLE001
+            return []
+
     # -- forecast rows ------------------------------------------------------
     def upsert_forecasts(self, rows: List[Dict[str, Any]]) -> bool:
         """Returns True if persisted (or nothing to persist), False on failure —
@@ -305,6 +400,34 @@ class Store:
             return self._rows(
                 f"SELECT {', '.join(FORECAST_COLS)} FROM forecast_cache WHERE end_date = ? "
                 f"ORDER BY ts_code",  # stable base order; the model-facing sort by cum_yoy is stable on top
+                [period], FORECAST_COLS,
+            )
+        except Exception:  # noqa: BLE001
+            return []
+
+    def upsert_tushare_forecasts(self, rows: List[Dict[str, Any]]) -> bool:
+        """Persist the non-authoritative Tushare reconciliation snapshot."""
+        if not self.available:
+            return False
+        if not rows:
+            return True
+        try:
+            self._batch_upsert(
+                "forecast_tushare_cache", FORECAST_COLS + ["fetched_at"], ["ts_code", "end_date"],
+                [[r.get(c) for c in FORECAST_COLS] + [_now()] for r in rows],
+                where="excluded.ann_date >= forecast_tushare_cache.ann_date",
+            )
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def load_tushare_forecasts(self, period: str) -> List[Dict[str, Any]]:
+        if not self.available:
+            return []
+        try:
+            return self._rows(
+                f"SELECT {', '.join(FORECAST_COLS)} FROM forecast_tushare_cache WHERE end_date = ? "
+                "ORDER BY ts_code",
                 [period], FORECAST_COLS,
             )
         except Exception:  # noqa: BLE001

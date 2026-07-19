@@ -299,6 +299,7 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
         rev = s.get("revenue_trailing") or {}
         pr = s.get("price_reaction") or {}
         val = s.get("valuation") or {}
+        source = s.get("source") or {}
         v = verdicts.get(ts_code)
         first_ann = str(s.get("first_ann_date") or s.get("ann_date") or "")
         ann = str(s.get("ann_date") or "")
@@ -413,6 +414,10 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
             "stale": stale,
             "ann_date": ann,
             "first_ann_date": first_ann,
+            "source_authority": source.get("authority"),
+            "structured_source": source.get("structured_source"),
+            "source_title": source.get("title"),
+            "source_url": source.get("url"),
         }
         # deterministic list facet (opportunity judgment stays with the model)
         if gap_dir == "up":
@@ -810,6 +815,8 @@ function renderDetail(){
   h+=mrow('单季度同比',fmtPct(s.single_q_yoy,s.type)+(s.accelerating?' ↑加速':''),cls(s.single_q_yoy));
   h+=mrow('环比',fmtPct(s.qoq,s.type),cls(s.qoq));
   h+=mrow('扣非净利(cninfo)',s.kf||'—');
+  const src=s.source_authority==='cninfo'?'CNInfo官方公告 · '+(s.structured_source||'公告发现'):'Tushare例外 · '+(s.structured_source||'结构化记录');
+  h+=mrow('预告来源',src);
   h+=mrow('营收'+(s.rev_period?`(${s.rev_period}实际)`:''),s.rev_yoy===null?'—':sign(s.rev_yoy)+'%',cls(s.rev_yoy));
   h+='</div>';
   const themeLine=s.theme_id?`<span class="acc">${s.match_confidence==='low'?'疑似 ':''}${s.theme_name}</span> <span class="pill ${s.theme_hot?'thot':'tcool'}">${s.theme_state||''}${s.theme_stars?'★'+s.theme_stars:''}</span>`:(s.tier?'<span class="mut">无归属主线（潜在未被市场发现）</span>':'<span class="mut">未判</span>');
@@ -936,7 +943,7 @@ def render_html(view: Dict[str, Any], kline_assets: Optional[Dict[str, Any]] = N
 <body><main class="page"><div class="doc-head"><span class="dh-title">Earnings Forecast</span><span class="dh-meta">{view['period_label']} · 公告截止 {cutoff_display} · updated {view['updated_at']}</span></div>
 <section class="section report earnings-report"><div class="wrap">
 <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px">
-<div><h1>{view['period_label']} 业绩预告 · 报告期观察</h1><div class="sub">end_date {view['period']} · {cutoff_text} · 业绩 × 股价断层 × 主线行业趋势 · 列表+详情</div></div>
+<div><h1>{view['period_label']} 业绩预告 · 报告期观察</h1><div class="sub">end_date {view['period']} · {cutoff_text} · CNInfo官方公告主源 · Tushare差异校验 · 业绩 × 股价断层 × 主线行业趋势</div></div>
 <div class="sub">更新于 {view['updated_at']}</div></div>
 {overview_html}
 <div class="ctrl">

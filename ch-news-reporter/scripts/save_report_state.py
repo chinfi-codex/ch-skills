@@ -38,7 +38,12 @@ from db_adapter import (
     write_report_state as db_write_report_state,
 )
 from framework_loader import load_framework
-from profile_config import DEFAULT_PROFILE_CONFIG, load_profile, open_budget
+from profile_config import (
+    CUSTOM_TOPICS_CONFIG,
+    DEFAULT_PROFILE_CONFIG,
+    load_profile,
+    open_budget,
+)
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -96,7 +101,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Persist/validate a watchboard payload into report_state."
     )
-    parser.add_argument("--profile", required=True, help="Profile name from config/report_profiles.yaml.")
+    parser.add_argument("--profile", required=True, help="Profile name from config/report_profiles.yaml;自定义主题用 custom_<slug>。")
     parser.add_argument("--date", default="today", help="today or YYYY-MM-DD.")
     parser.add_argument(
         "--state-file",
@@ -106,6 +111,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--db", default=str(DEFAULT_DB), help="SQLite database path.")
     parser.add_argument(
         "--config", default=str(DEFAULT_CONFIG), help="Report profiles YAML path."
+    )
+    parser.add_argument(
+        "--custom-config",
+        default=str(CUSTOM_TOPICS_CONFIG),
+        help="Custom topics YAML path(仅 custom_<slug> 主题使用)。",
     )
     parser.add_argument(
         "--check-only",
@@ -732,7 +742,22 @@ def _load_open_challenges(
 def main() -> int:
     args = parse_args()
     date_key = resolve_date_key(args.date)
-    profile = load_profile(args.profile, Path(args.config))
+    profile = load_profile(args.profile, Path(args.config), Path(args.custom_config))
+
+    # 自定义主题显式关闭跨天状态(state_enabled: false 或 open_budget: 0)时
+    # 跳过 watchboard 回写:没有 carry-forward 的主题不存状态(O3)。
+    if profile.get("custom_topic") and not profile.get("state_enabled"):
+        report = {
+            "profile": args.profile,
+            "date_key": date_key,
+            "status": "skipped",
+            "reason": "自定义主题已关闭跨天状态(state_enabled false 或 open_budget 0),跳过 watchboard 回写",
+            "warnings": [],
+            "errors": [],
+        }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+
     # Framework single source of truth: a profile's framework.md machine region
     # supersedes the legacy report_profiles.yaml state_schema; fall back to the
     # YAML when no framework.md exists yet so un-migrated profiles keep working.

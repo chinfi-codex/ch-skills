@@ -1,6 +1,6 @@
 ---
 name: ch-news-reporter
-description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、宏观或全球地缘风险新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、地缘日报（覆盖中东、俄乌、台海、朝鲜半岛、红海/航运、能源通道、制裁、联盟与大国博弈，含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“生成今天地缘日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“分析红海/霍尔木兹/俄乌/台海/制裁对油价、航运和风险资产的影响”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述三类主题日报，不用于临时/零碎的新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
+description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、宏观或全球地缘风险新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、地缘日报（覆盖中东、俄乌、台海、朝鲜半岛、红海/航运、能源通道、制裁、联盟与大国博弈，含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。也用于用户在 config/custom_topics.yaml 注册的自定义关注主题日报：当用户要求跟踪特定公司/产品/产业事项（如英伟达 Rubin 出货、Kimi 算力部署、华为升腾出货）、生成每天的自定义主题日报（全部关注事项合并为一份）、新增/暂停/归档关注主题、或对关注主题做多通道（新闻库/实时搜索/本地 Vault 笔记/结构化数据）证据汇总时，走自定义主题流程。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“生成今天地缘日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“分析红海/霍尔木兹/俄乌/台海/制裁对油价、航运和风险资产的影响”“帮我每天跟踪 XX 的进展并出日报”“把 XX 加为关注主题”“今天 XX 主题有什么增量”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述固定日报与已注册关注主题日报，不用于未注册主题的临时/零碎新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
 ---
 
 # CH News Reporter
@@ -45,10 +45,12 @@ DB-first 的取数/回写脚本(`collect_news.py` / `prepare_report_data.py` / `
 - 用户要生成 AI 日报，跟踪模型能力、Agent、开源生态、端侧运行时、AI 资本与产品发布。
 - 用户要生成每日宏观日报，跟踪金十电报中的中国/美国经济数据、利率、汇率、大宗商品和风险资产价格信号。
 - 用户要输出地缘日报，覆盖全球主要地缘冲突、能源与航运通道、制裁、联盟行动和风险资产传导。
+- 用户要跟踪已在 `config/custom_topics.yaml` 注册的自定义关注事项，生成「自定义主题日报」（全部关注事项合并为一份）。
+- 用户要新增、暂停或归档一个关注主题（onboarding 流程见「8. 自定义主题日报」）。
 
 不要使用本 skill 的场景：
 
-- 做 AI 日报 / 宏观日报 / 地缘日报三类主题之外的临时、自由主题新闻检索或研究。
+- 做固定日报与已注册关注主题之外的临时、自由主题新闻检索或研究（先把主题注册进 `config/custom_topics.yaml`，再走自定义主题流程）。
 - 只总结用户粘贴的一篇文章。
 - 只查询一个公开事实，不需要多信源采集。
 - 用户要求实时交易指令、买卖点或确定性预测。
@@ -255,6 +257,26 @@ python scripts/render_report_html.py -i reports/geopolitical_daily_2026-06-04.md
 
 渲染框架来自仓库通用 `shared/html_report`（随 `shared` bundle 同步到 `scripts/_shared/html_report/`），与 A 股各 skill 共用同一套主题与图表工具；新增样式主题只需在该目录 `themes/` 下放一个 CSS 文件。
 
+### 8. 自定义主题日报（custom topics）
+
+固定三日报之外，用户可以在 `config/custom_topics.yaml` 注册自己的窄关注事项（5-10 个，如英伟达 Rubin 出货、Kimi 算力部署、华为升腾出货）。「自定义主题」在 News Reporter 里是**一个**与固定三日报平级的主题：所有 active 关注事项每天合并产出**一份**日报 `reports/custom_daily_<date>.md`，事项作为报告内板块，不按事项各出一份。单个事项当天有重大进展时，可应用户要求额外出一份该事项的单主题深挖报告。设计全文见 `docs/custom-topics-design.md`。
+
+**onboarding（新增主题）**：用户给出关注点 → Agent 按 `config/custom_topics.yaml` 的 schema 起草主题配置（slug、focus、keywords、web_search queries、通道挂钩）→ 用户确认后落盘 → 首次跑检索建立冷启动 watchboard。slug 禁止与固定 profile 冲突（加载时校验、冲突即报错）；`status: active / paused / archived` 管生命周期，`open_budget: 0` 或 `state_enabled: false` 关闭跨天状态。
+
+**每日流程（全部关注事项 → 一份合并日报）**：
+
+```bash
+python scripts/collect_news.py --date today --only-missing        # 照旧刷新新闻库
+python scripts/topic_retrieve.py --topic all --date today         # 遍历 active 事项:多通道检索 → 去重/落库 → 各事项证据包
+python scripts/prepare_report_data.py --topic <slug> --date today --format markdown   # 需要单看某事项证据包时
+```
+
+- 证据来自四个通道（脚本只取数/去重/落库/打包）：`news_db`（库内新闻关键词+时间窗）、`pg_data`（alpha_data 结构化表白名单查询，仅 PG）、`web_search`（Tavily 实时检索，结果落库 `items`，需 `TAVILY_API_KEY`，无 key 或网络失败时优雅降级并记 coverage）、`alpha_vault`（本地 Obsidian Vault 只读检索，路径不存在跳过记警告）。新通道 = 在 `scripts/retrievers/` 加一个原子脚本 + 配置项。
+- `--topic all` 遍历所有 `active` 且 `frequency: daily` 的主题；`weekly` 主题不进每日批量，`paused` 主题只能显式点名手动跑，`archived` 不再检索。
+- web 检索预算：每主题 `max_queries_per_day` + 全局 `global_max_queries_per_day`，当日已执行 query 以库内收据计量，同日重跑不重复扣预算；落库行按 `retention_days` 自动清理（也可 `python scripts/topic_retrieve.py --groom`）。
+- 分析时读 `references/reports/custom_topic/methodology.md`（通用底线：证据分层 / 边际判定 / 传闻降级 / 无增量不硬凑）+ 各事项 `focus` + 各事项证据包与 `Prior Watchboard`，按 `references/reports/custom_topic/template.md` 写**一份合并日报**：每个关注事项一个板块（边际变化 / 新证据 / 判断更新 / 跟踪项一句话结算），当天无增量的事项一句话带过，不硬凑篇幅。
+- 回写仍按事项逐个进行：`save_report_state.py --profile custom_<slug> --date <报告日>`，watchboard 通用骨架（regime/tracking_items/next_nodes/falsifiers）照常校验，frame 自由结构。跨天状态按事项各自滚动，合并日报只是展示层。
+
 ## 数据表说明
 
 采集脚本默认写入 PostgreSQL；显式设置 `ALPHA_DB_BACKEND=sqlite` 时写入本地 SQLite fallback：
@@ -267,11 +289,11 @@ python scripts/render_report_html.py -i reports/geopolitical_daily_2026-06-04.md
 核心字段：
 
 - `date_key`：Asia/Shanghai 日期，格式 `YYYY-MM-DD`。
-- `source_type`：`jin10`、`github_trending`、`rss`、`product_hunt`、`hacker_news`。
-- `source_name`：具体来源名称。
+- `source_type`：`jin10`、`github_trending`、`rss`、`product_hunt`、`hacker_news`，以及自定义主题 web 检索落库的 `web_search`（自由 TEXT 值，无需 DDL）。
+- `source_name`：具体来源名称；web 检索行形如 `tavily:<slug>`。
 - `published_at` / `fetched_at`：发布时间与抓取时间。
 - `title` / `content` / `url`：主要文本与链接。
-- `tags_json` / `metadata_json` / `raw_json`：结构化补充信息。
+- `tags_json` / `metadata_json` / `raw_json`：结构化补充信息；web 检索行的 `metadata_json` 必带 `query` 与 `retrieved_at`，保证证据可回指到具体检索动作。
 
 采集使用稳定哈希去重。重复运行同一天采集不会重复插入同一条记录。
 

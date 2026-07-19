@@ -1,0 +1,127 @@
+# 自定义关注主题配置(ch-news-reporter custom topics)
+#
+# 每个主题生成 profile 名 custom_<slug>,每日一份独立日报 reports/custom_<slug>_<date>.md。
+# slug 禁止与固定 profile(ai_daily / macro_daily / geopolitical_daily)冲突,加载时校验、冲突即报错。
+#
+# 主题生命周期 status:
+#   active   —— 每日检索,--topic all 会带上
+#   paused   —— 暂停每日检索;显式 --topic <slug> 仍可手动跑一次
+#   archived —— 跟完归档,不再检索;历史 watchboard 保留可回看
+#
+# 字段说明:
+#   focus            自然语言关注问题,注入分析层当判断锚点(模型读,脚本不读)
+#   keywords         关键词列表;用双引号包住的是整体短语(如 '"Rubin ramp"'),其余为普通子串,大小写不敏感
+#   exclude_keywords 命中即排除
+#   time_window_days 检索时间窗(天);日频主题 1-3,低频主题 7-14
+#   frequency        daily / weekly;weekly 主题不进 --topic all 的每日批量,不出每日"无增量"短报
+#   state_enabled    是否启用 watchboard 跨天状态
+#   open_budget      open 跟踪项软上限;0 = 显式关闭跨天状态(等价 state_enabled: false)
+#
+# 通道(channels):
+#   news_db: true 或 {max_items: N}   items 表关键词检索(库内新闻,不含 web_search 行)
+#   pg_data: {stock_tickers: [...]}   alpha_data 结构化表白名单查询,仅 PostgreSQL 可用;
+#                                     可选挂钩: stock_tickers→stock_daily / index_codes→stock_index_daily /
+#                                     theme_ids→theme_daily_state / tracking_tickers→stock_tracking_history
+#   web_search:                       实时 Tavily 检索,结果落库 items(source_type='web_search')
+#     queries                         每主题定制 query;onboarding 时模型起草、用户确认,滚动维护
+#     max_queries_per_day             每主题每日 query 上限;onboarding 期 2-3,稳定后可升 4
+#   alpha_vault:                      本地 Obsidian Vault 只读检索(.md 关键词匹配)
+#     enabled / paths                 paths 为 vault 内相对路径(目录或 glob);不存在的路径跳过并记警告
+#
+# 顶层 settings:
+#   web_search.global_max_queries_per_day  全部主题合计的 Tavily 日调用封顶
+#   web_search.retention_days              web_search 落库证据保留天数,过期由 topic_retrieve --groom 清理
+#   vault_root                             AlphaVault 根目录(~ 会展开)
+
+settings:
+  web_search:
+    global_max_queries_per_day: 30
+    retention_days: 90
+  vault_root: "~/Library/CloudStorage/OneDrive-个人/Obsidian-Vault/1-AlphaVault"
+
+topics:
+  nvidia_rubin:
+    title: 英伟达 Rubin 出货跟踪
+    status: active
+    frequency: daily
+    focus: |
+      判断 Rubin 出货是否顺利、量级如何;关注供应链(台积电/CoWoS/HBM)、
+      云厂商 capex 指引、管理层表态中关于 Rubin ramp 的边际信息
+    keywords: [Rubin, '"Rubin ramp"', Vera, CoWoS, HBM4]
+    exclude_keywords: []
+    time_window_days: 3
+    channels:
+      news_db: true
+      pg_data:
+        stock_tickers: [NVDA, 2330.TW]
+        # 可扩展:未来支持 tables / custom_sql
+      web_search:
+        queries:
+          - "NVIDIA Rubin shipment ramp 2026"
+          - "Rubin CoWoS capacity allocation"
+        max_queries_per_day: 3
+      alpha_vault:
+        enabled: true
+        paths:
+          - "wiki/03-产业链图谱/"
+          - "wiki/10-产业跟踪/"
+    state_enabled: true
+    open_budget: 5
+
+  kimi_compute:
+    title: Kimi 算力部署与效率验证
+    status: active
+    frequency: daily
+    focus: |
+      跟踪 Kimi/月之暗面的算力部署量级与推理效率进展;关注能否验证
+      "更少算力达到 GPT-4o 同级效果"的说法,关注 GPU/集群采购、推理成本、
+      模型效率(MLA/MoE 等)与第三方实测中的边际信息
+    keywords: [Kimi, 月之暗面, Moonshot, '"Kimi K2"', '"Kimi K3"']
+    exclude_keywords: []
+    time_window_days: 3
+    channels:
+      news_db: true
+      # 月之暗面未上市,无直接 pg_data 挂钩;如需代理标的后续再加
+      web_search:
+        queries:
+          - "Kimi 月之暗面 算力 部署 推理成本"
+          - "Moonshot AI Kimi compute GPU infrastructure efficiency"
+          - "Kimi K2 K3 inference efficiency 算力"
+        max_queries_per_day: 3
+      alpha_vault:
+        enabled: true
+        paths:
+          - "wiki/02-概念词条/"
+          - "wiki/10-产业跟踪/"
+          - "wiki/05-行业研判/"
+    state_enabled: true
+    open_budget: 5
+
+  huawei_ascend:
+    title: 华为升腾芯片出货跟踪
+    status: active
+    frequency: daily
+    focus: |
+      跟踪华为升腾 910B/910C 下半年出货进展与量级;关注中芯国际代工产能与良率、
+      国产替代订单(运营商/互联网大厂/政务)、美国出口管制变化对供货的边际影响
+    keywords: [昇腾, 升腾, Ascend, 910B, 910C]
+    exclude_keywords: []
+    time_window_days: 3
+    channels:
+      news_db: true
+      pg_data:
+        stock_tickers: [688981.SH]   # 中芯国际,代工产能代理观察
+      web_search:
+        queries:
+          - "华为 昇腾 910C 出货 量产"
+          - "Huawei Ascend 910B 910C shipment volume"
+          - "昇腾 910C 中芯国际 产能 良率"
+        max_queries_per_day: 3
+      alpha_vault:
+        enabled: true
+        paths:
+          - "wiki/01-个股词条/"
+          - "wiki/03-产业链图谱/"
+          - "wiki/10-产业跟踪/"
+    state_enabled: true
+    open_budget: 5

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -123,6 +125,42 @@ class FilterBarTests(unittest.TestCase):
         opts = renderer.pe_bucket_options()
         self.assertEqual([o["v"] for o in opts],
                          ["pe_le15", "pe_15_30", "pe_30_50", "pe_50_100", "pe_gt100", "pe_na"])
+
+    def test_large_list_is_rendered_in_bounded_batches(self) -> None:
+        html = renderer.render_html(_view(parent_annualized=4.0, parent_pe=25.0, kf_median=1.5))
+        self.assertIn("const LIST_PAGE=120", html)
+        self.assertIn('id="loadmore"', html)
+        self.assertIn("allRows.slice(0,LIST_SHOWN)", html)
+
+
+class LazyKlineTests(unittest.TestCase):
+    def test_html_uses_lazy_kline_assets_instead_of_inline_bars(self) -> None:
+        view = _view(parent_annualized=4.0, parent_pe=25.0, kf_median=1.5)
+        view["klines"] = {"000001.SZ": [["20260710", 10, 11, 9, 10.5, 1000]]}
+        html = renderer.render_html(view)
+        self.assertIn('"kline_asset_base":"forecast_20260630.klines"', html)
+        self.assertIn('"kline_shards":', html)
+        self.assertIn("fetch(url,{cache:'force-cache'})", html)
+        self.assertNotIn('"klines":', html)
+        self.assertNotIn('DATA.klines', html)
+
+    def test_kline_assets_are_sharded_and_manifested(self) -> None:
+        klines = {
+            "000001.SZ": [["20260710", 10, 11, 9, 10.5, 1000]],
+            "600000.SH": [["20260710", 8, 9, 7, 8.5, 2000]],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "forecast_20260630.html"
+            assets = renderer.write_kline_assets(str(out), klines, shard_count=4,
+                                                  generated_at="2026-07-19T10:00:00+08:00")
+            asset_dir = Path(assets["asset_dir"])
+            self.assertEqual(asset_dir.name, "forecast_20260630.klines")
+            manifest = json.loads((asset_dir / "_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["stock_count"], 2)
+            self.assertEqual(manifest["shard_count"], 4)
+            for code, shard in assets["code_to_shard"].items():
+                payload = json.loads((asset_dir / f"{shard}.json").read_text(encoding="utf-8"))
+                self.assertEqual(payload[code], klines[code])
 
 
 class AnnouncementCutoffTests(unittest.TestCase):

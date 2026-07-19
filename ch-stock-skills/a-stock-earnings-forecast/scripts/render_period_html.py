@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Render one self-contained HTML page per report period (master-detail view).
+"""Render one lightweight HTML page per report period (master-detail view).
 
 Layout: title → 产业结构综述 (model text from forecast_period_overview, stale-
 badged when the sample fingerprint moved) → filter bar → two panes. The filter
@@ -14,7 +14,7 @@ the selected stock — a prominent 年化PE hero strip under the header (annuali
 against the latest total market cap; 扣非-first — when cninfo enrichment carries
 a 扣非 median the headline PE is on that non-recurring-adjusted basis with the
 归母 PE kept as a cross-reference, else the 归母 median with a rolling-PE check),
-an embedded K-line (candles + volume, announcement marker
+an on-demand K-line (candles + volume, announcement marker
 on the trading bar immediately before ann_date, and pre-announcement close marked)
 plus a slim price line (跳空/公告后累计)、
 业绩、归属主线, and a **行业趋势分析** block: within the stock's mainline, how many
@@ -26,7 +26,10 @@ judged it, the attributed trend from forecast_theme_trend (direction + 强/弱�
 Everything comes from the evidence pack + cninfo enrichment + verdict ledger
 (incl. theme trends) + live theme states + the skill's own bar cache; the
 renderer projects and tallies deterministic facts, it does not judge
-opportunities. Self-contained single file, no CDN, dark-mode aware.
+opportunities. The initial HTML keeps the complete stock/verdict/trend view but
+stores K-lines in deterministic JSON shards loaded on demand, so a growing
+report period does not block first paint on a multi-megabyte inline payload.
+No JS CDN, dark-mode aware.
 
 Usage:
     python3 scripts/render_period_html.py --period 20260630
@@ -54,6 +57,7 @@ POS_SPLIT = 50.0       # 公告前一年分位 >= split → 趋势加速型；< 
 MUTED_MAX_PCT = 3.0    # |公告后累计涨幅| < N% 且无断层 → 未反应观察
 TREND_NET = 2          # 主线内 净断层方向 |strong-weak| >= N → 偏强/偏弱
 KLINE_BARS = 130       # bars embedded per stock for the detail chart
+KLINE_SHARDS = 64      # deterministic sidecar shards; one small shard loads per selected stock
 BEIJING_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
 
 # 年化PE 分段（筛选用，口径与详情页 hero 同源：扣非优先、无扣非退归母）。
@@ -208,6 +212,75 @@ def _compact_kline(bars: List[Dict[str, Any]], keep: int) -> List[List[Any]]:
         rows.append([str(b["trade_date"]), b.get("open"), b.get("high"),
                      b.get("low"), b.get("close"), b.get("vol")])
     return rows
+
+
+def _kline_shard_id(ts_code: str, shard_count: int = KLINE_SHARDS) -> str:
+    """Stable FNV-1a shard id shared with generated asset metadata.
+
+    Do not use Python's built-in ``hash`` because its salt changes per process.
+    The embedded HTML carries the code→shard map, so the browser does not need
+    to duplicate this algorithm.
+    """
+    if shard_count <= 0:
+        raise ValueError("kline shard_count 必须为正整数。")
+    h = 2166136261
+    for b in ts_code.encode("utf-8"):
+        h ^= b
+        h = (h * 16777619) & 0xFFFFFFFF
+    width = max(2, len(str(shard_count - 1)))
+    return f"{h % shard_count:0{width}d}"
+
+
+def write_kline_assets(out_path: str, klines: Dict[str, List[List[Any]]],
+                       shard_count: int = KLINE_SHARDS,
+                       generated_at: Optional[str] = None) -> Dict[str, Any]:
+    """Write deterministic K-line JSON shards next to the HTML.
+
+    ``forecast_20260630.html`` produces ``forecast_20260630.klines/00.json``
+    etc. Only shard files referenced by the current report are retained. The
+    returned code→shard map stays in the lightweight HTML for constant-time
+    lazy lookup.
+    """
+    html_path = Path(out_path)
+    asset_dir = html_path.with_suffix("").with_name(html_path.stem + ".klines")
+    asset_dir.mkdir(parents=True, exist_ok=True)
+
+    shard_payloads: Dict[str, Dict[str, List[List[Any]]]] = {}
+    code_to_shard: Dict[str, str] = {}
+    for ts_code in sorted(klines):
+        shard_id = _kline_shard_id(ts_code, shard_count)
+        code_to_shard[ts_code] = shard_id
+        shard_payloads.setdefault(shard_id, {})[ts_code] = klines[ts_code]
+
+    written = set()
+    for shard_id, payload in shard_payloads.items():
+        name = f"{shard_id}.json"
+        written.add(name)
+        (asset_dir / name).write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+
+    manifest_name = "_manifest.json"
+    written.add(manifest_name)
+    (asset_dir / manifest_name).write_text(json.dumps({
+        "schema_version": "earnings-kline-shards/v1",
+        "generated_at": generated_at,
+        "shard_count": shard_count,
+        "nonempty_shards": len(shard_payloads),
+        "stock_count": len(code_to_shard),
+    }, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+
+    for old in asset_dir.glob("*.json"):
+        if old.name not in written:
+            old.unlink()
+
+    return {
+        "asset_dir": str(asset_dir),
+        "asset_base": asset_dir.name,
+        "code_to_shard": code_to_shard,
+        "nonempty_shards": len(shard_payloads),
+    }
 
 
 def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str, Any]],
@@ -492,6 +565,8 @@ input:focus,select:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--accb
 .row{background:var(--s2);border:1px solid var(--bd);border-radius:var(--r-md);padding:9px 12px;margin-bottom:7px;cursor:pointer;transition:border-color .14s ease,box-shadow .14s ease,transform .14s ease}
 .row:hover{border-color:var(--line-1);box-shadow:var(--shadow-1);transform:translateY(-1px)}
 .row.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
+.loadmore{display:block;width:100%;margin:10px 0 4px;padding:10px 12px;border:1px solid var(--bd);border-radius:var(--r-md);background:var(--s1);color:var(--tx2);cursor:pointer;font:inherit}
+.loadmore:hover{border-color:var(--acc);color:var(--tx)}
 .row.gapup{background:var(--upbg)}.row.gapdn{background:var(--dnbg)}
 .r1{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .r1 .nm{font-weight:500}.r1 .cd{color:var(--tx3);font-size:13px}
@@ -624,10 +699,22 @@ function buildMS(){
   }
 }
 function clearFilters(){document.querySelectorAll('.ms input:checked').forEach(cb=>cb.checked=false);document.querySelectorAll('.ms').forEach(updateMS);closeAllPops(null);renderList();}
-function renderList(){
+const LIST_PAGE=120;
+let LIST_SHOWN=LIST_PAGE;
+function orderedRows(mode,rows){
+  if(mode==='ann')return [...rows].sort((a,b)=>(b.ann_date||b.first_ann_date||'').localeCompare(a.ann_date||a.first_ann_date||''));
+  if(mode==='theme'){
+    const rank=s=>{const k=s.theme_id||(s.tier?'__none__':'__unjudged__'),tr=DATA.theme_trends[k];return tr?tr.net:(k.startsWith('__')?-99:0);};
+    return [...rows].sort((a,b)=>rank(b)-rank(a)||String(a.theme_name||'').localeCompare(String(b.theme_name||''),'zh')||a.ts_code.localeCompare(b.ts_code));
+  }
+  return rows;
+}
+function renderList(reset=true){
   const mode=document.getElementById('grp').value;
-  const rows=filtered();
-  const fc=document.getElementById('fcount');if(fc)fc.innerHTML=`<b>${rows.length}</b> / ${DATA.stocks.length} 只`;
+  const allRows=orderedRows(mode,filtered());
+  if(reset)LIST_SHOWN=LIST_PAGE;
+  const rows=allRows.slice(0,LIST_SHOWN);
+  const fc=document.getElementById('fcount');if(fc)fc.innerHTML=`<b>${allRows.length}</b> / ${DATA.stocks.length} 只 · 已显示 ${rows.length}`;
   let h='';
   if(mode==='theme'){
     const seen=new Map();
@@ -642,16 +729,17 @@ function renderList(){
       h+=`<div class="ghead"><span>${label}</span><span style="display:flex;gap:4px;flex-wrap:wrap">${tr?trendPill(tr)+judgedPill(tr):`<span>${grp.length}</span>`}</span></div>`+grp.map(stockRow).join('');
     }
   }else if(mode==='ann'){
-    const byDate=[...rows].sort((a,b)=>(b.ann_date||b.first_ann_date||'').localeCompare(a.ann_date||a.first_ann_date||''));
     const seen=new Map();
-    for(const s of byDate){const d=s.ann_date||s.first_ann_date||'未披露日期';if(!seen.has(d))seen.set(d,[]);seen.get(d).push(s);}
+    for(const s of rows){const d=s.ann_date||s.first_ann_date||'未披露日期';if(!seen.has(d))seen.set(d,[]);seen.get(d).push(s);}
     for(const [d,grp] of seen.entries()){
       const label=d==='未披露日期'?d:`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`;
       h+=`<div class="ghead"><span>${label}</span><span>${grp.length}</span></div>`+grp.map(stockRow).join('');
     }
   }else{h=rows.map(stockRow).join('');}
+  if(rows.length<allRows.length){const next=Math.min(LIST_PAGE,allRows.length-rows.length);h+=`<button id="loadmore" class="loadmore" type="button">再显示 ${next} 家（剩余 ${allRows.length-rows.length} 家）</button>`;}
   document.getElementById('list').innerHTML=h||'<div class="empty">无匹配</div>';
   document.querySelectorAll('.row').forEach(el=>el.onclick=()=>select(el.dataset.c));
+  const more=document.getElementById('loadmore');if(more)more.onclick=()=>{LIST_SHOWN+=LIST_PAGE;renderList(false);};
   if(rows.length&&!rows.some(s=>s.ts_code===SEL))select(rows[0].ts_code);
 }
 let SEL=null;
@@ -730,7 +818,38 @@ function renderDetail(){
   if(s.reason||s.caveat)h+=`<div class="dsec">判分</div><div class="dtext">${s.reason||''}${s.caveat?'<br>caveat: '+s.caveat:''}</div>`;
   if(s.change_reason)h+=`<div class="dsec">业绩变动原因（公司口径）</div><div class="dtext">${s.change_reason}</div>`;
   el.innerHTML=h;
-  drawKline(document.getElementById('kl'),DATA.klines[s.ts_code],s);
+  renderKline(s);
+}
+const KLINE_SHARD_CACHE=new Map();
+const KLINE_SHARD_PENDING=new Map();
+async function loadKline(code){
+  const shard=DATA.kline_shards[code];
+  if(shard===undefined||shard===null)return null;
+  if(KLINE_SHARD_CACHE.has(shard))return KLINE_SHARD_CACHE.get(shard)[code]||null;
+  if(!KLINE_SHARD_PENDING.has(shard)){
+    const url=new URL(`${DATA.kline_asset_base}/${shard}.json`,document.baseURI);
+    KLINE_SHARD_PENDING.set(shard,fetch(url,{cache:'force-cache'}).then(r=>{
+      if(!r.ok)throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }).then(payload=>{KLINE_SHARD_CACHE.set(shard,payload);return payload;})
+      .finally(()=>KLINE_SHARD_PENDING.delete(shard)));
+  }
+  const payload=await KLINE_SHARD_PENDING.get(shard);
+  return payload[code]||null;
+}
+async function renderKline(s){
+  const el=document.getElementById('kl');
+  if(!el)return;
+  el.innerHTML='<div class="empty">K线加载中…</div>';
+  try{
+    const bars=await loadKline(s.ts_code);
+    if(SEL!==s.ts_code)return;
+    drawKline(el,bars,s);
+  }catch(err){
+    if(SEL!==s.ts_code)return;
+    const localHint=location.protocol==='file:'?'；本地文件请通过 HTTP 预览':'';
+    el.innerHTML=`<div class="empty">K线分片加载失败${localHint}（${esc(err&&err.message?err.message:'未知错误')}）</div>`;
+  }
 }
 function drawKline(el,bars,s){
   if(!bars||bars.length<2){el.innerHTML='<div class="empty">无K线数据（--no-price 或日线缓存为空）</div>';return;}
@@ -779,7 +898,7 @@ renderList();
 """
 
 
-def render_html(view: Dict[str, Any]) -> str:
+def render_html(view: Dict[str, Any], kline_assets: Optional[Dict[str, Any]] = None) -> str:
     empty_note = ('<div class="foot">主线台账为空——归属与行业趋势需先运行 daily-market-sense 填充 theme 台账、再跑 verdict 判分归属。</div>'
                   if view["theme_registry_empty"] else "")
     ov = view.get("overview")
@@ -794,10 +913,18 @@ def render_html(view: Dict[str, Any]) -> str:
     cutoff_display = f"{cutoff[:4]}-{cutoff[4:6]}-{cutoff[6:]}"
     cutoff_mode = "北京时间次日口径" if view["ann_cutoff_is_next_day"] else "公告截止口径"
     cutoff_text = f"公告扫描截至 {cutoff_display}（{cutoff_mode} · 截止日 {view['ann_cutoff_stock_count']} 家）"
+    kline_assets = kline_assets or {
+        "asset_base": f"forecast_{view['period']}.klines",
+        "code_to_shard": {
+            code: _kline_shard_id(code) for code in view.get("klines", {})
+        },
+    }
     data_json = json.dumps({
         "pos_split": view["pos_split"], "trend_net": view["trend_net"],
         "pe_buckets": view["pe_buckets"],
-        "stocks": view["stocks"], "theme_trends": view["theme_trends"], "klines": view["klines"],
+        "stocks": view["stocks"], "theme_trends": view["theme_trends"],
+        "kline_asset_base": kline_assets["asset_base"],
+        "kline_shards": kline_assets["code_to_shard"],
     }, ensure_ascii=False, separators=(",", ":"))
     shared_theme = _load_shared_theme("default")
     return f"""<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
@@ -819,7 +946,7 @@ def render_html(view: Dict[str, Any]) -> str:
 <span id="fcount" class="fcount"></span>
 </div>
 <div class="panes">
-<div class="list" id="list"></div>
+<div class="list" id="list"><div class="empty">正在加载 {len(view['stocks'])} 家预告数据…</div></div>
 <div class="detail" id="detail"><div class="empty">点击左侧个股查看详情</div></div>
 </div>
 <div class="foot">净利=预告中值 · 断层以首次披露日为锚(预告多在披露日前一交易日盘后发出，反应落在披露日当天)：跳空=公告日当天开盘 vs 公告日前一交易日收盘；向上=业绩超预期跳空(强表现)、向下=不及预期跳空下跌(弱表现)；未回补=其后价格未回到公告前收盘另一侧，D+n=断层后交易日数(新断层未经检验) · 行业趋势=报告期内按主线聚合成员的断层方向(强表现向上/弱表现向下)自下而上归纳：↑↓⇅为机械计数，「判·方向」为模型对强/弱成员变动原因的归因交叉验证(落 verdict 台账，†=成员已变化待复判) · 页首产业结构综述=模型基于全样本行业聚合(industry_summary，含负向预告)的结构判断，样本随披露累积、综述会随之更新 · K线使用前复权(qfq)口径，红涨绿跌，蓝虚线=公告日标注(落在公告日前一交易日，如公告日7.3则标7.2)、橙虚线=公告前收盘 · 年化PE=最新交易日总市值÷年化净利，年化净利=预告中值÷报告期季数×4(简单年化，未调季节性，年报预告即中值)；有 cninfo 扣非中值时头条 PE 优先按扣非(剔除一次性损益)算、归母 PE 作对照，无扣非退回归母；滚动PE分母=上年年报实际+本期中值−上年同期实际(季节性对照)；年化净利≤0不给PE，扭亏小基数会把PE推到数百倍、一次性损益会让归母PE虚低，与行情软件静态PE/PE-TTM口径不同 · 归属主线由模型语义匹配 daily-market-sense 主线台账 · 仅作观察、不含买卖建议</div>
@@ -879,10 +1006,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                       store.load_theme_trends(period), store.load_period_overview(period),
                       bars_map, today,
                       pos_split=args.pos_split, muted_max=args.muted_max, kline_bars=args.kline_days)
-    html = render_html(view)
-
     out_path = args.out or os.path.join("reports", f"forecast_{period}.html")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    kline_assets = write_kline_assets(
+        out_path, view["klines"], generated_at=cutoff_info["evidence_generated_at"]
+    )
+    html = render_html(view, kline_assets)
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write(html)
     trends = view["theme_trends"]
@@ -893,6 +1022,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                       "ann_cutoff": cutoff_info["ann_cutoff"],
                       "ann_cutoff_stock_count": cutoff_info["ann_cutoff_stock_count"],
                       "evidence_generated_at": cutoff_info["evidence_generated_at"],
+                      "kline_asset_dir": kline_assets["asset_dir"],
+                      "kline_shards": kline_assets["nonempty_shards"],
+                      "html_bytes": os.path.getsize(out_path),
                       "out": out_path}, ensure_ascii=False, indent=2))
     return 0
 

@@ -66,10 +66,29 @@ def _matching_snippets(text: str, keywords: list[str]) -> list[str]:
 
 def _collect_files(root: Path, paths: list[str], warnings: list[str]) -> list[Path]:
     """按配置 paths 收集 .md 文件;目录递归,glob 直接展开,不存在则跳过记 warning。"""
+    root = root.resolve()
     files: list[Path] = []
     seen: set[str] = set()
+    rejected: set[str] = set()
 
-    def add(path: Path) -> None:
+    def reject(entry: str) -> None:
+        if entry not in rejected:
+            warnings.append(f"vault 路径越界,已跳过: {entry}")
+            rejected.add(entry)
+
+    def resolve_inside(path: Path, entry: str) -> Path | None:
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            reject(entry)
+            return None
+        return resolved
+
+    def add(path: Path, entry: str) -> None:
+        path = resolve_inside(path, entry)
+        if path is None:
+            return
         key = str(path)
         if key in seen or not path.is_file() or path.suffix.lower() != ".md":
             return
@@ -80,16 +99,22 @@ def _collect_files(root: Path, paths: list[str], warnings: list[str]) -> list[Pa
         entry = str(entry).strip()
         if not entry:
             continue
+        entry_path = Path(entry)
+        if entry_path.is_absolute() or ".." in entry_path.parts:
+            reject(entry)
+            continue
         if _GLOB_CHARS & set(entry):
             for match in sorted(root.glob(entry)):
-                add(match)
+                add(match, entry)
             continue
-        target = root / entry
+        target = resolve_inside(root / entry, entry)
+        if target is None:
+            continue
         if target.is_dir():
             for match in sorted(target.rglob("*.md")):
-                add(match)
+                add(match, entry)
         elif target.is_file():
-            add(target)
+            add(target, entry)
         else:
             warnings.append(f"vault 路径不存在,已跳过: {entry}")
     return files
@@ -120,7 +145,7 @@ def retrieve(
             "warnings": ["settings.vault_root 未配置,alpha_vault 通道降级"],
             "notes": [],
         }
-    root = Path(os.path.expanduser(vault_root))
+    root = Path(os.path.expanduser(vault_root)).resolve()
     if not root.is_dir():
         return {
             "status": "degraded",

@@ -270,6 +270,18 @@ def retrieve(
             f"{skipped_budget} 条 query 因预算上限未执行(主题余量 {topic_remaining},全局余量 {global_remaining})"
         )
 
+    # Tavily 的 days 参数始终以“调用时刻”为锚点，不能用于历史日期回放。
+    # 否则 --date 过去日期会把今天检索到的新闻错误写入过去的 date_key，
+    # 造成未来信息泄漏。历史回放只允许读取已经落库的 web_search 证据。
+    today_key = datetime.now(SHANGHAI).strftime("%Y-%m-%d")
+    if to_run and date_key != today_key:
+        budget["skipped_historical"] = len(to_run)
+        warnings.append(
+            f"历史日期 {date_key} 不执行实时 Tavily 查询，仅读取已落库证据"
+        )
+        status = "degraded"
+        to_run = []
+
     if to_run and (tavily_search is None or get_tavily_key is None):
         warnings.append("tavily_search 模块不可用(shared bundle 未同步?),web_search 通道降级")
         status = "degraded"

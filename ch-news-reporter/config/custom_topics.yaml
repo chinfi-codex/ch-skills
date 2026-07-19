@@ -1,6 +1,6 @@
 # 自定义关注主题配置(ch-news-reporter custom topics)
 #
-# 每个主题生成 profile 名 custom_<slug>,每日一份独立日报 reports/custom_<slug>_<date>.md。
+# 每个主题生成 profile 名 custom_<slug>;所有 active 主题每天合并产出一份日报 reports/custom_daily_<date>.md。
 # slug 禁止与固定 profile(ai_daily / macro_daily / geopolitical_daily)冲突,加载时校验、冲突即报错。
 #
 # 主题生命周期 status:
@@ -26,10 +26,10 @@
 #     queries                         每主题定制 query;onboarding 时模型起草、用户确认,滚动维护
 #     max_queries_per_day             每主题每日 query 上限;onboarding 期 2-3,稳定后可升 4
 #   alpha_vault:                      本地 Obsidian Vault 只读检索(.md 关键词匹配)
-#     enabled / paths                 paths 为 vault 内相对路径(目录或 glob);不存在的路径跳过并记警告
+#     enabled / paths                 paths 为 vault 内相对路径(目录或 glob);不存在或越界路径跳过并记警告
 #
 # 顶层 settings:
-#   web_search.global_max_queries_per_day  全部主题合计的 Tavily 日调用封顶
+#   web_search.global_max_queries_per_day  全部主题合计的 Tavily 日调用封顶;历史日期回放不发实时请求
 #   web_search.retention_days              web_search 落库证据保留天数,过期由 topic_retrieve --groom 清理
 #   vault_root                             AlphaVault 根目录(~ 会展开)
 
@@ -123,5 +123,39 @@ topics:
           - "wiki/01-个股词条/"
           - "wiki/03-产业链图谱/"
           - "wiki/10-产业跟踪/"
+    state_enabled: true
+    open_budget: 5
+
+  ai_model_frontier:
+    title: AI 模型前沿进展与算力需求
+    status: active
+    frequency: daily
+    focus: |
+      跟踪全球主要 AI 模型的最新进展:产品发布、技术迭代、模型代际演进、
+      能力跃迁(跑分/实测/新模态/新形态);并重点判断这些进展对算力需求的
+      边际影响——模型效率提升(架构/量化/稀疏化)与规模扩张、推理 token 通胀、
+      训练集群扩建两股力量相抵后,算力供需在变得更紧缺还是更宽松。
+    keywords: [
+      OpenAI, GPT, Claude, Anthropic, Gemini, DeepMind, Llama, Grok, xAI,
+      DeepSeek, Qwen, 通义, Kimi, 月之暗面, GLM, 智谱, Mistral, 混元, 豆包, 文心,
+      大模型, 开源模型, 权重, 跑分, benchmark, 多模态, 推理模型,
+      算力, GPU, GB200, GB300, B200, H200, 集群, 训练成本, 推理成本
+    ]
+    exclude_keywords: []
+    time_window_days: 2
+    channels:
+      news_db: true
+      web_search:
+        queries:
+          - "frontier AI model release benchmark 2026"
+          - "AI model capability leap compute demand GPU"
+          - "大模型 发布 跑分 算力 需求"
+        max_queries_per_day: 3
+      alpha_vault:
+        enabled: true
+        paths:
+          - "wiki/10-产业跟踪/"
+          - "wiki/05-行业研判/"
+          - "wiki/02-概念词条/"
     state_enabled: true
     open_budget: 5

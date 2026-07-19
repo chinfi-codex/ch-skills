@@ -271,7 +271,7 @@ python scripts/topic_retrieve.py --topic all --date today         # 遍历 activ
 python scripts/prepare_report_data.py --topic <slug> --date today --format markdown   # 需要单看某事项证据包时
 ```
 
-- 证据来自四个通道（脚本只取数/去重/落库/打包）：`news_db`（库内新闻关键词+时间窗）、`pg_data`（alpha_data 结构化表白名单查询，仅 PG）、`web_search`（Tavily 实时检索，结果落库 `items`，需 `TAVILY_API_KEY`，无 key 或网络失败时优雅降级并记 coverage）、`alpha_vault`（本地 Obsidian Vault 只读检索，路径不存在跳过记警告）。新通道 = 在 `scripts/retrievers/` 加一个原子脚本 + 配置项。
+- 证据来自四个通道（脚本只取数/去重/落库/打包）：`news_db`（库内新闻关键词+时间窗）、`pg_data`（alpha_data 结构化表白名单查询，仅 PG）、`web_search`（Tavily 实时检索，结果落库 `items`，需 `TAVILY_API_KEY`，无 key 或网络失败时优雅降级并记 coverage；历史日期回放仅读取已落库 Web 证据，禁止调用以当前时刻为锚的实时检索）、`alpha_vault`（本地 Obsidian Vault 只读检索，只接受 `vault_root` 内相对路径或 glob；不存在或越界路径跳过并记警告）。新通道 = 在 `scripts/retrievers/` 加一个原子脚本 + 配置项。
 - `--topic all` 遍历所有 `active` 且 `frequency: daily` 的主题；`weekly` 主题不进每日批量，`paused` 主题只能显式点名手动跑，`archived` 不再检索。
 - web 检索预算：每主题 `max_queries_per_day` + 全局 `global_max_queries_per_day`，当日已执行 query 以库内收据计量，同日重跑不重复扣预算；落库行按 `retention_days` 自动清理（也可 `python scripts/topic_retrieve.py --groom`）。
 - 分析时读 `references/reports/custom_topic/methodology.md`（通用底线：证据分层 / 边际判定 / 传闻降级 / 无增量不硬凑）+ 各事项 `focus` + 各事项证据包与 `Prior Watchboard`，按 `references/reports/custom_topic/template.md` 写**一份合并日报**：每个关注事项一个板块（边际变化 / 新证据 / 判断更新 / 跟踪项一句话结算），当天无增量的事项一句话带过，不硬凑篇幅。

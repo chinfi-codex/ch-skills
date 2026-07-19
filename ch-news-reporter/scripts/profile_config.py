@@ -111,11 +111,17 @@ def _validate_topic(slug: str, topic: Any) -> dict[str, Any]:
             f"主题 {slug!r} frequency={frequency!r} 非法(允许: {sorted(TOPIC_FREQUENCY)})"
         )
     try:
-        days = int(topic.get("time_window_days") or 3)
+        days = int(topic.get("time_window_days", 3))
     except (TypeError, ValueError):
         raise SystemExit(f"主题 {slug!r} time_window_days 必须是整数") from None
     if days < 1:
         raise SystemExit(f"主题 {slug!r} time_window_days 必须 >= 1")
+    try:
+        budget = int(topic.get("open_budget", 5))
+    except (TypeError, ValueError):
+        raise SystemExit(f"主题 {slug!r} open_budget 必须是整数") from None
+    if budget < 0:
+        raise SystemExit(f"主题 {slug!r} open_budget 必须 >= 0")
     for field in ("keywords", "exclude_keywords"):
         value = topic.get(field)
         if value is not None and not isinstance(value, list):
@@ -156,9 +162,12 @@ def load_custom_topics(
 def topic_open_budget(topic: dict[str, Any]) -> int:
     """主题 open 跟踪项预算;0 = 显式关闭跨天状态(O3)。"""
     try:
-        return int(topic.get("open_budget", 5))
+        value = int(topic.get("open_budget", 5))
     except (TypeError, ValueError):
         raise SystemExit(f"主题 open_budget 必须是整数: {topic.get('open_budget')!r}")
+    if value < 0:
+        raise SystemExit(f"主题 open_budget 必须 >= 0: {value}")
+    return value
 
 
 def topic_state_enabled(topic: dict[str, Any]) -> bool:

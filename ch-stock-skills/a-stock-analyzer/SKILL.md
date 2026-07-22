@@ -85,7 +85,7 @@ python scripts/data_fetcher.py pack 600519.SH --date 2026-01-01~2026-05-16 --evi
 ### 2.2 公告查询边界
 
 - `announcements` 只支持按个股查询。不要用本 skill 做全市场公告扫描。
-- 巨潮 `seDate` 按公告**归档日**过滤，晚间披露的公告归档在次日；脚本发请求时会自动把结束日 +1 天，避免"查到今天"漏掉当晚公告。查询回显仍是原始窗口，结果可能包含次日白天归档的公告，按 `announcement_time` 甄别。
+- 巨潮 `seDate` 按公告**归档日**过滤，晚间披露的公告归档在次日；脚本发请求时会自动把结束日 +1 天，避免"查到今天"漏掉当晚公告。查询结果同时回显 `date` 原始窗口与 `date_effective` 生效窗口；结果可能包含次日白天归档的公告，按 `announcement_time` 甄别。
 - 标题规则只负责定位事件类型，不负责判断影响大小。
 - `tabtype=fulltext` 用于公告全文列表；`tabtype=relation` 仅作为互动易/调研相关**公告**列表的辅助入口——投资者问答正文用 `interactive-qa` 数据集直接抓取（见 §7.3），不靠 relation 列表。
 - PDF 原文读取使用本 skill 内置下载与 `PyPDF2` 文本抽取，不跨 skill 引用。

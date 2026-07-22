@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import sys
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -28,10 +28,11 @@ ALLOWED_TAB_TYPES = {"fulltext", "relation"}
 DATE_RANGE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}$")
 STOCK_CODE_RE = re.compile(r"^\d{6}$")
 STOCK_WITH_ORG_RE = re.compile(r"^\d{6},[\w-]+$")
+CNINFO_TIMEZONE = timezone(timedelta(hours=8), "Asia/Shanghai")
 
 
 def _default_date_range() -> str:
-    today = date.today()
+    today = datetime.now(CNINFO_TIMEZONE).date()
     yesterday = today - timedelta(days=1)
     return f"{yesterday:%Y-%m-%d}~{today:%Y-%m-%d}"
 
@@ -47,6 +48,13 @@ def _extend_archive_end(se_date: str, days: int = 1) -> str:
     start_str, end_str = se_date.split("~")
     end = datetime.strptime(end_str, "%Y-%m-%d").date() + timedelta(days=days)
     return f"{start_str}~{end:%Y-%m-%d}"
+
+
+def _announcement_date(timestamp_ms: Any) -> str:
+    """把巨潮 epoch 毫秒时间戳固定解释为北京时间日期。"""
+    if timestamp_ms in (None, ""):
+        return ""
+    return datetime.fromtimestamp(float(timestamp_ms) / 1000, tz=CNINFO_TIMEZONE).strftime("%Y-%m-%d")
 
 
 def _validate_date_range(value: str) -> str:
@@ -157,10 +165,7 @@ def query_cninfo_announcements(
 
     normalized_items: list[dict[str, Any]] = []
     for item in announcements:
-        announcement_time = item.get("announcementTime")
-        publish_date = ""
-        if announcement_time:
-            publish_date = datetime.fromtimestamp(announcement_time / 1000).strftime("%Y-%m-%d")
+        publish_date = _announcement_date(item.get("announcementTime"))
 
         adjunct_url = item.get("adjunctUrl") or ""
         if adjunct_url and not adjunct_url.startswith("http"):

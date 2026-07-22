@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -41,6 +41,7 @@ REPORT_SUMMARY_PATTERNS = (
     "回复",
 )
 REPORT_CORRECTION_PATTERNS = ("更正", "修订", "更新", "补充")
+CNINFO_TIMEZONE = timezone(timedelta(hours=8), "Asia/Shanghai")
 
 INQUIRY_REPLY_PATTERNS = [
     r"问询.*回复",
@@ -88,9 +89,16 @@ ORIGINAL_TEXT_REQUIRED_TAGS = {
 
 def default_cninfo_date_range(days: int = 365) -> str:
     """Build a CNInfo date range ending today."""
-    today = datetime.now()
+    today = datetime.now(CNINFO_TIMEZONE)
     start = today - timedelta(days=days)
     return f"{start:%Y-%m-%d}~{today:%Y-%m-%d}"
+
+
+def cninfo_announcement_date(timestamp_ms: Any) -> str:
+    """Render a CNInfo epoch timestamp as a China-market calendar date."""
+    if timestamp_ms in (None, ""):
+        return ""
+    return datetime.fromtimestamp(float(timestamp_ms) / 1000, tz=CNINFO_TIMEZONE).strftime("%Y-%m-%d")
 
 
 def extend_cninfo_archive_window(value: str, days: int = 1) -> str:

@@ -28,6 +28,7 @@ from cninfo import (
     classify_cninfo_fulltext,
     classify_cninfo_relation,
     classify_report_title,
+    cninfo_announcement_date,
     cninfo_headers,
     report_sort_key,
     require_requests,
@@ -464,6 +465,8 @@ class StockDataFetcher:
             raise ValueError(f"Unsupported CNInfo tabtype: {tab_type}")
 
         http = self._session or require_requests()
+        requested_date_range = validate_cninfo_date_range(date_range)
+        effective_date_range = extend_cninfo_archive_window(requested_date_range)
         response = request_with_retry(
             http.post,
             "http://www.cninfo.com.cn/new/hisAnnouncement/query",
@@ -478,7 +481,7 @@ class StockDataFetcher:
                 "secid": "",
                 "category": str(category or "").strip(),
                 "trade": str(trade or "").strip(),
-                "seDate": extend_cninfo_archive_window(validate_cninfo_date_range(date_range)),
+                "seDate": effective_date_range,
                 "sortName": "",
                 "sortType": "",
                 "isHLtitle": "true",
@@ -491,10 +494,7 @@ class StockDataFetcher:
 
         normalized_items: List[Dict[str, Any]] = []
         for item in announcements:
-            announcement_time = item.get("announcementTime")
-            publish_date = ""
-            if announcement_time:
-                publish_date = datetime.fromtimestamp(announcement_time / 1000).strftime("%Y-%m-%d")
+            publish_date = cninfo_announcement_date(item.get("announcementTime"))
 
             adjunct_url = item.get("adjunctUrl") or ""
             normalized_item = {
@@ -513,6 +513,8 @@ class StockDataFetcher:
             normalized_items.append(normalized_item)
 
         return {
+            "date_range": requested_date_range,
+            "date_range_effective": effective_date_range,
             "total_pages": results.get("totalpages"),
             "total_records": results.get("totalRecordNum"),
             "announcements": normalized_items,
@@ -558,6 +560,7 @@ class StockDataFetcher:
                 "cninfo_stock": cninfo_stock,
                 "tabtype": tab_type,
                 "date": validate_cninfo_date_range(date_range),
+                "date_effective": result.get("date_range_effective"),
                 "searchkey": str(searchkey or "").strip(),
                 "category": str(category or "").strip(),
                 "trade": str(trade or "").strip(),
@@ -698,10 +701,7 @@ class StockDataFetcher:
 
         normalized_items: List[Dict[str, Any]] = []
         for item in announcements:
-            announcement_time = item.get("announcementTime")
-            publish_date = ""
-            if announcement_time:
-                publish_date = datetime.fromtimestamp(announcement_time / 1000).strftime("%Y-%m-%d")
+            publish_date = cninfo_announcement_date(item.get("announcementTime"))
 
             adjunct_url = item.get("adjunctUrl") or ""
             report_meta = classify_report_title(item.get("announcementTitle") or "")
@@ -853,4 +853,3 @@ class StockDataFetcher:
         if column not in df.columns:
             return df
         return df.sort_values(column, ascending=ascending)
-

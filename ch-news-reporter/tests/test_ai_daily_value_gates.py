@@ -9,7 +9,11 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from prepare_report_data import select_report_items  # noqa: E402
+from prepare_report_data import (  # noqa: E402
+    build_enrichment_candidates,
+    is_content_truncated,
+    select_report_items,
+)
 from save_report_state import validate  # noqa: E402
 
 
@@ -55,6 +59,32 @@ class SourceAwareSelectionTests(unittest.TestCase):
         }
         self.assertTrue(all(counts[source] >= 1 for source in sources))
         self.assertLessEqual(max(counts.values()), 4)
+
+
+class EnrichmentCandidateTests(unittest.TestCase):
+    def test_truncation_detector_handles_feed_ellipsis_only_at_the_end(self) -> None:
+        self.assertTrue(is_content_truncated("正文尚未结束……  "))
+        self.assertTrue(is_content_truncated("正文尚未结束...\n"))
+        self.assertFalse(is_content_truncated("正文中间有…但结尾完整。"))
+        self.assertFalse(is_content_truncated(""))
+
+    def test_truncated_rss_item_is_marked_for_full_article_fetch(self) -> None:
+        candidates = build_enrichment_candidates(
+            [
+                {
+                    "id": "rss-1",
+                    "source_type": "rss",
+                    "title": "被截断的 RSS 摘要",
+                    "url": "https://example.com/full-story",
+                    "content": "只拿到了摘要…",
+                }
+            ]
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["target_type"], "article_url")
+        self.assertTrue(candidates[0]["truncated"])
+        self.assertIn("fetch full article", candidates[0]["reason"])
 
 
 class GradingAuditValidationTests(unittest.TestCase):

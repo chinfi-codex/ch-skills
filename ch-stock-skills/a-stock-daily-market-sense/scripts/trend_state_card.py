@@ -3,7 +3,19 @@
 
 与 AlphaVault `system/tools/trend_state.py`（盘前计划工具）同源同参：
 五个趋势计数器（破位 / 融资连负 / 缩量 / 反弹质检戳 / 顶背离计数）+
-六档状态机（进攻 / 标准 / 谨慎 / 退潮 / 深度退潮 / 冰点，升档须右侧确认迟滞）。
+六档状态机（进攻 / 标准 / 谨慎 / 退潮 / 深度退潮 / 冰点）。
+升档迟滞只作用于「升出退潮梯队」（退潮/深度退潮/冰点 → 谨慎，须 exit_ok
+右侧确认）；梯队内部档位按日调整——非退潮态下跌停 ≥PANIC_LIMIT_DOWN 的
+恐慌日当日直进退潮（闪崩放量、融资 T-1 滞后时三组难当日凑够两组），
+冰点以跌停 ≥PANIC_LIMIT_DOWN 进入（退潮态内），以跌停回落至
+ICE_EXIT_LIMIT_DOWN 以下且涨>跌（广度修复）当日解除，退回退潮/深度退潮，
+避免单日恐慌把状态锁死在冰点多日（融资 T-1 滞后会使 exit_ok 在恐慌
+结束后仍长期不可达）。
+退潮/深度退潮日附带确定性相位修饰 phase（修复中 / 企稳 / 恶化中，规则见
+run_state_machine 末尾）：主档保持迟滞、不追单日，相位承载边际方向，
+表达「退潮·修复中」这类过渡期语义；冰点与非退潮态 phase 为空。
+反弹质检戳的融资腿（T-1 滞后）在恐慌次日（昨日跌停 ≥PANIC_LIMIT_DOWN）
+不参判——彼时融资读数反映恐慌日本身，近乎自动触发，只按量能腿判定。
 两者唯一差异是时间语义：本脚本为盘后视角，`--asof` **含当日**收盘数据；
 盘前工具取计划日之前的数据。参数常量对应经验法则 R-016 / R-017 / R-018，
 改参数须与盘前工具及规则页同步。
@@ -60,6 +72,7 @@ DIV_MARGIN_YI = -150.0
 DIV_WINDOW = 10
 DIV_TRIGGER = 2
 PANIC_LIMIT_DOWN = 200
+ICE_EXIT_LIMIT_DOWN = 100   # 冰点解除线：跌停回落到此线以下且涨>跌即解除（入 200 / 出 100，迟滞防抖）
 
 
 @dataclass
@@ -90,6 +103,7 @@ class DayRow:
     div_count10: int = 0
     groups_hit: list = field(default_factory=list)
     state: str = "标准"
+    phase: str = ""                 # 退潮梯队内的相位修饰：修复中 / 企稳 / 恶化中
     exit_progress: str = ""
 
 
@@ -196,7 +210,11 @@ def derive(days: List[DayRow]) -> None:
         idx_pct_max = max((r.idx_pct.get(ts, 0) for ts in TREND_PAIR), default=0)
         r.big_up = r.rise > BIGUP_RISE or idx_pct_max > BIGUP_IDX_PCT
         weak_volume = r.amt_ma20_prev is not None and r.amount_qianyuan < r.amt_ma20_prev
-        r.rebound_stamp = r.big_up and (weak_volume or r.margin_yi < QC_MARGIN_YI)
+        # 融资腿（T-1 滞后）在恐慌次日失真：跌停 ≥PANIC 的次日，融资读数反映的是
+        # 恐慌日本身，近乎自动触发，此时只按量能腿判定反弹戳
+        panic_yesterday = prev is not None and prev.limit_down >= PANIC_LIMIT_DOWN
+        margin_leg = r.margin_yi < QC_MARGIN_YI and not panic_yesterday
+        r.rebound_stamp = r.big_up and (weak_volume or margin_leg)
 
         new_high = any(r.idx_high20.get(ts) for ts in INDEXES)
         r.divergence = new_high and (r.rise < DIV_RISE or r.margin_yi < DIV_MARGIN_YI)
@@ -224,6 +242,8 @@ def run_state_machine(days: List[DayRow]) -> None:
             for ts in TREND_PAIR
         )
         vol_ok = r.amt_ma20_prev is not None and r.amount_qianyuan >= r.amt_ma20_prev
+        # exit_ok 末项 not rebound_stamp 为防御性写法：反弹戳要求缩量或融资 < -100 亿，
+        # 与 vol_ok / margin_pos_2d 互斥，逻辑上冗余，保留以显式表达"弱质反弹不算解除"
         exit_ok = margin_pos_2d and above_both and vol_ok and not r.rebound_stamp
 
         if in_retreat:
@@ -232,19 +252,34 @@ def run_state_machine(days: List[DayRow]) -> None:
             else:
                 if r.limit_down >= PANIC_LIMIT_DOWN:
                     state = "冰点"
-                elif state != "冰点":
+                elif state == "冰点":
+                    # 冰点解除：恐慌退潮（跌停 < 解除线）且广度修复（涨>跌），
+                    # 当日退回退潮梯队；不满足则维持冰点
+                    ice_clear = r.limit_down < ICE_EXIT_LIMIT_DOWN and r.rise > r.fall
+                    if not ice_clear:
+                        state = "冰点"
+                    else:
+                        state = "深度退潮" if len(r.groups_hit) == 3 else "退潮"
+                else:
                     state = "深度退潮" if len(r.groups_hit) == 3 else "退潮"
                 r.exit_progress = (
                     f"融资转正 {'2/2' if margin_pos_2d else ('1/2' if r.margin_yi > 0 else '0/2')}｜"
                     f"收复20日线 {'✓' if above_both else '✗'}｜量能≥20日均 {'✓' if vol_ok else '✗'}"
                     + ("｜本日盖派发反弹戳，解除进度清零" if r.rebound_stamp else "")
+                    + (f"｜冰点维持：跌停 {r.limit_down}（解除须跌停<{ICE_EXIT_LIMIT_DOWN} 且涨>跌）"
+                       if state == "冰点" else "")
                 )
-        elif len(r.groups_hit) >= 2:
+        elif r.limit_down >= PANIC_LIMIT_DOWN or len(r.groups_hit) >= 2:
+            # 恐慌日（跌停 ≥ PANIC_LIMIT_DOWN）当日直进退潮梯队：闪崩日常放量、
+            # 融资 T-1 滞后，三组难以当日凑够两组，恐慌单独构成退潮入口；
+            # 次日恐慌若持续，由退潮态分支再升冰点
             state = "深度退潮" if len(r.groups_hit) == 3 else "退潮"
         else:
             caution = (
                 r.below20_any
+                # 与「融资」组口径一致：连负天数或连负累计额任一触发
                 or r.margin_neg_days >= MARGIN_NEG_DAYS
+                or r.margin_neg_cum_yi <= MARGIN_NEG_CUM_YI
                 or r.rebound_stamp
                 or (prev is not None and prev.rebound_stamp)
                 or r.div_count10 >= DIV_TRIGGER
@@ -254,6 +289,7 @@ def run_state_machine(days: List[DayRow]) -> None:
             elif state == "谨慎":
                 prev_caution = prev is not None and (
                     prev.below20_any or prev.margin_neg_days >= MARGIN_NEG_DAYS
+                    or prev.margin_neg_cum_yi <= MARGIN_NEG_CUM_YI
                     or prev.rebound_stamp or prev.div_count10 >= DIV_TRIGGER
                 )
                 state = "谨慎" if prev_caution else "标准"
@@ -265,6 +301,30 @@ def run_state_machine(days: List[DayRow]) -> None:
                 )
                 state = "进攻" if attack_ok else "标准"
         r.state = state
+
+        # 相位修饰（仅退潮/深度退潮）：主档保持迟滞，相位承载边际方向。
+        # 修复证据：涨>跌 / 自冰点解除当日 / 融资转正 / 收复双指数 20 日线；
+        # 恶化证据：跌停回升至解除线以上 / 当日新破位 / 缩量 / 融资大卖（<-100 亿）。
+        # 任一方向证据 ≥2 且严格多于对方才定向，否则为企稳。
+        if state in ("退潮", "深度退潮"):
+            repair = (
+                (r.rise > r.fall)
+                + (prev is not None and prev.state == "冰点")
+                + (r.margin_yi > 0)
+                + above_both
+            )
+            worsen = (
+                (r.limit_down >= ICE_EXIT_LIMIT_DOWN)
+                + (r.break_days == 1)
+                + r.shrink
+                + (r.margin_yi < QC_MARGIN_YI)
+            )
+            if repair >= 2 and repair > worsen:
+                r.phase = "修复中"
+            elif worsen >= 2 and worsen > repair:
+                r.phase = "恶化中"
+            else:
+                r.phase = "企稳"
 
 
 def normalize_asof(asof: Optional[str]) -> date:
@@ -307,6 +367,7 @@ def build_block(asof: Optional[str] = None) -> Dict[str, Any]:
         "is_current": ref.d == asof_date,
         "state": ref.state,
         "state_days": state_days,
+        "phase": ref.phase or None,
         "counters": {
             "break_days": ref.break_days,
             "margin_neg_days": ref.margin_neg_days,
@@ -331,6 +392,7 @@ def build_block(asof: Optional[str] = None) -> Dict[str, Any]:
             {
                 "date": str(d.d),
                 "state": d.state,
+                "phase": d.phase or None,
                 "groups": d.groups_hit,
                 "rebound_stamp": d.rebound_stamp,
                 "div10": d.div_count10,

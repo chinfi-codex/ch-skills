@@ -36,6 +36,19 @@ def _default_date_range() -> str:
     return f"{yesterday:%Y-%m-%d}~{today:%Y-%m-%d}"
 
 
+def _extend_archive_end(se_date: str, days: int = 1) -> str:
+    """把日期范围的结束日向后顺延。
+
+    巨潮 seDate 按公告**归档日**过滤，晚间披露的公告归档在次日：
+    查询截止到 D 会漏掉 D 日晚间发布（归档 D+1）的公告。默认把结束日
+    +1 天以覆盖晚间披露；代价是可能带入 D+1 白天归档的公告，结果中的
+    announcement_time 会如实显示归档日，由调用方甄别。
+    """
+    start_str, end_str = se_date.split("~")
+    end = datetime.strptime(end_str, "%Y-%m-%d").date() + timedelta(days=days)
+    return f"{start_str}~{end:%Y-%m-%d}"
+
+
 def _validate_date_range(value: str) -> str:
     if not DATE_RANGE_RE.match(value):
         raise argparse.ArgumentTypeError("日期范围必须是 YYYY-MM-DD~YYYY-MM-DD")
@@ -209,6 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--page-size", type=int, default=DEFAULT_PAGE_SIZE, help="每页条数")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="请求超时秒数")
     parser.add_argument("--include-excluded", action="store_true", help="保留被 rules 排除的公告")
+    parser.add_argument("--no-archive-extend", action="store_true", help="不自动把结束日 +1 天（默认顺延以覆盖晚间披露、次日归档的公告）")
     parser.add_argument("--disable-orgid-resolve", action="store_true", help="stock 为纯代码时不自动补全 orgId")
     parser.add_argument("--output", help="输出 JSON 文件路径")
     return parser
@@ -223,6 +237,8 @@ def main() -> None:
     if stock and not args.disable_orgid_resolve:
         stock = resolve_stock_argument(stock, timeout=args.timeout)
 
+    se_date_effective = args.se_date if args.no_archive_extend else _extend_archive_end(args.se_date)
+
     result = query_cninfo_announcements(
         page_num=args.page_num,
         tab_type=args.tabtype,
@@ -230,13 +246,14 @@ def main() -> None:
         searchkey=args.searchkey.strip(),
         category=args.category.strip(),
         trade=args.trade.strip(),
-        se_date=args.se_date,
+        se_date=se_date_effective,
         page_size=args.page_size,
         timeout=args.timeout,
     )
     result["query"] = {
         "tabtype": args.tabtype,
         "se_date": args.se_date,
+        "se_date_effective": se_date_effective,
         "stock": stock,
         "searchkey": args.searchkey.strip(),
         "category": args.category.strip(),

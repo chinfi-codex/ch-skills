@@ -93,6 +93,20 @@ def default_cninfo_date_range(days: int = 365) -> str:
     return f"{start:%Y-%m-%d}~{today:%Y-%m-%d}"
 
 
+def extend_cninfo_archive_window(value: str, days: int = 1) -> str:
+    """Push the range end forward to cover evening disclosures.
+
+    CNInfo `seDate` filters by archive date; announcements published in the
+    evening of day D are archived under D+1, so a range ending on D silently
+    misses them. Extending the end by one day may pull in items archived the
+    next morning — callers see the archive date in `announcement_time` and
+    can filter.
+    """
+    start_str, end_str = value.split("~")
+    end = datetime.strptime(end_str, "%Y-%m-%d") + timedelta(days=days)
+    return f"{start_str}~{end:%Y-%m-%d}"
+
+
 def validate_cninfo_date_range(value: Optional[str]) -> str:
     """Validate or default CNInfo date range."""
     if not value:

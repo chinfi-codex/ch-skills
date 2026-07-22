@@ -11,7 +11,8 @@
 targets:
   # Agent 品牌目录（Kimi CLI 启动时会按优先级自动扫描）
   # 开启 merge_all_available_skills = true 后，Kimi 会合并所有品牌目录
-  kimi:     "~/.kimi/skills"
+  kimi-code: "~/.kimi-code/skills"
+  kimi-work: "~/.kimi-work/skills"
   claude:   "~/.claude/skills"
   codex:    "~/.codex/skills"
   hermes:   "~/.hermes/skills"

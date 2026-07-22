@@ -80,13 +80,14 @@ python scripts/cninfo_announcement_search.py --tabtype fulltext --date 2026-03-0
 参数：
 
 - `--tabtype`: `fulltext` 或 `relation`
-- `--date`: `YYYY-MM-DD~YYYY-MM-DD`
+- `--date`: `YYYY-MM-DD~YYYY-MM-DD`。**注意**：巨潮按公告**归档日**过滤，晚间披露的公告归档在次日；脚本默认自动把结束日 +1 天以免漏掉截止日晚间的公告（输出 `query.se_date_effective` 记录生效窗口），可能因此带入次日白天归档的公告，按 `announcement_time` 甄别即可
 - `--stock`: `300017` 或 `300017,9900008387`
 - `--searchkey`: 标题关键词
 - `--category`: 巨潮原始分类参数
 - `--trade`: 行业参数
 - `--page-num` / `--page-size`
 - `--include-excluded`
+- `--no-archive-extend`: 关闭结束日 +1 天的自动顺延，严格按传入窗口查询
 - `--disable-orgid-resolve`
 - `--output`
 

@@ -139,6 +139,13 @@ class FilterBarTests(unittest.TestCase):
         self.assertIn('id="loadmore"', html)
         self.assertIn("allRows.slice(0,LIST_SHOWN)", html)
 
+    def test_detail_pane_scrolls_independently_on_desktop(self) -> None:
+        html = renderer.render_html(_view(parent_annualized=4.0, parent_pe=25.0, kf_median=1.5))
+        self.assertIn("max-height:calc(100vh - 28px)", html)
+        self.assertIn("overflow-y:auto", html)
+        self.assertIn("overscroll-behavior:contain", html)
+        self.assertIn(".detail{position:static!important;max-height:none;overflow:visible", html)
+
 
 class LazyKlineTests(unittest.TestCase):
     def test_html_uses_lazy_kline_assets_instead_of_inline_bars(self) -> None:

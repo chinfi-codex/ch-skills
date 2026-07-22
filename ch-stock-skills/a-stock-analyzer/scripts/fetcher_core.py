@@ -31,6 +31,7 @@ from cninfo import (
     cninfo_headers,
     report_sort_key,
     require_requests,
+    extend_cninfo_archive_window,
     validate_cninfo_date_range,
 )
 from common import (
@@ -477,7 +478,7 @@ class StockDataFetcher:
                 "secid": "",
                 "category": str(category or "").strip(),
                 "trade": str(trade or "").strip(),
-                "seDate": validate_cninfo_date_range(date_range),
+                "seDate": extend_cninfo_archive_window(validate_cninfo_date_range(date_range)),
                 "sortName": "",
                 "sortType": "",
                 "isHLtitle": "true",
@@ -684,7 +685,7 @@ class StockDataFetcher:
                 "secid": "",
                 "category": category,
                 "trade": "",
-                "seDate": date_range,
+                "seDate": extend_cninfo_archive_window(date_range),
                 "sortName": "",
                 "sortType": "",
                 "isHLtitle": "true",

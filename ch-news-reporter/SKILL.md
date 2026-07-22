@@ -143,6 +143,8 @@ python scripts/enrich_targets.py --targets-file selected_targets.json
 
 重复运行不会让数据膨胀；同一 `item_id + target_type + target_url` 会更新已有 enrichment。
 
+**截断 RSS 全文回填（硬规则）**：`prepare_report_data.py` 会对 `content` 被源站截断（以「…」/「...」结尾）的 RSS 条目，在 `enrichment_candidates` 里给其自身 URL 的 `article_url` 候选打上 `truncated: true` 标记，`reason` 标为「RSS content truncated — fetch full article from source URL」。这类候选**必须全部纳入本轮 enrichment**——抓取条目原文 URL，抓回的 `text_excerpt` 即为该条目的权威正文，报告引用以全文为准，不得只依据截断摘要下结论。全文回填是补全动作，**不计入 5-15 个广度 pass 预算**。Juya AI Daily 等每日聚合类 feed（feed summary 被源站截断在「…」）必然触发此规则；长文（如 27 条聚合早报）抓取时显式传 `--website-max-chars 16000` 避免正文被二次截断。
+
 完成 enrichment 后，再生成 enriched evidence packet：
 
 ```bash

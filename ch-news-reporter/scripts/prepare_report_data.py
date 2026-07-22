@@ -710,11 +710,31 @@ def build_conditional_data_fetches(events: list[dict[str, Any]]) -> dict[str, An
     }
 
 
+def is_content_truncated(content: str) -> bool:
+    """Detect RSS/feed summaries truncated by the source feed itself.
+
+    Some feeds (e.g. Juya AI Daily) emit a <summary> that ends with an
+    ellipsis ("…" U+2026 or "...") well short of the real article body. Flag
+    these so the enrichment pass fetches the full article from the item's own
+    URL instead of trusting the truncated snippet.
+    """
+    if not content:
+        return False
+    tail = content.rstrip()[-3:]
+    return tail.endswith("…") or tail.endswith("...")
+
+
 def build_enrichment_candidates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
 
-    def add_target(item: dict[str, Any], target_type: str, url: str, reason: str) -> None:
+    def add_target(
+        item: dict[str, Any],
+        target_type: str,
+        url: str,
+        reason: str,
+        truncated: bool = False,
+    ) -> None:
         target_url = normalize_url(github_repo_url(url) or url)
         if not target_url:
             return
@@ -722,16 +742,17 @@ def build_enrichment_candidates(items: list[dict[str, Any]]) -> list[dict[str, A
         if key in seen:
             return
         seen.add(key)
-        candidates.append(
-            {
-                "item_id": item["id"],
-                "source_type": item.get("source_type"),
-                "title": item.get("title"),
-                "target_type": target_type,
-                "target_url": target_url,
-                "reason": reason,
-            }
-        )
+        candidate = {
+            "item_id": item["id"],
+            "source_type": item.get("source_type"),
+            "title": item.get("title"),
+            "target_type": target_type,
+            "target_url": target_url,
+            "reason": reason,
+        }
+        if truncated:
+            candidate["truncated"] = True
+        candidates.append(candidate)
 
     for item in items:
         source_type = item.get("source_type")
@@ -749,7 +770,15 @@ def build_enrichment_candidates(items: list[dict[str, Any]]) -> list[dict[str, A
             if repo_url:
                 add_target(item, "github_repo", repo_url, f"{source_type} GitHub link")
             else:
-                add_target(item, "article_url", url, f"{source_type} external URL")
+                truncated = source_type == "rss" and is_content_truncated(
+                    str(item.get("content") or "")
+                )
+                reason = (
+                    "RSS content truncated — fetch full article from source URL"
+                    if truncated
+                    else f"{source_type} external URL"
+                )
+                add_target(item, "article_url", url, reason, truncated=truncated)
 
     return candidates
 

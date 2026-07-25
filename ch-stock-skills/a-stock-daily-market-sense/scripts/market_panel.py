@@ -3328,6 +3328,7 @@ def build_money_effect_samples(
     pct_chg_threshold: float,
     amount_threshold_100m_yuan: float,
     sample_limit: int,
+    market_panel: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Any]:
     """
     Build the money-effect candidate pool for daily theme grouping.
@@ -3374,7 +3375,9 @@ def build_money_effect_samples(
         if column in df.columns:
             df[column] = pd.to_numeric(df[column], errors="coerce")
 
-    market_total_amount_100m = float(df["amount"].fillna(0).clip(lower=0).sum() / 100000)
+    market_amount_source = market_panel if market_panel is not None and not market_panel.empty else df
+    market_amount = pd.to_numeric(market_amount_source["amount"], errors="coerce")
+    market_total_amount_100m = float(market_amount.fillna(0).clip(lower=0).sum() / 100000)
 
     qualified = df.loc[
         (df["pct_chg"].fillna(-999) >= pct_chg_threshold)
@@ -5215,6 +5218,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         pct_chg_threshold=args.money_pct_threshold,
         amount_threshold_100m_yuan=args.money_amount_threshold,
         sample_limit=args.money_sample_limit,
+        market_panel=panel,
     )
     volume_decline = build_volume_decline_samples(
         candidate_panel,

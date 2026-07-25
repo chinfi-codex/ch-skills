@@ -14,6 +14,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -214,10 +215,12 @@ def cleanup_intermediates(reports_dir: Path, date: str) -> Dict[str, Any]:
         removed.append(str(extra))
     module_dir = reports_dir / f"module_context_{date}"
     if module_dir.is_dir():
-        for child in sorted(module_dir.glob("*.json")):
-            child.unlink()
-            removed.append(str(child))
-        module_dir.rmdir()
+        removed.extend(
+            str(child)
+            for child in sorted(module_dir.rglob("*"))
+            if child.is_file() or child.is_symlink()
+        )
+        shutil.rmtree(module_dir)
         removed.append(str(module_dir))
     else:
         missing.append(str(module_dir))

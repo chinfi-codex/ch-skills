@@ -460,6 +460,22 @@ def test_build_money_effect_samples():
     assert empty["summary"]["candidate_amount_share_of_market_pct"] is None
 
 
+def test_build_money_effect_samples_uses_full_market_turnover_denominator():
+    full_market = _synthetic_panel()
+    candidate_panel = full_market.loc[full_market["ts_code"].isin(["A.SZ", "B.SZ"])].copy()
+    result = mp.build_money_effect_samples(
+        candidate_panel,
+        pct_chg_threshold=7.0,
+        amount_threshold_100m_yuan=2.0,
+        sample_limit=10,
+        market_panel=full_market,
+    )
+    summary = result["summary"]
+    assert summary["total_amount_100m_yuan"] == 8.0
+    assert summary["market_total_amount_100m_yuan"] == 20.3
+    assert summary["candidate_amount_share_of_market_pct"] == 39.41
+
+
 def test_build_volume_decline_samples():
     result = mp.build_volume_decline_samples(
         _synthetic_panel(),

@@ -1,0 +1,11 @@
+tushare>=1.4.0
+pandas>=1.5.0
+requests>=2.28.0
+# On-demand PDF: official quarterly/interim/annual reports are text PDFs but can
+# run to hundreds of pages, so section extraction needs page-level access —
+# PyMuPDF preferred, PyPDF2 is the fallback extractor.
+PyMuPDF>=1.24.0
+PyPDF2>=3.0.0
+# Storage / incremental cache via shared/data/db_core.py. psycopg2 is only
+# needed for the default PostgreSQL backend; ALPHA_DB_BACKEND=sqlite needs none.
+psycopg2-binary>=2.9.0

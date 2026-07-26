@@ -37,6 +37,7 @@ shared:
         - ch-news-reporter
         - a-stock-daily-market-sense
         - a-stock-earnings-forecast
+        - a-stock-quarterly-report
         - a-stock-analyzer
     # html 能力：报告渲染框架（Markdown→HTML + 内联图表）
     - source: shared/html_report
@@ -44,6 +45,7 @@ shared:
       skills:
         - a-stock-analyzer
         - a-stock-earnings-forecast
+        - a-stock-quarterly-report
         - chstock-usmarket-report
         - ch-news-reporter
         - a-stock-daily-market-sense
@@ -93,6 +95,8 @@ exclude:
     a-stock-daily-market-sense:
       - reports
     a-stock-earnings-forecast:
+      - reports
+    a-stock-quarterly-report:
       - reports
     a-stock-analyzer:
       - reports

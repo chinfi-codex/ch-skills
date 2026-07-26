@@ -177,7 +177,8 @@ def disclosure_window(store: Store, code: str, period: str, pad_days: int = 4) -
     # No calendar row (e.g. an older period never scanned): reports are filed
     # after the period ends, so start there rather than at the year start.
     start = dt.datetime.strptime(period, "%Y%m%d").date()
-    return f"{start.strftime('%Y-%m-%d')}~{dt.date.today().strftime('%Y-%m-%d')}"
+    today = dt.datetime.now(cn.BEIJING_TZ).date()
+    return f"{start.strftime('%Y-%m-%d')}~{today.strftime('%Y-%m-%d')}"
 
 
 def resolve_announcement(store: Store, code: str, period: str, se_date: str,
@@ -219,6 +220,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         ap.error("--period 与 --code 必填（或用 --list-sections）")
 
     period, code = args.period, args.code.strip().upper()
+    if not re.fullmatch(r"\d{8}", period) or period[4:] not in cn.REPORT_CATEGORY:
+        ap.error("--period 必须是季度末 YYYYMMDD（0331/0630/0930/1231）")
+    if not re.fullmatch(r"\d{6}\.(SZ|SH|BJ)", code):
+        ap.error("--code 必须是 Tushare A 股代码，如 300750.SZ")
     wanted = list(SECTIONS) if args.sections.strip() == "all" else \
         [s.strip() for s in args.sections.split(",") if s.strip()]
     unknown = [s for s in wanted if s not in SECTIONS]

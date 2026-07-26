@@ -39,6 +39,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from zoneinfo import ZoneInfo
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _BUNDLED_SHARED = _SCRIPT_DIR / "_shared"
@@ -85,7 +86,7 @@ _SCHEMA: Dict[str, str] = {
             ts_code TEXT NOT NULL,
             trade_date TEXT NOT NULL,
             open REAL, high REAL, low REAL, close REAL, pre_close REAL,
-            pct_chg REAL, vol REAL, amount REAL,
+            pct_chg REAL, vol REAL, amount REAL, adj_factor REAL,
             PRIMARY KEY (ts_code, trade_date)
         )""",
     "qreport_cninfo_fetch_log": """
@@ -102,6 +103,7 @@ _SCHEMA: Dict[str, str] = {
             period TEXT NOT NULL,
             ts_code TEXT NOT NULL,
             ann_date TEXT NOT NULL,
+            name TEXT,
             title TEXT,
             url TEXT,
             is_corrected INTEGER,
@@ -198,8 +200,8 @@ _DISCLOSURE_COLS = ["period", "ts_code", "pre_date", "actual_date", "ann_date", 
 _FIN_COLS = ["ts_code", "period", "ann_date", "sources", "data_json", "fetched_at"]
 _BASIC_COLS = ["ts_code", "name", "industry", "area", "market", "fetched_at"]
 _BAR_COLS = ["ts_code", "trade_date", "open", "high", "low", "close", "pre_close",
-             "pct_chg", "vol", "amount"]
-_ANN_COLS = ["announcement_id", "period", "ts_code", "ann_date", "title", "url",
+             "pct_chg", "vol", "amount", "adj_factor"]
+_ANN_COLS = ["announcement_id", "period", "ts_code", "ann_date", "name", "title", "url",
              "is_corrected", "is_summary", "fetched_at"]
 _PDF_COLS = ["ts_code", "period", "section", "title", "url", "page_span", "text", "fetched_at"]
 _FCREF_COLS = ["ts_code", "period", "kind", "ann_date", "type", "np_min", "np_max",
@@ -214,7 +216,29 @@ _OVERVIEW_COLS = ["period", "overview", "evidence_total", "evidence_growth",
 
 
 def _now() -> str:
-    return dt.datetime.now().isoformat(timespec="seconds")
+    return dt.datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds")
+
+
+def qfq_adjust_bars(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Derive a consistent qfq series from persisted raw bars."""
+    if not rows:
+        return []
+    factors = [(str(r.get("trade_date") or ""), r.get("adj_factor")) for r in rows
+               if r.get("adj_factor")]
+    if not factors:
+        return [dict(r) for r in rows]
+    latest = max(factors, key=lambda item: item[0])[1]
+    if not latest:
+        return [dict(r) for r in rows]
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        factor = (item.get("adj_factor") or latest) / latest
+        for col in ("open", "high", "low", "close", "pre_close"):
+            if item.get(col) is not None:
+                item[col] = round(float(item[col]) * factor, 2)
+        out.append(item)
+    return out
 
 
 def _chunks(seq: Sequence[Any], size: int) -> Iterable[Sequence[Any]]:
@@ -239,11 +263,38 @@ class Store:
                 cur = conn.cursor()
                 for ddl in _SCHEMA.values():
                     cur.execute(adapt_sql(ddl))
+                bar_factor_added = self._ensure_column(
+                    cur, "qreport_daily_cache", "adj_factor", "REAL")
+                self._ensure_column(
+                    cur, "qreport_cninfo_announcement", "name", "TEXT")
+                if bar_factor_added:
+                    # Old cache rows were already qfq-adjusted and have no
+                    # factor, so mixing them with raw rows would create gaps.
+                    cur.execute(adapt_sql("DELETE FROM qreport_daily_cache"))
                 for idx in _INDEXES:
                     cur.execute(adapt_sql(idx))
             self.available = True
         except Exception as exc:  # noqa: BLE001
             self.reason = f"db connect/init failed: {str(exc)[:120]}"
+
+    @staticmethod
+    def _ensure_column(cur: Any, table: str, column: str, sql_type: str) -> bool:
+        """Add a cache column in place; return whether a migration ran."""
+        if BACKEND == Backend.POSTGRESQL:
+            cur.execute(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = %s AND column_name = %s",
+                (table, column),
+            )
+            exists = cur.fetchone() is not None
+        else:
+            cur.execute(f"PRAGMA table_info({table})")
+            exists = column in {str(row[1]) for row in cur.fetchall()}
+        if not exists:
+            cur.execute(adapt_sql(
+                f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"))
+            return True
+        return False
 
     # -- generic helpers ----------------------------------------------------
     def _rows(self, sql: str, params: Sequence[Any], cols: Sequence[str]) -> List[Dict[str, Any]]:
@@ -441,7 +492,8 @@ class Store:
             now = _now()
             self._batch_upsert(
                 "qreport_cninfo_announcement", _ANN_COLS, ["announcement_id"],
-                [(r["announcement_id"], period, r["ts_code"], r["ann_date"], r.get("title"),
+                [(r["announcement_id"], period, r["ts_code"], r["ann_date"], r.get("name"),
+                  r.get("title"),
                   r.get("url"), 1 if r.get("is_corrected") else 0,
                   1 if r.get("is_summary") else 0, now) for r in rows],
             )
@@ -452,7 +504,8 @@ class Store:
     def load_cninfo_announcements(self, period: str) -> List[Dict[str, Any]]:
         if not self.available:
             return []
-        cols = ["announcement_id", "ts_code", "ann_date", "title", "url", "is_corrected", "is_summary"]
+        cols = ["announcement_id", "ts_code", "ann_date", "name", "title", "url",
+                "is_corrected", "is_summary"]
         try:
             return self._rows(
                 f"SELECT {', '.join(cols)} FROM qreport_cninfo_announcement "
@@ -560,9 +613,9 @@ class Store:
         except Exception:  # noqa: BLE001
             return {}
 
-    def upsert_verdicts(self, records: Sequence[Dict[str, Any]]) -> None:
+    def upsert_verdicts(self, records: Sequence[Dict[str, Any]]) -> bool:
         if not self.available or not records:
-            return
+            return False
         try:
             now = _now()
             self._batch_upsert(
@@ -573,8 +626,9 @@ class Store:
                   r.get("evidence_np_single_yoy"), r.get("evidence_rev_single_yoy"), now)
                  for r in records],
             )
+            return True
         except Exception:  # noqa: BLE001
-            pass
+            return False
 
     # -- model theme trends --------------------------------------------------
     def load_theme_trends(self, period: str) -> Dict[str, Dict[str, Any]]:
@@ -589,9 +643,9 @@ class Store:
         except Exception:  # noqa: BLE001
             return {}
 
-    def upsert_theme_trends(self, records: Sequence[Dict[str, Any]]) -> None:
+    def upsert_theme_trends(self, records: Sequence[Dict[str, Any]]) -> bool:
         if not self.available or not records:
-            return
+            return False
         try:
             now = _now()
             self._batch_upsert(
@@ -601,8 +655,9 @@ class Store:
                   r.get("evidence_strong_n"), r.get("evidence_weak_n"),
                   r.get("evidence_member_n"), now) for r in records],
             )
+            return True
         except Exception:  # noqa: BLE001
-            pass
+            return False
 
     # -- model period overview ----------------------------------------------
     def load_period_overview(self, period: str) -> Optional[Dict[str, Any]]:
@@ -617,17 +672,18 @@ class Store:
         except Exception:  # noqa: BLE001
             return None
 
-    def upsert_period_overview(self, record: Dict[str, Any]) -> None:
+    def upsert_period_overview(self, record: Dict[str, Any]) -> bool:
         if not self.available or not record:
-            return
+            return False
         try:
             self._batch_upsert(
                 "qreport_period_overview", _OVERVIEW_COLS, ["period"],
                 [(record["period"], record["overview"], record.get("evidence_total"),
                   record.get("evidence_growth"), record.get("evidence_decline"), _now())],
             )
+            return True
         except Exception:  # noqa: BLE001
-            pass
+            return False
 
     # -- daily bars ----------------------------------------------------------
     def cached_bar_dates(self, start: str, end: str) -> Set[str]:
@@ -658,7 +714,7 @@ class Store:
                     out.setdefault(str(r["ts_code"]), []).append(r)
         except Exception:  # noqa: BLE001
             return out
-        return out
+        return {code: qfq_adjust_bars(rows) for code, rows in out.items()}
 
     def upsert_bars_many(self, records: Sequence[Dict[str, Any]]) -> None:
         if not self.available or not records:

@@ -25,6 +25,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -44,6 +45,7 @@ def _session() -> requests.Session:
 TOPSEARCH_URL = "http://www.cninfo.com.cn/new/information/topSearch/query"
 QUERY_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 STATIC_PREFIX = "http://static.cninfo.com.cn/"
+ALLOWED_CNINFO_HOSTS = {"static.cninfo.com.cn", "www.cninfo.com.cn"}
 BEIJING_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 # Period end (mmdd) -> official report category on cninfo.
@@ -193,6 +195,9 @@ def _row_to_record(a: Dict[str, Any], period: str) -> Optional[Dict[str, Any]]:
     if not ts_code:
         return None
     adjunct = str(a.get("adjunctUrl") or "")
+    url = urljoin(STATIC_PREFIX, adjunct)
+    if not validate_pdf_url(url):
+        return None
     return {
         "announcement_id": str(a.get("announcementId") or adjunct or ""),
         "period": period,
@@ -201,7 +206,7 @@ def _row_to_record(a: Dict[str, Any], period: str) -> Optional[Dict[str, Any]]:
         "name": str(a.get("secName") or ""),
         "title": title,
         "ann_date": _epoch_to_date(a.get("announcementTime")).replace("-", ""),
-        "url": adjunct if adjunct.startswith("http") else STATIC_PREFIX + adjunct,
+        "url": url,
         "adjunct_url": adjunct,
         "is_corrected": is_corrected_title(title),
         "is_summary": is_summary_title(title),
@@ -282,8 +287,19 @@ def find_report_announcement(code: str, orgid: str, period: str, se_date: str,
     return matched[0]
 
 
+def validate_pdf_url(url: str) -> bool:
+    """Allow only the official CNInfo HTTP(S) hosts."""
+    try:
+        parsed = urlparse(str(url))
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and parsed.hostname in ALLOWED_CNINFO_HOSTS
+
+
 def download_pdf(url: str, timeout: int = 90, attempts: int = 3) -> Optional[bytes]:
     """Fetch an announcement PDF. Annual reports reach tens of MB — long timeout."""
+    if not validate_pdf_url(url):
+        raise ValueError(f"refusing non-CNInfo PDF URL: {url!r}")
     last: Optional[Exception] = None
     for i in range(attempts):
         try:

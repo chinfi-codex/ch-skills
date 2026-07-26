@@ -23,6 +23,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sys
 from html import escape
 from pathlib import Path
@@ -33,6 +34,12 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 from store import Store  # noqa: E402
+from cninfo_client import validate_pdf_url  # noqa: E402
+
+_BUNDLED_HTML = Path(_SCRIPT_DIR) / "_shared" / "html_report"
+_DEV_HTML = Path(_SCRIPT_DIR).parents[2] / "shared" / "html_report"
+sys.path.insert(0, str(_BUNDLED_HTML if _BUNDLED_HTML.exists() else _DEV_HTML))
+from safe_json import safe_json_for_script  # noqa: E402
 
 BEIJING_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
 KLINE_BARS = 130
@@ -54,6 +61,8 @@ def beijing_today() -> dt.date:
 
 
 def quarter_of(period: str) -> int:
+    if not re.fullmatch(r"\d{8}", str(period)):
+        raise ValueError(f"{period} 不是季度末(YYYYMMDD)。")
     if period[4:] not in _MMDD_Q:
         raise ValueError(f"{period} 不是季度末(0331/0630/0930/1231)。")
     return _MMDD_Q[period[4:]]
@@ -298,7 +307,9 @@ def build_view(period: str, evidence: Dict[str, Any], verdicts: Dict[str, Dict[s
             "match_confidence": (v or {}).get("match_confidence"),
             "theme_rationale": (v or {}).get("theme_rationale"),
             "badges": badges, "stale": stale,
-            "cninfo_title": src.get("cninfo_title"), "cninfo_url": src.get("cninfo_url"),
+            "cninfo_title": src.get("cninfo_title"),
+            "cninfo_url": (src.get("cninfo_url")
+                           if validate_pdf_url(str(src.get("cninfo_url") or "")) else None),
             "sources": src.get("sources") or [],
         }
         if gap_dir == "up":
@@ -888,13 +899,13 @@ def render_html(view: Dict[str, Any], kline_assets: Optional[Dict[str, Any]] = N
         "asset_base": f"qreport_{view['period']}.klines",
         "code_to_shard": {code: _kline_shard_id(code) for code in view.get("klines", {})},
     }
-    data_json = json.dumps({
+    data_json = safe_json_for_script({
         "period": view["period"], "trend_net": view["trend_net"],
         "pe_buckets": view["pe_buckets"], "industries": view["industries"],
         "stocks": view["stocks"], "theme_trends": view["theme_trends"],
         "kline_asset_base": kline_assets["asset_base"],
         "kline_shards": kline_assets["code_to_shard"],
-    }, ensure_ascii=False, separators=(",", ":"))
+    })
     shared_theme = _load_shared_theme("default")
     return f"""<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -958,6 +969,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     if evidence is None:
         print(json.dumps({"error": f"evidence 不存在: {ev_path}，请先运行 report_scan.py。"},
                          ensure_ascii=False))
+        return 2
+    evidence_period = str((evidence.get("meta") or {}).get("period") or "")
+    if evidence_period != period:
+        print(json.dumps({
+            "error": f"evidence 报告期不符：evidence={evidence_period!r}，要求={period!r}",
+            "evidence": ev_path,
+        }, ensure_ascii=False))
         return 2
     try:
         cutoff_info = _validate_evidence_cutoff(evidence, args.require_ann_cutoff)

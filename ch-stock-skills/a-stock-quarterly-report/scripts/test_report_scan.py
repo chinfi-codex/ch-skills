@@ -20,6 +20,10 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import report_scan as rs  # noqa: E402
+import cninfo_client as cn  # noqa: E402
+import render_period_html as renderer  # noqa: E402
+import verdict  # noqa: E402
+from store import qfq_adjust_bars  # noqa: E402
 
 
 def test_period_arithmetic() -> None:
@@ -74,6 +78,87 @@ def test_single_quarter_missing_base_is_none_not_cumulative() -> None:
     series = rs.Series({"20260630": {"revenue": 300.0}})
     assert series.single("20260630", "revenue") is None
     assert series.prev_single("20260630", "revenue") is None
+
+
+def test_financial_firm_revenue_falls_back_to_total_revenue() -> None:
+    series = rs.Series({
+        "20260331": {"total_revenue": 120.0},
+        "20260630": {"total_revenue": 260.0},
+    })
+    assert series.cum("20260630", "revenue") == 260.0
+    assert series.single("20260630", "revenue") == 140.0
+
+
+def test_refetch_merge_preserves_complete_cached_statement() -> None:
+    old = {"20260331": {
+        "revenue": 100.0, "n_cashflow_act": 20.0,
+        "_sources": {"income", "cashflow"},
+    }}
+    fresh = {"20260331": {
+        "revenue": 110.0, "_sources": {"income"},
+    }}
+    merged = rs.merge_statement_periods(old, fresh)
+    assert merged["20260331"]["revenue"] == 110.0
+    assert merged["20260331"]["n_cashflow_act"] == 20.0
+    assert merged["20260331"]["_sources"] == {"income", "cashflow"}
+
+
+def test_qfq_is_rebased_over_the_complete_raw_series() -> None:
+    rows = [
+        {"trade_date": "20260101", "close": 10.0, "open": 10.0,
+         "high": 10.0, "low": 10.0, "pre_close": 10.0, "adj_factor": 1.0},
+        {"trade_date": "20260701", "close": 6.0, "open": 6.0,
+         "high": 6.0, "low": 6.0, "pre_close": 10.0, "adj_factor": 0.6},
+    ]
+    adjusted = qfq_adjust_bars(rows)
+    assert adjusted[0]["close"] == 16.67
+    assert adjusted[1]["close"] == 6.0
+
+
+def test_security_and_model_contract_guards() -> None:
+    assert cn.validate_pdf_url("https://static.cninfo.com.cn/finalpage/a.pdf")
+    assert not cn.validate_pdf_url("javascript:alert(1)")
+    assert not cn.validate_pdf_url("https://evil.example/finalpage/a.pdf")
+    assert "</script>" not in renderer.safe_json_for_script({"x": "</script>"})
+
+    evidence = {"000001.SZ": {
+        "ts_code": "000001.SZ", "ann_date": "20260420",
+        "growth": {"np": {}, "revenue": {}},
+    }}
+    valid, errors = verdict.validate_records(
+        [{"ts_code": "000001.SZ", "tier": "强"}], evidence, {})
+    assert not valid and any("reason" in error for error in errors)
+
+
+def test_reference_scan_returns_latest_rows_without_database() -> None:
+    class Pro:
+        def forecast(self, ann_date: str, fields: str) -> pd.DataFrame:
+            if ann_date not in {"20260401", "20260402"}:
+                return pd.DataFrame()
+            return pd.DataFrame([{
+                "ts_code": "000001.SZ", "ann_date": ann_date,
+                "end_date": "20260331", "type": "预增",
+                "p_change_min": 10, "p_change_max": 20,
+                "net_profit_min": 1, "net_profit_max": 2,
+                "summary": "", "change_reason": "",
+            }])
+
+        def express(self, **_: object) -> pd.DataFrame:
+            return pd.DataFrame()
+
+    class NoStore:
+        def logged_forecast_ann_dates(self, _: str) -> set[str]:
+            return set()
+
+        def upsert_forecast_ref(self, _: object) -> bool:
+            return False
+
+        def record_forecast_fetch_days(self, *_: object) -> None:
+            raise AssertionError("no-DB scan must not claim a persisted fetch")
+
+    rows = rs.scan_reference_values(
+        Pro(), NoStore(), "20260331", "20260402", 0, [], workers=2)
+    assert len(rows) == 1 and rows[0]["ann_date"] == "20260402"
 
 
 def test_growth_guards() -> None:
@@ -184,6 +269,11 @@ def test_compute_reaction_gap_and_fill() -> None:
 
     filled = rs.compute_reaction(bars + [bar("20260424", 11.0, 9.5)], "20260422", 2.0)
     assert filled["gap_status"] == "filled"
+    intraday = bars + [{
+        "trade_date": "20260424", "open": 11.6, "high": 11.8,
+        "low": 9.9, "close": 11.2, "vol": 1000.0,
+    }]
+    assert rs.compute_reaction(intraday, "20260422", 2.0)["gap_status"] == "filled"
 
     # Filing with no session yet is "pending", not "no gap".
     assert rs.compute_reaction(bars, "20260501", 2.0)["gap_status"] == "pending"

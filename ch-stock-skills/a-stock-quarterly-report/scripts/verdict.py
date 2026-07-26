@@ -31,6 +31,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -49,9 +50,12 @@ QUALITY_CALLS = ["扎实", "尚可", "存疑", "虚高"]
 FULFILLMENTS = ["超预告上限", "落区间上沿", "符合", "落区间下沿", "低于预告", "无预告"]
 REASON_BRIEF = 220
 _MMDD_Q = {"0331": 1, "0630": 2, "0930": 3, "1231": 4}
+BEIJING_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
 
 
 def quarter_of(period: str) -> int:
+    if not re.fullmatch(r"\d{8}", str(period)):
+        raise ValueError(f"{period} 不是季度末(YYYYMMDD)。")
     if period[4:] not in _MMDD_Q:
         raise ValueError(f"{period} 不是季度末(0331/0630/0930/1231)。")
     return _MMDD_Q[period[4:]]
@@ -263,7 +267,7 @@ def build_context(period: str, evidence: Dict[str, Any], verdicts: Dict[str, Dic
     meta = evidence.get("meta") or {}
     return {
         "period": period, "period_label": period_label(period),
-        "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
+        "generated_at": dt.datetime.now(BEIJING_TZ).isoformat(timespec="seconds"),
         "enum": {"tiers": TIERS, "quality_calls": QUALITY_CALLS, "fulfillments": FULFILLMENTS,
                  "match_confidence": CONFIDENCES, "trend_directions": TREND_DIRECTIONS},
         "disclosure": {
@@ -322,13 +326,16 @@ def validate_records(records: List[Dict[str, Any]], ev_idx: Dict[str, Dict[str, 
         if tier not in TIERS:
             errors.append(f"{ts_code}: tier={tier!r} 非法(应为 {TIERS})，跳过。")
             continue
+        if not str(r.get("reason") or "").strip():
+            errors.append(f"{ts_code}: reason 不能为空，跳过。")
+            continue
         qc = r.get("quality_call")
-        if qc is not None and qc not in QUALITY_CALLS:
-            errors.append(f"{ts_code}: quality_call={qc!r} 非法(应为 {QUALITY_CALLS} 或 null)，跳过。")
+        if qc not in QUALITY_CALLS:
+            errors.append(f"{ts_code}: quality_call={qc!r} 非法(应为 {QUALITY_CALLS})，跳过。")
             continue
         ff = r.get("fulfillment")
-        if ff is not None and ff not in FULFILLMENTS:
-            errors.append(f"{ts_code}: fulfillment={ff!r} 非法(应为 {FULFILLMENTS} 或 null)，跳过。")
+        if ff not in FULFILLMENTS:
+            errors.append(f"{ts_code}: fulfillment={ff!r} 非法(应为 {FULFILLMENTS})，跳过。")
             continue
         conf = r.get("match_confidence")
         if conf is not None and conf not in CONFIDENCES:
@@ -337,6 +344,11 @@ def validate_records(records: List[Dict[str, Any]], ev_idx: Dict[str, Dict[str, 
         theme_id = r.get("theme_id")
         if theme_id and theme_id not in themes:
             errors.append(f"{ts_code}: theme_id={theme_id!r} 不在 theme_registry(合法: {sorted(themes)[:6]}…)，跳过。")
+            continue
+        if theme_id and (conf not in CONFIDENCES or not str(
+                r.get("theme_rationale") or "").strip()):
+            errors.append(
+                f"{ts_code}: 有 theme_id 时必须填写合法 match_confidence 和 theme_rationale，跳过。")
             continue
         s = ev_idx[ts_code]
         g = s.get("growth", {})
@@ -404,7 +416,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     rec.add_argument("--evidence")
 
     args = ap.parse_args(argv)
-    period = args.period or latest_quarter_end(dt.date.today())
+    period = args.period or latest_quarter_end(
+        dt.datetime.now(BEIJING_TZ).date())
     quarter_of(period)
     store = Store()
 
@@ -413,6 +426,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         evidence = _load_json(ev_path)
         if evidence is None:
             print(json.dumps({"error": f"evidence 不存在: {ev_path}，请先运行 report_scan.py。"},
+                             ensure_ascii=False))
+            return 2
+        if str((evidence.get("meta") or {}).get("period") or "") != period:
+            print(json.dumps({"error": f"evidence 报告期与 --period={period} 不符。"},
                              ensure_ascii=False))
             return 2
         context = build_context(
@@ -437,19 +454,37 @@ def main(argv: Optional[List[str]] = None) -> int:
     if payload is None:
         print(json.dumps({"error": f"输入不存在: {args.input}"}, ensure_ascii=False))
         return 2
-    period = payload.get("period") or period
+    payload_period = payload.get("period")
+    if payload_period and args.period and payload_period != args.period:
+        print(json.dumps({
+            "error": f"payload period={payload_period} 与 --period={args.period} 不符。"
+        }, ensure_ascii=False))
+        return 2
+    period = payload_period or period
+    quarter_of(period)
     ev_path = args.evidence or os.path.join("reports", f"qreport_scan_{period}.json")
     evidence = _load_json(ev_path)
     if evidence is None:
         print(json.dumps({"error": f"evidence 不存在: {ev_path}，record 需要它快照证据指纹。"},
                          ensure_ascii=False))
         return 2
+    if str((evidence.get("meta") or {}).get("period") or "") != period:
+        print(json.dumps({"error": f"evidence 报告期与 record period={period} 不符。"},
+                         ensure_ascii=False))
+        return 2
+    if not store.available:
+        print(json.dumps({
+            "error": f"台账存储不可用，拒绝伪报成功：{store.reason}"
+        }, ensure_ascii=False))
+        return 2
     ev_idx = _evidence_index(evidence)
     registry = store.load_theme_registry()
     valid, errors = validate_records(payload.get("records", []), ev_idx, registry)
     for r in valid:
         r["period"] = period
-    store.upsert_verdicts(valid)
+    verdict_ok = not valid or store.upsert_verdicts(valid)
+    if not verdict_ok:
+        errors.append("records: 数据库写入失败。")
 
     # Trends are validated against the post-upsert ledger so members attributed in
     # this same payload count into the snapshot.
@@ -457,7 +492,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     valid_trends, trend_errors = validate_trends(payload.get("theme_trends", []), registry, membership)
     for t in valid_trends:
         t["period"] = period
-    store.upsert_theme_trends(valid_trends)
+    trends_ok = not valid_trends or store.upsert_theme_trends(valid_trends)
+    if not trends_ok:
+        trend_errors.append("theme_trends: 数据库写入失败。")
 
     overview_recorded = False
     ov_errors: List[str] = []
@@ -467,11 +504,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             ov_errors.append("period_overview: 需为非空字符串(综述成文)，跳过。")
         else:
             total, growth_n, decline_n = sample_fingerprint(evidence)
-            store.upsert_period_overview({
+            overview_recorded = store.upsert_period_overview({
                 "period": period, "overview": ov.strip(), "evidence_total": total,
                 "evidence_growth": growth_n, "evidence_decline": decline_n,
             })
-            overview_recorded = True
+            if not overview_recorded:
+                ov_errors.append("period_overview: 数据库写入失败。")
 
     print(json.dumps({
         "period": period, "recorded": len(valid), "skipped": len(errors),
@@ -480,7 +518,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "cache": "on" if store.available else f"off ({store.reason})",
         "errors": errors + trend_errors + ov_errors,
     }, ensure_ascii=False, indent=2))
-    return 0
+    return 0 if verdict_ok and trends_ok and not ov_errors else 2
 
 
 if __name__ == "__main__":

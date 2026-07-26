@@ -41,6 +41,7 @@ import datetime as dt
 import json
 import math
 import os
+import re
 import statistics
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -52,7 +53,7 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from store import Store  # noqa: E402
+from store import Store, qfq_adjust_bars  # noqa: E402
 from tushare_client import TushareProxy, get_tushare_pro  # noqa: E402
 
 BEIJING_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
@@ -72,6 +73,8 @@ def beijing_today() -> dt.date:
 
 
 def quarter_of(period: str) -> Tuple[int, int]:
+    if not re.fullmatch(r"\d{8}", str(period)):
+        raise ValueError(f"period must be a quarter end (YYYYMMDD): {period}")
     year = int(period[:4])
     mmdd = period[4:]
     for q, end in QUARTER_END.items():
@@ -309,6 +312,23 @@ def fetch_statements_for_code(pro: TushareProxy, ts_code: str, period: str, end_
     return merged
 
 
+def merge_statement_periods(existing: Dict[str, Dict[str, Any]],
+                            fetched: Dict[str, Dict[str, Any]],
+                            replace: bool = False) -> Dict[str, Dict[str, Any]]:
+    """Merge a refetch without erasing fields from temporarily lagging endpoints."""
+    out = {} if replace else {p: dict(row) for p, row in existing.items()}
+    for period, row in fetched.items():
+        if replace or period not in out:
+            out[period] = dict(row)
+            continue
+        previous = out[period]
+        merged = {**previous, **{k: v for k, v in row.items() if v is not None}}
+        merged["_sources"] = set(previous.get("_sources") or set()) | set(
+            row.get("_sources") or set())
+        out[period] = merged
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Per-stock series view over the cached statement rows
 # --------------------------------------------------------------------------- #
@@ -321,7 +341,11 @@ class Series:
     def cum(self, period: Optional[str], field: str) -> Optional[float]:
         if not period:
             return None
-        return _f((self.by_period.get(period) or {}).get(field))
+        row = self.by_period.get(period) or {}
+        value = row.get(field)
+        if field == "revenue" and value is None:
+            value = row.get("total_revenue")
+        return _f(value)
 
     def has(self, period: Optional[str]) -> bool:
         return bool(period) and period in self.by_period
@@ -718,9 +742,13 @@ def compute_reaction(bars: List[Dict[str, Any]], anchor_ann: str, gap_min: float
     if gap_dir is None:
         status = "none"
     elif gap_dir == "up":
-        status = "filled" if any((_f(b.get("close")) or 0) < pre_close for b in bars[idx:]) else "intact"
+        status = "filled" if any(
+            (_f(b.get("low")) if _f(b.get("low")) is not None else _f(b.get("close")) or 0)
+            <= pre_close for b in bars[idx:]) else "intact"
     else:
-        status = "filled" if any((_f(b.get("close")) or 0) > pre_close for b in bars[idx:]) else "intact"
+        status = "filled" if any(
+            (_f(b.get("high")) if _f(b.get("high")) is not None else _f(b.get("close")) or 0)
+            >= pre_close for b in bars[idx:]) else "intact"
 
     return {
         "anchor_ann_date": anchor_ann, "reaction_date": r["trade_date"],
@@ -764,7 +792,7 @@ def fetch_market_bars(pro: TushareProxy, store: Store, start: str, end: str,
                 "open": _f(row.get("open")), "high": _f(row.get("high")), "low": _f(row.get("low")),
                 "close": _f(row.get("close")), "pre_close": _f(row.get("pre_close")),
                 "pct_chg": _f(row.get("pct_chg")), "vol": _f(row.get("vol")),
-                "amount": _f(row.get("amount")), "_adj": _f(row.get("adj_factor")),
+                "amount": _f(row.get("amount")), "adj_factor": _f(row.get("adj_factor")),
             })
         return day, recs
 
@@ -779,37 +807,19 @@ def fetch_market_bars(pro: TushareProxy, store: Store, start: str, end: str,
                     continue
                 fetched.extend(recs)
 
-    # Forward-adjust once, at the end, against each code's latest factor in the
-    # window; storing raw prices and adjusting on read would re-shift history
-    # every time a new dividend lands.
+    # Persist raw prices + factor. qfq is derived over the complete cached series
+    # on read so a later dividend cannot leave old/new cache slices on different
+    # adjustment bases.
     if fetched:
-        latest_adj: Dict[str, Tuple[str, float]] = {}
-        for r in fetched:
-            if r["_adj"]:
-                prev = latest_adj.get(r["ts_code"])
-                if prev is None or r["trade_date"] > prev[0]:
-                    latest_adj[r["ts_code"]] = (r["trade_date"], r["_adj"])
-        rows = []
-        for r in fetched:
-            base = latest_adj.get(r["ts_code"])
-            f = (r["_adj"] / base[1]) if (r["_adj"] and base and base[1]) else 1.0
-            rows.append({
-                "ts_code": r["ts_code"], "trade_date": r["trade_date"],
-                "open": r2((r["open"] or 0) * f) if r["open"] else None,
-                "high": r2((r["high"] or 0) * f) if r["high"] else None,
-                "low": r2((r["low"] or 0) * f) if r["low"] else None,
-                "close": r2((r["close"] or 0) * f) if r["close"] else None,
-                "pre_close": r2((r["pre_close"] or 0) * f) if r["pre_close"] else None,
-                "pct_chg": r["pct_chg"], "vol": r["vol"], "amount": r["amount"],
-            })
-        store.upsert_bars_many(rows)
+        store.upsert_bars_many(fetched)
         if not store.available:  # no DB → hand the in-memory rows back
             out: Dict[str, List[Dict[str, Any]]] = {}
-            for r in rows:
+            for r in fetched:
                 out.setdefault(r["ts_code"], []).append(r)
-            for v in out.values():
-                v.sort(key=lambda b: b["trade_date"])
-            return out
+            return {
+                code: qfq_adjust_bars(sorted(rows, key=lambda b: b["trade_date"]))
+                for code, rows in out.items()
+            }
     return {}  # persisted; the caller reads them back per code from the store
 
 
@@ -908,7 +918,8 @@ def screen_block(growth: Dict[str, Dict[str, Any]], quality: Dict[str, Any],
 # Reference values (forecast / express) for 兑现度
 # --------------------------------------------------------------------------- #
 def scan_reference_values(pro: TushareProxy, store: Store, period: str, end_ann: str,
-                          refetch_days: int, notes: List[str], workers: int = 4) -> None:
+                          refetch_days: int, notes: List[str],
+                          workers: int = 4) -> List[Dict[str, Any]]:
     """Populate `qreport_forecast_ref` with 业绩预告 (day-scanned) and 业绩快报.
 
     `forecast` rejects a period-only query, so it is scanned by announcement day
@@ -957,6 +968,13 @@ def scan_reference_values(pro: TushareProxy, store: Store, period: str, end_ann:
                     continue
                 day_counts[day] = len(rows)
                 batch.extend(rows)
+    latest: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+    for row in batch:
+        key = (str(row["ts_code"]), str(row["period"]), str(row["kind"]))
+        prev = latest.get(key)
+        if prev is None or str(row.get("ann_date") or "") > str(prev.get("ann_date") or ""):
+            latest[key] = row
+    batch = list(latest.values())
     if store.upsert_forecast_ref(batch):
         store.record_forecast_fetch_days(period, day_counts)
 
@@ -964,9 +982,9 @@ def scan_reference_values(pro: TushareProxy, store: Store, period: str, end_ann:
         ex = pro.express(period=period, fields="ts_code,ann_date,end_date,revenue,n_income,yoy_net_profit")
     except Exception as exc:  # noqa: BLE001
         notes.append(f"业绩快报抓取失败：{str(exc)[:60]}")
-        return
+        return batch
     if ex is None or ex.empty:
-        return
+        return batch
     rows = []
     for row in ex.to_dict("records"):
         if str(row.get("end_date")) != period:
@@ -981,13 +999,14 @@ def scan_reference_values(pro: TushareProxy, store: Store, period: str, end_ann:
             "revenue": _f(row.get("revenue")), "summary": None, "change_reason": None,
         })
     store.upsert_forecast_ref(rows)
+    return batch + rows
 
 
 # --------------------------------------------------------------------------- #
 # CNInfo provenance (title + original PDF link; PDFs themselves stay on demand)
 # --------------------------------------------------------------------------- #
 def scan_cninfo_provenance(store: Store, period: str, end_ann: str, refetch_days: int,
-                           notes: List[str]) -> int:
+                           notes: List[str]) -> List[Dict[str, Any]]:
     """Bulk-scan the official report category so every covered stock has a
     traceable filing link. Numbers still come from Tushare — this is provenance,
     plus the entry point `report_pdf.py` uses when a PDF is actually needed."""
@@ -1004,7 +1023,7 @@ def scan_cninfo_provenance(store: Store, period: str, end_ann: str, refetch_days
     cutoff = shift_ymd(end_ann, -max(0, refetch_days))
     todo = [d for d in days if d not in done or d >= cutoff]
     if not todo:
-        return 0
+        return []
 
     total = 0
     day_counts: Dict[str, int] = {}
@@ -1021,7 +1040,7 @@ def scan_cninfo_provenance(store: Store, period: str, end_ann: str, refetch_days
         total += len(rows)
     if store.upsert_cninfo_announcements(period, batch):
         store.record_cninfo_fetch_days(period, day_counts)
-    return total
+    return batch
 
 
 # --------------------------------------------------------------------------- #
@@ -1110,6 +1129,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     period = args.period
     quarter_of(period)  # validates
     end_ann = args.end_ann or (today + dt.timedelta(days=1)).strftime("%Y%m%d")
+    if not re.fullmatch(r"\d{8}", end_ann):
+        raise ValueError(f"end-ann must be YYYYMMDD: {end_ann}")
+    dt.datetime.strptime(end_ann, "%Y%m%d")
+    if end_ann < period:
+        raise ValueError("end-ann cannot be earlier than the report period")
     if args.require_ann_cutoff and args.require_ann_cutoff != end_ann:
         print(f"[gate] ann cutoff mismatch: got {end_ann}, required {args.require_ann_cutoff}", file=sys.stderr)
         return 2
@@ -1146,6 +1170,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             if prev is None or actual < prev["actual_date"]:
                 released[code] = {"ts_code": code, "actual_date": actual, "pre_date": pre or None}
     store.upsert_disclosure(period, disc_rows)
+    released_total = len(released)
 
     if args.codes:
         wanted_codes = {c.strip().upper() for c in args.codes.split(",") if c.strip()}
@@ -1162,6 +1187,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     # -- 2. statements -----------------------------------------------------
     wanted = set(needed_periods(period))
     all_sources = [s for s, _, _ in _ENDPOINTS]
+    if args.refresh_fin:
+        store.delete_fin_periods(codes, sorted(wanted))
     cached_fin = {} if args.refresh_fin else store.load_fin_many(codes)
     refetch_cutoff = shift_ymd(end_ann, -max(0, args.refetch_days))
 
@@ -1197,8 +1224,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 except Exception as exc:  # noqa: BLE001
                     notes.append(f"财报抓取失败：{str(exc)[:80]}")
                     continue
-                cached_fin.setdefault(code, {}).update(merged)
-                for p, rec in merged.items():
+                cached_fin[code] = merge_statement_periods(
+                    cached_fin.get(code) or {}, merged, replace=args.refresh_fin)
+                for p in merged:
+                    rec = cached_fin[code][p]
                     write_batch.append({"ts_code": code, "period": p, "ann_date": rec.get("ann_date"),
                                         "sources": sorted(rec.get("_sources") or []), "data": rec})
                 if len(write_batch) >= 4000:
@@ -1209,9 +1238,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         store.upsert_fin_many(write_batch)
 
     # -- 3. reference values ------------------------------------------------
-    scan_reference_values(pro, store, period, end_ann, args.refetch_days, notes,
-                          workers=min(4, args.fetch_workers))
+    fresh_refs = scan_reference_values(
+        pro, store, period, end_ann, args.refetch_days, notes,
+        workers=min(4, args.fetch_workers))
     refs = store.load_forecast_ref(period)
+    for row in fresh_refs:
+        slot = refs.setdefault(str(row["ts_code"]), {})
+        kind = str(row["kind"])
+        previous = slot.get(kind)
+        if previous is None or str(row.get("ann_date") or "") >= str(
+                previous.get("ann_date") or ""):
+            slot[kind] = row
 
     # -- 4. basics + market cap --------------------------------------------
     basic = store.load_basic(codes)
@@ -1261,12 +1298,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     # -- 6. provenance ------------------------------------------------------
     ann_index: Dict[str, Dict[str, Any]] = {}
     if not args.no_cninfo:
-        scan_cninfo_provenance(store, period, end_ann, args.refetch_days, notes)
-        for r in store.load_cninfo_announcements(period):
+        fresh_ann = scan_cninfo_provenance(
+            store, period, end_ann, args.refetch_days, notes)
+        persisted_ann = store.load_cninfo_announcements(period)
+        for r in persisted_ann + fresh_ann:
             prev = ann_index.get(str(r["ts_code"]))
             # Corrected filings supersede the original; otherwise the latest wins.
-            if prev is None or (r.get("is_corrected") and not prev.get("is_corrected")) \
-                    or str(r["ann_date"]) > str(prev["ann_date"]):
+            rank = (1 if r.get("is_corrected") else 0, str(r.get("ann_date") or ""))
+            prev_rank = ((1 if prev and prev.get("is_corrected") else 0),
+                         str((prev or {}).get("ann_date") or ""))
+            if prev is None or rank > prev_rank:
                 ann_index[str(r["ts_code"])] = r
 
     # -- 7. derive ----------------------------------------------------------
@@ -1386,6 +1427,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         u["shortlisted"] = u["ts_code"] in shortlist_codes
 
     cutoff_count = sum(1 for c in codes if released[c]["actual_date"] == end_ann)
+    scheduled_codes = {str(row.get("ts_code") or "") for row in disc_rows
+                       if row.get("ts_code")}
+    run_scope = "codes" if args.codes else ("limit" if args.limit else "full")
     meta = {
         "period": period, "period_label": period_label(period),
         "quarters_elapsed": quarters_elapsed(period),
@@ -1394,8 +1438,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         "ann_cutoff": end_ann, "ann_cutoff_stock_count": cutoff_count,
         "released_count": len(codes), "with_statements": len(stocks),
         "statements_incomplete": incomplete,
-        "scheduled_total": len(disc_rows),
-        "disclosure_progress_pct": (round(len(codes) / len(disc_rows) * 100, 1) if disc_rows else None),
+        "scheduled_total": len(scheduled_codes),
+        "disclosure_progress_pct": (
+            round(released_total / len(scheduled_codes) * 100, 1)
+            if scheduled_codes else None),
+        "run_scope": run_scope,
         "primary_source": "tushare_statements",
         "pdf_role": "on_demand_only",
         "cninfo_role": "provenance_and_on_demand_pdf",
@@ -1410,8 +1457,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                      "优秀与否、质量成色、行业方向由模型判断并写入 qreport_verdict 台账。"),
     }
 
-    out_path = args.out or os.path.join("reports", f"qreport_scan_{period}.json")
-    uni_path = args.universe_out or os.path.join("reports", f"qreport_universe_{period}.json")
+    scope_suffix = "" if run_scope == "full" else (
+        "_subset" if run_scope == "codes" else f"_limit{args.limit}")
+    out_path = args.out or os.path.join(
+        "reports", f"qreport_scan_{period}{scope_suffix}.json")
+    uni_path = args.universe_out or os.path.join(
+        "reports", f"qreport_universe_{period}{scope_suffix}.json")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     os.makedirs(os.path.dirname(uni_path) or ".", exist_ok=True)
 

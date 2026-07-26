@@ -8,10 +8,12 @@
 
 | Agent | Skills 路径 | 加载机制 |
 |---|---|---|
-| **Kimi CLI** | `~/.kimi/skills` → fallback `~/.claude/skills` | `merge_all_available_skills=false` 时只加载第一个存在的品牌目录 |
+| **Kimi Code** | `~/.kimi-code/skills` | 独立品牌目录 |
+| **Kimi Work** | `~/.kimi-work/skills` | 独立品牌目录 |
 | **Claude Code** | `~/.claude/skills` | 仅读自身品牌目录 |
 | **Codex** | `~/.codex/skills` | 仅读自身品牌目录 |
-| **.agents** | `~/.agents/skills` | ClawHub 安装目录 |
+| **Hermes** | `~/.hermes/skills` | 仅读自身品牌目录 |
+| **OpenClaw** | `~/.openclaw/skills` | 仅读自身品牌目录 |
 | **WorkBuddy** | `~/.workbuddy/skills`（用户级）+ `{workspace}/.workbuddy/skills`（项目级） | 用户级跨项目可用；项目级仅当前项目可见，两者合并加载 |
 
 修改本仓库后，各 Agent 安装目录里的副本不会自动更新，导致 Kimi / Claude / Codex 读到的可能是旧版本，甚至完全缺失某些 skill。
@@ -22,18 +24,16 @@
 
 ```
 ┌─────────────────────────────────────────┐
-│  OneDrive/skills/  (canonical source)   │
-│  • health-butler/SKILL.md               │
-│  • iran-war-tracker - V2/SKILL.md       │
-│  • stock-skills/*/SKILL.md              │
-│  • ch-pd-flow/skills/product-workflow/* │
+│  ch-skills/  (canonical source)         │
+│  • ch-stock-skills/*/SKILL.md           │
+│  • other-skill/SKILL.md                 │
 └──────────────┬──────────────────────────┘
                │  scripts/skill_sync.py
                │  (扁平化扫描 + robocopy /MIR)
                ▼
     ┌──────────────┬──────────────┬──────────────┐
     ▼              ▼              ▼              ▼
- ~/.kimi/skills  ~/.claude/skills ~/.codex/skills ~/.agents/skills
+ ~/.kimi-code/skills  ~/.kimi-work/skills  ~/.claude/skills ~/.codex/skills
  ~/.hermes/skills  ~/.openclaw/skills  ~/.workbuddy/skills
 ```
 
@@ -43,31 +43,21 @@
 
 ### 1. 确保依赖
 
-```powershell
+```bash
 pip install pyyaml
 ```
 
 ### 2. 安装 Git Hook（只需一次）
 
-```powershell
+```bash
 python scripts/skill_sync.py --install-hook
 ```
 
 此后每次 `git commit` 会自动执行同步。
 
-### 3. 开启 Kimi CLI 多品牌合并（推荐）
+### 3. 手动同步（可选）
 
-编辑 `~/.kimi/config.toml`，添加：
-
-```toml
-merge_all_available_skills = true
-```
-
-开启后 Kimi 会同时加载 `~/.kimi/skills`、`~/.claude/skills`、`~/.codex/skills`、`~/.agents/skills`，无需把 skill 重复复制到多个目录。
-
-### 4. 手动同步（可选）
-
-```powershell
+```bash
 # 预览变更（不实际执行）
 python scripts/skill_sync.py --dry-run
 
@@ -85,21 +75,22 @@ python scripts/skill_sync.py --watch --interval 5
 
 ```yaml
 targets:
-  kimi:     "$env:USERPROFILE/.kimi/skills"
-  claude:   "$env:USERPROFILE/.claude/skills"
-  codex:    "$env:USERPROFILE/.codex/skills"
-  agents:   "$env:USERPROFILE/.agents/skills"
-  workbuddy: "$env:USERPROFILE/.workbuddy/skills"
+  kimi-code: "~/.kimi-code/skills"
+  kimi-work: "~/.kimi-work/skills"
+  claude: "~/.claude/skills"
+  codex: "~/.codex/skills"
+  hermes: "~/.hermes/skills"
+  openclaw: "~/.openclaw/skills"
+  workbuddy: "~/.workbuddy/skills"
 
-rename:
-  "iran-war-tracker - V2": "iran-war-tracker-v2"
+rename: {}
 
 exclude:
   dirs: [.git, __pycache__, evals, benchmarks, "*-workspace", node_modules, venv, .venv]
   files: [benchmark.json, grading.json, review.html, test_*.py, "*_test.py", .env, "*.pyc"]
 ```
 
-- **targets**：定义要同步的 Agent 安装目录。使用 `$env:USERPROFILE`（PowerShell）或 `~`（Unix）确保跨环境可移植。
+- **targets**：定义要同步的 Agent 安装目录。使用 `~` 保持跨环境可移植。
 - **rename**：当源目录名和目标 skill 名不一致时显式映射（如去除空格）。
 - **exclude**：开发/评测产物不会同步到 Agent 目录，保持安装包干净。
 
@@ -107,7 +98,7 @@ exclude:
 
 **日常迭代**：
 
-```powershell
+```bash
 # 1. 修改 SKILL.md 或脚本
 # 2. 保存后如需立即在 Agent 中生效（Link 模式）
 python scripts/skill_sync.py --link
@@ -132,5 +123,5 @@ clawhub publish <skill路径>
 ## 注意事项
 
 1. **单向同步**：Skill Sync Hub 是单向的（仓库 → Agent）。不要在 Agent 安装目录里直接修改 skill，否则下次同步会被覆盖。
-2. **Link 模式限制**：Windows Junction 要求源和目标在同一卷。你的 OneDrive 和 `~/.kimi/.claude/.codex` 默认都在 C 盘，满足条件。
+2. **Link 模式限制**：Windows Junction 要求源和目标在同一卷；macOS/Linux 使用符号链接。
 3. **Codex / Claude 的额外文件**：如果 Agent 目录里原有非本仓库管理的 skill（如 Codex 的 `.system/`、`codex-primary-runtime/`），同步脚本不会触碰它们——只覆盖/新增本仓库扫描到的 skill。

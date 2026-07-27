@@ -20,15 +20,29 @@ run_state_machine 末尾）：主档保持迟滞、不追单日，相位承载�
 盘前工具取计划日之前的数据。参数常量对应经验法则 R-016 / R-017 / R-018，
 改参数须与盘前工具及规则页同步。
 
+融资滞后口径（本轮修正的核心，见 margin_data_date / 升档守卫 / 相位配平）：
+market_panel 写 market_history 时，`margin_net_buy_trade_date` 取的是**前一
+交易日**（`margin_trade_date = previous_trade_date`），因此第 d 行的融资读数
+描述的是 d-1 的杠杆行为，不含当日信息。这条滞后在持续退潮期无害（方向一致），
+但在**转向日**会把前一日的悲观读数按在一个盘面相反的日子上。为此：
+  1. `margin_data_date` 随读数一起输出，卡面必须标注融资读数的实际数据日；
+  2. 升入深度退潮时加守卫——第三组恰为「融资」且当日出现广度反转
+     （涨>跌 且 涨停>跌停）时推迟一日再判（`deep_escalation_deferred`），
+     等融资数据推进到能反映当日盘面的那一天，与「升档须右侧确认」对称；
+  3. 相位改为 5v5 对称配平，当日证据（广度 / 20 日线缺口 / 量能 / 跌停）四票，
+     滞后融资一票，滞后腿不能单独决定方向。
+
 口径备注（与 market_history 写入口径一致）：
   - market_history.amount 单位千元；margin_net_buy 单位元（融资为 T-1 滞后口径）。
   - 「成交额 vs 20 日均」为前 20 个交易日均值（不含当日）。
   - 指数 MA20 为含当日的 20 日收盘均线。
+  - `ma20_gap` 为双指数对各自 MA20 的最大负偏离（正值 = 在均线下方多少），
+    较前日收窄 / 扩大即为相位的「缺口」腿。
 
 输出 JSON 为确定性证据（只含客观读数，不含任何仓位或操作字段）：
 available / data_through / state / state_days / counters / ref_day /
-exit_progress / history。模型只读、不得改写读数；趋势定性由模型在模块 1
-正文中给出，且同样不写仓位与买卖建议。
+phase_score / state_note / exit_progress / history。模型只读、不得改写读数；
+趋势定性由模型在模块 1 正文中给出，且同样不写仓位与买卖建议。
 
 用法：
   python scripts/trend_state_card.py --asof 20260717
@@ -83,7 +97,8 @@ class DayRow:
     limit_up: int
     limit_down: int
     amount_qianyuan: float          # 千元
-    margin_yi: float                # 亿元
+    margin_yi: float                # 亿元（T-1 口径，实际数据日见 margin_data_date）
+    margin_data_date: Optional[date] = None  # 该融资读数描述的交易日 = 前一交易日
     amt_ma20_prev: Optional[float] = None   # 前 20 日均（千元，不含当日）
     idx_close: dict = field(default_factory=dict)
     idx_ma20: dict = field(default_factory=dict)
@@ -92,6 +107,7 @@ class DayRow:
 
     below20_both: bool = False
     below20_any: bool = False
+    ma20_gap: Optional[float] = None   # 双指数对 MA20 的最大负偏离比例，正值 = 在线下
     break_days: int = 0
     margin_neg_days: int = 0
     margin_neg_cum_yi: float = 0.0
@@ -104,6 +120,10 @@ class DayRow:
     groups_hit: list = field(default_factory=list)
     state: str = "标准"
     phase: str = ""                 # 退潮梯队内的相位修饰：修复中 / 企稳 / 恶化中
+    phase_repair: List[str] = field(default_factory=list)   # 相位修复腿命中项
+    phase_worsen: List[str] = field(default_factory=list)   # 相位恶化腿命中项
+    deep_escalation_deferred: bool = False   # 升入深度退潮被滞后融资守卫推迟
+    state_note: str = ""
     exit_progress: str = ""
 
 
@@ -171,6 +191,8 @@ def fetch(conn, boundary_exclusive: date, lookback_cal_days: int = 240) -> Tuple
                 row.idx_ma20[ts] = info[ts]["ma20"]
                 row.idx_pct[ts] = info[ts]["pct"]
                 row.idx_high20[ts] = info[ts]["high20"]
+        # market_panel 以 previous_trade_date 取融资，故第 d 行的融资读数属于前一交易日
+        row.margin_data_date = days[-1].d if days else None
         amounts.append(float(amount))
         days.append(row)
     universe = sorted(set(all_mh_dates) | set(idx_by_day))
@@ -196,6 +218,15 @@ def derive(days: List[DayRow]) -> None:
         r.below20_both = all(below.values())
         r.below20_any = any(below.values())
         r.break_days = (prev.break_days + 1) if (r.below20_both and prev) else (1 if r.below20_both else 0)
+
+        # 对 MA20 的最大负偏离：破位期间 above_both 恒为假，用缺口的收窄/扩大
+        # 承载「指数正在往均线修复 / 继续离开均线」这一当日边际方向
+        gaps = [
+            (r.idx_ma20[ts] - r.idx_close[ts]) / r.idx_ma20[ts]
+            for ts in TREND_PAIR
+            if r.idx_ma20.get(ts) and ts in r.idx_close
+        ]
+        r.ma20_gap = max(gaps) if len(gaps) == len(TREND_PAIR) else None
 
         if r.margin_yi < 0:
             r.margin_neg_days = (prev.margin_neg_days + 1) if prev and prev.margin_neg_days else 1
@@ -230,10 +261,39 @@ def derive(days: List[DayRow]) -> None:
         r.groups_hit = groups
 
 
+def retreat_tier(r: DayRow, prev_state: str) -> str:
+    """退潮梯队内定档：三组全中记深度退潮，否则退潮；带滞后融资升档守卫。
+
+    守卫动机：`margin_yi` 是 T-1 口径，第 d 行描述的是 d-1 的杠杆行为。持续退潮
+    期间方向一致、无害；但在转向日，它会让「融资」组带着前一日的悲观读数，在一个
+    盘面已经反向的日子上把档位从退潮压到深度退潮——这一票里没有任何当日信息。
+    因此当第三组恰为「融资」、且当日出现广度反转（涨>跌 且 涨停>跌停）时，本日
+    不升入深度退潮，推迟一日：次日的融资读数正好描述今日，届时若杠杆确实在撤，
+    深度退潮照记不误。这与「升出退潮梯队须右侧确认」是同一条对称原则——降档同样
+    不该由不含当日信息的读数单独推动。已在深度退潮的日子不受守卫影响（非升档）。
+    """
+    if len(r.groups_hit) < 3:
+        return "退潮"
+    breadth_reversal = r.rise > r.fall and r.limit_up > r.limit_down
+    if "融资" in r.groups_hit and prev_state != "深度退潮" and breadth_reversal:
+        r.deep_escalation_deferred = True
+        margin_day = r.margin_data_date.strftime("%m-%d") if r.margin_data_date else "前一交易日"
+        r.state_note = (
+            f"条件组 3/3，但第三组「融资」来自 {margin_day} 的 T-1 读数、不含当日；"
+            f"当日广度反转（涨 {r.rise}/跌 {r.fall}、涨停 {r.limit_up}/跌停 {r.limit_down}），"
+            "深度退潮升档推迟一日，待融资数据推进到能反映当日盘面再判"
+        )
+        return "退潮"
+    return "深度退潮"
+
+
 def run_state_machine(days: List[DayRow]) -> None:
     state = "标准"
     for i, r in enumerate(days):
         prev = days[i - 1] if i > 0 else None
+        # 幂等：允许对同一批 DayRow 重复跑状态机而不累积相位命中项
+        r.phase, r.phase_repair, r.phase_worsen = "", [], []
+        r.deep_escalation_deferred, r.state_note, r.exit_progress = False, "", ""
         in_retreat = state in ("退潮", "深度退潮", "冰点")
 
         margin_pos_2d = r.margin_yi > 0 and prev is not None and prev.margin_yi > 0
@@ -259,9 +319,9 @@ def run_state_machine(days: List[DayRow]) -> None:
                     if not ice_clear:
                         state = "冰点"
                     else:
-                        state = "深度退潮" if len(r.groups_hit) == 3 else "退潮"
+                        state = retreat_tier(r, state)
                 else:
-                    state = "深度退潮" if len(r.groups_hit) == 3 else "退潮"
+                    state = retreat_tier(r, state)
                 r.exit_progress = (
                     f"融资转正 {'2/2' if margin_pos_2d else ('1/2' if r.margin_yi > 0 else '0/2')}｜"
                     f"收复20日线 {'✓' if above_both else '✗'}｜量能≥20日均 {'✓' if vol_ok else '✗'}"
@@ -273,7 +333,7 @@ def run_state_machine(days: List[DayRow]) -> None:
             # 恐慌日（跌停 ≥ PANIC_LIMIT_DOWN）当日直进退潮梯队：闪崩日常放量、
             # 融资 T-1 滞后，三组难以当日凑够两组，恐慌单独构成退潮入口；
             # 次日恐慌若持续，由退潮态分支再升冰点
-            state = "深度退潮" if len(r.groups_hit) == 3 else "退潮"
+            state = retreat_tier(r, state)
         else:
             caution = (
                 r.below20_any
@@ -303,22 +363,48 @@ def run_state_machine(days: List[DayRow]) -> None:
         r.state = state
 
         # 相位修饰（仅退潮/深度退潮）：主档保持迟滞，相位承载边际方向。
-        # 修复证据：涨>跌 / 自冰点解除当日 / 融资转正 / 收复双指数 20 日线；
-        # 恶化证据：跌停回升至解除线以上 / 当日新破位 / 缩量 / 融资大卖（<-100 亿）。
+        # 5v5 镜像证据，四对取自当日、一对取自 T-1 融资，滞后腿因此无法单独定向：
+        #   广度（涨>跌 / 跌>涨）、20 日线缺口（收窄 / 扩大或当日新破位）、
+        #   量能（站回 20 日均九成 / 缩量）、跌停（收敛 / 抬升至解除线上）、
+        #   融资（转正 / 大卖 <-100 亿，滞后一日）。
+        # 旧口径把「收复双指数 20 日线」当修复腿，但它与「破位」组定义互斥——
+        # 破位命中时该腿恒为假，修复侧结构性封顶，方向实际由滞后融资单独决定；
+        # 改用缺口收窄后，指数向均线修复这件事在破位期间也能被记到。
         # 任一方向证据 ≥2 且严格多于对方才定向，否则为企稳。
         if state in ("退潮", "深度退潮"):
-            repair = (
-                (r.rise > r.fall)
-                + (prev is not None and prev.state == "冰点")
-                + (r.margin_yi > 0)
-                + above_both
+            gap_narrowing = (
+                r.ma20_gap is not None and prev is not None
+                and prev.ma20_gap is not None and r.ma20_gap < prev.ma20_gap
             )
-            worsen = (
-                (r.limit_down >= ICE_EXIT_LIMIT_DOWN)
-                + (r.break_days == 1)
-                + r.shrink
-                + (r.margin_yi < QC_MARGIN_YI)
+            gap_widening = (
+                r.ma20_gap is not None and prev is not None
+                and prev.ma20_gap is not None and r.ma20_gap > prev.ma20_gap
             )
+            vol_recovered = r.amt_ma20_prev is not None and not r.shrink
+            limit_down_easing = (
+                r.limit_down < ICE_EXIT_LIMIT_DOWN
+                and prev is not None and r.limit_down < prev.limit_down
+            )
+            margin_day = r.margin_data_date.strftime("%m-%d") if r.margin_data_date else "T-1"
+            for hit, label in (
+                (r.rise > r.fall, "广度转正"),
+                (gap_narrowing, "20日线缺口收窄"),
+                (vol_recovered, "量能站回20日均九成"),
+                (limit_down_easing, "跌停收敛"),
+                (r.margin_yi > 0, f"融资转正（{margin_day}）"),
+            ):
+                if hit:
+                    r.phase_repair.append(label)
+            for hit, label in (
+                (r.fall > r.rise, "广度恶化"),
+                (gap_widening or r.break_days == 1, "20日线缺口扩大"),
+                (r.shrink, "缩量"),
+                (r.limit_down >= ICE_EXIT_LIMIT_DOWN, "跌停抬升"),
+                (r.margin_yi < QC_MARGIN_YI, f"融资大卖（{margin_day}）"),
+            ):
+                if hit:
+                    r.phase_worsen.append(label)
+            repair, worsen = len(r.phase_repair), len(r.phase_worsen)
             if repair >= 2 and repair > worsen:
                 r.phase = "修复中"
             elif worsen >= 2 and worsen > repair:
@@ -377,6 +463,9 @@ def build_block(asof: Optional[str] = None) -> Dict[str, Any]:
             "div_count10": ref.div_count10,
             "groups_hit": ref.groups_hit,
             "groups_hit_count": len(ref.groups_hit),
+            # 融资读数为 T-1 口径：卡面必须连同数据日一起标注，不得当作当日读数使用
+            "margin_data_date": str(ref.margin_data_date) if ref.margin_data_date else None,
+            "deep_escalation_deferred": ref.deep_escalation_deferred,
         },
         "ref_day": {
             "rise": ref.rise,
@@ -387,6 +476,13 @@ def build_block(asof: Optional[str] = None) -> Dict[str, Any]:
             "amount_vs_ma20_pct": round(100 * ref.amount_qianyuan / ref.amt_ma20_prev, 1) if ref.amt_ma20_prev else None,
             "margin_yi": round(ref.margin_yi, 1),
         },
+        "phase_score": {
+            "repair": len(ref.phase_repair),
+            "worsen": len(ref.phase_worsen),
+            "repair_hits": ref.phase_repair,
+            "worsen_hits": ref.phase_worsen,
+        } if ref.phase else None,
+        "state_note": ref.state_note or None,
         "exit_progress": ref.exit_progress or ("不适用（未处退潮态）" if ref.state in ("进攻", "标准", "谨慎") else ""),
         "history": [
             {
@@ -396,6 +492,7 @@ def build_block(asof: Optional[str] = None) -> Dict[str, Any]:
                 "groups": d.groups_hit,
                 "rebound_stamp": d.rebound_stamp,
                 "div10": d.div_count10,
+                "deep_deferred": d.deep_escalation_deferred or None,
             }
             for d in days[-10:]
         ],

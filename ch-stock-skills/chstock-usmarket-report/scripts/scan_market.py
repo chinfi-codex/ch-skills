@@ -28,11 +28,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-import requests
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-YAHOO_SCREENER_URL = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
-REQUEST_HEADERS = {"User-Agent": "Mozilla/5.0"}
-SCREENER_FETCH_COUNT = 250  # Yahoo's hard cap per request; covers the vast majority of movers
+from yahoo_http import yahoo_get  # noqa: E402 — sibling module, needs the path insert above
+
+YAHOO_SCREENER_PATH = "/v1/finance/screener/predefined/saved"
+SCREENER_FETCH_COUNT = 250  # Yahoo's hard cap per request (count=300 -> 400 "size is too large")
 EVIDENCE_TYPE = "us_nasdaq_movers_evidence"
 
 # Nasdaq tiers: Global Select (NMS) / Global Market (NGM) / Capital Market (NCM).
@@ -46,9 +47,13 @@ DEFAULT_LIMIT_PER_SIDE = 60              # money-effect pool can be larger than 
 
 
 def fetch_screener(scr_id: str, count: int = SCREENER_FETCH_COUNT) -> List[Dict[str, Any]]:
-    """Pull one Yahoo predefined screener (day_gainers | day_losers)."""
-    response = requests.get(
-        YAHOO_SCREENER_URL,
+    """Pull one Yahoo predefined screener (day_gainers | day_losers).
+
+    Goes through `yahoo_get`, which retries the edge's 403/429 verdict across both
+    query hosts — losing one side of this call silently empties half the mover pool.
+    """
+    response = yahoo_get(
+        YAHOO_SCREENER_PATH,
         params={
             "formatted": "false",
             "lang": "en-US",
@@ -56,10 +61,7 @@ def fetch_screener(scr_id: str, count: int = SCREENER_FETCH_COUNT) -> List[Dict[
             "scrIds": scr_id,
             "count": count,
         },
-        headers=REQUEST_HEADERS,
-        timeout=20,
     )
-    response.raise_for_status()
     payload = response.json()
     results = (payload.get("finance") or {}).get("result") or []
     if not results:
@@ -193,6 +195,13 @@ def scan_movers(
         "scope_note": (
             "Nasdaq 交易所过滤为确定性脚本逻辑；是否属于科技、归属哪个主题，"
             "由模型读 ticker + 名称在下游判断。池子按 dollar_volume 降序（成交额优先）。"
+        ),
+        # A screener side that got refused leaves its half of the pool empty, which
+        # otherwise reads downstream as "no gainers tonight" — a wrong and invisible
+        # conclusion. Flag it so the report says 数据缺失 instead of 无异动.
+        "degraded": bool(errors),
+        "degraded_note": (
+            "；".join(f"{side} 取数失败：{msg}" for side, msg in errors.items()) or None
         ),
         "scan_date": scan_date,
         "market_states": market_states,

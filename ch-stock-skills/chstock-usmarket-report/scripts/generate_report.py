@@ -18,8 +18,11 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import requests
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from yahoo_http import yahoo_get  # noqa: E402 — sibling module, needs the path insert above
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -29,8 +32,7 @@ HISTORY_DAYS = 260  # ≈ 52 周的交易日；够算 52 周位置 + 20 日均�
 QQQ_KLINE_DAYS = 120  # 嵌入证据包的 QQQ K 线展示窗口（HTML 头部蜡烛图）
 GROUP_INDEX_DAYS = QQQ_KLINE_DAYS  # 分组等权 ETF 指数展示窗口（与 QQQ K 线同窗，便于热力墙下方多线对比）
 EVIDENCE_TYPE = "us_market_watchlist_evidence"
-YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-REQUEST_HEADERS = {"User-Agent": "Mozilla/5.0"}
+YAHOO_CHART_PATH = "/v8/finance/chart/{ticker}"  # host chosen per attempt by yahoo_get
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "indices": [
@@ -80,18 +82,15 @@ def fetch_chart_history(ticker: str) -> list[Dict[str, Any]]:
     fields the sector money-effect rubric leans on. The call count is unchanged
     (still one request per ticker); only the `range` widens.
     """
-    response = requests.get(
-        YAHOO_CHART_URL.format(ticker=ticker),
+    response = yahoo_get(
+        YAHOO_CHART_PATH.format(ticker=ticker),
         params={
             "range": "1y",
             "interval": "1d",
             "includePrePost": "false",
             "events": "div,splits",
         },
-        headers=REQUEST_HEADERS,
-        timeout=20,
     )
-    response.raise_for_status()
     payload = response.json()
 
     result = (payload.get("chart") or {}).get("result") or []

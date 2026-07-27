@@ -420,6 +420,8 @@ python scripts/prepare_report_data.py --profile geopolitical_daily --date today 
 python scripts/macro_monitor.py market
 ```
 
+取数后先看 `sources.yahoo_finance`：`OK` 是七个位置锚点全回来了，`PARTIAL(5/7)` 说明有品种没取到，`ERROR` 是整条线都被拒。只要不是 `OK`，`source_failures.yahoo_finance` 里会逐条列出哪个品种、什么原因（`BLOCKED_BY_EDGE` 是 Yahoo 边缘把请求判成机器人，重试即可恢复；`NO_DATA` 是该品种当天确实没有数据），以及 `recovered_by` —— 有值表示后面被 Stooq / Alpha Vantage 补上了、可以正常引用，为 `null` 则这个数字今天真的缺席。**缺席的品种不要用上一交易日的数值顶替，也不要略过不提**，在证据说明里写清是哪一个、为什么缺。
+
 加载：
 
 - `references/reports/watchboard.md`（活动状态机制）

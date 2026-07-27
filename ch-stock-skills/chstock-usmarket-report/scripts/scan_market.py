@@ -28,9 +28,28 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+SCRIPT_ROOT = Path(__file__).resolve().parent
 
-from yahoo_http import yahoo_get  # noqa: E402 — sibling module, needs the path insert above
+
+def _shared_root() -> str:
+    """Locate the shared bundle root: synced copy first, canonical repo second.
+
+    Tested on the package itself rather than on `_shared/` as a whole, because a
+    synced copy predating this bundle still has an `_shared/` directory.
+    """
+    for candidate in (SCRIPT_ROOT / "_shared", SCRIPT_ROOT.parents[2] / "shared"):
+        if (candidate / "yahoo_http").is_dir():
+            return str(candidate)
+    raise ModuleNotFoundError(
+        "yahoo_http shared bundle not found — run `python scripts/skill_sync.py` "
+        "in the ch-skills repo to sync it into scripts/_shared/."
+    )
+
+
+sys.path.insert(0, str(SCRIPT_ROOT))
+sys.path.insert(0, _shared_root())
+
+from yahoo_http import yahoo_get  # noqa: E402 — shared bundle, needs the path insert above
 
 YAHOO_SCREENER_PATH = "/v1/finance/screener/predefined/saved"
 SCREENER_FETCH_COUNT = 250  # Yahoo's hard cap per request (count=300 -> 400 "size is too large")

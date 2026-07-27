@@ -15,10 +15,35 @@ import math
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
+
+SCRIPT_ROOT = Path(__file__).resolve().parent
+
+
+def _shared_root() -> str:
+    """Locate the shared bundle root: synced copy first, canonical repo second.
+
+    Tested on the package itself rather than on `_shared/` as a whole. A synced
+    copy that predates this bundle still has an `_shared/` directory (db_core,
+    html_report), and keying off the directory alone would resolve there and
+    fail the import.
+    """
+    for candidate in (SCRIPT_ROOT / "_shared", SCRIPT_ROOT.parents[1] / "shared"):
+        if (candidate / "yahoo_http").is_dir():
+            return str(candidate)
+    raise ModuleNotFoundError(
+        "yahoo_http shared bundle not found — run `python scripts/skill_sync.py` "
+        "in the ch-skills repo to sync it into scripts/_shared/."
+    )
+
+
+sys.path.insert(0, _shared_root())
+
+from yahoo_http import YahooBlocked, yahoo_get  # noqa: E402 — shared bundle, needs the path insert above
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -41,7 +66,9 @@ STOOQ_BACKUP_URLS = {
     "NATURAL_GAS": "https://stooq.com/q/l/?s=ng.f&i=d",
     "NASDAQ_FUTURES": "https://stooq.com/q/l/?s=nq.f&i=d",
 }
-YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+# Host-relative: `yahoo_get` picks query1/query2 per attempt so one edge pool's
+# refusal is not the end of the call.
+YAHOO_CHART_PATH = "/v8/finance/chart/{symbol}"
 
 # Symbols fetched with 1y daily history so we can compute 52w high/low,
 # YTD performance, and 20/60 day moving averages. These are the "market
@@ -185,29 +212,42 @@ def fetch_yahoo_chart(
     """Fetch a Yahoo Finance daily series and derive position metrics.
 
     Returns close, previous_close, change_pct, 52w high/low, % off 52w high,
-    % above 52w low, YTD %, MA20, MA60. Errors are returned as ``_error``.
+    % above 52w low, YTD %, MA20, MA60. Errors are returned as ``_error`` plus
+    an ``_error_kind`` tag, so a caller can tell "Yahoo's edge refused us and we
+    should retry later" (``BLOCKED_BY_EDGE``) from "this symbol has no data"
+    (``NO_DATA``) — the two call for different responses in the daily.
     """
 
-    url = YAHOO_CHART_URL.format(symbol=symbol)
     try:
-        response = requests.get(
-            url,
+        response = yahoo_get(
+            YAHOO_CHART_PATH.format(symbol=symbol),
             params={"range": range_label, "interval": interval},
-            headers={"User-Agent": "Mozilla/5.0"},
             timeout=25,
         )
-        response.raise_for_status()
         payload = response.json()
+    except YahooBlocked as exc:
+        return {
+            "_error": str(exc),
+            "_error_kind": "BLOCKED_BY_EDGE",
+            "symbol": symbol,
+            "source": "yahoo_finance",
+        }
     except Exception as exc:
         return {
             "_error": str(exc),
+            "_error_kind": type(exc).__name__,
             "symbol": symbol,
             "source": "yahoo_finance",
         }
 
     result = ((payload.get("chart") or {}).get("result") or [None])[0]
     if not isinstance(result, dict):
-        return {"_error": "EMPTY", "symbol": symbol, "source": "yahoo_finance"}
+        return {
+            "_error": "EMPTY",
+            "_error_kind": "EMPTY",
+            "symbol": symbol,
+            "source": "yahoo_finance",
+        }
 
     meta = result.get("meta") or {}
     timestamps = result.get("timestamp") or []
@@ -221,7 +261,12 @@ def fetch_yahoo_chart(
         if ts is not None and close is not None and not math.isnan(float(close))
     ]
     if not pairs:
-        return {"_error": "NO_DATA", "symbol": symbol, "source": "yahoo_finance"}
+        return {
+            "_error": "NO_DATA",
+            "_error_kind": "NO_DATA",
+            "symbol": symbol,
+            "source": "yahoo_finance",
+        }
 
     closes = [close for _, close in pairs]
     last_ts, last_close = pairs[-1]
@@ -295,16 +340,42 @@ def fetch_yahoo_chart(
 
 
 def fetch_yahoo_position_quotes() -> dict[str, Any]:
+    """Fetch every position anchor, reporting per-symbol outcomes.
+
+    A source-level "OK" used to be set as soon as *one* symbol came back, which
+    meant an edge refusal on five of seven anchors read as a healthy Yahoo feed
+    and the missing numbers just vanished from the evidence. The status now
+    carries the count and every failure is listed, so a partial fetch is visible
+    to whoever writes the daily.
+    """
     data: dict[str, Any] = {}
-    any_ok = False
+    failures: list[dict[str, Any]] = []
     for key, symbol in YAHOO_POSITION_SYMBOLS.items():
         quote = fetch_yahoo_chart(symbol)
         data[key] = quote
-        if "_error" not in quote and quote.get("close") is not None:
-            any_ok = True
+        if not ok_quote(quote):
+            failures.append(
+                {
+                    "key": key,
+                    "symbol": symbol,
+                    "reason": quote.get("_error_kind") or "UNKNOWN",
+                    "detail": str(quote.get("_error") or "")[:300],
+                }
+            )
+
+    total = len(YAHOO_POSITION_SYMBOLS)
+    ok_count = total - len(failures)
+    if ok_count == total:
+        status = "OK"
+    elif ok_count == 0:
+        status = "ERROR"
+    else:
+        status = f"PARTIAL({ok_count}/{total})"
+
     return {
-        "sources": {"yahoo_finance": "OK" if any_ok else "ERROR"},
+        "sources": {"yahoo_finance": status},
         "data": data,
+        "failures": failures,
     }
 
 
@@ -340,6 +411,40 @@ def fetch_stooq_backup() -> dict[str, Any]:
             data[key] = {"_error": str(exc), "source": "stooq_backup"}
     status = "OK" if any(ok_quote(value) for value in data.values()) else "ERROR"
     return {"sources": {"stooq_backup": status}, "data": data}
+
+
+def resolved_source(entry: Any) -> str | None:
+    """Which source ended up supplying a usable number, or None if the key is empty.
+
+    Accepts ``value``-only entries because Alpha Vantage's treasury yield has no
+    ``close`` — the same exception ``merge_missing_quotes`` already makes.
+    """
+    if not isinstance(entry, dict) or entry.get("_error"):
+        return None
+    if entry.get("close") is None and entry.get("value") is None:
+        return None
+    return entry.get("source") or "unknown"
+
+
+def annotate_recovery(
+    failures: list[dict[str, Any]], data: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Mark each Yahoo failure with whether a fallback source later covered it.
+
+    A refusal on BTC that Stooq backfilled is a footnote; a refusal on VIX, which
+    no fallback covers, means the number is simply absent tonight. The daily
+    should be able to tell those apart without re-deriving it.
+    """
+    annotated = []
+    for failure in failures:
+        source = resolved_source(data.get(failure["key"]))
+        annotated.append(
+            {
+                **failure,
+                "recovered_by": source if source and source != "yahoo_finance" else None,
+            }
+        )
+    return annotated
 
 
 def merge_missing_quotes(base: dict[str, Any], supplement: dict[str, Any]) -> None:
@@ -393,6 +498,7 @@ def fetch_market_signals(use_backup: bool = False) -> dict[str, Any]:
     yahoo = fetch_yahoo_position_quotes()
     results["sources"].update(yahoo["sources"])
     merge_missing_quotes(results["data"], yahoo["data"])
+    yahoo_failures = yahoo["failures"]
 
     alpha = fetch_alpha_vantage_market()
     results["sources"].update(alpha["sources"])
@@ -406,6 +512,13 @@ def fetch_market_signals(use_backup: bool = False) -> dict[str, Any]:
         backup = fetch_stooq_backup()
         results["sources"].update(backup["sources"])
         merge_missing_quotes(results["data"], backup["data"])
+
+    # Recorded after every fallback has had its turn, so `recovered_by` reflects
+    # the final evidence rather than the state mid-pipeline.
+    if yahoo_failures:
+        results["source_failures"] = {
+            "yahoo_finance": annotate_recovery(yahoo_failures, results["data"])
+        }
 
     results["groups"] = build_signal_groups(results["data"])
     return results
@@ -536,11 +649,16 @@ def fetch_dataset(
     if dataset == "all":
         market = fetch_market_signals(use_backup=use_backup)
         china = fetch_china_monthly(china_indicators or [])
-        return {
+        merged = {
             "timestamp": now_iso(),
             "sources": {**market.get("sources", {}), **china.get("sources", {})},
             "data": {**market.get("data", {}), "CHINA_MACRO": china.get("data", {})},
         }
+        # Carry the per-symbol failure list through; dropping it here would put
+        # the silent-drop back for anyone calling `all` instead of `market`.
+        if market.get("source_failures"):
+            merged["source_failures"] = market["source_failures"]
+        return merged
     raise ValueError(f"Unsupported dataset: {dataset}")
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""One hardened GET for every Yahoo Finance call in this skill.
+"""One hardened GET for every Yahoo Finance call in this repo.
 
 Yahoo fronts `query{1,2}.finance.yahoo.com` with an edge classifier that decides
 per request whether the caller is allowed. When it says no it does not answer
@@ -36,6 +36,16 @@ extra header (Accept, Accept-Language, Referer, Origin) is a no-op alongside it.
 gated and stay blocked whatever you send; nothing here recovers them. The
 predefined `saved` screener and `v8/finance/chart` are the two doors still open,
 and both go through `yahoo_get`.
+
+Consumers (synced in as `scripts/_shared/yahoo_http` by the skill-sync bundle):
+`chstock-usmarket-report` (screener + per-ticker chart) and `ch-news-reporter`
+(macro position anchors). Import it by putting the *parent* directory on
+`sys.path` — `scripts/_shared` in a synced copy, `<repo>/shared` in this repo —
+and then `from yahoo_http import yahoo_get`.
+
+This module is pure transport: retry policy, host failover, UA policy. It holds
+no domain judgment — which symbols to fetch, what a refusal means for the
+evidence, and how to report it stay with the calling skill.
 """
 
 from __future__ import annotations
@@ -66,6 +76,8 @@ DEFAULT_BACKOFF_BASE = 1.5  # seconds; grows 1.5 / 3.0 / 6.0 with jitter on top
 MAX_BACKOFF = 20.0
 
 _local = threading.local()
+
+__all__ = ["YahooBlocked", "yahoo_get", "YAHOO_HOSTS", "REQUEST_HEADERS"]
 
 
 class YahooBlocked(RuntimeError):

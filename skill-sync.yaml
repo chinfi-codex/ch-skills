@@ -57,6 +57,14 @@ shared:
         - chstock-usmarket-report
         - ch-news-reporter
         - a-stock-daily-market-sense
+    # yahoo_http 能力：Yahoo Finance 加固 GET（重试 edge 的 403/429 判定 + query1/query2 交替）。
+    # 纯传输层，不含任何领域判断；UA 不可"升级"的实测结论写在模块 docstring 里。
+    # 消费方把 scripts/_shared（同步副本）或 <repo>/shared（dev）加进 sys.path 后 `from yahoo_http import yahoo_get`。
+    - source: shared/yahoo_http
+      dest: scripts/_shared/yahoo_http
+      skills:
+        - chstock-usmarket-report
+        - ch-news-reporter
 
 # 排除规则（开发/评测产物，不同步到 Agent 安装目录）
 exclude:

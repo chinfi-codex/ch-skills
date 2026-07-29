@@ -14,9 +14,10 @@ import io
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -93,6 +94,47 @@ def parse_report_date(value: Optional[str]) -> Optional[date]:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
+def _exchange_timezone(meta: Dict[str, Any]) -> Any:
+    """Return the exchange timezone, with Yahoo's UTC offset as a safe fallback."""
+    timezone_name = meta.get("exchangeTimezoneName") or "America/New_York"
+    try:
+        return ZoneInfo(str(timezone_name))
+    except ZoneInfoNotFoundError:
+        offset_seconds = int(meta.get("gmtoffset") or -5 * 60 * 60)
+        return timezone(timedelta(seconds=offset_seconds))
+
+
+def _exclude_incomplete_daily_bar(
+    rows: list[Dict[str, Any]],
+    meta: Dict[str, Any],
+    now_timestamp: Optional[float] = None,
+) -> list[Dict[str, Any]]:
+    """Exclude the current US session's daily bar until its regular close.
+
+    Yahoo may expose a live, still-changing 1d bar during PRE/REGULAR trading.
+    `currentTradingPeriod.regular.end` is exchange-calendar aware (including
+    early closes), so it is a safer completion boundary than a hard-coded hour.
+    """
+    regular_period = ((meta.get("currentTradingPeriod") or {}).get("regular") or {})
+    regular_end = regular_period.get("end")
+    if not isinstance(regular_end, (int, float)):
+        return rows
+
+    current_timestamp = (
+        now_timestamp
+        if now_timestamp is not None
+        else datetime.now(timezone.utc).timestamp()
+    )
+    if current_timestamp >= float(regular_end):
+        return rows
+
+    exchange_tz = _exchange_timezone(meta)
+    current_session_date = datetime.fromtimestamp(
+        float(regular_end) - 1, exchange_tz
+    ).date()
+    return [row for row in rows if row["date"] < current_session_date]
+
+
 def fetch_chart_history(ticker: str) -> list[Dict[str, Any]]:
     """Fetch one year of daily chart history from Yahoo Finance.
 
@@ -117,6 +159,8 @@ def fetch_chart_history(ticker: str) -> list[Dict[str, Any]]:
         raise RuntimeError(f"{ticker} 未返回可用行情。")
 
     chart = result[0]
+    meta = chart.get("meta") or {}
+    exchange_tz = _exchange_timezone(meta)
     timestamps = chart.get("timestamp") or []
     quote = ((chart.get("indicators") or {}).get("quote") or [{}])[0]
     opens = quote.get("open") or []
@@ -137,7 +181,7 @@ def fetch_chart_history(ticker: str) -> list[Dict[str, Any]]:
         volume_value = volumes[index] if index < len(volumes) else None
         rows.append(
             {
-                "date": datetime.utcfromtimestamp(timestamp).date(),
+                "date": datetime.fromtimestamp(timestamp, exchange_tz).date(),
                 "open": _at(opens, index),
                 "high": _at(highs, index),
                 "low": _at(lows, index),
@@ -146,6 +190,7 @@ def fetch_chart_history(ticker: str) -> list[Dict[str, Any]]:
             }
         )
 
+    rows = _exclude_incomplete_daily_bar(rows, meta)
     if len(rows) < 2:
         raise RuntimeError(f"{ticker} 历史行情不足。")
     return rows[-HISTORY_DAYS:]
@@ -226,7 +271,7 @@ def _volume_ratio_20d(
         return None
     start = max(0, target_index - window)
     prior = [r.get("volume") for r in history[start:target_index] if r.get("volume")]
-    if len(prior) < 5:
+    if len(prior) != window:
         return None
     avg = sum(prior) / len(prior)
     return cur_vol / avg if avg else None
@@ -255,19 +300,24 @@ def build_stock_snapshot(
 
     change_pct = (close_price - prev_close) / prev_close * 100
     target_index = history.index(target_row)
-    five_day_trend = _return_pct(history, target_index, 4)
-    twenty_day_trend = _return_pct(history, target_index, 19)
+    five_day_trend = _return_pct(history, target_index, 5)
+    twenty_day_trend = _return_pct(history, target_index, 20)
+    five_day_start = history[target_index - 5]["date"] if target_index >= 5 else None
+    twenty_day_start = history[target_index - 20]["date"] if target_index >= 20 else None
     position_52w, drawdown_high, high_52w, low_52w = _position_in_range(history, target_index)
     vol_ratio = _volume_ratio_20d(history, target_index)
 
     return {
         "ticker": ticker,
         "trade_date": target_row["date"].isoformat(),
+        "prev_trade_date": prev_row["date"].isoformat(),
         "close": round(close_price, 4),
         "prev_close": round(prev_close, 4),
         "change_pct": round(change_pct, 4),
         "five_day_trend_pct": round(five_day_trend, 4) if five_day_trend is not None else None,
+        "five_day_start_date": five_day_start.isoformat() if five_day_start else None,
         "trend_20d_pct": round(twenty_day_trend, 4) if twenty_day_trend is not None else None,
+        "trend_20d_start_date": twenty_day_start.isoformat() if twenty_day_start else None,
         "position_52w": round(position_52w, 4) if position_52w is not None else None,
         "drawdown_from_high_pct": round(drawdown_high, 2) if drawdown_high is not None else None,
         "high_52w": round(high_52w, 4) if high_52w is not None else None,
@@ -287,13 +337,49 @@ def inject_relative_fields(
     place means the fields also flow into the group rows and abnormal buckets,
     which reference the same snapshot dicts.
     """
-    if not snapshot or not benchmark:
+    if not snapshot:
         return
+    snapshot.pop("vs_qqq_1d", None)
+    snapshot.pop("vs_qqq_5d", None)
+    snapshot["vs_qqq_1d_date_aligned"] = False
+    snapshot["vs_qqq_5d_date_aligned"] = False
+    if not benchmark:
+        return
+
+    snapshot_1d_dates = (
+        snapshot.get("trade_date"),
+        snapshot.get("prev_trade_date"),
+    )
+    benchmark_1d_dates = (
+        benchmark.get("trade_date"),
+        benchmark.get("prev_trade_date"),
+    )
+    snapshot_5d_dates = (
+        snapshot.get("trade_date"),
+        snapshot.get("five_day_start_date"),
+    )
+    benchmark_5d_dates = (
+        benchmark.get("trade_date"),
+        benchmark.get("five_day_start_date"),
+    )
+    one_day_dates_aligned = all(snapshot_1d_dates + benchmark_1d_dates) and (
+        snapshot_1d_dates == benchmark_1d_dates
+    )
+    five_day_dates_aligned = all(snapshot_5d_dates + benchmark_5d_dates) and (
+        snapshot_5d_dates == benchmark_5d_dates
+    )
+    snapshot["vs_qqq_1d_date_aligned"] = one_day_dates_aligned
+    snapshot["vs_qqq_5d_date_aligned"] = five_day_dates_aligned
+
     bench_1d = benchmark.get("change_pct")
-    if snapshot.get("change_pct") is not None and bench_1d is not None:
+    if one_day_dates_aligned and snapshot.get("change_pct") is not None and bench_1d is not None:
         snapshot["vs_qqq_1d"] = round(snapshot["change_pct"] - bench_1d, 4)
     bench_5d = benchmark.get("five_day_trend_pct")
-    if snapshot.get("five_day_trend_pct") is not None and bench_5d is not None:
+    if (
+        five_day_dates_aligned
+        and snapshot.get("five_day_trend_pct") is not None
+        and bench_5d is not None
+    ):
         snapshot["vs_qqq_5d"] = round(snapshot["five_day_trend_pct"] - bench_5d, 4)
 
 

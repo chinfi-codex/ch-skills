@@ -86,13 +86,16 @@ targets:
 rename: {}
 
 exclude:
-  dirs: [.git, __pycache__, evals, benchmarks, "*-workspace", node_modules, venv, .venv]
-  files: [benchmark.json, grading.json, review.html, test_*.py, "*_test.py", .env, "*.pyc"]
+  dirs: [.git, __pycache__, tests, evals, benchmarks, "*-workspace", node_modules, venv, .venv]
+  files: [README.md, benchmark.json, grading.json, review.html, test_*.py, "*_test.py", .env, "*.pyc"]
+  skill_root_dirs:
+    ch-news-reporter: [data, reports]
+    chstock-usmarket-report: [outputs]
 ```
 
 - **targets**：定义要同步的 Agent 安装目录。使用 `~` 保持跨环境可移植。
 - **rename**：当源目录名和目标 skill 名不一致时显式映射（如去除空格）。
-- **exclude**：开发/评测产物不会同步到 Agent 目录，保持安装包干净。
+- **exclude**：开发/评测产物不会同步到 Agent 目录，保持安装包干净。`skill_root_dirs` 只排除对应 skill 根目录下的运行输出，不会误伤 `references/` 内的同名资料目录。
 
 ## 开发工作流建议
 

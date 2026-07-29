@@ -39,6 +39,7 @@ shared:
         - a-stock-earnings-forecast
         - a-stock-quarterly-report
         - a-stock-analyzer
+        - us-ai-semi-earnings
     # html 能力：报告渲染框架（Markdown→HTML + 内联图表）
     - source: shared/html_report
       dest: scripts/_shared/html_report
@@ -50,6 +51,7 @@ shared:
         - ch-news-reporter
         - a-stock-daily-market-sense
         - ch-tech-explainer
+        - us-ai-semi-earnings
     # web_search 能力：Tavily 联网检索（WebFetch/WebSearch 在部分网络下不可达时的主路径）
     - source: shared/web_search
       dest: scripts/_shared/web_search
@@ -65,6 +67,7 @@ shared:
       skills:
         - chstock-usmarket-report
         - ch-news-reporter
+        - us-ai-semi-earnings
 
 # 排除规则（开发/评测产物，不同步到 Agent 安装目录）
 exclude:
@@ -73,6 +76,7 @@ exclude:
     - .cache
     - __pycache__
     - .pytest_cache
+    - tests
     - evals
     - benchmarks
     - "*-workspace"
@@ -93,6 +97,7 @@ exclude:
     - .env
     - "*.pyc"
     - .DS_Store
+    - README.md
     # ch-news-reporter 运行时残留:watchboard 状态、enrichment targets,运行时自动重建,不进发布包
     - "*watchboard.json"
     - selected_targets.json
@@ -100,6 +105,9 @@ exclude:
   # 不误伤嵌套同名目录（如 ch-news-reporter/references/reports 仍正常同步）。
   # 被排除目录在 Agent 目标端也不会被镜像删除，运行时产物得以保留。
   skill_root_dirs:
+    ch-news-reporter:
+      - data
+      - reports
     a-stock-daily-market-sense:
       - reports
     a-stock-earnings-forecast:
@@ -108,3 +116,8 @@ exclude:
       - reports
     a-stock-analyzer:
       - reports
+    chstock-usmarket-report:
+      - outputs
+    us-ai-semi-earnings:
+      - reports
+      - .cache

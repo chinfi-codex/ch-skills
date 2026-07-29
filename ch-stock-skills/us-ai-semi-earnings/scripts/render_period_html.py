@@ -9,10 +9,8 @@ company judged in week one keeps its verdict while week five's arrivals slot in
 beside it.
 
 The page is a projection, never a source of judgement: every tier, quality call
-and chain state on it was written by the model into `usearn_verdict` /
-`usearn_chain_verdict`. Companies with no verdict yet are shown as `未判`
-rather than hidden, so the gap between what has reported and what has been read
-is visible instead of implied.
+and guidance call on it was written by the model into `usearn_verdict`.
+Companies with no verdict yet are shown as `未判` rather than hidden.
 
 Self-contained by construction — inline CSS and JS, no CDN, no external fonts —
 so the file can be mailed or dropped on a static host as-is.
@@ -21,7 +19,6 @@ so the file can be mailed or dropped on a static host as-is.
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import json
 import re
 import sys
@@ -36,12 +33,6 @@ from store import Store  # noqa: E402
 _SCRIPT_DIR = Path(__file__).resolve().parent
 
 TIER_ORDER = {"强": 0, "中": 1, "观察": 2, "剔除": 3, "未判": 4}
-STAGE_LABEL = {
-    "xbrl": "10-Q 已落地",
-    "press_release_only": "仅新闻稿",
-    "reported_no_numbers": "已报未取到数",
-    "not_reported": "未披露",
-}
 
 
 def _n(v: Any, suffix: str = "", digits: int = 1) -> str:
@@ -72,9 +63,30 @@ def _growth_value(row: Dict[str, Any], *, eps: bool = False) -> str:
     return f"{unit} {amount}"
 
 
+def _price_window(bars: List[Dict[str, Any]], announce_date: Optional[str],
+                  *, limit: int = 120, pre_announce: int = 40) -> List[Dict[str, Any]]:
+    """Normalize cached/evidence bars and keep the announcement inside the window."""
+    usable = [
+        {k: b.get(k) for k in ("date", "open", "high", "low", "close", "volume")}
+        for b in bars
+        if b.get("date") and all(b.get(k) is not None for k in ("open", "high", "low", "close"))
+    ]
+    usable.sort(key=lambda b: b["date"])
+    if limit <= 0 or len(usable) <= limit:
+        return usable
+    marker = (
+        next((i for i, b in enumerate(usable) if b["date"] >= announce_date), None)
+        if announce_date else None
+    )
+    if marker is None:
+        return usable[-limit:]
+    start = min(max(0, marker - max(0, pre_announce)), len(usable) - limit)
+    return usable[start:start + limit]
+
+
 def build_view(frame: str, evidence: Dict[str, Any], verdicts: Dict[str, Dict[str, Any]],
-               chain_verdicts: Dict[str, Dict[str, Any]],
-               transcripts: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+               transcripts: Dict[str, Dict[str, Any]],
+               price_histories: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
     companies: List[Dict[str, Any]] = []
     for row in evidence.get("companies") or []:
         ticker = row["ticker"]
@@ -83,6 +95,8 @@ def build_view(frame: str, evidence: Dict[str, Any], verdicts: Dict[str, Dict[st
         q, b = row.get("quality") or {}, row.get("balance") or {}
         s, p = row.get("surprise") or {}, row.get("price_reaction") or {}
         t = transcripts.get(ticker) or row.get("transcript") or {}
+        announced = (row.get("announcement") or {}).get("date")
+        bars = row.get("price_history") or (price_histories or {}).get(ticker) or []
 
         def gv(c: str, k: str) -> Any:
             return ((g.get(c) or {}).get(k))
@@ -92,7 +106,7 @@ def build_view(frame: str, evidence: Dict[str, Any], verdicts: Dict[str, Dict[st
             "name": row.get("name"),
             "bucket": row.get("bucket"),
             "chain_role": row.get("chain_role"),
-            "announced": (row.get("announcement") or {}).get("date"),
+            "announced": announced,
             "announce_url": (row.get("announcement") or {}).get("url"),
             "provenance": (row.get("announcement") or {}).get("provenance"),
             "data_stage": row.get("data_stage"),
@@ -148,6 +162,7 @@ def build_view(frame: str, evidence: Dict[str, Any], verdicts: Dict[str, Dict[st
                       "vol_ratio": p.get("vol_ratio"), "pos52": p.get("position_52w"),
                       "since": p.get("since_announce_pct"), "days": p.get("trading_days_since"),
                       "note": p.get("note")},
+            "price_history": _price_window(bars, announced),
             "guidance": [e["text"] for e in (row.get("guidance_excerpts") or [])][:8],
             "press_head": row.get("press_release_head"),
             "transcript": {
@@ -163,30 +178,9 @@ def build_view(frame: str, evidence: Dict[str, Any], verdicts: Dict[str, Dict[st
 
     companies.sort(key=lambda c: (TIER_ORDER.get(c["tier"], 9), -(c["screen"].get("rank_score") or -999)))
 
-    chains = []
-    for chain in evidence.get("transmission_chains") or []:
-        cv = chain_verdicts.get(chain["name"]) or {}
-        chains.append({**chain, "state": cv.get("state") or "未判",
-                       "confirmed_by": cv.get("confirmed_by") or [],
-                       "contradicted_by": cv.get("contradicted_by") or [],
-                       "note": cv.get("note")})
-
-    meta = evidence.get("meta") or {}
-    judged = sum(1 for c in companies if c["tier"] != "未判")
-    read = sum(1 for c in companies if c["transcript"]["status"] == "ok")
     return {
         "frame": frame,
-        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-        "meta": meta,
-        "coverage": {
-            "universe": meta.get("universe_size"),
-            "reported": meta.get("reported_count"),
-            "judged": judged,
-            "transcripts": read,
-            "stages": meta.get("data_stage_counts") or {},
-        },
         "buckets": evidence.get("buckets") or [],
-        "chains": chains,
         "companies": companies,
         "not_reported": evidence.get("not_reported") or [],
     }
@@ -198,26 +192,30 @@ _CSS = """
 @media(prefers-color-scheme:light){:root{--bg:#f6f7f9;--panel:#fff;--panel2:#f0f2f5;--line:#dfe3ea;
 --fg:#161a20;--dim:#5d6672;--pos:#15803d;--neg:#b91c1c;--warn:#a16207;--accent:#1d4ed8;--chip:#eef1f6}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",
-"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
-header{padding:18px 22px;border-bottom:1px solid var(--line);background:var(--panel)}
+body{margin:0;height:100vh;display:flex;flex-direction:column;background:var(--bg);color:var(--fg);
+font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB",
+"Microsoft YaHei",sans-serif}
+header{flex:none;padding:18px 22px;border-bottom:1px solid var(--line);background:var(--panel)}
 h1{margin:0 0 6px;font-size:19px;letter-spacing:.3px}
 .sub{color:var(--dim);font-size:12.5px}
-.cov{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px}
-.cov div{background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:6px 11px;font-size:12.5px}
-.cov b{font-size:15px;margin-right:5px}
-main{display:grid;grid-template-columns:330px 1fr;gap:0;min-height:calc(100vh - 132px)}
-@media(max-width:900px){main{grid-template-columns:1fr}#detail{border-left:none;border-top:1px solid var(--line)}}
-#side{border-right:1px solid var(--line);background:var(--panel);overflow:auto;max-height:calc(100vh - 132px)}
-.filters{padding:11px 13px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:2}
-.filters select,.filters input{width:100%;margin-bottom:6px;padding:6px 8px;border-radius:6px;
-border:1px solid var(--line);background:var(--panel2);color:var(--fg);font-size:12.5px}
+.toolbar{flex:none;display:flex;align-items:center;gap:9px;padding:10px 13px;border-bottom:1px solid var(--line);
+background:var(--panel);white-space:nowrap;overflow-x:auto}
+.toolbar select,.toolbar input{height:34px;padding:6px 9px;border-radius:6px;border:1px solid var(--line);
+background:var(--panel2);color:var(--fg);font-size:12.5px}
+.toolbar select{width:170px;flex:0 0 170px}
+.toolbar input{min-width:260px;flex:1 1 360px}
+.toolbar #count{flex:0 0 auto;margin-left:auto}
+main{display:grid;grid-template-columns:330px minmax(0,1fr);gap:0;flex:1;min-height:0}
+@media(max-width:900px){body{display:block;height:auto;min-height:100vh}.toolbar{position:sticky;top:0;z-index:3}
+main{grid-template-columns:1fr}#detail{border-left:none;border-top:1px solid var(--line)}
+#side,#detail{max-height:none}}
+#side{border-right:1px solid var(--line);background:var(--panel);overflow:auto}
 .row{padding:10px 13px;border-bottom:1px solid var(--line);cursor:pointer}
 .row:hover{background:var(--panel2)}
 .row.on{background:var(--panel2);box-shadow:inset 3px 0 0 var(--accent)}
 .row .t{font-weight:600}
 .row .meta{color:var(--dim);font-size:11.5px;display:flex;gap:7px;flex-wrap:wrap;margin-top:3px}
-#detail{padding:20px 24px;overflow:auto;max-height:calc(100vh - 132px)}
+#detail{padding:20px 24px;overflow:auto}
 .tag{display:inline-block;border-radius:99px;padding:1px 8px;font-size:11px;border:1px solid var(--line);
 background:var(--chip);color:var(--dim)}
 .tag.s0{color:var(--pos);border-color:var(--pos)} .tag.s1{color:var(--accent);border-color:var(--accent)}
@@ -233,13 +231,13 @@ h2:first-of-type{margin-top:6px}
 border-radius:6px;padding:11px 14px;margin:10px 0}
 .quote{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:9px 12px;
 margin:6px 0;font-size:12.5px;color:var(--fg)}
+.kline-wrap{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 10px 5px;
+overflow:hidden}
+.kline-svg{display:block;width:100%;height:auto;min-height:260px}
+.kline-note{display:flex;gap:16px;flex-wrap:wrap;color:var(--dim);font-size:11.5px;padding:2px 6px 5px}
 ul{margin:6px 0;padding-left:20px} li{margin:3px 0}
-.chains{padding:14px 22px;border-bottom:1px solid var(--line);background:var(--panel2)}
-.chain{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:7px 0;font-size:12.5px}
-.link{background:var(--chip);border:1px solid var(--line);border-radius:6px;padding:4px 9px;white-space:nowrap}
-.arrow{color:var(--dim)}
 .empty{color:var(--dim);padding:40px 0;text-align:center}
-footer{padding:14px 22px;color:var(--dim);font-size:11.5px;border-top:1px solid var(--line)}
+footer{flex:none;padding:14px 22px;color:var(--dim);font-size:11.5px;border-top:1px solid var(--line)}
 code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 """
 
@@ -250,6 +248,55 @@ const num = (v, s='', d=1) => v===null||v===undefined ? '<span class="dim">—</
   : `<span class="${v>0?'pos':v<0?'neg':''}">${v>0&&(s==='%'||s==='pp')?'+':''}${(+v).toFixed(d)}${s}</span>`;
 const plain = (v, s='', d=1) => v===null||v===undefined ? '<span class="dim">—</span>' : `${(+v).toFixed(d)}${s}`;
 const esc = s => String(s??'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function klineHtml(c){
+  const bars = (c.price_history||[]).filter(b =>
+    b.date && [b.open,b.high,b.low,b.close].every(v => Number.isFinite(+v)));
+  if(!bars.length) {
+    return '<div class="quote dim">暂无日线数据；重新运行 earnings_scan.py 后会补入近 120 个交易日 K 线。</div>';
+  }
+  const W=920,H=340,p={l:14,r:66,t:24,b:30}, priceBottom=260, volTop=276, volBottom=318;
+  const lows=bars.map(b=>+b.low), highs=bars.map(b=>+b.high);
+  let lo=Math.min(...lows), hi=Math.max(...highs);
+  const pricePad=Math.max((hi-lo)*0.04, hi*0.002);
+  lo-=pricePad; hi+=pricePad;
+  const span=Math.max(hi-lo, 0.01), plotW=W-p.l-p.r;
+  const step=plotW/bars.length, candleW=Math.max(1.4,Math.min(5.8,step*.62));
+  const X=i=>p.l+step*(i+.5);
+  const Y=v=>p.t+(hi-(+v))/span*(priceBottom-p.t);
+  const maxVol=Math.max(1,...bars.map(b=>+(b.volume||0)));
+  const VY=v=>volBottom-(+(v||0))/maxVol*(volBottom-volTop);
+  let out=[];
+  for(let i=0;i<5;i++){
+    const value=hi-span*i/4, y=Y(value);
+    out.push(`<line x1="${p.l}" y1="${y}" x2="${W-p.r}" y2="${y}" stroke="var(--line)" stroke-width="1"/>`);
+    out.push(`<text x="${W-p.r+8}" y="${y+4}" fill="var(--dim)" font-size="11">${value.toFixed(2)}</text>`);
+  }
+  const marker=c.announced ? bars.findIndex(b=>b.date>=c.announced) : -1;
+  if(marker>=0){
+    const mx=X(marker);
+    out.push(`<rect x="${mx}" y="${p.t}" width="${Math.max(0,W-p.r-mx)}" height="${volBottom-p.t}" fill="var(--accent)" opacity=".045"/>`);
+    out.push(`<line x1="${mx}" y1="${p.t}" x2="${mx}" y2="${volBottom}" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>`);
+    const anchor=mx>W*.72?'end':'start', tx=mx+(anchor==='end'?-7:7);
+    out.push(`<text x="${tx}" y="16" text-anchor="${anchor}" fill="var(--accent)" font-size="11">财报发布 ${esc(c.announced)}</text>`);
+  }
+  bars.forEach((b,i)=>{
+    const up=+b.close>=+b.open, color=up?'var(--pos)':'var(--neg)', x=X(i);
+    const top=Y(Math.max(+b.open,+b.close)), bottom=Y(Math.min(+b.open,+b.close));
+    const bodyH=Math.max(1,bottom-top);
+    const title=`${b.date}  开 ${(+b.open).toFixed(2)}  高 ${(+b.high).toFixed(2)}  低 ${(+b.low).toFixed(2)}  收 ${(+b.close).toFixed(2)}`;
+    out.push(`<g><title>${esc(title)}</title><line x1="${x}" y1="${Y(b.high)}" x2="${x}" y2="${Y(b.low)}" stroke="${color}" stroke-width="1"/>`);
+    out.push(`<rect x="${x-candleW/2}" y="${top}" width="${candleW}" height="${bodyH}" fill="${up?'none':color}" stroke="${color}" stroke-width="1"/>`);
+    out.push(`<rect x="${x-candleW/2}" y="${VY(b.volume)}" width="${candleW}" height="${Math.max(1,volBottom-VY(b.volume))}" fill="${color}" opacity=".45"/></g>`);
+  });
+  const labels=[0,Math.floor((bars.length-1)/2),bars.length-1];
+  labels.forEach((i,n)=>out.push(`<text x="${X(i)}" y="${H-7}" text-anchor="${n===0?'start':n===2?'end':'middle'}" fill="var(--dim)" font-size="11">${esc(bars[i].date)}</text>`));
+  const markerNote=marker>=0
+    ? `虚线为财报发布日；淡蓝区域为发布后走势（${bars.length-marker-1} 个交易日）`
+    : `财报日 ${esc(c.announced||'—')} 不在当前窗口内`;
+  return `<div class="kline-wrap"><svg class="kline-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(c.ticker)} 近 120 个交易日 K 线">${out.join('')}</svg>
+    <div class="kline-note"><span>绿色＝上涨，红色＝下跌</span><span>${markerNote}</span><span>共 ${bars.length} 个交易日</span></div></div>`;
+}
 
 function matches(c){
   const b = document.getElementById('f-bucket').value;
@@ -300,6 +347,9 @@ function select(ticker){
       ${c.watch_items.length?`<div class="dim" style="margin-top:6px">需要跟踪：</div>
         <ul>${c.watch_items.map(r=>`<li>${esc(r)}</li>`).join('')}</ul>`:''}</div>`
       : '<div class="hl dim">尚未判分——跑 verdict.py context / record 后重渲染</div>'}
+
+    <h2>股价走势（近 120 个交易日）</h2>
+    ${klineHtml(c)}
 
     <h2>三口径</h2>
     <table><thead><tr><th>科目</th><th>本季</th><th>同比</th><th>环比</th></tr></thead><tbody>
@@ -369,28 +419,7 @@ document.addEventListener('DOMContentLoaded', () => {
 """
 
 
-_CHAIN_STATE_CLASS = {"确认": "s0", "部分确认": "s2", "背离": "s3"}
-
-
-def _chain_html(chain: Dict[str, Any]) -> str:
-    links = []
-    for link in chain.get("links") or []:
-        yoy = link.get("median_revenue_yoy_pct")
-        shown = "—" if yoy is None else f"{yoy:+.0f}%"
-        links.append(f'<span class="link">{escape(link["bucket"])} <b>{shown}</b> '
-                     f'<span class="dim">{escape(str(link.get("reported") or ""))}</span></span>')
-    state = chain.get("state") or "未判"
-    note = f'<span class="dim">{escape(chain.get("note") or "")}</span>' if chain.get("note") else ""
-    return (f'<div class="chain"><span class="tag">{escape(chain.get("name") or "")}</span>'
-            f'<span class="tag {_CHAIN_STATE_CLASS.get(state, "")}">{escape(state)}</span>'
-            + '<span class="arrow">→</span>'.join(links) + note + "</div>")
-
-
 def render_html(view: Dict[str, Any]) -> str:
-    cov = view["coverage"]
-    stages = " · ".join(f"{STAGE_LABEL.get(k, k)} {v}" for k, v in (cov["stages"] or {}).items())
-    chains_html = "".join(_chain_html(c) for c in view["chains"])
-    meta = view["meta"]
     safe_view_json = (json.dumps(view, ensure_ascii=False)
                       .replace("&", "\\u0026")
                       .replace("<", "\\u003c")
@@ -400,32 +429,23 @@ def render_html(view: Dict[str, Any]) -> str:
 <title>美股 AI/半导体财报季 {escape(view['frame'])}</title><style>{_CSS}</style></head><body>
 <header>
   <h1>美股 AI / 半导体财报季 · {escape(view['frame'])}</h1>
-  <div class="sub">数据截至 {escape(str(meta.get('as_of') or '—'))} ·
-    生成于 {escape(view['generated_at'])} · {escape(stages)}</div>
-  <div class="cov">
-    <div><b>{cov['reported'] or 0}</b>/{cov['universe'] or 0} 已披露</div>
-    <div><b>{cov['judged']}</b> 已判分</div>
-    <div><b>{cov['transcripts']}</b> 已取电话会议</div>
-    <div>Alpha Vantage 余额 <b>{(meta.get('av_budget') or {}).get('remaining', '—')}</b>/{(meta.get('av_budget') or {}).get('limit', '—')}</div>
-  </div>
 </header>
-<div class="chains"><div class="sub" style="margin-bottom:4px">产业链传导（中位数营收同比，模型判定状态）</div>{chains_html}</div>
+<div class="toolbar filters">
+  <select id="f-bucket"></select>
+  <select id="f-tier"><option value="">全部分档</option><option>强</option><option>中</option>
+    <option>观察</option><option>剔除</option><option>未判</option></select>
+  <select id="f-stage"><option value="">全部数据阶段</option><option value="xbrl">10-Q 已落地</option>
+    <option value="press_release_only">仅新闻稿</option><option value="transcript">有电话会议</option></select>
+  <input id="f-q" placeholder="搜索代码 / 名称 / 主题">
+  <div class="sub" id="count"></div>
+</div>
 <main>
   <div id="side">
-    <div class="filters">
-      <select id="f-bucket"></select>
-      <select id="f-tier"><option value="">全部分档</option><option>强</option><option>中</option>
-        <option>观察</option><option>剔除</option><option>未判</option></select>
-      <select id="f-stage"><option value="">全部数据阶段</option><option value="xbrl">10-Q 已落地</option>
-        <option value="press_release_only">仅新闻稿</option><option value="transcript">有电话会议</option></select>
-      <input id="f-q" placeholder="搜索代码 / 名称 / 主题">
-      <div class="sub" id="count"></div>
-    </div>
     <div id="rows"></div>
   </div>
   <div id="detail"></div>
 </main>
-<footer>脚本只产出确定性证据；分档、质量成色、指引判断与产业链状态均由模型写入台账。不构成投资建议。</footer>
+<footer>脚本只产出确定性证据；分档、质量成色与指引判断由模型写入台账。不构成投资建议。</footer>
 <script>window.__VIEW__ = {safe_view_json};</script>
 <script>{_JS}</script></body></html>"""
 
@@ -455,7 +475,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     store = Store()
     verdicts = store.load_verdicts(frame) if store.available else {}
-    chain_verdicts = store.load_chain_verdicts(frame) if store.available else {}
+    price_histories = {
+        row["ticker"]: store.load_bars(row["ticker"])
+        for row in (evidence.get("companies") or [])
+        if store.available and not row.get("price_history")
+    }
     transcripts = {t: v for (t, f), v in
                    (store.transcript_status([frame]).items() if store.available else [])
                    if f == frame}
@@ -467,12 +491,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                         "prepared_segments": rec.get("prepared_segments"),
                         "qa_segments": rec.get("qa_segments")}
 
-    view = build_view(frame, evidence, verdicts, chain_verdicts, transcripts)
+    view = build_view(frame, evidence, verdicts, transcripts, price_histories)
     out = Path(args.out or (_SCRIPT_DIR.parent / "reports" / f"usearn_{frame}.html"))
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render_html(view), encoding="utf-8")
-    print(f"[html] {view['coverage']['reported']} reported, {view['coverage']['judged']} judged, "
-          f"{view['coverage']['transcripts']} transcripts -> {out}")
+    judged = sum(1 for c in view["companies"] if c["tier"] != "未判")
+    read = sum(1 for c in view["companies"] if c["transcript"]["status"] == "ok")
+    print(f"[html] {len(view['companies'])} reported, {judged} judged, "
+          f"{read} transcripts -> {out}")
     store.close()
     return 0
 

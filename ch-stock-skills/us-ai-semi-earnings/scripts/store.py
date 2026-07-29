@@ -9,27 +9,23 @@ roll its own connection. Tables are namespaced `usearn_*` inside the shared
 
 What is cached and why each thing is cached the way it is:
 
-- `usearn_company`      the resolved universe: ticker → CIK, bucket, chain role.
+- `usearn_company`      the resolved universe: ticker → CIK, bucket, business role.
                         Saves re-resolving 130 tickers against SEC's map daily.
 - `usearn_filing`       every 8-K/10-Q/10-K seen, with the calendar frame it was
                         assigned. This is the **discovery water-mark**: a scan
                         only has to look at filings newer than the newest row.
 - `usearn_xbrl_fact`    one row per (ticker, frame, concept). Deliberately not a
-                        JSON blob like the A-share sibling: cross-company work
-                        here asks "every semicap name's gross margin this frame",
-                        which is one indexed query over rows and a full scan plus
-                        client-side parsing over blobs.
+                        JSON blob so category-level lookup stays one indexed
+                        query rather than a full scan plus client-side parsing.
 - `usearn_press_release` 8-K EX-99.1 text. Immutable once filed, so fetched once.
 - `usearn_transcript`    one row per (ticker, frame) call: source, status, stats.
 - `usearn_transcript_segment`
                         one row per speaker turn. Segment-level rows are what
                         make "who else mentioned CoWoS this quarter" a SQL query
-                        instead of thirty transcripts loaded into context — the
-                        cross-company read is the point of this skill.
+                        instead of thirty transcripts loaded into context.
 - `usearn_surprise`      EPS actual vs estimate, whichever vendor answered.
 - `usearn_price_cache`   daily bars for the gap/volume reaction engine.
 - `usearn_verdict`       the model's per-company call. Never written by a script.
-- `usearn_chain_verdict` the model's per-transmission-chain call.
 
 Transcripts are the reason the cache is not merely an optimisation: Alpha
 Vantage's free tier allows 25 requests a day, and a published transcript never
@@ -213,17 +209,6 @@ _SCHEMA: Dict[str, str] = {
             evidence_digest TEXT,
             decided_at TEXT,
             PRIMARY KEY (frame, ticker)
-        )""",
-    "usearn_chain_verdict": """
-        CREATE TABLE IF NOT EXISTS usearn_chain_verdict (
-            frame TEXT NOT NULL,
-            chain TEXT NOT NULL,
-            state TEXT,
-            confirmed_by TEXT,
-            contradicted_by TEXT,
-            note TEXT,
-            decided_at TEXT,
-            PRIMARY KEY (frame, chain)
         )""",
 }
 
@@ -701,26 +686,6 @@ class Store:
             rec["transcript_read"] = bool(rec.get("transcript_read"))
             for k in ("reasons", "watch_items", "evidence_digest"):
                 rec[k] = _jl(rec.get(k))
-            out[r[0]] = rec
-        return out
-
-    def save_chain_verdicts(self, frame: str, records: Sequence[Dict[str, Any]]) -> int:
-        cols = ("frame", "chain", "state", "confirmed_by", "contradicted_by",
-                "note", "decided_at")
-        payload = [(frame, r["chain"], r.get("state"), _jd(r.get("confirmed_by")),
-                    _jd(r.get("contradicted_by")), r.get("note"), _now())
-                   for r in records]
-        return self._upsert("usearn_chain_verdict", cols, ("frame", "chain"), payload)
-
-    def load_chain_verdicts(self, frame: str) -> Dict[str, Dict[str, Any]]:
-        keys = ("state", "confirmed_by", "contradicted_by", "note", "decided_at")
-        out: Dict[str, Dict[str, Any]] = {}
-        for r in self._query(
-            "SELECT chain, state, confirmed_by, contradicted_by, note, decided_at "
-            "FROM usearn_chain_verdict WHERE frame = %s", (frame,)):
-            rec = dict(zip(keys, r[1:]))
-            rec["confirmed_by"] = _jl(rec.get("confirmed_by")) or []
-            rec["contradicted_by"] = _jl(rec.get("contradicted_by")) or []
             out[r[0]] = rec
         return out
 

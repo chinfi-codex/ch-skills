@@ -1,15 +1,15 @@
 ---
 name: us-ai-semi-earnings
-description: 美股 AI 与半导体公司的财报与电话会议逐日跟踪、拆解与综合分析。覆盖超大厂 capex、算力芯片、存储、代工封装、半导体设备、EDA/IP、模拟功率、光互连、网络服务器、AI 云与数据中心、电力散热、AI 软件应用共约 100 家。以 SEC EDGAR 的 XBRL 为数值权威、8-K/6-K 新闻稿为财报当晚事实与指引来源、Motley Fool 与 Alpha Vantage 双路取电话会议全文（逐发言人、切分预备发言与问答），拆 GAAP 与 non-GAAP 差额、三口径增减、毛利率桥、现金流成色、指引变化、EPS 超预期与公告后股价反应，并做产业链上下游交叉验证（超大厂 capex→算力芯片→光互连→电力；代工 capex→设备；HBM 供需→GPU 出货；EDA backlog→设计活动），产出每日简报与随披露增量更新的财报季 HTML。适用于"昨晚谁报了财报""英伟达这季怎么样""台积电电话会议说了什么""AMD 指引上修了吗""这季半导体谁超预期""美光财报对存储周期意味着什么""超大厂 capex 指引兑现到芯片订单没有""谁提到了 HBM 供应紧张""设备公司订单跟上代工扩产没有""财报季 AI 链结构怎么变"等提问。脚本只做取数、日历季对齐、确定性拆解与渲染；分档、利润质量成色、指引判断、产业链传导状态全部由模型判断。不覆盖 A 股（用 a-stock-quarterly-report）与美股盘面复盘（用 chstock-usmarket-report）；不给买卖建议、目标价或仓位。
+description: 美股 AI 与半导体公司的财报与电话会议逐日跟踪、拆解与综合分析。覆盖超大厂、算力芯片、存储、代工封装、半导体设备、EDA/IP、模拟功率、光互连、网络服务器、AI 云与数据中心、电力散热、AI 软件应用共约 100 家。以 SEC EDGAR 的 XBRL 为数值权威、8-K/6-K 新闻稿为财报当晚事实与指引来源、Motley Fool 与 Alpha Vantage 双路取电话会议全文，拆 GAAP 与 non-GAAP 差额、三口径增减、毛利率、现金流成色、指引变化、EPS 超预期与公告后股价反应，产出每日简报与随披露增量更新的财报季 HTML；季报页使用单行筛选工具栏，并在公司详情展示包含财报发布标记的 120 个交易日 K 线。适用于"昨晚谁报了财报""英伟达这季怎么样""台积电电话会议说了什么""AMD 指引上修了吗""这季半导体谁超预期""美光财报对存储周期意味着什么""谁提到了 HBM 供应紧张"等提问。脚本只做取数、日历季对齐、确定性拆解与渲染；分档、利润质量成色与指引判断由模型完成。HTML 不展示运行覆盖统计卡片或产业链传导汇总，也不要求模型做产业链状态分析。不覆盖 A 股（用 a-stock-quarterly-report）与美股盘面复盘（用 chstock-usmarket-report）；不给买卖建议、目标价或仓位。
 ---
 
 # 美股 AI / 半导体财报与电话会议跟踪
 
 ## 目标
 
-- **做什么**：按日历季扫描约 100 家美股 AI 与半导体公司的财报披露，对每家拆出三口径增减、GAAP 与 non-GAAP 差额、毛利率与费用结构、现金流成色、资产负债表前瞻信号、EPS 超预期与公告后股价反应，取回**电话会议全文**并按预备发言/问答切分，最后由模型判断谁真正交付了、利润是不是真的、指引往哪走，以及**产业链上下游互相印证还是打架**。
+- **做什么**：按日历季扫描约 100 家美股 AI 与半导体公司的财报披露，对每家拆出三口径增减、GAAP 与 non-GAAP 差额、毛利率与费用结构、现金流成色、资产负债表前瞻信号、EPS 超预期与公告后股价反应，取回**电话会议全文**并按预备发言/问答切分，最后由模型判断谁真正交付了、利润是不是真的、指引往哪走。
 - **不做什么**：不做 A 股财报（用 `a-stock-quarterly-report`）、不做美股盘面与赚钱效应复盘（用 `chstock-usmarket-report`）、不做单股长线基本面深挖；不给买卖建议、目标价、仓位；不在脚本里判断"这季好不好"。
-- **给谁用**：跟踪 AI 资本开支周期的投研读者。既要知道单家公司这季如何，也要知道**这条链上谁的说法互相对不上**。
+- **给谁用**：跟踪 AI 资本开支周期的投研读者。重点是快速看清单家公司本季交付、利润质量、指引变化与电话会议增量。
 
 ## 数据现实（务必先读，直接决定能交付什么）
 
@@ -24,7 +24,7 @@ description: 美股 AI 与半导体公司的财报与电话会议逐日跟踪、
 
 ## 领域方法论（纲要，细则见 `references/`）
 
-判断分三层，逐层加深：
+判断分两层，逐层加深：
 
 ### 一、单家公司：数字层（细则见 `references/methodology.md`）
 
@@ -41,32 +41,20 @@ description: 美股 AI 与半导体公司的财报与电话会议逐日跟踪、
 
 **股价与指引背离最有信息量**：超预期却大跌几乎总是指引问题，不及预期却大涨几乎总是指引超预期。
 
-### 三、跨公司：产业链交叉验证（细则见 `references/cross_company.md`）
-
-**这是本 skill 相对"逐家读财报"的主要价值。** 这 100 家是一条链，每一环都在为相邻环节的说法作证或证伪：
-
-- **capex 链**（滞后 1-2 季）：超大厂 capex 指引 → 算力芯片 → 光互连 → 电力散热。源头喊加而末端没动，是时序还是结构，报告要给倾向并说明下季看什么能证伪。
-- **产能链**（滞后 1-3 季）：代工 capex 指引 → 设备订单。背离的常见真因是结构而非总量（钱去了先进封装或土建）。
-- **存储链**（滞后 0-1 季）：HBM 供需定价 → GPU 出货上限。几乎完全靠电话会议措辞验证。存储说紧张而算力说不缺货，多半是行业总量 vs 自己长约的口径差，要说破而不是简单判矛盾。
-- **设计领先链**（滞后 2-4 季）：EDA/IP 的 RPO 领先流片与产能需求 2-4 季，是判断"这轮投资还在不在往前铺"的最早信号。
-- **周期对照组**：模拟/功率/MCU 不在 AI 链上。AI 链强而周期锚弱 = 景气是结构性的，此时**不能说"半导体周期回来了"**。
-
-判定必须点名：`确认`/`背离`/`部分确认` 都要在 `confirmed_by`/`contradicted_by` 里列出公司，`verdict.py` 会拒绝空名单——**没有名字的产业链结论就是一句正确的废话**。
-
 ## 工作流程
 
 1. **定日历季**：`CY2026Q2` = 2026 年 4-6 月。用户说"这季""昨晚"就取当前所在或最近结束的日历季。
-2. **跑扫描**：`python3 scripts/earnings_scan.py --frame CY2026Q2`。发现已披露公司 → 取 XBRL → 抓 8-K/6-K 新闻稿与指引句 → 取 EPS 一致预期 → 算股价反应 → 按超预期幅度与体量优先级取电话会议 → 出决策包与全样本。首次约几分钟，之后增量。
+2. **跑扫描**：`python3 scripts/earnings_scan.py --frame CY2026Q2`。发现已披露公司 → 取 XBRL → 抓 8-K/6-K 新闻稿与指引句 → 取 EPS 一致预期 → 取 Yahoo 日线并截取包含财报日的 120 个交易日窗口 → 算股价反应 → 按超预期幅度与体量优先级取电话会议 → 出决策包与全样本。首次约几分钟，之后增量。
 3. **读决策包做初筛**：读 `reports/usearn_scan_<frame>.json`。先按 `priority_tickers` 指定的顺序读高优先级公司，再处理其余新披露公司；`companies[]` 保留全部已披露公司，不能把优先级截断误当成样本边界。按 `references/methodology.md` 逐家判断，先分出「强/中/观察/剔除」。
 4. **要原话就开原文**：`read_source.py transcript <T> --frame <F> --section qa` 读问答，`read_source.py press-release <T> --frame <F>` 读新闻稿。**不要凭数字编故事**——没读原文说不出"因为某产品放量"。
-5. **跨公司检索做交叉验证**：`read_source.py search "HBM" --frame CY2026Q2` 一次拉出所有提到该主题的公司，并区分是在**预备发言**里主动讲还是在**问答**里被问出来。数字对不上的地方，答案常在措辞里。
-6. **判分落台账**：`verdict.py context --frame <F>` 拿待判集合（新披露 + 证据已变化的待复判）。模型逐家判 `tier` + `quality_call` + `guidance_call` + `transcript_read` + `theme`，逐链判 `state`，写 `reports/usearn_verdict_<frame>.json`，再 `verdict.py record` 落库。**台账增量累积，每天只判 context 列出的增量。**
+5. **按主题检索原话**：需要比较多家公司对同一主题的说法时，可用 `read_source.py search "HBM" --frame CY2026Q2` 拉出命中段落；只把它作为相关公司判断的补充证据，不产出产业链状态。
+6. **判分落台账**：`verdict.py context --frame <F>` 拿待判集合（新披露 + 证据已变化的待复判）。模型逐家判 `tier` + `quality_call` + `guidance_call` + `transcript_read` + `theme`，写 `reports/usearn_verdict_<frame>.json`，再 `verdict.py record` 落库。**台账增量累积，每天只判 context 列出的增量。**
 7. **出交付物**：
    - **每日简报**：模型按 `references/output_template.md` 写 Markdown，再 `render_daily_html.py` 出 HTML。
    - **财报季页**：`render_period_html.py --frame <F>`，一季一页、每次从台账整页重渲染，随披露增量更新。
-8. **诚实标注缺口**：披露进度、`data_stage=press_release_only` 的名单、`transcript.status=pending` 的名单、ADR 的 `adr_limited`、`surprise_pct_unstable`、`gap_status=intact` 但只过了一两个交易日、Alpha Vantage 余额耗尽导致的待补——全部要写。
+8. **诚实标注公司级缺口**：在相关公司详情中标明 `data_stage=press_release_only`、`transcript.status=pending`、ADR 的 `adr_limited`、`surprise_pct_unstable` 与股价缺口新鲜度。不要另做顶部运行状态、覆盖进度或配额统计区。
 
-脑/手边界：脚本只做取数、日历季对齐、差分与比率、阈值命中、计数、渲染投影；"谁交付了、利润是不是真的、指引算不算上修、产业链是确认还是背离"全是模型写进台账的判断。`screen.hits` 与 `rank_score` 是**决定先读谁的漏斗，不是结论**——它看不到指引、读不了电话会议，会把靠一次性税收优惠超预期的公司排在上修全年指引的公司前面。
+脑/手边界：脚本只做取数、日历季对齐、差分与比率、阈值命中、计数、渲染投影；"谁交付了、利润是不是真的、指引算不算上修"由模型写进公司台账。`screen.hits` 与 `rank_score` 是**决定先读谁的漏斗，不是结论**——它看不到指引、读不了电话会议，会把靠一次性税收优惠超预期的公司排在上修全年指引的公司前面。
 
 ## 数据获取（脚本抓手）
 
@@ -118,7 +106,7 @@ python3 scripts/test_earnings_scan.py
 | 参数 | 含义 | 默认 |
 |---|---|---|
 | `--frame` | 日历季 `CY####Q#` | 最近结束的日历季 |
-| `--tickers` / `--buckets` | 限定公司 / 限定产业链环节 | 全部 |
+| `--tickers` / `--buckets` | 限定公司 / 限定业务类别 | 全部 |
 | `--since` / `--end-date` | 公告发现下界 / 数据截至日 | 季末前 30 天 / 今天 |
 | `--transcript-limit` | 本次最多新取多少份会议（已缓存的不计） | 40 |
 | `--no-av` / `--no-transcript` | 不动 AV 配额 / 完全跳过会议 | 关闭 |
@@ -130,41 +118,38 @@ python3 scripts/test_earnings_scan.py
 决策包 JSON 关键字段：
 
 - `meta`：`frame`、`as_of`、`reported_count`/`universe_size`、`data_stage_counts`、`transcript_stats`、`av_budget`、`source_roles`、`data_notes`。
-- `buckets[]`：按产业链环节的中位数聚合（营收同比/环比、毛利率、超预期、capex 强度）+ 已披露/待披露名单。
-- `transmission_chains[]`：各链按传导顺序排好的环节快照，`verdict` 由模型下。
+- `buckets[]`：按业务类别的聚合与已披露/待披露名单，用于筛选和定位公司，不要求据此判断产业链传导状态。
 - `priority_tickers[]`：按机械漏斗排序的优先阅读名单，长度由 `--top` 控制；它只是阅读顺序，不是样本截断。
-- `companies[]`：全部已披露公司，包含 `data_stage`、`statement_source`、`announcement`（含 `provenance`：8-K / 6-K 按一致预期日匹配 / 仅一致预期日）、`growth`、`margins`（含 `sbc`）、`quality`、`balance`（含 `rpo`）、`surprise`（含 `surprise_pct_unstable`）、`price_reaction`（当日与次日双报）、`guidance_excerpts`、`press_release_head`、`transcript`（状态/来源/分段统计）、`screen`。非美元 XBRL 会保留原始 `unit` 与 `value_local_millions`，绝不冒充 `value_musd`。
+- `companies[]`：全部已披露公司，包含 `data_stage`、`statement_source`、`announcement`（含 `provenance`：8-K / 6-K 按一致预期日匹配 / 仅一致预期日）、`growth`、`margins`（含 `sbc`）、`quality`、`balance`（含 `rpo`）、`surprise`（含 `surprise_pct_unstable`）、`price_reaction`（当日与次日双报）、`price_history`（最多 120 个交易日 OHLCV，保证财报日位于窗口内）、`guidance_excerpts`、`press_release_head`、`transcript`（状态/来源/分段统计）、`screen`。非美元 XBRL 会保留原始 `unit` 与 `value_local_millions`，绝不冒充 `value_musd`。
 - `not_reported[]`：本季尚未披露的名单。
 
 ## 数据存储与增量
 
-统一走 `shared/data/db_core.py`，表以 `usearn_` 前缀建在共享库（首次运行自动建表）。落库的东西：`usearn_company`（宇宙解析结果）、`usearn_filing`（发现水位）、`usearn_xbrl_fact`（按「公司×日历季×科目」存行，跨公司查询才是一条索引查询）、`usearn_press_release`、`usearn_transcript` + `usearn_transcript_segment`（**逐发言人存，跨公司关键词检索靠它**）、`usearn_surprise`、`usearn_calendar`、`usearn_price_cache`、`usearn_verdict`、`usearn_chain_verdict`。
+统一走 `shared/data/db_core.py`，表以 `usearn_` 前缀建在共享库（首次运行自动建表）。落库的东西：`usearn_company`（宇宙解析结果）、`usearn_filing`（发现水位）、`usearn_xbrl_fact`（按「公司×日历季×科目」存行）、`usearn_press_release`、`usearn_transcript` + `usearn_transcript_segment`（逐发言人存，供按主题检索）、`usearn_surprise`、`usearn_calendar`、`usearn_price_cache`、`usearn_verdict`。
 
 增量逻辑：XBRL 按「最新 10-Q 公告日 > 缓存水位」才重取；新闻稿与电话会议一经落库永不重取（**这是 25 次/天的配额能覆盖 100 家宇宙的原因**）；日线按交易日水位补。DB 不可用时降级为全量抓取不落库，仍能出报告——这是容错，不是常态，因为那样每次都会重花 AV 配额。
 
 ## 输出规范
 
-- **文风讲人话。** 像跟懂行的人当面把这季讲清楚：先给判断，再用少量关键数字支撑，把"为什么好/利润是不是真的/指引往哪走/链上对不对得上"说透。不堆"综上所述""值得注意的是"，不写"字段A - 字段B - 字段C"式横杠拼接。
+- **文风讲人话。** 像跟懂行的人当面把这季讲清楚：先给判断，再用少量关键数字支撑，把"为什么好/利润是不是真的/指引往哪走"说透。不堆"综上所述""值得注意的是"，不写"字段A - 字段B - 字段C"式横杠拼接。
 - **同项罗列用 list，每条说完整话。** 多家公司、多条原因、多项 caveat 拆成 bullet，一条一项、每条通顺；结构化对照（公司 × 三口径数值）才用表格。
 - **每家公司必须同时交代已发生的季度与指引。** 只报营收同比不报指引，是这个 skill 最不该犯的错。
 - **引用 EPS 必标口径。** GAAP 还是 non-GAAP、对的是哪个一致预期；`surprise_pct_unstable` 时只写美分差额不写百分比。
 - **数字之外的话要有出处。** 说"管理层称产能已售罄""某客户放量"必须来自 `read_source.py` 取到的原文并能指到发言人与段落；`transcript.status=pending` 就只讲数字能支持的结论。
 - **Motley Fool 页面的 TAKEAWAYS / RISKS / SUMMARY 是网站自己的编辑内容，不是管理层原话**，永远不能当会议内容引用（数据里已有 `publisher_notes_warning`）。
-- **产业链结论必须点名。** 说"上游指引没有传导到下游"就要说是哪几家上游、哪几家下游。
-- **诚实 caveat 必写**：披露进度、`press_release_only`、`pending` 会议、ADR 限制、追溯重述、缺口新鲜度、AV 配额耗尽导致的待补。
-- **红线**：不写买入/卖出/止损/目标价/仓位；可以写"交付分档""利润质量成色""指引方向""产业链传导状态""需要跟踪的证伪点"。
+- **诚实 caveat 必写**：在相关公司段落写清 `press_release_only`、`pending` 会议、ADR 限制、追溯重述与股价缺口新鲜度。
+- **HTML 明确不展示**：数据截至/生成时间、未披露数、10-Q/新闻稿数量、已披露/已判分/已取电话会议卡片、Alpha Vantage 余额，以及产业链传导汇总。
+- **财报季页布局**：把业务类别、分档、数据阶段和搜索放在股票列表与详情上方的同一行；窄屏可以横向滚动，但不拆成多行。公司详情在正文指标之前展示近 120 个交易日 K 线，用竖线标出财报发布日，并以淡色背景区分发布后的走势。
+- **红线**：不写买入/卖出/止损/目标价/仓位；不要求产业链状态判断；可以写"交付分档""利润质量成色""指引方向""需要跟踪的证伪点"。
 
 ## 示例
 
-用户：`昨晚谁报了？台积电这季怎么样，设备那边跟上了没？`
+用户：`昨晚谁报了？台积电这季怎么样？`
 
 ```bash
 python3 scripts/earnings_scan.py --frame CY2026Q2
 python3 scripts/read_source.py transcript TSM --frame CY2026Q2 --find "capacity,CoWoS,capex"
-python3 scripts/read_source.py search "CoWoS" --frame CY2026Q2
 python3 scripts/verdict.py context --frame CY2026Q2
 ```
 
-读决策包后判断。台积电这季走 `press_release_only` + `adr_limited`——它不交 10-Q，季度 XBRL 是空的，所以报表块全是 `—`，营收与 EPS 要从 `press_release_head` 读（NT$1,270.38 亿营收、EPS NT$27.25、同比 +36.0%），下季指引从 `guidance_excerpts` 读（营收 US$44.6–45.8B、毛利率 65–67%）。电话会议已取到，可以引 C.C. Wei 关于 CoWoS 与玻璃基板的原话。
-
-"设备跟上了没"要看 `transmission_chains` 里的产能链：如果 `semi_equipment` 只报了 1/17 家，那就判 `证据不足` 而不是拿一家当整环结论——这一条是本 skill 最容易被违反、也最该守住的纪律。
+读决策包后判断。台积电这季走 `press_release_only` + `adr_limited`——它不交 10-Q，季度 XBRL 是空的，所以报表块全是 `—`，营收与 EPS 要从 `press_release_head` 读（NT$1,270.38 亿营收、EPS NT$27.25、同比 +36.0%），下季指引从 `guidance_excerpts` 读（营收 US$44.6–45.8B、毛利率 65–67%）。电话会议已取到，可以引 C.C. Wei 关于 CoWoS 与玻璃基板的原话。最终 HTML 把筛选项单行放在列表和详情上方，并在台积电详情中用 120 日 K 线标出财报发布日及之后走势；不附运行统计或产业链状态区。

@@ -22,8 +22,6 @@ not let the ledger claim more certainty than the evidence supports.
 - `guidance_call` other than `未给指引` is rejected when the evidence pack found
   no guidance excerpts *and* no transcript — with neither, there is nothing a
   guidance verdict could have been formed from.
-- A chain verdict of `确认` or `背离` must name the companies on both sides;
-  a chain claim with no members is an assertion, not a finding.
 
 Nothing here decides anything. Every judgement in this file arrives from the
 model through `--input`.
@@ -50,7 +48,6 @@ TIERS = ["强", "中", "观察", "剔除"]
 # negative finding where there is simply no evidence either way.
 QUALITY_CALLS = ["扎实", "尚可", "存疑", "虚高", "无法判断"]
 GUIDANCE_CALLS = ["显著上修", "上修", "维持", "下修", "显著下修", "未给指引"]
-CHAIN_STATES = ["确认", "背离", "部分确认", "证据不足", "尚早"]
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -125,7 +122,6 @@ def _brief(row: Dict[str, Any]) -> Dict[str, Any]:
 def build_context(frame: str, evidence: Dict[str, Any], store: Store,
                   *, include_all: bool = False) -> Dict[str, Any]:
     verdicts = store.load_verdicts(frame)
-    chain_verdicts = store.load_chain_verdicts(frame)
     transcripts = store.transcript_status([frame])
     rows = evidence.get("companies") or []
 
@@ -155,17 +151,11 @@ def build_context(frame: str, evidence: Dict[str, Any], store: Store,
     return {
         "frame": frame,
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-        "evidence_meta": {k: evidence.get("meta", {}).get(k) for k in
-                          ("as_of", "reported_count", "universe_size", "data_stage_counts",
-                           "transcript_stats", "av_budget")},
         "enums": {"tier": TIERS, "quality_call": QUALITY_CALLS,
-                  "guidance_call": GUIDANCE_CALLS, "chain_state": CHAIN_STATES},
+                  "guidance_call": GUIDANCE_CALLS},
         "pending": pending,
         "revisit": revisit,
         "already_judged": sorted(set(verdicts) - {r["ticker"] for r in revisit}),
-        "buckets": evidence.get("buckets") or [],
-        "transmission_chains": evidence.get("transmission_chains") or [],
-        "chain_verdicts_on_file": chain_verdicts,
         "transcript_availability": {
             t: v.get("status") for (t, f), v in transcripts.items() if f == frame},
         "how_to_record": {
@@ -180,11 +170,6 @@ def build_context(frame: str, evidence: Dict[str, Any], store: Store,
                     "headline": "one sentence, plain language",
                     "reasons": ["evidence-backed bullets"],
                     "watch_items": ["what would change this call"],
-                }],
-                "chains": [{
-                    "chain": "capex 传导链", "state": "|".join(CHAIN_STATES),
-                    "confirmed_by": ["TICKER"], "contradicted_by": ["TICKER"],
-                    "note": "one sentence on what the links do or do not agree on",
                 }],
             },
             "then": f"verdict.py record --frame {frame} --input <that file>",
@@ -264,73 +249,6 @@ def validate_companies(records: Sequence[Dict[str, Any]], evidence_index: Dict[s
     return ok, errors
 
 
-def validate_chains(records: Sequence[Dict[str, Any]],
-                    chain_specs: Sequence[Dict[str, Any]],
-                    evidence_index: Dict[str, Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
-    ok: List[Dict[str, Any]] = []
-    errors: List[str] = []
-    known_chains = {
-        str(c.get("name") or ""): {
-            link.get("bucket") for link in (c.get("links") or []) if link.get("bucket")
-        }
-        for c in chain_specs
-    }
-    reported = set(evidence_index)
-
-    def _ticker_list(value: Any, where: str, field: str) -> List[str]:
-        if value is None:
-            return []
-        if not isinstance(value, list):
-            errors.append(f"{where}: {field} must be a list of tickers")
-            return []
-        return [str(t).strip().upper() for t in value if str(t).strip()]
-
-    for i, rec in enumerate(records):
-        name = str(rec.get("chain", "")).strip()
-        where = f"chains[{i}] {name}"
-        if name not in known_chains:
-            errors.append(f"{where}: unknown chain, expected one of {list(known_chains)}")
-            continue
-        state = rec.get("state")
-        if state not in CHAIN_STATES:
-            errors.append(f"{where}: state must be one of {CHAIN_STATES}, got {state!r}")
-        confirmed = _ticker_list(rec.get("confirmed_by"), where, "confirmed_by")
-        contradicted = _ticker_list(rec.get("contradicted_by"), where, "contradicted_by")
-        unknown = [t for t in confirmed + contradicted if t not in reported]
-        if unknown:
-            errors.append(f"{where}: cites companies that did not report this frame: {unknown}")
-        allowed_buckets = known_chains[name]
-        off_chain = [
-            t for t in confirmed + contradicted
-            if t in evidence_index
-            and not ({evidence_index[t].get("bucket")}
-                     | set(evidence_index[t].get("also_in") or [])) & allowed_buckets
-        ]
-        if off_chain:
-            errors.append(f"{where}: cites companies outside this chain: {off_chain}")
-        cited = set(confirmed + contradicted)
-        cited_links = {
-            bucket
-            for t in cited if t in evidence_index
-            for bucket in ({evidence_index[t].get("bucket")}
-                           | set(evidence_index[t].get("also_in") or []))
-            if bucket in allowed_buckets
-        }
-        if state in ("确认", "背离", "部分确认"):
-            if len(cited) < 2:
-                errors.append(f"{where}: state={state!r} needs at least two named companies")
-            if len(allowed_buckets) > 1 and len(cited_links) < 2:
-                errors.append(f"{where}: state={state!r} must cover at least two chain links")
-        if state == "确认" and not confirmed:
-            errors.append(f"{where}: state='确认' requires confirmed_by")
-        if state in ("背离", "部分确认") and (not confirmed or not contradicted):
-            errors.append(
-                f"{where}: state={state!r} requires both confirmed_by and contradicted_by")
-        ok.append({"chain": name, "state": state, "confirmed_by": confirmed,
-                   "contradicted_by": contradicted, "note": rec.get("note")})
-    return ok, errors
-
-
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Model verdict ledger for the earnings scan")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -392,24 +310,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     index = {r["ticker"]: r for r in (evidence.get("companies") or [])}
     transcripts = {t: v.get("status") for (t, f), v in
                    store.transcript_status([frame]).items() if f == frame}
-    chains = evidence.get("transmission_chains") or []
-
     companies, errs = validate_companies(payload.get("companies") or [], index, transcripts)
-    chain_records, chain_errs = validate_chains(payload.get("chains") or [], chains, index)
-    errors = errs + chain_errs
+    errors = errs
     if errors:
         print(f"[reject] {len(errors)} problem(s) — nothing was written:", file=sys.stderr)
         for e in errors:
             print(f"  - {e}", file=sys.stderr)
         return 1
     if args.dry_run:
-        print(f"[ok] {len(companies)} company verdicts and {len(chain_records)} chain verdicts "
-              f"validate; --dry-run so nothing was written")
+        print(f"[ok] {len(companies)} company verdicts validate; "
+              f"--dry-run so nothing was written")
         return 0
 
     n = store.save_verdicts(frame, companies)
-    m = store.save_chain_verdicts(frame, chain_records)
-    print(f"[record] {n} company verdicts, {m} chain verdicts stored for {frame}")
+    print(f"[record] {n} company verdicts stored for {frame}")
     store.close()
     return 0
 

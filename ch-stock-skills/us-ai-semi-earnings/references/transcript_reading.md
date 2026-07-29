@@ -36,7 +36,7 @@ python3 scripts/read_source.py transcript TSM --frame CY2026Q2 --find "CoWoS,产
 
 AI 链的瓶颈常年不在需求在供给：CoWoS/先进封装产能、HBM 供应、光模块交付、电力与变压器交期。管理层怎么描述紧张度（"tight through next year" vs "supply has caught up"）直接决定下游能出多少货。
 
-**这是跨公司交叉验证最有力的一环**——见 `cross_company.md`。
+把这些内容用于解释相关公司的供需、毛利率与指引，不据此另做产业链状态判定。
 
 ### 4. 毛利率桥（问答里被追问最多）
 

@@ -5,16 +5,12 @@
 Thin by design. The repo-level `shared/html_report` package owns the CLI,
 Markdown conversion, themes, text-preservation validation and the chart
 toolkit; everything below is the part that is specific to this skill — which
-evidence file to read, and which two pictures are worth drawing.
+evidence file to read, and which picture is worth drawing.
 
-Two charts, because two questions come up every night:
-
-1. **Who moved and on what** — a scatter of EPS surprise against the price
-   reaction. The interesting names are the off-diagonal ones: a beat the market
-   sold, or a miss it bought, is a guidance story the numbers alone do not tell.
-2. **Where the chain stands** — median revenue growth by supply-chain link, in
-   transmission order, so a night's arrivals can be read against the links that
-   already reported.
+The chart answers **who moved and on what**: a scatter of EPS surprise against
+the price reaction. The interesting names are the off-diagonal ones: a beat the
+market sold, or a miss it bought, is a guidance story the numbers alone do not
+tell.
 
 The season page (`render_period_html.py`) is the data-driven counterpart: it
 projects the ledger for a whole quarter. This one renders one evening's
@@ -40,10 +36,10 @@ from html_report import (  # noqa: E402
 # Table cells that carry a verdict get coloured. The vocabulary is data, so a
 # new tier label is a list edit, not a code change.
 PILL_RULES = [
-    (r"^(强|显著上修|确认)$", "pill"),
-    (r"^(中|上修|部分确认)$", "pill alt"),
-    (r"^(观察|维持|证据不足|尚早)$", "pill warn"),
-    (r"^(剔除|下修|显著下修|背离)$", "pill neg"),
+    (r"^(强|显著上修)$", "pill"),
+    (r"^(中|上修)$", "pill alt"),
+    (r"^(观察|维持)$", "pill warn"),
+    (r"^(剔除|下修|显著下修)$", "pill neg"),
     (r"^(扎实)$", "pill"),
     (r"^(尚可)$", "pill alt"),
     (r"^(存疑|虚高)$", "pill neg"),
@@ -105,20 +101,6 @@ if (Array.isArray(data.reactions) && data.reactions.length) {
   CK.insertAfter(root, ["今晚一句话", "今晚", "谁报了"], c);
 }
 
-// 2. The chain, in transmission order — upstream first, so a reader can see
-//    whether what the demand end promised has shown up downstream yet.
-if (Array.isArray(data.chain) && data.chain.length) {
-  const card = CK.horizontalBarCard({
-    title: "产业链各环节营收同比中位数（按传导顺序，上游在前）",
-    subtitle: "括号内为该环节已披露家数；空白＝该环节本季还没人报，不是零增长",
-    // horizontalBarCard formats the value itself with fmt.signedPct, which
-    // expects percentage units — yoy is already in percent, so it goes through
-    // unscaled.
-    rows: data.chain.map(r => ({ label: `${r.bucket} (${r.reported})`, value: r.yoy })),
-    maxRows: 14, labelWidth: 190, valueWidth: 66,
-  });
-  CK.insertAfter(root, ["产业链", "传导", "交叉验证"], card);
-}
 """
 
 
@@ -154,16 +136,7 @@ def _charts(evidence: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         reactions.append({"ticker": row["ticker"], "surprise": round(surprise, 1),
                           "move": round(move, 1)})
 
-    order: List[str] = []
-    for chain in evidence.get("transmission_chains") or []:
-        for link in chain.get("links") or []:
-            if link["bucket"] not in order:
-                order.append(link["bucket"])
-    by_bucket = {b["bucket"]: b for b in evidence.get("buckets") or []}
-    chain_rows = [{"bucket": b, "yoy": by_bucket[b]["median_revenue_yoy_pct"],
-                   "reported": f"{by_bucket[b]['reported']}/{by_bucket[b]['members']}"}
-                  for b in order if b in by_bucket]
-    return {"reactions": reactions, "chain": chain_rows}
+    return {"reactions": reactions}
 
 
 def build_job(args: Any) -> RenderJob:
@@ -180,35 +153,20 @@ def build_job(args: Any) -> RenderJob:
         except ValueError:
             evidence = None
 
-    meta = (evidence or {}).get("meta") or {}
-    meta_bits = []
-    if meta.get("frame"):
-        meta_bits.append(f"报告期 {meta['frame']}")
-    if meta.get("as_of"):
-        meta_bits.append(f"数据截至 {meta['as_of']}")
-    if meta.get("reported_count") is not None:
-        meta_bits.append(f"已披露 {meta['reported_count']}/{meta.get('universe_size')}")
-    ts = meta.get("transcript_stats") or {}
-    if ts:
-        meta_bits.append(f"电话会议 {ts.get('cached', 0) + ts.get('fetched', 0)} 份"
-                         + (f"（{ts['pending']} 份待补）" if ts.get("pending") else ""))
-
     builder = HtmlReportBuilder(
         title=args.title or md_path.stem,
         theme=args.theme,
-        meta_text=" · ".join(meta_bits) or None,
     )
     builder.add_decoration(PillDecoration(PILL_RULES))
     builder.add_decoration(HeroDecoration(heading_prefix="今晚一句话"))
     charts = _charts(evidence)
-    if charts.get("reactions") or charts.get("chain"):
+    if charts.get("reactions"):
         builder.add_chart_hook(ChartHook(name="usearn-daily", payload=charts, js=CHARTS_JS))
 
     out = Path(args.output) if args.output else md_path.with_suffix(".html")
     return RenderJob(
         markdown_text=markdown_text, builder=builder, output_path=out,
-        summary={"evidence": ev_path, "reaction_points": len(charts.get("reactions") or []),
-                 "chain_links": len(charts.get("chain") or [])},
+        summary={"evidence": ev_path, "reaction_points": len(charts.get("reactions") or [])},
     )
 
 

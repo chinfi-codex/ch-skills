@@ -266,6 +266,18 @@ check("no false historical next-day move", old_rx["next_day_pct"], None)
 check("old frames request enough Yahoo history",
       scan.price_history_range("2024-06-30", sec._parse_ymd("2026-07-29")), "5y")
 
+history_bars = [
+    {"date": f"{i:03d}", "open": 100 + i, "high": 102 + i,
+     "low": 99 + i, "close": 101 + i, "volume": 1_000 + i}
+    for i in range(300)
+]
+history_window = scan.price_history_window(history_bars, "100")
+check("K-line window is capped at 120 sessions", len(history_window), 120)
+check("K-line window keeps 40 pre-announcement sessions", history_window[0]["date"], "060")
+check("K-line window includes the announcement session",
+      next(i for i, b in enumerate(history_window) if b["date"] >= "100"), 40)
+check("K-line window preserves post-announcement path", history_window[-1]["date"], "179")
+
 print("EPS surprise stability guard")
 # Intel missing a 0.10 consensus by 0.20 prints as +200%; the percentage says
 # nothing about the size of the beat, so it gets flagged rather than quoted.
@@ -296,28 +308,9 @@ check("local unit is preserved", local_growth["revenue"]["unit"], "TWD")
 check("local amount is preserved in millions",
       local_growth["revenue"]["value_local_millions"], 1_270_380.0)
 
-print("chain verdict integrity")
-chain_specs = [{"name": "capex", "links": [{"bucket": "up"}, {"bucket": "down"}]}]
-chain_index = {
-    "UP": {"bucket": "up", "also_in": []},
-    "DOWN": {"bucket": "down", "also_in": []},
-}
-_, one_name_errors = verdict.validate_chains(
-    [{"chain": "capex", "state": "确认", "confirmed_by": ["UP"],
-      "contradicted_by": []}], chain_specs, chain_index)
-check_true("one company cannot confirm a chain", bool(one_name_errors))
-_, valid_chain_errors = verdict.validate_chains(
-    [{"chain": "capex", "state": "背离", "confirmed_by": ["UP"],
-      "contradicted_by": ["DOWN"]}], chain_specs, chain_index)
-check("two-sided chain divergence validates", valid_chain_errors, [])
-
 print("period HTML script safety")
 unsafe_view = {
     "frame": "CY2026Q2",
-    "generated_at": "now",
-    "meta": {},
-    "coverage": {"reported": 0, "universe": 0, "judged": 0, "transcripts": 0, "stages": {}},
-    "chains": [],
     "companies": [{"headline": "</script><script>alert(1)</script>"}],
     "not_reported": [],
     "buckets": [],
@@ -325,6 +318,52 @@ unsafe_view = {
 safe_html = period_html.render_html(unsafe_view)
 check("script-closing input is escaped", "</script><script>alert(1)</script>" in safe_html, False)
 check("escaped script-closing input remains data", "\\u003c/script\\u003e" in safe_html, True)
+check("operational coverage cards are omitted", "Alpha Vantage 余额" in safe_html, False)
+check("chain analysis section is omitted", "产业链传导" in safe_html, False)
+check_true("filters sit above the list-detail grid",
+           safe_html.index('class="toolbar filters"') < safe_html.index("<main>"))
+check("filter toolbar is forced to one line", "white-space:nowrap" in safe_html, True)
+check("K-line renderer is included", "function klineHtml(c)" in safe_html, True)
+check("earnings marker is included", "财报发布 ${esc(c.announced)}" in safe_html, True)
+
+view_with_bars = period_html.build_view(
+    "CY2026Q2",
+    {"companies": [{
+        "ticker": "TEST", "name": "Test", "bucket": "test", "chain_role": "test",
+        "announcement": {"date": "100"}, "growth": {}, "margins": {},
+        "quality": {}, "balance": {}, "surprise": {}, "price_reaction": {},
+        "price_history": history_bars, "transcript": {}, "screen": {},
+    }]},
+    {}, {},
+)
+check("period view embeds exactly 120 K-line sessions",
+      len(view_with_bars["companies"][0]["price_history"]), 120)
+check("period view keeps the earnings marker date visible",
+      any(b["date"] >= "100" for b in view_with_bars["companies"][0]["price_history"]), True)
+
+print("verdict context excludes operational and chain analysis")
+
+
+class _ContextStore:
+    def load_verdicts(self, frame):
+        return {}
+
+    def transcript_status(self, frames):
+        return {}
+
+
+ctx = verdict.build_context(
+    "CY2026Q2",
+    {"meta": {"reported_count": 24, "av_budget": {"remaining": 0}},
+     "buckets": [{"bucket": "ai_compute_chips"}],
+     "transmission_chains": [{"name": "legacy"}],
+     "companies": []},
+    _ContextStore(),
+)
+check("coverage metadata is absent from verdict context", "evidence_meta" in ctx, False)
+check("bucket aggregates are absent from verdict context", "buckets" in ctx, False)
+check("transmission chains are absent from verdict context", "transmission_chains" in ctx, False)
+check("record shape only asks for companies", list(ctx["how_to_record"]["shape"]), ["companies"])
 
 # ---------------------------------------------------------------------------
 print("\nuniverse")
@@ -333,9 +372,6 @@ check_true("universe loads a meaningful number of companies", len(uni["companies
            f"got {len(uni['companies'])}")
 check_true("every company has a chain role",
            all(c.get("chain_role") for c in uni["companies"].values()))
-check_true("transmission chains are defined", len(uni["chains"]) >= 4)
-check_true("chain links reference real buckets",
-           all(b in uni["buckets"] for ch in uni["chains"] for b in ch["path"]))
 check("bare ON parsed as a ticker, not a boolean", "ON" in uni["companies"], True)
 check_true("MRVL's second bucket is recorded rather than dropped",
            bool(uni["companies"]["MRVL"]["also_in"]))

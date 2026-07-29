@@ -159,7 +159,7 @@ def load_universe(path: Path) -> Dict[str, Any]:
                 continue
             # A ticker may legitimately sit in two buckets (MRVL is both compute
             # silicon and optical interconnect); the first wins for aggregation
-            # and the rest are recorded so the chain read can see both roles.
+            # and the remaining categories stay available for lookup.
             if ticker in companies:
                 companies[ticker]["also_in"].append(bucket)
                 continue
@@ -174,7 +174,6 @@ def load_universe(path: Path) -> Dict[str, Any]:
     return {
         "companies": companies,
         "buckets": raw.get("buckets") or {},
-        "chains": raw.get("transmission_chains") or [],
         "meta": raw.get("meta") or {},
     }
 
@@ -433,6 +432,33 @@ def price_history_range(frame_end: Optional[str], today: dt.date) -> str:
     if age_days <= 10 * 366:
         return "10y"
     return "max"
+
+
+def price_history_window(bars: Sequence[Dict[str, Any]], announce_date: Optional[str],
+                         *, limit: int = 120, pre_announce: int = 40) -> List[Dict[str, Any]]:
+    """Return a compact OHLCV window that keeps the earnings date visible.
+
+    Current-season reports naturally fall inside the latest 120 sessions. For an
+    older frame, anchor the window around the first trading session on or after
+    the announcement so the chart still shows both the setup and the aftermath.
+    """
+    usable = [
+        {k: b.get(k) for k in ("date", "open", "high", "low", "close", "volume")}
+        for b in bars
+        if b.get("date") and all(b.get(k) is not None for k in ("open", "high", "low", "close"))
+    ]
+    usable.sort(key=lambda b: b["date"])
+    if limit <= 0 or len(usable) <= limit:
+        return usable
+    marker = (
+        next((i for i, b in enumerate(usable) if b["date"] >= announce_date), None)
+        if announce_date else None
+    )
+    if marker is None:
+        return usable[-limit:]
+    latest_start = len(usable) - limit
+    start = min(max(0, marker - max(0, pre_announce)), latest_start)
+    return usable[start:start + limit]
 
 
 def price_reaction(bars: Sequence[Dict[str, Any]], announce_date: Optional[str],
@@ -897,8 +923,10 @@ def scan_company(company: Dict[str, Any], frame: str, ctx: Dict[str, Any]) -> Di
     if surprise:
         out["sources"].append(surprise.get("source", "surprise"))
 
-    reaction = price_reaction(ctx["bars"].get(ticker) or [],
-                              (out.get("announcement") or {}).get("date"),
+    ticker_bars = ctx["bars"].get(ticker) or []
+    announce_date = (out.get("announcement") or {}).get("date")
+    out["price_history"] = price_history_window(ticker_bars, announce_date)
+    reaction = price_reaction(ticker_bars, announce_date,
                               gap_min=ctx["gap_min"])
     out["price_reaction"] = reaction
 
@@ -948,37 +976,6 @@ def bucket_summary(rows: Sequence[Dict[str, Any]], universe: Dict[str, Any]) -> 
                 r["quality"]["capex_to_revenue_pct"] for r in reported),
             "reported_tickers": [r["ticker"] for r in reported],
             "pending_tickers": [r["ticker"] for r in members if not r.get("reported")],
-        })
-    return out
-
-
-def chain_context(buckets: Sequence[Dict[str, Any]], universe: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Line up each transmission chain's links side by side.
-
-    The numbers only; whether a chain is confirming or contradicting itself is
-    the model's call and lands in `usearn_chain_verdict`. What the scan can do is
-    put the links in order so the comparison is possible at all.
-    """
-    by_bucket = {b["bucket"]: b for b in buckets}
-    out: List[Dict[str, Any]] = []
-    for chain in universe.get("chains") or []:
-        links = []
-        for bucket in chain.get("path") or []:
-            b = by_bucket.get(bucket)
-            if not b:
-                continue
-            links.append({
-                "bucket": bucket,
-                "reported": f"{b['reported']}/{b['members']}",
-                "median_revenue_yoy_pct": b["median_revenue_yoy_pct"],
-                "median_revenue_qoq_pct": b["median_revenue_qoq_pct"],
-                "median_gross_margin_yoy_pp": b["median_gross_margin_yoy_pp"],
-                "median_capex_to_revenue_pct": b["median_capex_to_revenue_pct"],
-            })
-        out.append({
-            "name": chain.get("name"), "lag_quarters": chain.get("lag_quarters"),
-            "premise": chain.get("note"), "links": links,
-            "verdict": "model_decides",
         })
     return out
 
@@ -1182,7 +1179,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # --- assemble ----------------------------------------------------------
     buckets = bucket_summary(rows, universe)
-    chains = chain_context(buckets, universe)
     reported_rows = [r for r in rows if r.get("reported")]
     reported_rows.sort(key=lambda r: -(r.get("screen", {}).get("rank_score") or -999))
 
@@ -1228,7 +1224,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     decision_pack = {
         "meta": meta,
         "buckets": buckets,
-        "transmission_chains": chains,
         "priority_tickers": [r["ticker"] for r in reported_rows[:max(0, args.top)]],
         "companies": reported_rows,
         "not_reported": [

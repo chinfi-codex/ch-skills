@@ -1,0 +1,148 @@
+# 美股 AI + 半导体财报跟踪宇宙
+#
+# 用途：给财报扫描一个**稳定的分母**。SEC 的 8-K/10-Q 发现是全市场的，但本 skill
+# 只对这份名单里的公司做取数、电话会议抽取与判分——否则一个财报季要处理上千家。
+#
+# bucket 的作用是**产业链位置**，不是主题标签：它决定这家公司在跨公司交叉验证里
+# 站在哪一环（谁是需求源头、谁是供给瓶颈、谁是弹性末端）。主题归纳仍由模型按当季
+# 事实临时判断，见 references/cross_company.md。
+#
+# ⚠️ chain_role 是交叉验证的骨架，改动会影响 references/cross_company.md 的传导链推理。
+# ⚠️ 裸 ON / NO / YES 会被 YAML 解析成布尔，必须加引号。
+# ⚠️ ADR（TSM/ASML/ARM/UMC/STM/ASX）不交 10-Q，XBRL 覆盖差，见 SKILL.md 数据现实 §5。
+#
+# 维护：新 IPO（CRWV/NBIS 类）补进对应 bucket；被并购/退市的清掉。不必追求穷尽，
+# 但**同一环里至少留两家**，否则交叉验证没有对照。
+
+meta:
+  currency: USD
+  fiscal_note: 多家公司财年错位（NVDA/AVGO/MU/ARM/LRCX/ADI/MCHP/SNPS…），
+    横截面对比必须按日历季对齐，不能按公司自报的 "Q1/Q2" 拼。
+
+# 财年非日历年的公司：fiscal_year_end_month 用于把公司自报财季映射回日历季。
+# 只列出错位的；未列出的按日历年（12 月结束）处理。
+fiscal_offsets:
+  NVDA: 1     # 财年 1 月末结束：FY2027Q1 = 日历 2026Q2
+  AVGO: 10
+  MU: 8
+  ARM: 3
+  LRCX: 6
+  ADI: 10
+  MCHP: 3
+  SNPS: 10
+  CDNS: 12
+  MRVL: 1
+  SMCI: 6
+  APLD: 5
+  HPE: 10
+  DELL: 1
+  NTAP: 4
+  PSTG: 1
+  SNOW: 1
+  CRM: 1
+  ADBE: 11
+  "NOW": 12
+  TXN: 12
+  QCOM: 9
+  AAPL: 9
+  MSFT: 6
+  ASML: 12
+  TSM: 12
+
+buckets:
+
+  # ── 需求源头：超大厂 capex。它们的 capex 指引比芯片公司自己的指引更领先 ──
+  hyperscaler_capex:
+    chain_role: demand_origin
+    desc: 超大厂资本开支——整条 AI 链的需求源头，看 capex 指引与折旧口径
+    tickers: [MSFT, GOOGL, AMZN, META, ORCL, AAPL, TSLA, NFLX]
+
+  # ── 算力芯片：需求的第一承接者 ──
+  ai_compute_chips:
+    chain_role: compute_silicon
+    desc: GPU / 加速器 / 定制 ASIC / CPU——AI 算力的核心受益方
+    tickers: [NVDA, AMD, AVGO, MRVL, QCOM, INTC, ARM, ALAB, CRDO, MTSI, SMTC, LSCC]
+
+  # ── 存储：AI 算力的第二瓶颈，HBM 供需是关键 ──
+  memory_storage:
+    chain_role: memory_supply
+    desc: DRAM / HBM / NAND / 硬盘——HBM 供需直接卡 GPU 出货
+    tickers: [MU, SNDK, WDC, STX]
+
+  # ── 代工与先进封装：真正的产能瓶颈 ──
+  foundry_packaging:
+    chain_role: capacity_bottleneck
+    desc: 晶圆代工 + 封测——CoWoS/先进封装产能是 GPU 出货的硬约束
+    tickers: [TSM, GFS, UMC, TSEM, AMKR, ASX]
+
+  # ── 半导体设备：capex 的最终落点，代工指引的下游验证 ──
+  semi_equipment:
+    chain_role: capex_recipient
+    desc: 前道/后道设备与零部件——代工 capex 指引在这里兑现成订单
+    tickers: [ASML, AMAT, LRCX, KLAC, TER, ONTO, ACMR, CAMT, NVMI, KLIC, MKSI, UCTT, ICHR, AEIS, AZTA, VECO, PLAB]
+
+  # ── EDA / IP：设计端景气的领先指标（RPO/backlog 比营收领先） ──
+  eda_ip:
+    chain_role: design_leading
+    desc: EDA 工具与 IP 授权——backlog/RPO 领先芯片出货 2-4 个季度
+    tickers: [SNPS, CDNS]
+
+  # ── 模拟/功率/MCU：非 AI 半导体的周期锚，用来剥离"AI 之外的半导体到底在复苏没有" ──
+  analog_power_mcu:
+    chain_role: cycle_anchor
+    desc: 模拟 / 功率 / MCU / 射频——工业与汽车周期锚，与 AI 链背离时最有信息量
+    tickers: [TXN, ADI, NXPI, MCHP, "ON", STM, MPWR, SWKS, QRVO, ALGM, WOLF, SLAB, DIOD, POWI, VSH, AOSL]
+
+  # ── 光互连：算力规模扩张的直接函数，弹性最大 ──
+  optical_interconnect:
+    chain_role: interconnect
+    desc: 光模块 / 光器件 / 硅光 / 相干光——集群规模扩张的直接受益，弹性也最大
+    tickers: [COHR, LITE, AAOI, FN, CIEN, POET, MRVL]
+
+  # ── 网络与服务器：整机与交换，毛利率结构与芯片公司完全不同 ──
+  networking_server:
+    chain_role: system_integration
+    desc: 交换机 / AI 服务器 / 存储阵列——量大但毛利薄，看的是 mix 与 backlog
+    tickers: [ANET, SMCI, DELL, HPE, CSCO, PSTG, NTAP, JNPR]
+
+  # ── AI 云与数据中心运营：新一代需求方，也是自己就要报 capex 的一环 ──
+  ai_cloud_datacenter:
+    chain_role: neocloud
+    desc: GPU 云 / 数据中心运营——签约 backlog 与 GPU 交付节奏是核心
+    tickers: [CRWV, NBIS, APLD, IREN, CORZ, WULF, GDS]
+
+  # ── 电力与散热：AI 数据中心的物理约束，最"慢"但最确定的一环 ──
+  power_cooling:
+    chain_role: physical_constraint
+    desc: 供配电 / 液冷 / 发电——交付周期长，backlog 可见度最高
+    tickers: [VRT, ETN, GEV, PWR, NVT, MOD, AAON]
+
+  # ── AI 软件与应用：算力向收入的兑现端，口径与半导体差异大（ARR/NRR/RPO） ──
+  ai_software_apps:
+    chain_role: monetization
+    desc: AI 应用与数据平台——看 ARR/NRR/RPO 与 AI 相关收入是否单独披露
+    tickers: [PLTR, SNOW, DDOG, NET, MDB, CRM, "NOW", ADBE, TEM, AI, BBAI]
+
+# 交叉验证的传导链：模型判"上游指引有没有在下游兑现"时按这个顺序走。
+# 详细推理规则见 references/cross_company.md。
+transmission_chains:
+  - name: capex 传导链
+    path: [hyperscaler_capex, ai_compute_chips, optical_interconnect, power_cooling]
+    lag_quarters: 1-2
+    note: 超大厂 capex 指引 → 芯片订单 → 互连与电力。源头提指引而末端没反应，是背离信号。
+  - name: 产能传导链
+    path: [foundry_packaging, semi_equipment]
+    lag_quarters: 1-3
+    note: 代工 capex 指引 → 设备订单。代工提 capex 而设备订单平，说明钱花在了别处或延后。
+  - name: 存储传导链
+    path: [memory_storage, ai_compute_chips]
+    lag_quarters: 0-1
+    note: HBM 供需与定价 → GPU 出货上限。存储说供不应求而算力说不缺货，必有一方口径不同。
+  - name: 设计领先链
+    path: [eda_ip, ai_compute_chips, foundry_packaging]
+    lag_quarters: 2-4
+    note: EDA backlog/RPO 是设计活动的领先指标，领先流片与产能需求 2-4 个季度。
+  - name: 周期对照
+    path: [analog_power_mcu]
+    lag_quarters: 0
+    note: 不参与 AI 传导，用作对照——AI 链强而周期锚弱，说明景气是结构性的不是全面的。

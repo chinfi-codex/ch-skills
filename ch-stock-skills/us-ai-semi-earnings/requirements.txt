@@ -1,0 +1,14 @@
+# us-ai-semi-earnings
+#
+# Every data source is a public HTTP endpoint reached with `requests` — SEC
+# EDGAR, Nasdaq's consensus endpoint, Motley Fool, Alpha Vantage, Yahoo. There is
+# no vendor SDK to install and no API key is required for anything except the
+# Alpha Vantage transcript fallback.
+requests>=2.31
+PyYAML>=6.0
+
+# PostgreSQL is the default cache backend (shared/data/db_core.py). Without it
+# the skill still runs, but re-fetches everything each time — including the
+# Alpha Vantage transcript calls that the 25/day free tier cannot afford to
+# spend twice.
+psycopg2-binary>=2.9

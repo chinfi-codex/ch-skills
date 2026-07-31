@@ -774,6 +774,12 @@ def scan_company(company: Dict[str, Any], frame: str, ctx: Dict[str, Any]) -> Di
         out["errors"].append("submissions_missing")
         return out
     out["name"] = out["name"] or subs.get("name")
+    # SEC's fiscalYearEnd ("0630") is the authoritative fiscal calendar; the
+    # YAML fiscal_offsets only need to cover what SEC lacks (ADRs). The
+    # transcript path derives Alpha Vantage's fiscal-quarter label from this.
+    fye_raw = (subs.get("fiscalYearEnd") or "")
+    sec_fye_month = int(fye_raw[:2]) if len(fye_raw) >= 2 and fye_raw[:2].isdigit() else None
+    out["fiscal_year_end_month"] = company.get("fiscal_year_end_month") or sec_fye_month
     found = sec.find_earnings_filings(subs, since=ctx["since"], until=ctx["end_date"])
 
     # --- XBRL --------------------------------------------------------------
@@ -1113,6 +1119,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     with futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
         rows = list(pool.map(lambda t: scan_company(companies[t], frame, ctx), tickers))
 
+    # Persist SEC-derived fiscal year ends backfilled during the scan, so the
+    # fiscal-quarter mapping does not depend on the YAML offsets being complete.
+    store.save_companies([
+        {"ticker": r["ticker"], "cik": r.get("cik"), "name": r.get("name"),
+         "bucket": r["bucket"], "chain_role": r.get("chain_role"),
+         "fiscal_year_end_month": r.get("fiscal_year_end_month"),
+         "statement_source": "sec_xbrl" if r.get("cik") else "unresolved"}
+        for r in rows if r.get("fiscal_year_end_month")])
+
     # --- transcripts, after we know who reported and how big the beat was ---
     transcript_stats = {"cached": 0, "fetched": 0, "pending": 0, "skipped_budget": 0,
                         "skipped_limit": 0}
@@ -1149,7 +1164,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             if budget_left <= 0:
                 transcript_stats["skipped_limit"] += 1
                 continue
+            quarter_end = sec._parse_ymd(row.get("quarter_end_expected"))
+            fye_month = (row.get("fiscal_year_end_month")
+                         or companies[ticker].get("fiscal_year_end_month") or 12)
+            av_quarter = (tf.fiscal_quarter_label(quarter_end, fye_month)
+                          if quarter_end else None)
             payload = tf.get_transcript(ticker, call_date=row["announcement"]["date"],
+                                        av_quarter=av_quarter,
                                         budget=budget, allow_av=not args.no_av)
             store.save_transcript(ticker, frame, payload)
             budget_left -= 1

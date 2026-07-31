@@ -27,10 +27,15 @@ the store forever after.
 Quarter identification is by **call date**, never by the quarter label either
 source prints. Fool's slug carries the *fiscal* quarter (`nvidia-nvda-q1-2027-…`
 is the February–April 2026 quarter) while Alpha Vantage's `quarter` parameter is
-the *calendar* quarter the call took place in (`2026Q2` for that same call).
-Matching on either label directly mixes the two conventions; matching on the
-date the company announced is unambiguous, so callers pass `call_date` from the
-earnings 8-K and this module aligns to it.
+the *fiscal* quarter being reported (`2027Q1` for that same call — verified
+against off-calendar filers: asking MSFT for `2026Q3` returns the April FQ3
+call, not the July FQ4 one). Matching on either label directly mixes the two
+conventions; matching on the date the company announced is unambiguous, so
+callers pass `call_date` from the earnings 8-K and this module aligns to it.
+For the Alpha Vantage path the caller should also pass `av_quarter` — the
+company's fiscal quarter label derived from the reported period end and the
+fiscal-year-end month (`fiscal_quarter_label`) — because deriving it from the
+call date's calendar quarter is wrong for every off-calendar filer.
 
 What this module will not do: infer, summarise, or score. Sentiment from Alpha
 Vantage is passed through as the vendor's number and labelled as such. Fool's
@@ -120,8 +125,33 @@ def _cache_dir() -> Path:
 
 
 def calendar_quarter(day: dt.date) -> str:
-    """`2026Q2` — Alpha Vantage's quarter label for a call held on `day`."""
+    """`2026Q2` — calendar-quarter fallback, right only for calendar-year filers."""
     return f"{day.year}Q{(day.month - 1) // 3 + 1}"
+
+
+def fiscal_quarter_label(quarter_end: dt.date, fye_month: int = 12) -> str:
+    """Alpha Vantage's `quarter` label for the fiscal period ending `quarter_end`.
+
+    AV indexes transcripts by the company's *fiscal* quarter (`2026Q4` for
+    MSFT's June-2026 quarter, `2027Q1` for NVDA's Feb–Apr 2026 quarter), not
+    by the calendar quarter the call happened in. `fye_month` is the month the
+    fiscal year ends (12 for calendar-year filers; SEC submissions expose it as
+    `fiscalYearEnd`). Fiscal year is labelled by the year it ends in: a quarter
+    ending in or before `fye_month` belongs to that calendar year's fiscal year,
+    a quarter ending after it belongs to the next.
+
+    Fixed-weekday fiscal calendars let a quarter close a few days into the
+    following month (AVGO's Q3 ends ~Aug 2, STX's year ends ~Jul 3), so a
+    period ending in the first week of a month is attributed to the month just
+    finished.
+    """
+    fye_month = int(fye_month or 12)
+    d = quarter_end
+    if d.day <= 7:
+        d = d.replace(day=1) - dt.timedelta(days=1)
+    fy = d.year if d.month <= fye_month else d.year + 1
+    q = ((d.month - fye_month - 1) % 12) // 3 + 1
+    return f"{fy}Q{q}"
 
 
 def _parse_date(value: Optional[str]) -> Optional[dt.date]:
@@ -464,7 +494,9 @@ def av_request(function: str, budget: AVBudget, *, respect_reserve: bool = True,
 
 def fetch_av_transcript(ticker: str, quarter: str, budget: AVBudget,
                         *, respect_reserve: bool = True) -> Dict[str, Any]:
-    """`quarter` is the CALENDAR quarter the call happened in, e.g. `2026Q2`."""
+    """`quarter` is the FISCAL quarter being reported, e.g. `2026Q4` for MSFT's
+    June-2026 quarter — build it with `fiscal_quarter_label`, never from the
+    call date's calendar quarter."""
     data, status = av_request("EARNINGS_CALL_TRANSCRIPT", budget,
                               respect_reserve=respect_reserve,
                               symbol=ticker.upper(), quarter=quarter)
@@ -530,6 +562,7 @@ def summarise(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_transcript(ticker: str, *, call_date: Optional[str] = None,
+                   av_quarter: Optional[str] = None,
                    budget: Optional[AVBudget] = None,
                    prefer: str = "fool", date_tolerance_days: int = 6,
                    allow_av: bool = True,
@@ -538,10 +571,12 @@ def get_transcript(ticker: str, *, call_date: Optional[str] = None,
 
     `call_date` (YYYY-MM-DD, normally the earnings 8-K filing date) is how the
     right call is identified: a Fool page is accepted when published within
-    `date_tolerance_days` of it, and the Alpha Vantage quarter is the calendar
-    quarter containing it. Without it, the newest available call is returned and
-    `matched_by` says `latest_available` so the caller knows the alignment was
-    not verified.
+    `date_tolerance_days` of it. For Alpha Vantage, pass `av_quarter` — the
+    fiscal-quarter label of the reported period from `fiscal_quarter_label`;
+    without it the calendar quarter of `call_date` is used, which is wrong for
+    every off-calendar filer (MSFT, MU, LRCX, KLAC, NVDA…). Without `call_date`,
+    the newest available call is returned and `matched_by` says
+    `latest_available` so the caller knows the alignment was not verified.
 
     Always returns a dict; `status` is `ok`, `pending`, or an error label.
     Nothing is fabricated when both paths miss — `pending` means the call has not
@@ -593,7 +628,10 @@ def get_transcript(ticker: str, *, call_date: Optional[str] = None,
         if not allow_av:
             attempts.append({"source": "alpha_vantage", "status": "disabled"})
             return None
-        quarter = calendar_quarter(target or dt.date.today())
+        quarter = av_quarter or calendar_quarter(target or dt.date.today())
+        if av_quarter is None:
+            attempts.append({"source": "alpha_vantage", "status": "calendar_quarter_fallback",
+                             "detail": "av_quarter not supplied; wrong for off-calendar filers"})
         payload = fetch_av_transcript(ticker, quarter, budget, respect_reserve=respect_reserve)
         if payload.get("status") != "ok":
             attempts.append({"source": "alpha_vantage", "status": payload.get("status"),

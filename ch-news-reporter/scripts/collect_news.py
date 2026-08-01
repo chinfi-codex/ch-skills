@@ -41,6 +41,7 @@ COLLECTOR_SOURCE_TYPE = {
     "rss": "rss",
     "product_hunt": "product_hunt",
     "hacker_news": "hacker_news",
+    "polymarket": "polymarket",
 }
 ALL_COLLECTORS = set(COLLECTOR_SOURCE_TYPE)
 
@@ -55,6 +56,30 @@ DEFAULT_CONFIG = Path("config/sources.yaml")
 GITHUB_TRENDING_URL = "https://github.com/trending"
 PRODUCT_HUNT_GRAPHQL_URL = "https://api.producthunt.com/v2/api/graphql"
 HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
+# HN 评论采集深度预算:对分数最高的 N 个 story 各取前 M 条一级评论,
+# 额外请求硬封顶 N*M 条;文本去 HTML 后截断到 HN_COMMENT_TEXT_LIMIT 字符。
+HN_COMMENT_STORY_LIMIT = 10
+HN_COMMENT_LIMIT = 5
+HN_COMMENT_TEXT_LIMIT = 500
+POLYMARKET_API_URL = "https://gamma-api.polymarket.com/markets"
+# 快照型信源(与 GitHub Trending 同模式):published_at 压成当日 00:00,
+# 每次采集从 volume24hr 榜取 FETCH_LIMIT 个候选,保留 FREE_TOP 个高热市场
+# (不看关键词) + 关键词命中的其余市场,总量上限 ITEM_LIMIT。
+POLYMARKET_FETCH_LIMIT = 100
+POLYMARKET_FREE_TOP = 10
+POLYMARKET_ITEM_LIMIT = 50
+POLYMARKET_DESC_LIMIT = 300
+# 与 config/report_profiles.yaml geopolitical_daily.item_keywords 的主题范围保持同步;
+# Polymarket 市场标题为英文,这里维护对应的英文关键词(另含少量宏观词)。
+POLYMARKET_KEYWORDS = [
+    "geopolitic", "war", "ceasefire", "military", "missile", "airstrike",
+    "invade", "invasion", "conflict", "troop", "nato", "united nations",
+    "ukraine", "russia", "putin", "zelensky", "israel", "iran", "gaza",
+    "hamas", "lebanon", "hezbollah", "houthi", "red sea", "hormuz",
+    "taiwan", "north korea", "kim jong", "india", "pakistan", "nuclear",
+    "sanction", "tariff", "opec", "oil", "election", "trump",
+    "fed rate", "federal reserve", "recession", "cpi", "inflation",
+]
 
 
 @dataclass
@@ -73,7 +98,10 @@ class NewsItem:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Collect Jin10, GitHub Trending, Product Hunt, Hacker News, and RSS into SQLite."
+        description=(
+            "Collect Jin10, GitHub Trending, Product Hunt, Hacker News, "
+            "Polymarket, and RSS into SQLite."
+        )
     )
     parser.add_argument("--date", default="today", help="today or YYYY-MM-DD.")
     parser.add_argument(
@@ -93,12 +121,25 @@ def parse_args() -> argparse.Namespace:
             "rss",
             "product_hunt",
             "hacker_news",
+            "polymarket",
         ],
         default="all",
         help="Source to collect. Default: all.",
     )
     parser.add_argument(
         "--limit", type=int, default=None, help="Optional per-source item limit."
+    )
+    parser.add_argument(
+        "--hn-comment-stories",
+        type=int,
+        default=HN_COMMENT_STORY_LIMIT,
+        help="HN: fetch top comments for the N highest-scored stories (0 disables).",
+    )
+    parser.add_argument(
+        "--hn-comments-per-story",
+        type=int,
+        default=HN_COMMENT_LIMIT,
+        help="HN: max top-level comments kept per story.",
     )
     parser.add_argument("--timeout", type=int, default=20, help="Request timeout.")
     parser.add_argument(
@@ -280,12 +321,14 @@ def selected_source_types(source: str) -> list[str]:
         "rss": ["rss"],
         "product_hunt": ["product_hunt"],
         "hacker_news": ["hacker_news"],
+        "polymarket": ["polymarket"],
         "all": [
             "jin10",
             "github_trending",
             "rss",
             "product_hunt",
             "hacker_news",
+            "polymarket",
         ],
     }
     return mapping[source]
@@ -857,10 +900,62 @@ def fetch_hn_json(session: requests.Session, url: str, timeout: int) -> Any:
     raise RuntimeError(f"Failed to fetch HN URL: {url}")
 
 
+def strip_hn_html(html_text: str) -> str:
+    """HN comment text is HTML (links, <p>, entities); flatten to plain text."""
+    return " ".join(
+        BeautifulSoup(html_text, "html.parser").get_text(" ", strip=True).split()
+    )
+
+
+def parse_hn_comment(node: dict[str, Any]) -> dict[str, Any] | None:
+    """Map a raw HN comment item to the stored shape; None when not usable."""
+    if node.get("type") != "comment" or node.get("deleted") or node.get("dead"):
+        return None
+    text = strip_hn_html(str(node.get("text") or ""))
+    if not text:
+        return None
+    kids = node.get("kids")
+    return {
+        "author": str(node.get("by") or "") or None,
+        "text": text[:HN_COMMENT_TEXT_LIMIT],
+        "kids_count": len(kids) if isinstance(kids, list) else 0,
+    }
+
+
+def fetch_hn_top_comments(
+    session: requests.Session,
+    story: dict[str, Any],
+    timeout: int,
+    comment_limit: int,
+) -> list[dict[str, Any]]:
+    """Fetch the first ``comment_limit`` top-level comments of a story.
+
+    HN's item API exposes no comment score, so ``kids`` order (HN's own
+    ranking) is used as-is. Raises on request failure; the caller degrades
+    silently (story simply gets no ``comments`` key).
+    """
+    kids = story.get("kids")
+    if not isinstance(kids, list) or comment_limit <= 0:
+        return []
+    comments: list[dict[str, Any]] = []
+    for kid in kids[:comment_limit]:
+        if not isinstance(kid, int):
+            continue
+        node = fetch_hn_json(session, f"{HN_API_BASE}/item/{kid}.json", timeout)
+        if not isinstance(node, dict):
+            continue
+        comment = parse_hn_comment(node)
+        if comment:
+            comments.append(comment)
+    return comments
+
+
 def collect_hacker_news(
     session: requests.Session,
     timeout: int,
     limit: int | None,
+    comment_story_limit: int = HN_COMMENT_STORY_LIMIT,
+    comment_limit: int = HN_COMMENT_LIMIT,
 ) -> list[NewsItem]:
     per_rank_limit = limit or 50
     ranked: dict[int, dict[str, Any]] = {}
@@ -881,6 +976,21 @@ def collect_hacker_news(
             ranks = existing.setdefault("_ranks", {})
             ranks[rank_source] = rank
 
+    comments_by_story: dict[int, list[dict[str, Any]]] = {}
+    if comment_story_limit > 0 and comment_limit > 0:
+        top_stories = sorted(
+            ranked.values(), key=lambda s: s.get("score") or 0, reverse=True
+        )[:comment_story_limit]
+        for story in top_stories:
+            try:
+                comments = fetch_hn_top_comments(
+                    session, story, timeout, comment_limit
+                )
+            except Exception:
+                continue  # 评论抓取失败静默降级:该 story 不带 comments 键
+            if comments:
+                comments_by_story[int(story["id"])] = comments
+
     items: list[NewsItem] = []
     for story_id, story in ranked.items():
         hn_url = f"https://news.ycombinator.com/item?id={story_id}"
@@ -899,6 +1009,8 @@ def collect_hacker_news(
             "ranks": ranks,
             "hn_url": hn_url,
         }
+        if story_id in comments_by_story:
+            metadata["comments"] = comments_by_story[story_id]
         raw = dict(story)
         raw.pop("_rank_sources", None)
         raw.pop("_ranks", None)
@@ -919,6 +1031,156 @@ def collect_hacker_news(
                 raw=raw,
             )
         )
+    return items
+
+
+def parse_polymarket_list(value: Any) -> list[Any]:
+    """Gamma API returns some list fields (outcomes/outcomePrices) as JSON strings."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def parse_polymarket_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def polymarket_event_slug(market: dict[str, Any]) -> str:
+    events = market.get("events")
+    if isinstance(events, list):
+        for event in events:
+            if isinstance(event, dict) and event.get("slug"):
+                return str(event["slug"])
+    return ""
+
+
+def polymarket_search_text(market: dict[str, Any]) -> str:
+    return " ".join(
+        str(market.get(field) or "")
+        for field in ("question", "description", "groupItemTitle")
+    )
+
+
+def polymarket_keyword_hits(
+    market: dict[str, Any], keywords: list[str]
+) -> list[str]:
+    text = polymarket_search_text(market).lower()
+    return [keyword for keyword in keywords if keyword and keyword.lower() in text]
+
+
+def build_polymarket_item(
+    market: dict[str, Any], date_key: str, keywords: list[str]
+) -> NewsItem | None:
+    question = str(market.get("question") or "").strip()
+    if not question:
+        return None
+    outcomes = [str(outcome) for outcome in parse_polymarket_list(market.get("outcomes"))]
+    raw_prices = parse_polymarket_list(market.get("outcomePrices"))
+    prices = [parse_polymarket_float(price) for price in raw_prices]
+    odds = [
+        f"{outcome} {price * 100:.1f}%" if price is not None else outcome
+        for outcome, price in zip(outcomes, prices)
+    ]
+    description = " ".join(str(market.get("description") or "").split())
+    if len(description) > POLYMARKET_DESC_LIMIT:
+        description = description[: POLYMARKET_DESC_LIMIT - 1] + "…"
+    content = description
+    if odds:
+        content = (content + " " if content else "") + "赔率: " + " / ".join(odds)
+    slug = str(market.get("slug") or "")
+    event_slug = polymarket_event_slug(market)
+    url_slug = event_slug or slug
+    url = (
+        f"https://polymarket.com/event/{url_slug}"
+        if url_slug
+        else "https://polymarket.com"
+    )
+    market_id = str(market.get("id") or "")
+    hits = polymarket_keyword_hits(market, keywords)
+    # 快照语义(与 GitHub Trending 同模式):published_at 压成当日 00:00;
+    # stable_id 带 date_key,同一天重跑 upsert 覆盖、跨天各自成行。
+    snapshot_time = datetime.strptime(date_key, "%Y-%m-%d").replace(tzinfo=SHANGHAI)
+    metadata: dict[str, Any] = {
+        "market_id": market_id,
+        "slug": slug,
+        "event_slug": event_slug,
+        "outcomes": outcomes,
+        "outcomePrices": prices,
+        "volume": parse_polymarket_float(
+            market.get("volumeNum") or market.get("volume")
+        ),
+        "volume24hr": parse_polymarket_float(market.get("volume24hr")),
+        "liquidity": parse_polymarket_float(
+            market.get("liquidityNum") or market.get("liquidity")
+        ),
+        "endDate": market.get("endDate"),
+        "createdAt": market.get("createdAt"),
+        "keyword_hits": hits,
+    }
+    if market_id:
+        metadata["stable_id"] = f"polymarket:{market_id}:{date_key}"
+    return NewsItem(
+        source_type="polymarket",
+        source_name="Polymarket Markets",
+        published_at=snapshot_time.isoformat(timespec="seconds"),
+        title=question,
+        content=content,
+        url=url,
+        tags=["polymarket", "prediction_market", *hits],
+        metadata=metadata,
+        raw=market,
+    )
+
+
+def collect_polymarket(
+    session: requests.Session,
+    timeout: int,
+    limit: int | None,
+    date_key: str,
+    keywords: list[str] | None = None,
+) -> list[NewsItem]:
+    keywords = POLYMARKET_KEYWORDS if keywords is None else keywords
+    item_limit = limit or POLYMARKET_ITEM_LIMIT
+    response = session.get(
+        POLYMARKET_API_URL,
+        params={
+            "active": "true",
+            "closed": "false",
+            "limit": POLYMARKET_FETCH_LIMIT,
+            "order": "volume24hr",
+            "ascending": "false",
+        },
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, list):
+        raise RuntimeError("Unexpected Polymarket Gamma response shape")
+    markets = [market for market in payload if isinstance(market, dict)]
+    markets.sort(
+        key=lambda market: parse_polymarket_float(market.get("volume24hr")) or 0.0,
+        reverse=True,
+    )
+    selected = markets[: min(POLYMARKET_FREE_TOP, item_limit)]
+    for market in markets[len(selected):]:
+        if len(selected) >= item_limit:
+            break
+        if polymarket_keyword_hits(market, keywords):
+            selected.append(market)
+    items: list[NewsItem] = []
+    for market in selected:
+        item = build_polymarket_item(market, date_key, keywords)
+        if item:
+            items.append(item)
     return items
 
 
@@ -1015,7 +1277,14 @@ def collect_sources(
             session, args.timeout, args.limit, date_key
         ),
         "hacker_news": lambda: collect_hacker_news(
-            session, args.timeout, args.limit
+            session,
+            args.timeout,
+            args.limit,
+            comment_story_limit=args.hn_comment_stories,
+            comment_limit=args.hn_comments_per_story,
+        ),
+        "polymarket": lambda: collect_polymarket(
+            session, args.timeout, args.limit, date_key
         ),
     }
     for name in selected:

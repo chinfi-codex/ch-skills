@@ -1,0 +1,14 @@
+{
+  "by": "dmix",
+  "id": 49139182,
+  "kids": [
+    49139577,
+    49139540,
+    49139403,
+    49139469
+  ],
+  "parent": 49139102,
+  "text": "I use YNAB (<a href=\"https:&#x2F;&#x2F;www.ynab.com&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;www.ynab.com&#x2F;</a>) for budgeting so I already had all of my financial data in a single source. Exporting the CSVs locally and asking Claude to be my financial advisor legitimately gave me good advice. Not just nagging me to save more (which is always useful), but how to organize my budget categories better, detecting longer term spending patterns I wasn&#x27;t thinking much about, researching credit card reward programs based on my spending patterns, digging deep into interest and tax rates in way I never bothered etc.<p>That was the first time I felt like real people&#x27;s jobs were threatened by AI. Financial advisors and tax accountants better adapt quickly.",
+  "time": 1785623661,
+  "type": "comment"
+}

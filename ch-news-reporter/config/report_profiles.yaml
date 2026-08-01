@@ -74,8 +74,15 @@ profiles:
     sources:
       - jin10
       - rss
+      - polymarket
     rss_categories: [geopolitics]
     keyword_filter_sources: [jin10]
+    # polymarket 是快照型信源(采集侧已做关键词过滤与 volume 选品),
+    # 这里只给优先配额;jin10/rss 无 preferred 项,走全局新鲜度回填。
+    source_selection:
+      preferred_limits:
+        polymarket: 15
+      hard_max_share: 0.70
     item_keywords:
       - 地缘
       - 冲突

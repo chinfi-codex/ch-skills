@@ -1,6 +1,6 @@
 ---
 name: ch-news-reporter
-description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、RSS 等多信源采集财经、AI、宏观或全球地缘风险新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、地缘日报（覆盖中东、俄乌、台海、朝鲜半岛、红海/航运、能源通道、制裁、联盟与大国博弈，含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。也用于用户在 config/custom_topics.yaml 注册的自定义关注主题日报：当用户要求跟踪特定公司/产品/产业事项（如英伟达 Rubin 出货、Kimi 算力部署、华为升腾出货）、生成每天的自定义主题日报（全部关注事项合并为一份）、新增/暂停/归档关注主题、或对关注主题做多通道（新闻库/实时搜索/本地 Vault 笔记/结构化数据）证据汇总时，走自定义主题流程。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“生成今天地缘日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“分析红海/霍尔木兹/俄乌/台海/制裁对油价、航运和风险资产的影响”“帮我每天跟踪 XX 的进展并出日报”“把 XX 加为关注主题”“今天 XX 主题有什么增量”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述固定日报与已注册关注主题日报，不用于未注册主题的临时/零碎新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
+description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、Polymarket、RSS 等多信源采集财经、AI、宏观或全球地缘风险新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、地缘日报（覆盖中东、俄乌、台海、朝鲜半岛、红海/航运、能源通道、制裁、联盟与大国博弈，含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。也用于用户在 config/custom_topics.yaml 注册的自定义关注主题日报：当用户要求跟踪特定公司/产品/产业事项（如英伟达 Rubin 出货、Kimi 算力部署、华为升腾出货）、生成每天的自定义主题日报（全部关注事项合并为一份）、新增/暂停/归档关注主题、或对关注主题做多通道（新闻库/实时搜索/本地 Vault 笔记/结构化数据）证据汇总时，走自定义主题流程。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“生成今天地缘日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“分析红海/霍尔木兹/俄乌/台海/制裁对油价、航运和风险资产的影响”“帮我每天跟踪 XX 的进展并出日报”“把 XX 加为关注主题”“今天 XX 主题有什么增量”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述固定日报与已注册关注主题日报，不用于未注册主题的临时/零碎新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
 ---
 
 # CH News Reporter
@@ -74,7 +74,7 @@ python scripts/collect_news.py --date today --only-missing
 - `--date today` 或 `--date YYYY-MM-DD`：采集目标日期。
 - `--only-missing`：DB-first,只补库里当天缺失的源;已有的源跳过,不发请求。
 - `--min-rows N`:配合 `--only-missing`,行数达到 N 才算"已有"。默认 1(任意一条即视为已采)。RSS 这类多 feed 源容易"一条就算齐",想强制补全时把阈值调高。
-- `--source all|jin10|github|rss|product_hunt|hacker_news`：限制采集来源，默认 `all`。
+- `--source all|jin10|github|rss|product_hunt|hacker_news|polymarket`：限制采集来源，默认 `all`。
 - `--config config/sources.yaml`：RSS 配置文件。
 - `--db data/news_research.sqlite`：仅 SQLite fallback 使用的本地文件路径；PostgreSQL 模式下忽略。
 - `--limit N`：每个来源最多写入 N 条，适合调试。
@@ -86,7 +86,8 @@ python scripts/collect_news.py --date today --only-missing
 - RSS 只写入目标日期内有明确发布时间的条目；没有发布时间的 RSS 条目默认跳过。
 - GitHub Trending 会采集 daily 榜单，并补充 GitHub API 中的 repo 元数据。
 - Product Hunt 使用 `PRODUCTHUNT_TOKEN` 调用官方 GraphQL API，只采集热门/高排名产品发布，保留 votes、comments、dailyRank、topics、makers 等结构化字段。
-- Hacker News 只采集官方 Firebase API 的 `topstories` 和 `beststories`，不采集 `newstories`。
+- Hacker News 只采集官方 Firebase API 的 `topstories` 和 `beststories`，不采集 `newstories`。另对分数最高的若干 story 采集热门一级评论，写入该 story 的 `metadata.comments`（`author`/`text`/`kids_count`，HTML 已去标签）；深度由常量 `HN_COMMENT_STORY_LIMIT`（默认 10）和 `HN_COMMENT_LIMIT`（默认 5）封顶，也可用 `--hn-comment-stories` / `--hn-comments-per-story` 覆盖，评论抓取失败时静默降级（该 story 无 `comments` 键）。
+- Polymarket 走公开免 key 的 Gamma API（`gamma-api.polymarket.com/markets`），按 24h 成交量榜选品：保留头部高热市场 + 地缘/宏观关键词命中的市场（关键词常量 `POLYMARKET_KEYWORDS` 与 `report_profiles.yaml` 地缘主题保持同步），上限约 50 条。属快照型信源（同 GitHub Trending）：`published_at` 压成当日 00:00，`stable_id` 带日期，同日重跑去重、跨天各自成行；概率、volume、liquidity、endDate 等结构化字段在 `metadata`。
 
 ### 2. 按报告 profile 准备基础证据包
 
@@ -293,7 +294,7 @@ python scripts/prepare_report_data.py --topic <slug> --date today --format markd
 核心字段：
 
 - `date_key`：Asia/Shanghai 日期，格式 `YYYY-MM-DD`。
-- `source_type`：`jin10`、`github_trending`、`rss`、`product_hunt`、`hacker_news`，以及自定义主题 web 检索落库的 `web_search`（自由 TEXT 值，无需 DDL）。
+- `source_type`：`jin10`、`github_trending`、`rss`、`product_hunt`、`hacker_news`、`polymarket`，以及自定义主题 web 检索落库的 `web_search`（自由 TEXT 值，无需 DDL）。
 - `source_name`：具体来源名称；web 检索行形如 `tavily:<slug>`。
 - `published_at` / `fetched_at`：发布时间与抓取时间。
 - `title` / `content` / `url`：主要文本与链接。

@@ -945,6 +945,13 @@ def scan_company(company: Dict[str, Any], frame: str, ctx: Dict[str, Any]) -> Di
     return out
 
 
+def transcript_cache_matches(have: Dict[str, Any], av_quarter: Optional[str]) -> bool:
+    """Only reuse AV evidence when its requested fiscal quarter still matches."""
+    if have.get("source") != "alpha_vantage":
+        return True
+    return bool(av_quarter and tf.av_quarter_from_url(have.get("url")) == av_quarter)
+
+
 # ---------------------------------------------------------------------------
 # aggregation
 # ---------------------------------------------------------------------------
@@ -1147,8 +1154,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         budget_left = args.transcript_limit
         for row in reported:
             ticker = row["ticker"]
+            quarter_end = sec._parse_ymd(row.get("quarter_end_expected"))
+            fye_month = (row.get("fiscal_year_end_month")
+                         or companies[ticker].get("fiscal_year_end_month") or 12)
+            av_quarter = (tf.fiscal_quarter_label(quarter_end, fye_month)
+                          if quarter_end else None)
             have = cached_status.get((ticker, frame))
-            if have and have.get("status") == "ok":
+            cache_matches = bool(
+                have and have.get("status") == "ok"
+                and transcript_cache_matches(have, av_quarter))
+            if cache_matches:
                 payload = store.load_transcript(ticker, frame) or {}
                 ctx["transcripts"][(ticker, frame)] = {
                     "status": "ok", "source": have.get("source"), "url": have.get("url"),
@@ -1161,18 +1176,19 @@ def main(argv: Optional[List[str]] = None) -> int:
                 }
                 transcript_stats["cached"] += 1
                 continue
+            cache_writable = True
+            if have and have.get("status") == "ok":
+                cache_writable = store.delete_transcript(ticker, frame)
+                if not cache_writable:
+                    row["errors"].append("transcript_cache_invalidation_failed")
             if budget_left <= 0:
                 transcript_stats["skipped_limit"] += 1
                 continue
-            quarter_end = sec._parse_ymd(row.get("quarter_end_expected"))
-            fye_month = (row.get("fiscal_year_end_month")
-                         or companies[ticker].get("fiscal_year_end_month") or 12)
-            av_quarter = (tf.fiscal_quarter_label(quarter_end, fye_month)
-                          if quarter_end else None)
             payload = tf.get_transcript(ticker, call_date=row["announcement"]["date"],
                                         av_quarter=av_quarter,
                                         budget=budget, allow_av=not args.no_av)
-            store.save_transcript(ticker, frame, payload)
+            if cache_writable:
+                store.save_transcript(ticker, frame, payload)
             budget_left -= 1
             if payload["status"] == "ok":
                 transcript_stats["fetched"] += 1

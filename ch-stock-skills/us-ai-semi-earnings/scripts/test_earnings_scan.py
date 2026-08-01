@@ -216,12 +216,40 @@ check("prepared remarks stay prepared", segments[1]["section"], "prepared")
 check("the real handoff starts Q&A", segments[2]["section"], "qa")
 check("the analyst turn is in Q&A", segments[3]["section"], "qa")
 
-print("Alpha Vantage quarter label is the CALENDAR quarter of the call")
-# Fool's slug carries the fiscal label (`nvidia-nvda-q1-2027-...` is the
-# Feb-Apr 2026 quarter) while Alpha Vantage's parameter is the calendar quarter
-# the call happened in. Mixing the two conventions fetches the wrong call.
-check("NVDA May call", tf.calendar_quarter(sec._parse_ymd("2026-05-20")), "2026Q2")
-check("TXN July call", tf.calendar_quarter(sec._parse_ymd("2026-07-22")), "2026Q3")
+print("Alpha Vantage quarter label follows each company's fiscal calendar")
+fiscal_quarter_cases = [
+    ("calendar Q1", "2026-03-31", 12, "2026Q1"),
+    ("calendar Q2", "2026-06-30", 12, "2026Q2"),
+    ("calendar Q3", "2026-09-30", 12, "2026Q3"),
+    ("calendar Q4", "2026-12-31", 12, "2026Q4"),
+    ("MSFT Q1", "2025-09-30", 6, "2026Q1"),
+    ("MSFT Q2", "2025-12-31", 6, "2026Q2"),
+    ("MSFT Q3", "2026-03-31", 6, "2026Q3"),
+    ("MSFT Q4", "2026-06-30", 6, "2026Q4"),
+    ("NVDA Q1", "2026-04-28", 1, "2027Q1"),
+    ("AVGO fixed-week Q3", "2026-08-02", 10, "2026Q3"),
+    ("MU Q3", "2026-05-28", 8, "2026Q3"),
+    ("QCOM Q3", "2026-06-28", 9, "2026Q3"),
+    ("QRVO Q1", "2026-06-27", 3, "2027Q1"),
+    ("STX fixed-week Q4", "2026-07-03", 7, "2026Q4"),
+]
+for case_name, quarter_end, fye_month, expected in fiscal_quarter_cases:
+    check(case_name, tf.fiscal_quarter_label(sec._parse_ymd(quarter_end), fye_month), expected)
+
+print("legacy Alpha Vantage cache compatibility")
+matching_av = {"source": "alpha_vantage", "url":
+               "https://www.alphavantage.co/query?function=EARNINGS_CALL_TRANSCRIPT&symbol=NVDA&quarter=2027Q1"}
+wrong_av = {"source": "alpha_vantage", "url":
+            "https://www.alphavantage.co/query?function=EARNINGS_CALL_TRANSCRIPT&symbol=NVDA&quarter=2026Q2"}
+check("requested AV quarter is parsed", tf.av_quarter_from_url(matching_av["url"]), "2027Q1")
+check("matching AV cache is reusable", scan.transcript_cache_matches(matching_av, "2027Q1"), True)
+check("legacy calendar-quarter AV cache is invalidated",
+      scan.transcript_cache_matches(wrong_av, "2027Q1"), False)
+check("AV cache without quarter metadata is invalidated",
+      scan.transcript_cache_matches({"source": "alpha_vantage", "url": None}, "2027Q1"), False)
+check("date-matched Fool cache remains reusable",
+      scan.transcript_cache_matches({"source": "motley_fool", "url": "https://fool.test/call"},
+                                    "2027Q1"), True)
 
 # ---------------------------------------------------------------------------
 print("\nderived metrics")

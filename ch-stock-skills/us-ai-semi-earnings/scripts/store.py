@@ -515,6 +515,24 @@ class Store:
         return self._upsert("usearn_transcript_segment", seg_cols,
                             ("ticker", "frame", "idx"), seg_rows)
 
+    def delete_transcript(self, ticker: str, frame: str) -> bool:
+        """Delete a cached call and every segment before replacing stale evidence."""
+        if not self.available:
+            return False
+        try:
+            with get_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(self._sql(
+                    "DELETE FROM usearn_transcript_segment WHERE ticker = %s AND frame = %s"),
+                    [ticker, frame])
+                cur.execute(self._sql(
+                    "DELETE FROM usearn_transcript WHERE ticker = %s AND frame = %s"),
+                    [ticker, frame])
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self.error = f"transcript delete failed: {str(exc)[:160]}"
+            return False
+
     def transcript_status(self, frames: Sequence[str],
                           tickers: Optional[Sequence[str]] = None) -> Dict[Tuple[str, str], Dict[str, Any]]:
         if not self.available or not frames:

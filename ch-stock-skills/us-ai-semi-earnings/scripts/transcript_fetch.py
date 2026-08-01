@@ -129,6 +129,12 @@ def calendar_quarter(day: dt.date) -> str:
     return f"{day.year}Q{(day.month - 1) // 3 + 1}"
 
 
+def av_quarter_from_url(url: Optional[str]) -> Optional[str]:
+    """Read the requested fiscal quarter from a stored Alpha Vantage URL."""
+    match = re.search(r"(?:[?&])quarter=(\d{4}Q[1-4])(?:&|$)", url or "", re.IGNORECASE)
+    return match.group(1).upper() if match else None
+
+
 def fiscal_quarter_label(quarter_end: dt.date, fye_month: int = 12) -> str:
     """Alpha Vantage's `quarter` label for the fiscal period ending `quarter_end`.
 

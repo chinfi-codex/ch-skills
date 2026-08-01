@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """Verdict ledger for the quarterly-report skill: tier (强/中/观察/剔除) +
-质量成色 + 兑现度 + 主线归属 + 报告期行业趋势 + 产业结构综述.
+质量成色 + 兑现度 + 主线归属 + 报告期行业趋势.
 
 脑/手 boundary: this script is deterministic and calls no LLM. It only
   - `context`: assembles what the model must judge — the to-judge stock set
     (newly filed + stale-vs-current-evidence), the daily-market-sense theme
     registry as the matching reference, per-theme member briefs split into
-    强表现 (up gap) / 弱表现 (down gap) / 无断层, and the whole-sample
-    industry_summary plus the period-overview staleness state.
+    强表现 (up gap) / 弱表现 (down gap) / 无断层.
   - `record`: validates the model's verdict JSON (enums, theme existence,
-    finished overview text), snapshots the evidence fingerprint, and upserts into
-    qreport_verdict / qreport_theme_trend / qreport_period_overview.
+    snapshots the evidence fingerprint, and upserts into qreport_verdict /
+    qreport_theme_trend.
 
 One thing differs from the forecast ledger by design. A forecast ships its own
 《业绩变动原因》 text, so attribution could read straight off the evidence. A
@@ -170,21 +169,10 @@ def theme_member_counts(membership: Dict[str, Dict[str, List[Dict[str, Any]]]],
     return s_n, w_n, s_n + w_n + len(grp["quiet"])
 
 
-def sample_fingerprint(evidence: Dict[str, Any]) -> Tuple[int, int, int]:
-    """(released_total, growth_n, decline_n) over the **whole released universe**,
-    read from meta + industry_summary rather than the shortlist — the 产业结构综述
-    is a statement about the market, so its staleness must track the market."""
-    total = int((evidence.get("meta") or {}).get("with_statements") or 0)
-    growth = sum(int(row.get("growth_n") or 0) for row in evidence.get("industry_summary", []))
-    decline = sum(int(row.get("decline_n") or 0) for row in evidence.get("industry_summary", []))
-    return total, growth, decline
-
-
 # --------------------------------------------------------------------------- #
 def build_context(period: str, evidence: Dict[str, Any], verdicts: Dict[str, Dict[str, Any]],
-                  themes: Dict[str, Dict[str, Any]], states: Dict[str, Dict[str, Any]],
-                  trends: Dict[str, Dict[str, Any]], overview: Optional[Dict[str, Any]],
-                  drift: float) -> Dict[str, Any]:
+                   themes: Dict[str, Dict[str, Any]], states: Dict[str, Dict[str, Any]],
+                   trends: Dict[str, Dict[str, Any]], drift: float) -> Dict[str, Any]:
     ev_idx = _evidence_index(evidence)
 
     to_judge: List[Dict[str, Any]] = []
@@ -255,15 +243,6 @@ def build_context(period: str, evidence: Dict[str, Any], verdicts: Dict[str, Dic
             item["prev_cross_validation"] = prev.get("cross_validation")
         to_judge_themes.append(item)
 
-    total, growth_n, decline_n = sample_fingerprint(evidence)
-    if overview is None:
-        ov_why: Optional[str] = "no_overview"
-    elif (overview.get("evidence_total"), overview.get("evidence_growth"),
-          overview.get("evidence_decline")) != (total, growth_n, decline_n):
-        ov_why = "stale_sample"
-    else:
-        ov_why = None
-
     meta = evidence.get("meta") or {}
     return {
         "period": period, "period_label": period_label(period),
@@ -284,13 +263,6 @@ def build_context(period: str, evidence: Dict[str, Any], verdicts: Dict[str, Dic
         "to_judge": to_judge,
         "to_judge_theme_count": len(to_judge_themes),
         "to_judge_themes": to_judge_themes,
-        "period_overview": {
-            "evidence_total": total, "evidence_growth": growth_n, "evidence_decline": decline_n,
-            "reason_to_judge": ov_why,
-            "prev": ({"overview": overview.get("overview"), "judged_at": overview.get("judged_at"),
-                      "evidence_total": overview.get("evidence_total")} if overview else None),
-        },
-        "industry_summary": evidence.get("industry_summary", []),
         "notes": [
             "对每只 to_judge 股判 tier(强/中/观察/剔除)、quality_call(扎实/尚可/存疑/虚高)、"
             "fulfillment(超预告上限/落区间上沿/符合/落区间下沿/低于预告/无预告)与 theme_id(对不上填 null=无归属)。",
@@ -304,10 +276,7 @@ def build_context(period: str, evidence: Dict[str, Any], verdicts: Dict[str, Dic
             "行业趋势任务：对 to_judge_themes 每条主线写 theme_trends[]——分别读强表现(向上断层)与弱表现(向下断层)成员，"
             "归因每侧是行业级共性还是个体因素，交叉验证定 direction，附 strong_common/weak_common/cross_validation/confidence。",
             "本轮你新归入某主线的股票(即使不在 to_judge_themes 里)也要一并判/重判该主线趋势。",
-            "产业结构综述任务：reason_to_judge=no_overview/stale_sample 时据 industry_summary 写 period_overview。"
-            "季报是**强制全市场披露**，不像预告只有剧烈变化的公司出现——所以这份综述可以谈全经济体量的结构，"
-            "不需要预告那套样本偏差 caveat，但要写清截至当前的披露进度(progress_pct)。",
-            "theme_registry_empty=true 时主线台账为空(需先跑 daily-market-sense)，theme_id 一律 null、theme_trends 留空；综述照常写。",
+            "theme_registry_empty=true 时主线台账为空(需先跑 daily-market-sense)，theme_id 一律 null、theme_trends 留空。",
         ],
     }
 
@@ -435,18 +404,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         context = build_context(
             period, evidence, store.load_verdicts(period),
             store.load_theme_registry(), store.load_theme_latest_state(),
-            store.load_theme_trends(period), store.load_period_overview(period), args.drift,
+            store.load_theme_trends(period), args.drift,
         )
         out_path = args.out or os.path.join("reports", f"qreport_verdict_context_{period}.json")
         os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as fh:
             json.dump(context, fh, ensure_ascii=False, indent=2)
         summary = {"period": period, "to_judge": context["to_judge_count"],
-                   "already_judged": context["already_judged"],
-                   "themes": len(context["themes"]),
-                   "to_judge_themes": context["to_judge_theme_count"],
-                   "overview_to_judge": context["period_overview"]["reason_to_judge"],
-                   "out": out_path}
+                    "already_judged": context["already_judged"],
+                    "themes": len(context["themes"]),
+                    "to_judge_themes": context["to_judge_theme_count"],
+                    "out": out_path}
         print(json.dumps(context if args.stdout else summary, ensure_ascii=False, indent=2))
         return 0
 
@@ -496,29 +464,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not trends_ok:
         trend_errors.append("theme_trends: 数据库写入失败。")
 
-    overview_recorded = False
-    ov_errors: List[str] = []
-    ov = payload.get("period_overview")
-    if ov is not None:
-        if not isinstance(ov, str) or not ov.strip():
-            ov_errors.append("period_overview: 需为非空字符串(综述成文)，跳过。")
-        else:
-            total, growth_n, decline_n = sample_fingerprint(evidence)
-            overview_recorded = store.upsert_period_overview({
-                "period": period, "overview": ov.strip(), "evidence_total": total,
-                "evidence_growth": growth_n, "evidence_decline": decline_n,
-            })
-            if not overview_recorded:
-                ov_errors.append("period_overview: 数据库写入失败。")
-
     print(json.dumps({
         "period": period, "recorded": len(valid), "skipped": len(errors),
         "trends_recorded": len(valid_trends), "trends_skipped": len(trend_errors),
-        "overview_recorded": overview_recorded,
         "cache": "on" if store.available else f"off ({store.reason})",
-        "errors": errors + trend_errors + ov_errors,
+        "errors": errors + trend_errors,
     }, ensure_ascii=False, indent=2))
-    return 0 if verdict_ok and trends_ok and not ov_errors else 2
+    return 0 if verdict_ok and trends_ok else 2
 
 
 if __name__ == "__main__":

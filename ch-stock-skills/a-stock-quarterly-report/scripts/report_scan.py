@@ -288,19 +288,44 @@ def _pick_rows(df: pd.DataFrame, wanted: Set[str], keep: Sequence[str]) -> Dict[
     return out
 
 
-def fetch_statements_for_code(pro: TushareProxy, ts_code: str, period: str, end_ann: str,
-                              wanted: Set[str], sources_needed: Sequence[str]) -> Dict[str, Dict[str, Any]]:
-    """One range call per endpoint → {period: {field: value, '_sources': {...}}}."""
+def fetch_statements_for_code(
+        pro: TushareProxy, ts_code: str, period: str, end_ann: str,
+        wanted: Set[str], sources_needed: Sequence[str],
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    """Fetch one code and preserve why an endpoint is still missing.
+
+    A successful empty response means Tushare has not published the requested
+    period yet; an exception means the request itself failed.  Keeping those
+    cases separate prevents an API/permission/network failure from being
+    mislabeled as harmless upstream ingestion lag.
+    """
     start, end = fetch_range(period, end_ann)
     merged: Dict[str, Dict[str, Any]] = {}
+    diagnostics: Dict[str, Dict[str, Any]] = {}
     for src, api, fields in _ENDPOINTS:
         if src not in sources_needed:
             continue
         try:
             df = getattr(pro, api)(ts_code=ts_code, start_date=start, end_date=end, fields=fields)
-        except Exception:  # noqa: BLE001 - one endpoint failing must not lose the rest
+        except Exception as exc:  # noqa: BLE001 - one endpoint failing must not lose the rest
+            diagnostics[src] = {
+                "status": "request_failed",
+                "error": re.sub(r"\s+", " ", str(exc)).strip()[:180],
+            }
             continue
-        for p, rec in _pick_rows(df, wanted, _KEEP[src]).items():
+        try:
+            picked = _pick_rows(df, wanted, _KEEP[src])
+        except Exception as exc:  # noqa: BLE001 - retain the other endpoints
+            diagnostics[src] = {
+                "status": "response_parse_failed",
+                "error": re.sub(r"\s+", " ", str(exc)).strip()[:180],
+            }
+            continue
+        diagnostics[src] = ({"status": "ok"} if period in picked else {
+            "status": "current_period_not_returned",
+            "returned_wanted_periods": sorted(picked),
+        })
+        for p, rec in picked.items():
             slot = merged.setdefault(p, {"_sources": set()})
             ann = rec.pop("ann_date", None)
             # The income statement carries the report's disclosure date; the other
@@ -309,7 +334,7 @@ def fetch_statements_for_code(pro: TushareProxy, ts_code: str, period: str, end_
                 slot["ann_date"] = ann or slot.get("ann_date")
             slot.update({k: v for k, v in rec.items() if v is not None})
             slot["_sources"].add(src)
-    return merged
+    return merged, diagnostics
 
 
 def merge_statement_periods(existing: Dict[str, Dict[str, Any]],
@@ -1211,19 +1236,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     todo = {c: needs_fetch(c) for c in codes}
     todo = {c: s for c, s in todo.items() if s}
     fetch_stats = {"released": len(codes), "fetched": len(todo), "from_cache": len(codes) - len(todo)}
+    statement_fetch_diagnostics: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
     if todo:
-        def work(code: str) -> Tuple[str, Dict[str, Dict[str, Any]]]:
-            return code, fetch_statements_for_code(pro, code, period, end_ann, wanted, todo[code])
+        def work(code: str) -> Tuple[str, Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+            merged, diagnostics = fetch_statements_for_code(
+                pro, code, period, end_ann, wanted, todo[code])
+            return code, merged, diagnostics
         write_batch: List[Dict[str, Any]] = []
         with ThreadPoolExecutor(max_workers=max(1, args.fetch_workers)) as pool:
             futures = [pool.submit(work, c) for c in todo]
             for i, fut in enumerate(as_completed(futures), 1):
                 try:
-                    code, merged = fut.result()
+                    code, merged, diagnostics = fut.result()
                 except Exception as exc:  # noqa: BLE001
                     notes.append(f"财报抓取失败：{str(exc)[:80]}")
                     continue
+                statement_fetch_diagnostics[code] = diagnostics
                 cached_fin[code] = merge_statement_periods(
                     cached_fin.get(code) or {}, merged, replace=args.refresh_fin)
                 for p in merged:
@@ -1236,6 +1265,21 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if i % 500 == 0:
                     print(f"  … 财报取数 {i}/{len(todo)}", file=sys.stderr)
         store.upsert_fin_many(write_batch)
+
+    diagnostic_status_counts: Dict[str, int] = {}
+    for by_source in statement_fetch_diagnostics.values():
+        for item in by_source.values():
+            status = str(item.get("status") or "unknown")
+            diagnostic_status_counts[status] = diagnostic_status_counts.get(status, 0) + 1
+    fetch_stats["endpoint_status_counts"] = diagnostic_status_counts
+    problem_fetch_diagnostics = {
+        code: {src: item for src, item in by_source.items()
+               if item.get("status") != "ok"}
+        for code, by_source in statement_fetch_diagnostics.items()
+    }
+    problem_fetch_diagnostics = {
+        code: by_source for code, by_source in problem_fetch_diagnostics.items() if by_source
+    }
 
     # -- 3. reference values ------------------------------------------------
     fresh_refs = scan_reference_values(
@@ -1314,7 +1358,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     stocks: List[Dict[str, Any]] = []
     universe: List[Dict[str, Any]] = []
     missing_current = 0
-    incomplete = 0
+    partial_incomplete = 0
+    income_missing_partial = 0
 
     for code in codes:
         by_period = cached_fin.get(code) or {}
@@ -1344,11 +1389,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         ann = ann_index.get(code)
         have_sources = sorted(by_period[period].get("_sources") or [])
         missing_sources = [s for s in all_sources if s not in have_sources]
+        fetch_diag = statement_fetch_diagnostics.get(code) or {}
+        missing_source_diagnostics = {
+            src: fetch_diag[src] for src in missing_sources if src in fetch_diag
+        }
+        if missing_sources:
+            partial_incomplete += 1
         # The income statement is the spine: without it there is no revenue, no
         # 归母, no single-quarter anything. fina_indicator often lands first, so a
         # record can exist and still be hollow — say so instead of shipping nulls.
         if "income" in missing_sources:
-            incomplete += 1
+            income_missing_partial += 1
         if not info.get("name") and ann:
             # stock_basic misses very recent listings (BSE especially); the
             # filing itself carries the company name.
@@ -1362,6 +1413,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "authority": "tushare_statements",
                 "sources": have_sources,
                 "missing_sources": missing_sources,
+                "missing_source_diagnostics": missing_source_diagnostics,
                 "statements_complete": not missing_sources,
                 "income_loaded": "income" in have_sources,
                 "cninfo_title": (ann or {}).get("title"),
@@ -1400,11 +1452,29 @@ def main(argv: Optional[List[str]] = None) -> int:
         })
 
     if missing_current:
-        notes.append(f"{missing_current} 家已披露但 Tushare 尚未收录本期报表（上游滞后，下次重跑自动补）")
-    if incomplete:
         notes.append(
-            f"{incomplete} 家本期利润表尚未上线（只到 fina_indicator 等），增长与质量字段为空——"
-            "看 source.missing_sources，别把空值当成零增长；下次重跑自动补")
+            f"{missing_current} 家已披露但本次未取到任一本期报表行；"
+            "先看 meta.statement_fetch_diagnostics 区分上游未返回与请求失败，下次重跑会自动补取")
+    if partial_incomplete:
+        notes.append(
+            f"{partial_incomplete} 家已取到部分本期报表，但四接口尚未齐全；"
+            "逐股看 source.missing_sources 与 missing_source_diagnostics")
+    if income_missing_partial:
+        notes.append(
+            f"{income_missing_partial} 家本次未取到本期利润表，营收/归母及相关质量字段为空——"
+            "看 source.missing_sources 与 missing_source_diagnostics，别把空值当成零增长；下次重跑自动补")
+    request_failures = sum(
+        count for status, count in diagnostic_status_counts.items()
+        if status in ("request_failed", "response_parse_failed"))
+    upstream_empty = diagnostic_status_counts.get("current_period_not_returned", 0)
+    if request_failures:
+        notes.append(
+            f"{request_failures} 次报表接口请求/解析失败，这不是上游入库滞后；"
+            "请按 source.missing_source_diagnostics 的 error 排查网络、权限或参数")
+    if upstream_empty:
+        notes.append(
+            f"{upstream_empty} 次接口请求成功但未返回本报告期，判定为 Tushare 分接口入库滞后；"
+            "缺源会在后续重跑自动补取")
     unnamed = [s["ts_code"] for s in stocks if not s.get("name")]
     if unnamed:
         # Typically a brand-new listing: Tushare stock_basic has not picked it up
@@ -1437,7 +1507,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         "clock_timezone": "Asia/Shanghai",
         "ann_cutoff": end_ann, "ann_cutoff_stock_count": cutoff_count,
         "released_count": len(codes), "with_statements": len(stocks),
-        "statements_incomplete": incomplete,
+        "statements_complete_count": len(stocks) - partial_incomplete,
+        "statements_incomplete": missing_current + partial_incomplete,
+        "income_missing_count": missing_current + income_missing_partial,
         "scheduled_total": len(scheduled_codes),
         "disclosure_progress_pct": (
             round(released_total / len(scheduled_codes) * 100, 1)
@@ -1451,6 +1523,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                            else f"rank_score 前 {args.top}"),
         "thresholds": thresholds,
         "fetch_stats": {**fetch_stats, "cache": "on" if store.available else "off"},
+        "statement_fetch_diagnostics": problem_fetch_diagnostics,
         "price_note": price_note,
         "data_notes": notes,
         "boundary": ("脚本只出确定性证据：拆解、比率、阈值命中、计数。"

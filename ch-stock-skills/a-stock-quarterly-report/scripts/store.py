@@ -22,7 +22,6 @@ Cache tables
 - qreport_forecast_ref   : forecast / express reference values for 兑现度
 - qreport_verdict        : model verdicts (tier + theme attribution) per (period, ts_code)
 - qreport_theme_trend    : model-judged report-period industry trend per (period, theme_id)
-- qreport_period_overview: model-written 产业结构综述 per period (sample fingerprint)
 
 Writes go through one batched statement per table (execute_values on PostgreSQL,
 executemany on SQLite); reads are batched with IN-lists.
@@ -178,15 +177,6 @@ _SCHEMA: Dict[str, str] = {
             judged_at TEXT,
             PRIMARY KEY (period, theme_id)
         )""",
-    "qreport_period_overview": """
-        CREATE TABLE IF NOT EXISTS qreport_period_overview (
-            period TEXT PRIMARY KEY,
-            overview TEXT NOT NULL,
-            evidence_total INTEGER,
-            evidence_growth INTEGER,
-            evidence_decline INTEGER,
-            judged_at TEXT
-        )""",
 }
 
 _INDEXES = [
@@ -211,8 +201,6 @@ _VERDICT_COLS = ["period", "ts_code", "tier", "reason", "caveat", "quality_call"
                  "evidence_np_single_yoy", "evidence_rev_single_yoy", "judged_at"]
 _TREND_COLS = ["period", "theme_id", "direction", "strong_common", "weak_common", "cross_validation",
                "confidence", "evidence_strong_n", "evidence_weak_n", "evidence_member_n", "judged_at"]
-_OVERVIEW_COLS = ["period", "overview", "evidence_total", "evidence_growth",
-                  "evidence_decline", "judged_at"]
 
 
 def _now() -> str:
@@ -654,32 +642,6 @@ class Store:
                   r.get("weak_common"), r.get("cross_validation"), r.get("confidence"),
                   r.get("evidence_strong_n"), r.get("evidence_weak_n"),
                   r.get("evidence_member_n"), now) for r in records],
-            )
-            return True
-        except Exception:  # noqa: BLE001
-            return False
-
-    # -- model period overview ----------------------------------------------
-    def load_period_overview(self, period: str) -> Optional[Dict[str, Any]]:
-        if not self.available:
-            return None
-        try:
-            rows = self._rows(
-                f"SELECT {', '.join(_OVERVIEW_COLS)} FROM qreport_period_overview WHERE period = ?",
-                [period], _OVERVIEW_COLS,
-            )
-            return rows[0] if rows else None
-        except Exception:  # noqa: BLE001
-            return None
-
-    def upsert_period_overview(self, record: Dict[str, Any]) -> bool:
-        if not self.available or not record:
-            return False
-        try:
-            self._batch_upsert(
-                "qreport_period_overview", _OVERVIEW_COLS, ["period"],
-                [(record["period"], record["overview"], record.get("evidence_total"),
-                  record.get("evidence_growth"), record.get("evidence_decline"), _now())],
             )
             return True
         except Exception:  # noqa: BLE001

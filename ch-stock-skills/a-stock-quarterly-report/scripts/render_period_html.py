@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Render one report period into a single self-contained HTML page.
 
-Structure mirrors the earnings-forecast page (产业结构综述 → filters → left list /
-right detail, with K-lines split into lazily loaded shards) because the reading
-motion is the same. The content is not: a statutory report can show the quality
+Structure mirrors the earnings-forecast page (filters → left list / right detail,
+with K-lines split into lazily loaded shards). The content is not: a statutory report can show the quality
 triad a forecast cannot — how much profit survives 扣非, how much of it arrived
 as operating cash, and whether receivables and inventory outran revenue — so the
 detail pane leads with that, then 兑现度 against the company's own guidance,
@@ -204,15 +203,22 @@ def write_kline_assets(out_path: str, klines: Dict[str, List[List[Any]]],
 # --------------------------------------------------------------------------- #
 def build_view(period: str, evidence: Dict[str, Any], verdicts: Dict[str, Dict[str, Any]],
                themes: Dict[str, Dict[str, Any]], states: Dict[str, Dict[str, Any]],
-               trends: Dict[str, Dict[str, Any]], overview_row: Optional[Dict[str, Any]],
-               bars_map: Dict[str, List[Dict[str, Any]]], today: dt.date,
+               trends: Dict[str, Dict[str, Any]], bars_map: Dict[str, List[Dict[str, Any]]],
+               today: dt.date,
                pos_split: float = POS_SPLIT, muted_max: float = MUTED_MAX_PCT,
-               kline_bars: int = KLINE_BARS) -> Dict[str, Any]:
+               kline_bars: int = KLINE_BARS,
+               include_unassigned: bool = False) -> Dict[str, Any]:
     stocks: List[Dict[str, Any]] = []
     klines: Dict[str, List[List[Any]]] = {}
+    excluded_unassigned = 0
 
     for s in evidence.get("stocks", []):
         ts_code = str(s["ts_code"])
+        v = verdicts.get(ts_code)
+        theme_id = (v or {}).get("theme_id")
+        if not include_unassigned and not theme_id:
+            excluded_unassigned += 1
+            continue
         g = s.get("growth", {})
         rev, npf, dedt, ocf = (g.get("revenue") or {}, g.get("np") or {},
                                g.get("dedt") or {}, g.get("ocf") or {})
@@ -224,7 +230,6 @@ def build_view(period: str, evidence: Dict[str, Any], verdicts: Dict[str, Dict[s
         sc = s.get("screen") or {}
         ff = (s.get("fulfillment") or {}).get("forecast") or {}
         src = s.get("source") or {}
-        v = verdicts.get(ts_code)
         ann = str(s.get("ann_date") or "")
 
         badges = []
@@ -234,7 +239,6 @@ def build_view(period: str, evidence: Dict[str, Any], verdicts: Dict[str, Dict[s
         if src.get("cninfo_is_corrected"):
             badges.append("更正后")
 
-        theme_id = (v or {}).get("theme_id")
         theme_name = theme_state = theme_stars = None
         theme_hot = False
         if theme_id and theme_id in themes:
@@ -371,18 +375,6 @@ def build_view(period: str, evidence: Dict[str, Any], verdicts: Dict[str, Dict[s
     stocks.sort(key=lambda s: (facet_rank[s["facet"]], not s["theme_hot"],
                                -(s["rank_score"] or -99), -(s["np_sq_yoy"] or -1e9)))
 
-    overview = None
-    if overview_row:
-        rows = evidence.get("industry_summary", [])
-        cur = (int((evidence.get("meta") or {}).get("with_statements") or 0),
-               sum(int(r.get("growth_n") or 0) for r in rows),
-               sum(int(r.get("decline_n") or 0) for r in rows))
-        snap = (overview_row.get("evidence_total"), overview_row.get("evidence_growth"),
-                overview_row.get("evidence_decline"))
-        overview = {"text": overview_row.get("overview") or "",
-                    "judged_at": str(overview_row.get("judged_at") or "")[:10],
-                    "snap_total": snap[0], "stale": snap != cur}
-
     industries = sorted({s["industry"] for s in stocks if s["industry"]})
     cutoff_info = _validate_evidence_cutoff(evidence)
     return {
@@ -392,7 +384,9 @@ def build_view(period: str, evidence: Dict[str, Any], verdicts: Dict[str, Dict[s
         "theme_registry_empty": len(themes) == 0,
         "pos_split": pos_split, "trend_net": TREND_NET,
         "pe_buckets": pe_bucket_options(), "industries": industries,
-        "stocks": stocks, "theme_trends": theme_trends, "overview": overview, "klines": klines,
+        "stocks": stocks, "theme_trends": theme_trends, "klines": klines,
+        "include_unassigned": include_unassigned,
+        "excluded_unassigned": excluded_unassigned,
     }
 
 
@@ -876,24 +870,18 @@ def _load_shared_theme(theme: str) -> str:
 def render_html(view: Dict[str, Any], kline_assets: Optional[Dict[str, Any]] = None) -> str:
     empty_note = ('<div class="foot">主线台账为空——归属与行业趋势需先运行 daily-market-sense 填充 theme 台账、'
                   '再跑 verdict 判分归属。</div>' if view["theme_registry_empty"] else "")
-    ov = view.get("overview")
-    if ov:
-        stale = '<span class="badge bstale">样本已更新，待复判</span>' if ov["stale"] else ""
-        overview_html = ('<div class="ovw"><div class="ttl">报告期产业结构综述（模型判断，落台账）'
-                         f'<span>判于 {escape(ov["judged_at"])} · 当时样本 {ov["snap_total"]} 家</span>{stale}</div>'
-                         f'<div class="ovtx">{escape(ov["text"])}</div></div>')
-    else:
-        overview_html = ""
-
     cutoff = view["ann_cutoff"]
     cutoff_display = f"{cutoff[:4]}-{cutoff[4:6]}-{cutoff[6:]}"
     progress = view.get("disclosure_progress_pct")
     prog_html = ""
     if progress is not None:
+        scope_note = ("HTML 已包含无归属主线" if view.get("include_unassigned") else
+                      f"默认剔除无归属主线 {view.get('excluded_unassigned') or 0} 家")
         prog_html = (f'<div class="prog"><span>披露进度 {view.get("released_count") or 0} 家</span>'
                      f'<span class="bar"><i style="width:{min(100.0, float(progress)):.1f}%"></i></span>'
                      f'<span>{progress}% · 已出证据 {view.get("with_statements") or 0} 家 · '
-                     f'页面收录 {len(view["stocks"])} 家（{escape(str(view.get("shortlist_rule") or ""))}）</span></div>')
+                     f'页面收录 {len(view["stocks"])} 家（{escape(str(view.get("shortlist_rule") or ""))}） · '
+                     f'{escape(scope_note)}</span></div>')
 
     kline_assets = kline_assets or {
         "asset_base": f"qreport_{view['period']}.klines",
@@ -921,9 +909,8 @@ def render_html(view: Dict[str, Any], kline_assets: Optional[Dict[str, Any]] = N
 <div class="sub">end_date {view['period']} · 披露扫描截至 {cutoff_display}（当日 {view['ann_cutoff_stock_count']} 家）· Tushare 结构化报表为数值权威 · PDF 按需 · 增长 × 利润质量 × 兑现度 × 股价断层</div></div>
 <div class="sub">更新于 {view['updated_at']}</div></div>
 {prog_html}
-{overview_html}
 <div class="ctrl">
-<select id="grp" title="排序 / 分组（单选）"><option value="rank">按机械得分排序</option><option value="ann">按披露时间</option><option value="theme">按主线分组</option><option value="ind">按行业分组</option><option value="flat">平铺</option></select>
+<select id="grp" title="排序 / 分组（单选）"><option value="ann" selected>按披露时间</option><option value="rank">按机械得分排序</option><option value="theme">按主线分组</option><option value="ind">按行业分组</option><option value="flat">平铺</option></select>
 <div id="msbar" class="msbar"></div>
 <button id="fclear" class="fbar-x" type="button" hidden>清空筛选</button>
 <span id="fcount" class="fcount"></span>
@@ -957,6 +944,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--kline-days", type=int, default=KLINE_BARS, help="详情页 K 线根数（默认 130）")
     ap.add_argument("--require-ann-cutoff",
                     help="严格要求 evidence 披露截止日为 YYYYMMDD；不一致则拒绝渲染")
+    ap.add_argument("--include-unassigned", action="store_true",
+                    help="包含 theme_id 为空的个股（默认从 HTML 剔除）")
     ap.add_argument("--out")
     args = ap.parse_args(argv)
 
@@ -984,13 +973,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     store = Store()
-    codes = [str(s["ts_code"]) for s in evidence.get("stocks", [])]
+    verdicts = store.load_verdicts(period)
+    codes = [str(s["ts_code"]) for s in evidence.get("stocks", [])
+             if args.include_unassigned or (verdicts.get(str(s["ts_code"])) or {}).get("theme_id")]
     bars_map = store.load_bars_many(codes)
-    view = build_view(period, evidence, store.load_verdicts(period),
-                      store.load_theme_registry(), store.load_theme_latest_state(),
-                      store.load_theme_trends(period), store.load_period_overview(period),
-                      bars_map, today, pos_split=args.pos_split, muted_max=args.muted_max,
-                      kline_bars=args.kline_days)
+    view = build_view(period, evidence, verdicts,
+                       store.load_theme_registry(), store.load_theme_latest_state(),
+                       store.load_theme_trends(period), bars_map, today,
+                       pos_split=args.pos_split, muted_max=args.muted_max,
+                       kline_bars=args.kline_days,
+                       include_unassigned=args.include_unassigned)
     out_path = args.out or os.path.join("reports", f"qreport_{period}.html")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     kline_assets = write_kline_assets(out_path, view["klines"],
@@ -1000,9 +992,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     trends = view["theme_trends"]
     print(json.dumps({
         "period": period, "stocks": len(view["stocks"]), "klines": len(view["klines"]),
+        "excluded_unassigned": view["excluded_unassigned"],
+        "include_unassigned": view["include_unassigned"],
         "themes_with_trend": len(trends),
         "themes_judged": sum(1 for t in trends.values() if t.get("judged")),
-        "overview": bool(view.get("overview")),
         "ann_cutoff": cutoff_info["ann_cutoff"],
         "ann_cutoff_stock_count": cutoff_info["ann_cutoff_stock_count"],
         "evidence_generated_at": cutoff_info["evidence_generated_at"],

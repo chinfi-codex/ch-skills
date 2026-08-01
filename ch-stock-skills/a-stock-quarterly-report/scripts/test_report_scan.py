@@ -103,6 +103,66 @@ def test_refetch_merge_preserves_complete_cached_statement() -> None:
     assert merged["20260331"]["_sources"] == {"income", "cashflow"}
 
 
+def test_statement_fetch_diagnostics_distinguish_lag_from_failure() -> None:
+    class Pro:
+        def income(self, **_: object) -> pd.DataFrame:
+            return pd.DataFrame([{
+                "end_date": "20260630", "report_type": "1", "update_flag": "0",
+                "ann_date": "20260725", "revenue": 100.0,
+            }])
+
+        def fina_indicator(self, **_: object) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def cashflow(self, **_: object) -> pd.DataFrame:
+            raise RuntimeError("temporary network failure")
+
+        def balancesheet(self, **_: object) -> pd.DataFrame:
+            return pd.DataFrame([{
+                "end_date": "20250331", "report_type": "1", "update_flag": "0",
+                "ann_date": "20250425", "total_assets": 200.0,
+            }])
+
+    merged, diagnostics = rs.fetch_statements_for_code(
+        Pro(), "000001.SZ", "20260630", "20260802",
+        {"20260630", "20250331"}, ["income", "fina", "cashflow", "balance"])
+    assert merged["20260630"]["_sources"] == {"income"}
+    assert diagnostics["income"]["status"] == "ok"
+    assert diagnostics["fina"]["status"] == "current_period_not_returned"
+    assert diagnostics["balance"]["status"] == "current_period_not_returned"
+    assert diagnostics["cashflow"]["status"] == "request_failed"
+    assert "network failure" in diagnostics["cashflow"]["error"]
+
+
+def test_html_defaults_to_assigned_themes_only() -> None:
+    evidence = {
+        "meta": {
+            "period": "20260630", "ann_cutoff": "20260802",
+            "ann_cutoff_stock_count": 0, "clock_timezone": "Asia/Shanghai",
+            "released_count": 2, "with_statements": 2,
+        },
+        "stocks": [
+            {"ts_code": "000001.SZ", "name": "A", "growth": {}, "source": {}},
+            {"ts_code": "000002.SZ", "name": "B", "growth": {}, "source": {}},
+        ],
+    }
+    verdicts = {
+        "000001.SZ": {"theme_id": "TH-1", "tier": "强"},
+        "000002.SZ": {"theme_id": None, "tier": "中"},
+    }
+    themes = {"TH-1": {"name": "主线一"}}
+    default_view = renderer.build_view(
+        "20260630", evidence, verdicts, themes, {}, {}, {}, dt.date(2026, 8, 1))
+    assert [s["ts_code"] for s in default_view["stocks"]] == ["000001.SZ"]
+    assert default_view["excluded_unassigned"] == 1
+
+    full_view = renderer.build_view(
+        "20260630", evidence, verdicts, themes, {}, {}, {}, dt.date(2026, 8, 1),
+        include_unassigned=True)
+    assert {s["ts_code"] for s in full_view["stocks"]} == {"000001.SZ", "000002.SZ"}
+    assert full_view["excluded_unassigned"] == 0
+
+
 def test_qfq_is_rebased_over_the_complete_raw_series() -> None:
     rows = [
         {"trade_date": "20260101", "close": 10.0, "open": 10.0,

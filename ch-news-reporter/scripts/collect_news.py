@@ -4,14 +4,13 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import io
 import json
 import os
 import re
 import sys
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -29,6 +28,8 @@ from db_adapter import (
     count_items_by_source as db_count_items_by_source,
     get_connection,
     init_news_schema,
+    item_exists as db_item_exists,
+    make_stable_id,
     placeholder,
     write_items as db_write_items,
 )
@@ -123,12 +124,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-rows",
         type=int,
-        default=1,
+        default=None,
         help=(
             "With --only-missing, the row count at or above which a source counts "
-            "as already present. Default 1 (any row = present). Raise it to force "
-            "backfill of thinly-covered sources such as RSS, where a single feed "
-            "item would otherwise mark the whole source done."
+            "as already present. Default: per-source thresholds from the config's "
+            "collect_min_rows map (falling back to 1). Passing N overrides all "
+            "sources uniformly."
+        ),
+    )
+    parser.add_argument(
+        "--no-watermark",
+        action="store_true",
+        help=(
+            "Disable the Jin10 pagination watermark (stop when a page is mostly "
+            "already in the DB) and always crawl up to the 10-page cap."
         ),
     )
     return parser.parse_args()
@@ -210,22 +219,26 @@ def item_date_key(item: NewsItem, fallback_date_key: str) -> str:
     return fallback_date_key
 
 
-def stable_id(item: NewsItem, date_key: str) -> str:
+# source_type 的 published_at 是当日 00:00 快照（github_trending）或按日诊断行
+# （error），跨天相同，id 种子必须带 date_key 才能让每日各行独立；其余源带真实
+# 时间戳，不带 date_key，同一文章跨天重采只留一行。
+_DATE_KEYED_ID_SOURCE_TYPES = {"github_trending", "error"}
+
+
+def item_stable_id(item: NewsItem, date_key: str) -> str:
+    """DB 行 id：原生 id 优先（Product Hunt / Hacker News），否则走 db_adapter
+    的权威 make_stable_id。"""
     metadata = item.metadata or {}
     if metadata.get("stable_id"):
         return str(metadata["stable_id"])
-    seed = "|".join(
-        [
-            item.source_type,
-            item.source_name,
-            item.url,
-            item.published_at or "",
-            item.title,
-            item.content[:160],
-            date_key,
-        ]
+    return make_stable_id(
+        item.source_type,
+        item.source_name,
+        item.url,
+        item.published_at,
+        item.title,
+        date_key=date_key if item.source_type in _DATE_KEYED_ID_SOURCE_TYPES else None,
     )
-    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
 def get_session() -> requests.Session:
@@ -257,7 +270,7 @@ def write_items(con: Any, items: list[NewsItem], date_key: str) -> int:
             continue
         rows.append(
             {
-                "id": stable_id(item, row_date),
+                "id": item_stable_id(item, row_date),
                 "source_type": item.source_type,
                 "source_name": item.source_name,
                 "published_at": item.published_at,
@@ -304,63 +317,95 @@ def delete_date_rows(con: Any, date_key: str, source_types: list[str]) -> int:
     return cur.rowcount
 
 
+def jin10_record_to_item(record: Any) -> NewsItem | None:
+    """Map one raw Jin10 flash record to a NewsItem (None for non-dict rows)."""
+    if not isinstance(record, dict):
+        return None
+    data = record.get("data") if isinstance(record.get("data"), dict) else {}
+    title = str(
+        record.get("title")
+        or data.get("title")
+        or record.get("content")
+        or data.get("content")
+        or data.get("vip_title")
+        or ""
+    ).strip()
+    content = str(
+        record.get("content")
+        or data.get("content")
+        or title
+        or data.get("vip_desc")
+        or ""
+    ).strip()
+    return NewsItem(
+        source_type="jin10",
+        source_name="金十数据 MCP 电报",
+        published_at=iso_in_shanghai(
+            parse_any_datetime(
+                record.get("time")
+                or record.get("created_at")
+                or data.get("time")
+                or data.get("created_at")
+            )
+        ),
+        title=title,
+        content=content,
+        url=str(
+            record.get("url")
+            or data.get("source_link")
+            or data.get("url")
+            or data.get("pic")
+            or ""
+        ),
+        author=str(record.get("source") or data.get("source") or "") or None,
+        tags=[str(tag) for tag in record.get("tags", []) if tag],
+        metadata={
+            "important": record.get("important"),
+            "type": record.get("type"),
+            "channel": record.get("channel", []),
+            "mcp_source": True,
+        },
+        raw=record,
+    )
+
+
 def collect_jin10(
-    session: requests.Session, timeout: int, limit: int | None
+    session: requests.Session,
+    timeout: int,
+    limit: int | None,
+    db_path: Path | None = None,
+    use_watermark: bool = True,
 ) -> list[NewsItem]:
     del session, timeout
-    records = fetch_jin10_mcp_records(limit=limit)
+
+    records: list[dict[str, Any]]
+    with ExitStack() as stack:
+        con = None
+        if use_watermark and db_path is not None:
+            try:
+                con = stack.enter_context(init_db(db_path))
+            except Exception as exc:
+                # 水位线 DB 不可用只是少了增量短路，降级为全量翻页（10 页上限）。
+                print(
+                    f"⚠️  collect_news: 金十水位线 DB 不可用，降级为全量翻页: {exc}",
+                    file=sys.stderr,
+                )
+        record_known = None
+        if con is not None:
+            def record_known(record: Any) -> bool:  # noqa: F811
+                item = jin10_record_to_item(record)
+                return item is not None and db_item_exists(
+                    con, item_stable_id(item, "")
+                )
+
+        records = fetch_jin10_mcp_records(limit=limit, record_known=record_known)
+
     items: list[NewsItem] = []
     for record in records:
-        if not isinstance(record, dict):
+        item = jin10_record_to_item(record)
+        if item is None:
             continue
-        data = record.get("data") if isinstance(record.get("data"), dict) else {}
-        title = str(
-            record.get("title")
-            or data.get("title")
-            or record.get("content")
-            or data.get("content")
-            or data.get("vip_title")
-            or ""
-        ).strip()
-        content = str(
-            record.get("content")
-            or data.get("content")
-            or title
-            or data.get("vip_desc")
-            or ""
-        ).strip()
-        items.append(
-            NewsItem(
-                source_type="jin10",
-                source_name="金十数据 MCP 电报",
-                published_at=iso_in_shanghai(
-                    parse_any_datetime(
-                        record.get("time")
-                        or record.get("created_at")
-                        or data.get("time")
-                        or data.get("created_at")
-                    )
-                ),
-                title=title,
-                content=content,
-                url=str(
-                    record.get("url")
-                    or data.get("source_link")
-                    or data.get("url")
-                    or data.get("pic")
-                    or ""
-                ),
-                author=str(record.get("source") or data.get("source") or "") or None,
-                tags=[str(tag) for tag in record.get("tags", []) if tag],
-                metadata={
-                    "important": record.get("important"),
-                    "type": record.get("type"),
-                    "channel": record.get("channel", []),
-                    "mcp_source": True,
-                },
-                raw=record,
-            )
-        )
+        items.append(item)
         if limit and len(items) >= limit:
             break
     return items
@@ -403,14 +448,24 @@ def extract_jin10_cursor(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def fetch_jin10_mcp_records(limit: int | None = None) -> list[dict[str, Any]]:
+def fetch_jin10_mcp_records(
+    limit: int | None = None,
+    record_known: Any = None,
+) -> list[dict[str, Any]]:
+    """Fetch Jin10 flash pages, newest first.
+
+    Watermark: page 1 is always fetched in full; from page 2 on, when more
+    than half of a page's records already exist in the DB (record_known), the
+    crawl has caught up with the previous run and pagination stops.  The
+    10-page hard cap stays as the final backstop.
+    """
     client = Jin10McpClient()
     records: list[dict[str, Any]] = []
     cursor: str | None = None
     seen_cursors: set[str] = set()
     max_pages = 10 if limit is None else max(1, min(10, (limit + 19) // 20))
     try:
-        for _ in range(max_pages):
+        for page_index in range(max_pages):
             payload = client.list_flash(cursor=cursor)
             page_items = extract_jin10_items(payload)
             if not page_items:
@@ -418,6 +473,10 @@ def fetch_jin10_mcp_records(limit: int | None = None) -> list[dict[str, Any]]:
             records.extend(page_items)
             if limit and len(records) >= limit:
                 return records[:limit]
+            if page_index >= 1 and record_known is not None:
+                known = sum(1 for record in page_items if record_known(record))
+                if known > len(page_items) / 2:
+                    break
             cursor = extract_jin10_cursor(payload)
             if not cursor or cursor in seen_cursors:
                 break
@@ -810,16 +869,15 @@ def collect_product_hunt(
             "ranking_window": {"posted_after": posted_after, "posted_before": posted_before},
         }
         if not metadata["stable_id"]:
-            metadata["stable_id"] = stable_id(
-                NewsItem(
-                    source_type="product_hunt",
-                    source_name="Product Hunt Ranking",
-                    published_at=snapshot_time.isoformat(timespec="seconds"),
-                    title=name,
-                    content=tagline or description,
-                    url=str(node.get("url") or ""),
-                ),
-                date_key,
+            # 原生 id 缺失的兜底：published_at 是当日 00:00 快照，与 GitHub
+            # Trending 同理必须带 date_key，跨天快照才不会撞成同一行。
+            metadata["stable_id"] = make_stable_id(
+                "product_hunt",
+                "Product Hunt Ranking",
+                str(node.get("url") or ""),
+                snapshot_time.isoformat(timespec="seconds"),
+                name,
+                date_key=date_key,
             )
         items.append(
             NewsItem(
@@ -930,8 +988,29 @@ def load_rss_sources(config_path: Path) -> list[dict[str, Any]]:
     return [source for source in sources if source.get("enabled", True)]
 
 
+def load_collect_min_rows(config_path: Path) -> dict[str, int]:
+    """Read the per-source --only-missing thresholds (collect_min_rows map).
+
+    Keys are source_type values (jin10/rss/github_trending/product_hunt/
+    hacker_news). Missing config or malformed entries fall back to the
+    caller's default of 1.
+    """
+    if not config_path.exists():
+        return {}
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    raw = payload.get("collect_min_rows") or {}
+    thresholds: dict[str, int] = {}
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            try:
+                thresholds[str(key)] = max(1, int(value))
+            except (TypeError, ValueError):
+                continue
+    return thresholds
+
+
 def collect_rss(
-    config_path: Path, timeout: int, limit: int | None
+    config_path: Path, timeout: int, limit: int | None, date_key: str
 ) -> list[NewsItem]:
     session = get_session()
     items: list[NewsItem] = []
@@ -992,6 +1071,31 @@ def collect_rss(
             per_source_count += 1
             if limit and per_source_count >= limit:
                 break
+        # 空 feed 可见化：抓取成功但当日 0 条时写诊断行（error_type=feed_empty，
+        # 区别于抓取异常），否则薄覆盖日被误判为"源正常只是没新闻"。
+        today_count = sum(
+            1
+            for entry_item in items
+            if entry_item.source_type == "rss"
+            and entry_item.source_name == str(source.get("name") or source.get("url"))
+            and item_date_key(entry_item, date_key) == date_key
+        )
+        if today_count == 0:
+            items.append(
+                NewsItem(
+                    source_type="error",
+                    source_name=f"rss:{source.get('name') or feed_url}",
+                    published_at=None,
+                    title="RSS feed empty for date",
+                    content=f"feed fetched OK but 0 entries for {date_key}",
+                    url=str(feed_url),
+                    metadata={
+                        "error": True,
+                        "error_type": "feed_empty",
+                        "category": source.get("category"),
+                    },
+                )
+            )
     return items
 
 
@@ -1008,9 +1112,15 @@ def collect_sources(
     errors: dict[str, str] = {}
 
     collectors = {
-        "jin10": lambda: collect_jin10(session, args.timeout, args.limit),
+        "jin10": lambda: collect_jin10(
+            session,
+            args.timeout,
+            args.limit,
+            db_path=Path(args.db),
+            use_watermark=not args.no_watermark,
+        ),
         "github": lambda: collect_github_trending(session, args.timeout, args.limit),
-        "rss": lambda: collect_rss(Path(args.config), args.timeout, args.limit),
+        "rss": lambda: collect_rss(Path(args.config), args.timeout, args.limit, date_key),
         "product_hunt": lambda: collect_product_hunt(
             session, args.timeout, args.limit, date_key
         ),
@@ -1067,12 +1177,19 @@ def main() -> int:
         with init_db(Path(args.db)) as con:
             counts = db_count_items_by_source(con, date_key)
         requested = requested_collectors(args.source)
-        threshold = max(1, args.min_rows)
-        present = {
-            name
-            for name in requested
-            if counts.get(COLLECTOR_SOURCE_TYPE[name], 0) >= threshold
-        }
+        # 每源阈值：--min-rows 显式传入时全源统一覆盖；否则读 config 的
+        # collect_min_rows；配置缺失回退默认 1（任意行即视为已采）。
+        config_thresholds = load_collect_min_rows(Path(args.config))
+        present = set()
+        for name in requested:
+            source_type = COLLECTOR_SOURCE_TYPE[name]
+            threshold = (
+                args.min_rows
+                if args.min_rows is not None
+                else config_thresholds.get(source_type, 1)
+            )
+            if counts.get(source_type, 0) >= max(1, threshold):
+                present.add(name)
         restrict_to = requested - present
         skipped = sorted(present)
 

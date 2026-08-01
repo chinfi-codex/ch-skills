@@ -1,0 +1,156 @@
+{
+  "data": {
+    "posts": {
+      "edges": [
+        {
+          "node": {
+            "id": "1211493",
+            "name": "NudgeForMe",
+            "tagline": "AI follow-up agent for missed email opportunities",
+            "description": "NudgeForMe scans your sent conversations, finds threads where someone never replied, and drafts natural follow-ups inside your own mailbox. It starts in draft mode, so you stay in control. You can review each opportunity, select the useful ones, and send from Gmail, Outlook, or IMAP/SMTP. Built by the Snoooz team after processing millions of emails, NudgeForMe is focused on one painful workflow: making sure leads, deals, partnerships, and customer conversations do not quietly go cold.",
+            "url": "https://www.producthunt.com/products/nudgeforme?utm_campaign=producthunt-api&utm_medium=api-v2&utm_source=Application%3A+ch-newsletter+%28ID%3A+284667%29",
+            "website": "https://www.producthunt.com/r/G2YNDDYM6FTUFG?utm_campaign=producthunt-api&utm_medium=api-v2&utm_source=Application%3A+ch-newsletter+%28ID%3A+284667%29",
+            "votesCount": 268,
+            "commentsCount": 44,
+            "dailyRank": 1,
+            "weeklyRank": 22,
+            "featuredAt": "2026-08-01T07:01:00Z",
+            "createdAt": "2026-08-01T07:01:00Z",
+            "thumbnail": {
+              "url": "https://ph-files.imgix.net/136f1435-260c-4135-9c5f-54ac923d5f78.jpeg?auto=format"
+            },
+            "topics": {
+              "edges": [
+                {
+                  "node": {
+                    "name": "Email",
+                    "slug": "email"
+                  }
+                },
+                {
+                  "node": {
+                    "name": "Productivity",
+                    "slug": "productivity"
+                  }
+                },
+                {
+                  "node": {
+                    "name": "Artificial Intelligence",
+                    "slug": "artificial-intelligence"
+                  }
+                }
+              ]
+            },
+            "makers": [
+              {
+                "name": "Rohan Chaubey",
+                "username": "rohanrecommends"
+              },
+              {
+                "name": "Chitresh Singh",
+                "username": "chitreshsingh"
+              },
+              {
+                "name": "Ali Nagi",
+                "username": "alinagi"
+              },
+              {
+                "name": "Victoria Dash",
+                "username": "victoria_dash"
+              }
+            ]
+          }
+        },
+        {
+          "node": {
+            "id": "1211631",
+            "name": "DeepSeek-V4-Flash-0731",
+            "tagline": "Frontier agent intelligence at Flash prices",
+            "description": "DeepSeek-V4-Flash-0731 is the official release of V4-Flash, featuring a massive leap in agentic capabilities. It outperforms V4-Pro (Preview) on key benchmarks, natively supports the Responses API, and is fully adapted for Codex CLI.",
+            "url": "https://www.producthunt.com/products/deepseek?utm_campaign=producthunt-api&utm_medium=api-v2&utm_source=Application%3A+ch-newsletter+%28ID%3A+284667%29",
+            "website": "https://www.producthunt.com/r/DHPDMPFRNHBRJQ?utm_campaign=producthunt-api&utm_medium=api-v2&utm_source=Application%3A+ch-newsletter+%28ID%3A+284667%29",
+            "votesCount": 245,
+            "commentsCount": 9,
+            "dailyRank": 2,
+            "weeklyRank": 23,
+            "featuredAt": "2026-08-01T07:01:00Z",
+            "createdAt": "2026-08-01T07:01:00Z",
+            "thumbnail": {
+              "url": "https://ph-files.imgix.net/9d823c04-85e6-4010-a80e-52c793e0e20b.png?auto=format"
+            },
+            "topics": {
+              "edges": [
+                {
+                  "node": {
+                    "name": "API",
+                    "slug": "api-1"
+                  }
+                },
+                {
+                  "node": {
+                    "name": "Open Source",
+                    "slug": "open-source"
+                  }
+                },
+                {
+                  "node": {
+                    "name": "Artificial Intelligence",
+                    "slug": "artificial-intelligence"
+                  }
+                }
+              ]
+            },
+            "makers": []
+          }
+        },
+        {
+          "node": {
+            "id": "1210161",
+            "name": "Port22",
+            "tagline": "Claude Code, Codex & more on your phone ",
+            "description": "I'd start a long agent run, walk away, and come back to find it had spent 20 minutes waiting on me to approve one file edit. Port22 puts every coding agent running on your Mac onto your phone. See which are working and which are stuck. When one needs permission your phone buzzes and you tap the actual option it offered, not a guessed keystroke. It attaches to what you already run. No wrapper, no config, no new terminal. Free for one Mac and two sessions, every feature on.",
+            "url": "https://www.producthunt.com/products/port22?utm_campaign=producthunt-api&utm_medium=api-v2&utm_source=Application%3A+ch-newsletter+%28ID%3A+284667%29",
+            "website": "https://www.producthunt.com/r/Z426QGPUISUCBK?utm_campaign=producthunt-api&utm_medium=api-v2&utm_source=Application%3A+ch-newsletter+%28ID%3A+284667%29",
+            "votesCount": 213,
+            "commentsCount": 29,
+            "dailyRank": 3,
+            "weeklyRank": 27,
+            "featuredAt": "2026-08-01T07:01:00Z",
+            "createdAt": "2026-08-01T07:01:00Z",
+            "thumbnail": {
+              "url": "https://ph-files.imgix.net/db044d18-ce80-43d6-89c7-ac039f7e196d.png?auto=format"
+            },
+            "topics": {
+              "edges": [
+                {
+                  "node": {
+                    "name": "iOS",
+                    "slug": "ios"
+                  }
+                },
+                {
+                  "node": {
+                    "name": "Developer Tools",
+                    "slug": "developer-tools"
+                  }
+                },
+                {
+                  "node": {
+                    "name": "Artificial Intelligence",
+                    "slug": "artificial-intelligence"
+                  }
+                }
+              ]
+            },
+            "makers": [
+              {
+                "name": "harsha chaganti",
+                "username": "harsha_chaganti"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

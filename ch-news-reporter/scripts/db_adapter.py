@@ -14,6 +14,7 @@ Jieba Chinese word-segmentation is used for PostgreSQL tsvector generation.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -45,6 +46,39 @@ except ImportError:  # pragma: no cover
     RealDictCursor = None
 
 DEFAULT_DB_PATH = _SCRIPT_DIR.parent / "data" / "news_research.sqlite"
+
+
+# ---------------------------------------------------------------------------
+# Stable item identity (single authoritative implementation)
+# ---------------------------------------------------------------------------
+def make_stable_id(
+    source_type: str,
+    source_name: str,
+    url: Optional[str],
+    published_at: Optional[str],
+    title: str,
+    *,
+    date_key: Optional[str] = None,
+) -> str:
+    """Return the deterministic item id (sha256 hex).
+
+    Seed = source_type|source_name|url|published_at|title.  *date_key* joins
+    the seed only when explicitly passed — reserved for sources whose
+    published_at is a daily snapshot (GitHub Trending) or per-day diagnostic
+    rows (source_type='error'), so their rows stay distinct across days.
+    Sources with real timestamps omit it: the same article re-collected on a
+    later day then maps to one row instead of accumulating duplicates.
+    """
+    parts = [
+        source_type or "",
+        source_name or "",
+        url or "",
+        published_at or "",
+        title or "",
+    ]
+    if date_key is not None:
+        parts.append(date_key)
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +155,7 @@ def _init_sqlite_schema(conn: Any) -> None:
         )
         """
     )
+    _ensure_sqlite_fts_triggers(conn)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS enrichments (
@@ -170,6 +205,54 @@ def _init_sqlite_schema(conn: Any) -> None:
     )
 
 
+# Standard FTS5 external-content triggers keeping items_fts in sync with
+# items.  Replaces the old "rebuild after every write_items" behaviour.
+_SQLITE_FTS_TRIGGERS: dict[str, str] = {
+    "items_fts_ai": """
+        CREATE TRIGGER items_fts_ai AFTER INSERT ON items BEGIN
+            INSERT INTO items_fts(rowid, title, content, tags_json)
+            VALUES (new.rowid, new.title, new.content, new.tags_json);
+        END
+    """,
+    "items_fts_ad": """
+        CREATE TRIGGER items_fts_ad AFTER DELETE ON items BEGIN
+            INSERT INTO items_fts(items_fts, rowid, title, content, tags_json)
+            VALUES ('delete', old.rowid, old.title, old.content, old.tags_json);
+        END
+    """,
+    "items_fts_au": """
+        CREATE TRIGGER items_fts_au AFTER UPDATE ON items BEGIN
+            INSERT INTO items_fts(items_fts, rowid, title, content, tags_json)
+            VALUES ('delete', old.rowid, old.title, old.content, old.tags_json);
+            INSERT INTO items_fts(rowid, title, content, tags_json)
+            VALUES (new.rowid, new.title, new.content, new.tags_json);
+        END
+    """,
+}
+
+
+def _ensure_sqlite_fts_triggers(conn: Any) -> None:
+    """Create the FTS sync triggers when missing; one-time rebuild afterwards.
+
+    Existing databases opened after the upgrade get their triggers here and a
+    single full rebuild to realign historical rows (writes that happened
+    before triggers existed are otherwise invisible to MATCH).  The rebuild is
+    idempotent, so partial trigger sets also converge.
+    """
+    existing = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+        )
+    }
+    missing = [name for name in _SQLITE_FTS_TRIGGERS if name not in existing]
+    if not missing:
+        return
+    for name in missing:
+        conn.execute(_SQLITE_FTS_TRIGGERS[name])
+    conn.execute("INSERT INTO items_fts(items_fts) VALUES ('rebuild')")
+
+
 def _init_postgresql_schema(conn: Any) -> None:
     # PostgreSQL schema is managed by init_alpha_data.sql;
     # this function only verifies tables exist.
@@ -177,7 +260,6 @@ def _init_postgresql_schema(conn: Any) -> None:
         raise RuntimeError(
             "PostgreSQL tables not found. Run init_alpha_data.sql first."
         )
-
 
 # ---------------------------------------------------------------------------
 # Jieba → tsvector helper (PostgreSQL only)
@@ -224,8 +306,15 @@ def write_items(
     ph = placeholder()
 
     for item in items:
-        # Compute row_id same as original collect_news.py logic
-        row_id = item.get("id") or _stable_id(item, date_key)
+        # Rows normally carry an id from the collector (make_stable_id or a
+        # native source id); fall back to the same authoritative algorithm.
+        row_id = item.get("id") or make_stable_id(
+            item.get("source_type"),
+            item.get("source_name"),
+            item.get("url"),
+            item.get("published_at"),
+            item.get("title"),
+        )
 
         if BACKEND == Backend.SQLITE:
             conn.execute(
@@ -314,10 +403,8 @@ def write_items(
 
         inserted += 1
 
-    # SQLite: rebuild FTS index after batch insert
-    if BACKEND == Backend.SQLITE:
-        conn.execute("INSERT INTO items_fts(items_fts) VALUES ('rebuild')")
-
+    # SQLite: items_fts stays in sync via the AFTER INSERT/UPDATE/DELETE
+    # triggers created by _init_sqlite_schema — no per-batch rebuild here.
     return inserted
 
 
@@ -444,6 +531,22 @@ def get_enrichments_by_items(
 # ---------------------------------------------------------------------------
 # Coverage (DB-first read policy)
 # ---------------------------------------------------------------------------
+def item_exists(conn: Any, item_id: str) -> bool:
+    """Return True when an items row with *item_id* already exists.
+
+    Used by the Jin10 pagination watermark to detect that a page has caught
+    up with the previous collection run.
+    """
+    ph = placeholder()
+    sql = f"SELECT 1 FROM items WHERE id = {ph} LIMIT 1"
+    if BACKEND == Backend.SQLITE:
+        cur = conn.execute(sql, (item_id,))
+    else:
+        cur = conn.cursor()
+        cur.execute(adapt_sql(sql), (item_id,))
+    return cur.fetchone() is not None
+
+
 def count_items_by_source(conn: Any, date_key: str) -> dict[str, int]:
     """Return {source_type: row_count} for a given date_key.
 
@@ -681,14 +784,3 @@ def get_latest_framework_state(
         cur.execute(adapt_sql(sql), params)
     row = cur.fetchone()
     return _normalize_framework_state_row(row) if row else None
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def _stable_id(item: dict[str, Any], date_key: str) -> str:
-    """Generate deterministic ID from item content (mirrors original logic)."""
-    import hashlib
-
-    src = f"{item.get('source_type','')}|{item.get('source_name','')}|{item.get('title','')}|{date_key}"
-    return hashlib.md5(src.encode("utf-8")).hexdigest()

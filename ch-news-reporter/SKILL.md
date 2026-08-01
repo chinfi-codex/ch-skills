@@ -67,13 +67,14 @@ DB-first 的取数/回写脚本(`collect_news.py` / `prepare_report_data.py` / `
 python scripts/collect_news.py --date today --only-missing
 ```
 
-`--only-missing` 会先查库里目标日期各源的行数,只对行数低于阈值(`--min-rows`,默认 1,即零行)的源发起采集,已有的源连网络请求都不发。今天首跑时库空→全采;重跑或补历史日→读库不重采,保证同一报告日的证据可复现(这也是 watchboard 跨天结算能成立的前提)。需要强制重抓时用 `--replace-date`(优先级高于 `--only-missing`)。
+`--only-missing` 会先查库里目标日期各源的行数,只对行数低于阈值的源发起采集,已有的源连网络请求都不发。阈值按源取 `config/sources.yaml` 的 `collect_min_rows`(金十 300 / rss 30 / github_trending 20 / product_hunt 10 / hacker_news 20,约为各源典型日产量),`--min-rows N` 可全源统一覆盖;配置缺失时回退默认 1。今天首跑时库空→全采;重跑或补历史日→读库不重采,保证同一报告日的证据可复现(这也是 watchboard 跨天结算能成立的前提)。需要强制重抓时用 `--replace-date`(优先级高于 `--only-missing`)。
 
 常用参数：
 
 - `--date today` 或 `--date YYYY-MM-DD`：采集目标日期。
 - `--only-missing`：DB-first,只补库里当天缺失的源;已有的源跳过,不发请求。
-- `--min-rows N`:配合 `--only-missing`,行数达到 N 才算"已有"。默认 1(任意一条即视为已采)。RSS 这类多 feed 源容易"一条就算齐",想强制补全时把阈值调高。
+- `--min-rows N`:配合 `--only-missing`,全源统一覆盖 `collect_min_rows` 的每源阈值;不传则按配置逐源判定。
+- `--no-watermark`：禁用金十翻页水位线(默认从第 2 页起,某页过半条目已入库即停止翻页),强制翻满 10 页上限。
 - `--source all|jin10|github|rss|product_hunt|hacker_news|polymarket`：限制采集来源，默认 `all`。
 - `--config config/sources.yaml`：RSS 配置文件。
 - `--db data/news_research.sqlite`：仅 SQLite fallback 使用的本地文件路径；PostgreSQL 模式下忽略。
@@ -83,7 +84,7 @@ python scripts/collect_news.py --date today --only-missing
 来源说明：
 
 - 金十电报通过金十 MCP `list_flash` 接入，需要环境变量 `JIN10_AUTH_TOKEN`；脚本会尝试按 cursor 翻页，实际返回量取决于 MCP 服务。
-- RSS 只写入目标日期内有明确发布时间的条目；没有发布时间的 RSS 条目默认跳过。
+- RSS 只写入目标日期内有明确发布时间的条目；没有发布时间的 RSS 条目默认跳过。feed 抓取成功但当日 0 条时会写一条 `error_type=feed_empty` 的诊断行，与抓取异常区分，coverage 里可见。
 - GitHub Trending 会采集 daily 榜单，并补充 GitHub API 中的 repo 元数据。
 - Product Hunt 使用 `PRODUCTHUNT_TOKEN` 调用官方 GraphQL API，只采集热门/高排名产品发布，保留 votes、comments、dailyRank、topics、makers 等结构化字段。
 - Hacker News 只采集官方 Firebase API 的 `topstories` 和 `beststories`，不采集 `newstories`。另对分数最高的若干 story 采集热门一级评论，写入该 story 的 `metadata.comments`（`author`/`text`/`kids_count`，HTML 已去标签）；深度由常量 `HN_COMMENT_STORY_LIMIT`（默认 10）和 `HN_COMMENT_LIMIT`（默认 5）封顶，也可用 `--hn-comment-stories` / `--hn-comments-per-story` 覆盖，评论抓取失败时静默降级（该 story 无 `comments` 键）。
@@ -287,7 +288,7 @@ python scripts/prepare_report_data.py --topic <slug> --date today --format markd
 采集脚本默认写入 PostgreSQL；显式设置 `ALPHA_DB_BACKEND=sqlite` 时写入本地 SQLite fallback：
 
 - `items`：统一新闻表。
-- `items_fts`：FTS5 全文索引。
+- `items_fts`：FTS5 全文索引（SQLite 下由 items 表上的 AFTER INSERT/UPDATE/DELETE 触发器自动同步，老库首次打开时补建触发器并一次性 rebuild）。
 - `enrichments`：可选二次加工表，由 `enrich_targets.py` 写入，不改变原始 `items`。
 - `report_state`：活动状态层(watchboard),按 `(profile, date_key)` 存每日分析状态;由 `save_report_state.py` 写入、`prepare_report_data.py` 读回,与原始 `items` 解耦。属运行时数据,不进发布包。
 

@@ -34,6 +34,8 @@ python scripts/collect_news.py --date today --db data/news_research.sqlite
 
 SQLite fallback 下的 `--db` 参数仅指定本地 SQLite 文件；PostgreSQL 模式下连接信息完全由 `ALPHA_PG_URL` 决定。
 
+可选：`GITHUB_TOKEN` 用于 GitHub Trending 的 repo 元数据抓取。未认证时 `api.github.com` 限额只有 60 次/小时/IP（脚本按 0.8 次/秒限速、429 自动退避），设置后脚本带 `Authorization: Bearer` 调用并放宽限速，元数据缺失率显著降低。
+
 DB-first 的取数/回写脚本(`collect_news.py` / `prepare_report_data.py` / `save_report_state.py`)在 PostgreSQL 不可达时不会抛裸栈,而是先做一次连接预检,失败就打印可执行的恢复提示并以非零码退出:要么把库拉起来 / 修 `ALPHA_PG_URL` 后重跑,要么按上面的方式切到 `ALPHA_DB_BACKEND=sqlite` 离线跑。**不会**静默回退到可能为空的本地库,以免发出"看起来正常其实没数据"的报告。
 
 ## 适用场景与边界

@@ -10,7 +10,7 @@ import json
 import os
 import re
 import sys
-import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -20,6 +20,7 @@ from typing import Any, Iterator
 from zoneinfo import ZoneInfo
 
 import feedparser
+import http_utils
 import requests
 import yaml
 from bs4 import BeautifulSoup
@@ -55,6 +56,21 @@ DEFAULT_CONFIG = Path("config/sources.yaml")
 GITHUB_TRENDING_URL = "https://github.com/trending"
 PRODUCT_HUNT_GRAPHQL_URL = "https://api.producthunt.com/v2/api/graphql"
 HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
+# Worker counts for the two concurrent collectors.
+GITHUB_META_WORKERS = 4
+HN_ITEM_WORKERS = 7
+
+
+def configure_github_limiters() -> None:
+    """Pace GitHub per host family: unauthenticated api.github.com is capped at
+    60 req/hour/IP, so stay well under 1 req/s; a GITHUB_TOKEN raises the quota
+    and lets us go faster. github.com HTML pages tolerate more."""
+    http_utils.configure_limiter(
+        "api.github.com",
+        rate_per_sec=2.0 if os.getenv("GITHUB_TOKEN") else 0.8,
+        burst=1,
+    )
+    http_utils.configure_limiter("github.com", rate_per_sec=2.0, burst=2)
 
 
 @dataclass
@@ -435,16 +451,23 @@ def parse_int(text: str) -> int | None:
 def fetch_github_repo_metadata(
     session: requests.Session, repo_name: str, timeout: int
 ) -> dict[str, Any]:
+    del session  # pacing/transport live in http_utils now
     api_url = f"https://api.github.com/repos/{repo_name}"
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    response = session.get(api_url, headers=headers, timeout=timeout)
-    if response.status_code == 403:
-        return {"api_error": "GitHub API rate limited or forbidden"}
-    response.raise_for_status()
-    payload = response.json()
+    token = os.getenv("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    # Never raise: a rate-limited/forbidden repo must not lose the whole item,
+    # and the api_error category makes the half-failure visible downstream.
+    result = http_utils.fetch_safe(
+        api_url, headers=headers, timeout=timeout, family="api.github.com"
+    )
+    if not result.ok:
+        return {"api_error": result.error or "unknown"}
+    payload = result.json()
     if not isinstance(payload, dict):
         return {}
     owner = payload.get("owner") if isinstance(payload.get("owner"), dict) else {}
@@ -499,9 +522,9 @@ def heading_text(row: Any) -> str:
 def fetch_github_repo_html_metadata(
     session: requests.Session, repo_url: str, repo_name: str, timeout: int
 ) -> dict[str, Any]:
-    response = session.get(repo_url, timeout=timeout)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
+    del session
+    html = http_utils.fetch_text(repo_url, timeout=timeout, family="github.com")
+    soup = BeautifulSoup(html, "html.parser")
     metadata: dict[str, Any] = {}
 
     description_meta = soup.find("meta", attrs={"property": "og:description"})
@@ -571,34 +594,24 @@ def fetch_github_repo_html_metadata(
 def collect_github_trending(
     session: requests.Session, timeout: int, limit: int | None
 ) -> list[NewsItem]:
-    response = session.get(
-        GITHUB_TRENDING_URL, params={"since": "daily"}, timeout=timeout
+    configure_github_limiters()
+    html = http_utils.fetch_text(
+        f"{GITHUB_TRENDING_URL}?since=daily", timeout=timeout, family="github.com"
     )
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
-    items: list[NewsItem] = []
+    soup = BeautifulSoup(html, "html.parser")
     trending_date = now_shanghai().replace(
         hour=0, minute=0, second=0, microsecond=0
     ).isoformat(timespec="seconds")
+
+    # Parse the trending page up front; the network-heavy per-repo metadata
+    # fetches then run concurrently while item assembly stays in page order.
+    entries: list[dict[str, Any]] = []
     for article in soup.select("article.Box-row"):
         repo_link = article.select_one("h2 a")
         if not repo_link:
             continue
         repo_name = " ".join(repo_link.get_text(" ", strip=True).split())
         repo_name = repo_name.replace(" / ", "/")
-        repo_url = "https://github.com" + repo_link.get("href", "").strip()
-        repo_meta: dict[str, Any] = {}
-        html_meta: dict[str, Any] = {}
-        try:
-            repo_meta = fetch_github_repo_metadata(session, repo_name, timeout)
-        except Exception as exc:
-            repo_meta = {"api_error": str(exc)}
-        try:
-            html_meta = fetch_github_repo_html_metadata(
-                session, repo_url, repo_name, timeout
-            )
-        except Exception as exc:
-            html_meta = {"html_error": str(exc)}
         description_node = article.select_one("p")
         description = (
             description_node.get_text(" ", strip=True) if description_node else ""
@@ -613,9 +626,62 @@ def collect_github_trending(
             else None
         )
         today_stars_node = article.select_one("span.d-inline-block.float-sm-right")
-        today_stars = (
-            today_stars_node.get_text(" ", strip=True) if today_stars_node else ""
+        entries.append(
+            {
+                "repo_name": repo_name,
+                "repo_url": "https://github.com" + repo_link.get("href", "").strip(),
+                "description": description,
+                "language": language,
+                "stars": stars,
+                "forks": forks,
+                "stars_today": (
+                    today_stars_node.get_text(" ", strip=True)
+                    if today_stars_node
+                    else ""
+                ),
+            }
         )
+        if limit and len(entries) >= limit:
+            break
+
+    def fetch_entry_meta(entry: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        try:
+            repo_meta = fetch_github_repo_metadata(session, entry["repo_name"], timeout)
+        except Exception as exc:
+            repo_meta = {"api_error": str(exc)}
+        try:
+            html_meta = fetch_github_repo_html_metadata(
+                session, entry["repo_url"], entry["repo_name"], timeout
+            )
+        except Exception as exc:
+            html_meta = {"html_error": str(exc)}
+        return repo_meta, html_meta
+
+    with ThreadPoolExecutor(max_workers=GITHUB_META_WORKERS) as pool:
+        all_meta = list(pool.map(fetch_entry_meta, entries))
+
+    failures = sum(
+        1
+        for repo_meta, html_meta in all_meta
+        if repo_meta.get("api_error") or html_meta.get("html_error")
+    )
+    if entries and failures * 2 > len(entries):
+        print(
+            f"⚠️  collect_news: GitHub repo 元数据抓取失败 {failures}/{len(entries)} "
+            "（可能是 api.github.com 限流或网络问题），github_api/github_html 字段将大面积缺失；"
+            "可设置 GITHUB_TOKEN 后重试。",
+            file=sys.stderr,
+        )
+
+    items: list[NewsItem] = []
+    for entry, (repo_meta, html_meta) in zip(entries, all_meta):
+        repo_name = entry["repo_name"]
+        repo_url = entry["repo_url"]
+        description = entry["description"]
+        language = entry["language"]
+        stars = entry["stars"]
+        forks = entry["forks"]
+        today_stars = entry["stars_today"]
         items.append(
             NewsItem(
                 source_type="github_trending",
@@ -667,8 +733,6 @@ def collect_github_trending(
                 },
             )
         )
-        if limit and len(items) >= limit:
-            break
     return items
 
 
@@ -715,6 +779,7 @@ def collect_product_hunt(
     limit: int | None,
     date_key: str,
 ) -> list[NewsItem]:
+    del session  # transport lives in http_utils now
     token = os.getenv("PRODUCTHUNT_TOKEN")
     if not token:
         raise RuntimeError("Missing PRODUCTHUNT_TOKEN environment variable")
@@ -751,24 +816,26 @@ def collect_product_hunt(
       }
     }
     """
-    response = session.post(
+    result = http_utils.fetch_response(
         PRODUCT_HUNT_GRAPHQL_URL,
+        method="POST",
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         },
-        json={
-            "query": query,
-            "variables": {
-                "first": first,
-                "after": posted_after,
-                "before": posted_before,
-            },
-        },
+        body=json.dumps(
+            {
+                "query": query,
+                "variables": {
+                    "first": first,
+                    "after": posted_after,
+                    "before": posted_before,
+                },
+            }
+        ).encode("utf-8"),
         timeout=timeout,
     )
-    response.raise_for_status()
-    payload = response.json()
+    payload = result.json()
     if payload.get("errors"):
         raise RuntimeError(f"Product Hunt GraphQL error: {payload['errors']}")
 
@@ -842,19 +909,10 @@ def collect_product_hunt(
 
 
 def fetch_hn_json(session: requests.Session, url: str, timeout: int) -> Any:
-    last_error: Exception | None = None
-    for attempt in range(3):
-        try:
-            response = session.get(url, timeout=timeout)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as exc:
-            last_error = exc
-            if attempt < 2:
-                time.sleep(0.5 * (attempt + 1))
-    if last_error:
-        raise last_error
-    raise RuntimeError(f"Failed to fetch HN URL: {url}")
+    del session
+    return http_utils.fetch_json(
+        url, timeout=timeout, family="hacker-news.firebaseio.com"
+    )
 
 
 def collect_hacker_news(
@@ -862,24 +920,45 @@ def collect_hacker_news(
     timeout: int,
     limit: int | None,
 ) -> list[NewsItem]:
+    http_utils.configure_limiter(
+        "hacker-news.firebaseio.com", rate_per_sec=8.0, burst=8
+    )
     per_rank_limit = limit or 50
-    ranked: dict[int, dict[str, Any]] = {}
+    # Collect (story_id, rank_source, rank) first so the ~100 item fetches can
+    # run concurrently; merging below preserves the original rank ordering.
+    fetch_plan: list[tuple[int, str, int]] = []
     for rank_source in ("topstories", "beststories"):
         story_ids = fetch_hn_json(session, f"{HN_API_BASE}/{rank_source}.json", timeout)
         if not isinstance(story_ids, list):
             continue
         for rank, story_id in enumerate(story_ids[:per_rank_limit], start=1):
-            if not isinstance(story_id, int):
-                continue
-            item = fetch_hn_json(session, f"{HN_API_BASE}/item/{story_id}.json", timeout)
-            if not isinstance(item, dict) or item.get("type") != "story":
-                continue
-            existing = ranked.setdefault(story_id, item)
-            sources = existing.setdefault("_rank_sources", [])
-            if rank_source not in sources:
-                sources.append(rank_source)
-            ranks = existing.setdefault("_ranks", {})
-            ranks[rank_source] = rank
+            if isinstance(story_id, int):
+                fetch_plan.append((story_id, rank_source, rank))
+
+    unique_ids = list(dict.fromkeys(story_id for story_id, _, _ in fetch_plan))
+
+    def load_item(story_id: int) -> tuple[int, Any]:
+        try:
+            return story_id, fetch_hn_json(
+                session, f"{HN_API_BASE}/item/{story_id}.json", timeout
+            )
+        except Exception:
+            return story_id, None  # one flaky item must not sink the whole source
+
+    with ThreadPoolExecutor(max_workers=HN_ITEM_WORKERS) as pool:
+        fetched = dict(pool.map(load_item, unique_ids))
+
+    ranked: dict[int, dict[str, Any]] = {}
+    for story_id, rank_source, rank in fetch_plan:
+        item = fetched.get(story_id)
+        if not isinstance(item, dict) or item.get("type") != "story":
+            continue
+        existing = ranked.setdefault(story_id, item)
+        sources = existing.setdefault("_rank_sources", [])
+        if rank_source not in sources:
+            sources.append(rank_source)
+        ranks = existing.setdefault("_ranks", {})
+        ranks[rank_source] = rank
 
     items: list[NewsItem] = []
     for story_id, story in ranked.items():
@@ -933,14 +1012,11 @@ def load_rss_sources(config_path: Path) -> list[dict[str, Any]]:
 def collect_rss(
     config_path: Path, timeout: int, limit: int | None
 ) -> list[NewsItem]:
-    session = get_session()
     items: list[NewsItem] = []
     for source in load_rss_sources(config_path):
         feed_url = source.get("url", "")
         try:
-            response = session.get(feed_url, timeout=timeout)
-            response.raise_for_status()
-            feed = feedparser.parse(response.content)
+            feed = feedparser.parse(http_utils.fetch_text(feed_url, timeout=timeout))
         except Exception as exc:
             items.append(
                 NewsItem(

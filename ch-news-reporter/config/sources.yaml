@@ -20,6 +20,16 @@
 #   The Rundown AI、Superhuman AI —— beehiiv RSS token 仅客户端注入,SSR HTML 取不到
 #   The Batch(Andrew Ng) —— rss.xml 上游持续返回 HTTP 500
 
+# --only-missing 的每源最小行数阈值(collect_news.py 读取;--min-rows N 可全源覆盖)。
+# 低于阈值视为"覆盖不足"并重采,避免旧默认"一条即齐"的假覆盖。典型日产量注释在旁。
+collect_min_rows:
+  jin10: 300            # 金十电报典型日产量 300-600 条
+  rss: 30               # 34 个 feed,典型日合计 30-80 条
+  github_trending: 20   # 日榜约 25 个仓库
+  product_hunt: 10      # featured 日榜约 10-20 个
+  hacker_news: 20       # top/best 合并去重后约 30-60 条
+  polymarket: 10        # 快照型,关键词过滤后约 10-50 条
+
 rss:
   - name: OpenAI Blog
     url: https://openai.com/news/rss.xml

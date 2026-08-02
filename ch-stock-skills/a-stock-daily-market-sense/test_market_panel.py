@@ -80,6 +80,46 @@ def test_missing_edge_ranges():
     ]
 
 
+def test_fetch_sw_daily_uses_dedicated_api_and_normalizes_schema():
+    class FakePro:
+        def __init__(self):
+            self.calls = []
+
+        def index_daily(self, **_kwargs):
+            raise AssertionError("SW codes must not use index_daily")
+
+        def sw_daily(self, **kwargs):
+            self.calls.append(kwargs)
+            return pd.DataFrame([
+                {
+                    "ts_code": "801010.SI",
+                    "trade_date": "20260801",
+                    "open": 101.0,
+                    "high": 103.0,
+                    "low": 99.0,
+                    "close": 102.0,
+                    "change": 2.0,
+                    "pct_change": 2.0,
+                    "vol": 10.0,
+                    "amount": 20.0,
+                }
+            ])
+
+    pro = FakePro()
+    out = mp.fetch_sw_daily(
+        pro,
+        "801010.SI",
+        "20260801",
+        "20260801",
+        cache_enabled=False,
+    )
+    assert len(pro.calls) == 1
+    assert pro.calls[0]["fields"] == mp.SW_DAILY_FIELDS
+    assert list(out.columns) == mp.split_fields(mp.DEFAULT_INDEX_FIELDS)
+    assert out.iloc[0]["pct_chg"] == 2.0
+    assert out.iloc[0]["pre_close"] == 100.0
+
+
 def test_market_history_backfill_dates():
     trade_dates = ["20260603", "20260604", "20260605", "20260608", "20260609"]
     existing = {"20260603", "20260604"}

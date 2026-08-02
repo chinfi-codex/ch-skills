@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS stock_daily_basic (
 
 
 -- -------------------------------------------------------------------------
--- 5. Index daily (Tushare pro.index_daily)
+-- 5. Index daily (Tushare pro.index_daily + pro.sw_daily normalized schema)
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS stock_index_daily (
     ts_code     TEXT NOT NULL,

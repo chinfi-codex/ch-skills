@@ -367,11 +367,24 @@ def selected_source_types(source: str) -> list[str]:
     return mapping[source]
 
 
-def delete_date_rows(con: Any, date_key: str, source_types: list[str]) -> int:
+def delete_date_rows(
+    con: Any,
+    date_key: str,
+    source_types: list[str],
+    *,
+    include_rss_errors: bool = False,
+) -> int:
     ph = placeholder()
     placeholders = ",".join(ph for _ in source_types)
-    sql = f"DELETE FROM items WHERE date_key = {ph} AND source_type IN ({placeholders})"
+    selectors = [f"source_type IN ({placeholders})"]
     params = [date_key, *source_types]
+    if include_rss_errors:
+        selectors.append(f"(source_type = {ph} AND source_name LIKE {ph})")
+        params.extend(["error", "rss:%"])
+    sql = (
+        f"DELETE FROM items WHERE date_key = {ph} "
+        f"AND ({' OR '.join(selectors)})"
+    )
     if hasattr(con, "execute"):
         cur = con.execute(sql, params)
     else:
@@ -1461,7 +1474,10 @@ def collect_sources(
             args.timeout,
             args.limit,
             db_path=Path(args.db),
-            use_watermark=not args.no_watermark,
+            # --replace-date promises a full refresh. Reading the old rows as a
+            # pagination watermark would stop early, after which those same rows
+            # are deleted below and only the partial fetch is written back.
+            use_watermark=not args.no_watermark and not args.replace_date,
         ),
         "github": lambda: collect_github_trending(session, args.timeout, args.limit),
         "rss": lambda: collect_rss(Path(args.config), args.timeout, args.limit, date_key),
@@ -1551,7 +1567,10 @@ def main() -> int:
         with init_db(Path(args.db)) as con:
             if args.replace_date:
                 deleted = delete_date_rows(
-                    con, date_key, selected_source_types(args.source)
+                    con,
+                    date_key,
+                    selected_source_types(args.source),
+                    include_rss_errors=args.source in {"rss", "all"},
                 )
                 print(
                     json.dumps(

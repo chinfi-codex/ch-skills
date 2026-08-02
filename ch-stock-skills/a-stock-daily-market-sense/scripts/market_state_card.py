@@ -20,8 +20,9 @@
 
 数据口径：
   - 所有计算以 asof（含）为止，禁止未来数据；margin 取 <= asof 的最新 trade_date。
-  - 指数与申万行业历史经 market_panel.fetch_index_daily 增量写入
-    stock_index_daily 缓存，首次回填约 400 个自然日（≈260 个交易日）。
+  - 宽基历史经 market_panel.fetch_index_daily、申万行业历史经
+    market_panel.fetch_sw_daily 获取，并增量写入同一 stock_index_daily 缓存；
+    首次回填约 400 个自然日（≈260 个交易日）。
   - 融资余额回填至 stock_margin（约 280 个交易日窗口），按 trade_date 汇总
     各交易所 rzye。
   - 窗口不足时对应字段给 null 并置 insufficient_history: true，不报错。
@@ -310,6 +311,32 @@ def summarize_sw_industries(
     }
 
 
+def build_sw_industries_block(
+    frames: Dict[str, pd.DataFrame],
+    names: Dict[str, str],
+    asof: str,
+    benchmark_frame: Optional[pd.DataFrame],
+    source: str,
+) -> Dict[str, Any]:
+    """Mark the block unavailable when the dedicated SW endpoint yields no data."""
+    available_count = sum(
+        1 for frame in frames.values() if frame is not None and not frame.empty
+    )
+    if available_count == 0:
+        return {
+            "available": False,
+            "reason": "sw_daily returned no industry history",
+            "industry_list_source": source,
+        }
+    return {
+        "available": True,
+        "industry_list_source": source,
+        "data_available_count": available_count,
+        "data_missing_count": len(frames) - available_count,
+        **summarize_sw_industries(frames, names, asof, benchmark_frame),
+    }
+
+
 # ---------------------------------------------------------------------------
 # IO（懒加载 market_panel，离线测试不触网）
 # ---------------------------------------------------------------------------
@@ -331,6 +358,13 @@ def fetch_index_frame(pro, ts_code: str, asof: str) -> pd.DataFrame:
     mp = _mp()
     start = (datetime.strptime(asof, "%Y%m%d") - timedelta(days=INDEX_BACKFILL_CAL_DAYS)).strftime("%Y%m%d")
     return mp.fetch_index_daily(pro, ts_code, start, asof)
+
+
+def fetch_sw_frame(pro, ts_code: str, asof: str) -> pd.DataFrame:
+    """经 Tushare sw_daily 增量补齐 stock_index_daily 缓存后取窗口。"""
+    mp = _mp()
+    start = (datetime.strptime(asof, "%Y%m%d") - timedelta(days=INDEX_BACKFILL_CAL_DAYS)).strftime("%Y%m%d")
+    return mp.fetch_sw_daily(pro, ts_code, start, asof)
 
 
 def fetch_sw_l1_industries(pro) -> Tuple[List[Tuple[str, str]], str]:
@@ -568,13 +602,11 @@ def build_block(asof: Optional[str] = None, evidence: Optional[Dict[str, Any]] =
     def _sw_industries() -> Dict[str, Any]:
         codes, source = fetch_sw_l1_industries(pro)
         names = dict(codes)
-        frames = {ts_code: fetch_index_frame(pro, ts_code, asof_ymd) for ts_code, _ in codes}
+        frames = {ts_code: fetch_sw_frame(pro, ts_code, asof_ymd) for ts_code, _ in codes}
         benchmark_frame = (index_position.get("_frames") or {}).get(BENCHMARK_INDEX)
-        return {
-            "available": True,
-            "industry_list_source": source,
-            **summarize_sw_industries(frames, names, asof_ymd, benchmark_frame),
-        }
+        return build_sw_industries_block(
+            frames, names, asof_ymd, benchmark_frame, source
+        )
 
     sw_industries = _attempt(_sw_industries)
     index_position.pop("_frames", None)

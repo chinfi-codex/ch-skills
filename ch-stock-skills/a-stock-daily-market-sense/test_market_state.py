@@ -151,6 +151,48 @@ def test_sw_industries_positive_count_and_benchmark_high() -> None:
     assert by_code["X3"]["insufficient_history"] is True
 
 
+def test_sw_frame_uses_sw_daily_route() -> None:
+    expected = pd.DataFrame({"trade_date": [ASOF], "close": [100.0]})
+
+    class FakeMarketPanel:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, str]] = []
+
+        def fetch_sw_daily(self, _pro, ts_code: str, start: str, end: str) -> pd.DataFrame:
+            self.calls.append((ts_code, start, end))
+            return expected
+
+        def fetch_index_daily(self, *_args, **_kwargs) -> pd.DataFrame:
+            raise AssertionError("SW codes must not use index_daily")
+
+    fake = FakeMarketPanel()
+    original = m._mp
+    m._mp = lambda: fake
+    try:
+        actual = m.fetch_sw_frame(object(), "801010.SI", ASOF)
+    finally:
+        m._mp = original
+    assert actual is expected
+    assert fake.calls[0][0] == "801010.SI"
+    assert fake.calls[0][2] == ASOF
+
+
+def test_sw_block_is_unavailable_when_endpoint_returns_no_history() -> None:
+    frames = {
+        "801010.SI": pd.DataFrame(),
+        "801030.SI": pd.DataFrame(),
+    }
+    out = m.build_sw_industries_block(
+        frames,
+        {"801010.SI": "农林牧渔", "801030.SI": "基础化工"},
+        ASOF,
+        None,
+        "index_classify",
+    )
+    assert out["available"] is False
+    assert out["reason"] == "sw_daily returned no industry history"
+
+
 def test_liquidity_reuses_evidence_numbers() -> None:
     evidence = {
         "market_temperature": {"total_amount_100m_yuan": 20000.0},

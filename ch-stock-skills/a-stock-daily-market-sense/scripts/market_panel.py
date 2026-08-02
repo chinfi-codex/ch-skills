@@ -71,6 +71,7 @@ DEFAULT_BASIC_FIELDS = (
 )
 DEFAULT_STOCK_FIELDS = "ts_code,name,market,list_date"
 DEFAULT_INDEX_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
+SW_DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,change,pct_change,vol,amount"
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 CACHE_ROOT = SKILL_ROOT / "data" / "cache"
 REFERENCE_ROOT = SKILL_ROOT / "references"
@@ -659,6 +660,80 @@ def fetch_index_daily(
         return pd.DataFrame()
 
     merged = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
+    merged["trade_date"] = merged["trade_date"].astype(str)
+    merged = merged.sort_values("trade_date")
+    if cache_enabled and not merged.empty:
+        write_cached_dataset("index_daily", cache_key, merged)
+    return date_range_filter(merged, "trade_date", start_date, end_date)
+
+
+def normalize_sw_daily_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Map Tushare sw_daily columns onto stock_index_daily's shared schema."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=split_fields(DEFAULT_INDEX_FIELDS))
+    out = df.copy().rename(columns={"pct_change": "pct_chg"})
+    if "pre_close" not in out.columns:
+        close = pd.to_numeric(out.get("close"), errors="coerce")
+        change = pd.to_numeric(out.get("change"), errors="coerce")
+        out["pre_close"] = close - change
+    columns = split_fields(DEFAULT_INDEX_FIELDS)
+    for column in columns:
+        if column not in out.columns:
+            out[column] = None
+    return out[columns]
+
+
+def fetch_sw_daily(
+    pro,
+    index_code: str,
+    start_date: str,
+    end_date: str,
+    cache_enabled: bool = True,
+    refresh_cache: bool = False,
+) -> pd.DataFrame:
+    """Fetch SW industry history via sw_daily and share stock_index_daily cache."""
+    cache_key = index_code
+    cached = (
+        None
+        if refresh_cache or not cache_enabled
+        else read_cached_dataset("index_daily", cache_key, DEFAULT_INDEX_FIELDS)
+    )
+    fetch_ranges = (
+        missing_edge_ranges(cached, "trade_date", start_date, end_date)
+        if cached is not None
+        else [(start_date, end_date)]
+    )
+
+    frames: List[pd.DataFrame] = []
+    if cached is not None and not cached.empty:
+        frames.append(cached)
+
+    for fetch_start, fetch_end in fetch_ranges:
+        try:
+            raw = pro.sw_daily(
+                ts_code=index_code,
+                start_date=fetch_start,
+                end_date=fetch_end,
+                fields=SW_DAILY_FIELDS,
+            )
+        except Exception as exc:
+            print(
+                f"[warn] sw_daily failed for {index_code} "
+                f"{fetch_start}-{fetch_end}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        normalized = normalize_sw_daily_frame(raw)
+        if not normalized.empty:
+            frames.append(normalized)
+
+    if not frames:
+        return pd.DataFrame(columns=split_fields(DEFAULT_INDEX_FIELDS))
+
+    merged = (
+        pd.concat(frames, ignore_index=True)
+        .drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
+    )
     merged["trade_date"] = merged["trade_date"].astype(str)
     merged = merged.sort_values("trade_date")
     if cache_enabled and not merged.empty:

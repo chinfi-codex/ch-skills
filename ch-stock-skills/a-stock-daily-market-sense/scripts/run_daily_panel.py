@@ -277,7 +277,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     resolved_date = evidence.get("metadata", {}).get("resolved_trade_date") or market_panel.normalize_date(args.asof)
     # 市场状态定位卡先进完整 evidence，再随模块级 JSON 注入 module1；
-    # 申万指数首次回填后走 stock_index_daily 缓存，增量很便宜
+    # 申万指数经 sw_daily 首次回填后走 stock_index_daily 缓存，增量很便宜
     market_state: Optional[Dict[str, Any]] = None
     if not args.no_market_state:
         market_state = build_market_state_card(resolved_date, evidence)

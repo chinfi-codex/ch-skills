@@ -9,10 +9,12 @@ is replaced by fake sessions or patched fetch helpers.
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -256,6 +258,46 @@ class Jin10WatermarkTests(unittest.TestCase):
             )
         self.assertEqual(client.calls, [None, "c2"])
         self.assertEqual(len(records), 4)
+
+
+class ReplaceDateTests(unittest.TestCase):
+    def test_replace_date_disables_jin10_watermark(self) -> None:
+        args = SimpleNamespace(
+            source="jin10",
+            timeout=5,
+            limit=None,
+            db="unused.sqlite",
+            no_watermark=False,
+            replace_date=True,
+        )
+        with patch.object(collect_news, "collect_jin10", return_value=[]) as mocked:
+            collect_news.collect_sources(args, "2026-08-01")
+        self.assertFalse(mocked.call_args.kwargs["use_watermark"])
+
+    def test_rss_replace_deletes_only_rss_diagnostics(self) -> None:
+        con = sqlite3.connect(":memory:")
+        con.execute(
+            "CREATE TABLE items ("
+            "id TEXT PRIMARY KEY, date_key TEXT, source_type TEXT, source_name TEXT)"
+        )
+        con.executemany(
+            "INSERT INTO items VALUES (?, ?, ?, ?)",
+            [
+                ("rss", "2026-08-01", "rss", "Feed"),
+                ("rss-error", "2026-08-01", "error", "rss:Feed"),
+                ("other-error", "2026-08-01", "error", "jin10:Feed"),
+                ("other-day", "2026-08-02", "error", "rss:Feed"),
+            ],
+        )
+        deleted = collect_news.delete_date_rows(
+            con,
+            "2026-08-01",
+            ["rss"],
+            include_rss_errors=True,
+        )
+        self.assertEqual(deleted, 2)
+        remaining = con.execute("SELECT id FROM items ORDER BY id").fetchall()
+        self.assertEqual(remaining, [("other-day",), ("other-error",)])
 
 
 class MakeStableIdTests(unittest.TestCase):

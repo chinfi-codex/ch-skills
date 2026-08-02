@@ -28,6 +28,7 @@ collect_min_rows:
   github_trending: 20   # 日榜约 25 个仓库
   product_hunt: 10      # featured 日榜约 10-20 个
   hacker_news: 20       # top/best 合并去重后约 30-60 条
+  polymarket: 10        # 快照型,关键词过滤后约 10-50 条
 
 rss:
   - name: OpenAI Blog

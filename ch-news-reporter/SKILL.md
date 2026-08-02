@@ -67,7 +67,7 @@ DB-first 的取数/回写脚本(`collect_news.py` / `prepare_report_data.py` / `
 python scripts/collect_news.py --date today --only-missing
 ```
 
-`--only-missing` 会先查库里目标日期各源的行数,只对行数低于阈值的源发起采集,已有的源连网络请求都不发。阈值按源取 `config/sources.yaml` 的 `collect_min_rows`(金十 300 / rss 30 / github_trending 20 / product_hunt 10 / hacker_news 20,约为各源典型日产量),`--min-rows N` 可全源统一覆盖;配置缺失时回退默认 1。今天首跑时库空→全采;重跑或补历史日→读库不重采,保证同一报告日的证据可复现(这也是 watchboard 跨天结算能成立的前提)。需要强制重抓时用 `--replace-date`(优先级高于 `--only-missing`)。
+`--only-missing` 会先查库里目标日期各源的行数,只对行数低于阈值的源发起采集,已有的源连网络请求都不发。阈值按源取 `config/sources.yaml` 的 `collect_min_rows`(金十 300 / rss 30 / github_trending 20 / product_hunt 10 / hacker_news 20 / polymarket 10,约为各源典型日产量),`--min-rows N` 可全源统一覆盖;配置缺失时回退默认 1。今天首跑时库空→全采;重跑或补历史日→读库不重采,保证同一报告日的证据可复现(这也是 watchboard 跨天结算能成立的前提)。需要强制重抓时用 `--replace-date`(优先级高于 `--only-missing`)。
 
 常用参数：
 

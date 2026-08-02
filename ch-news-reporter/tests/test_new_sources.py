@@ -11,32 +11,23 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(SCRIPTS))
 
 import collect_news  # noqa: E402
+import http_utils  # noqa: E402
 
 
 def load_fixture(name: str):
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
-class FakeResponse:
-    def __init__(self, payload):
-        self._payload = payload
+def make_fake_opener(payload, captured: list[dict]):
+    """http_utils opener 假实现:记录请求、返回固定 JSON payload。"""
 
-    def raise_for_status(self) -> None:
-        return None
+    def opener(url, *, method, headers, body, timeout):
+        captured.append({"url": url, "timeout": timeout})
+        return http_utils.RawResponse(
+            status=200, headers={}, body=json.dumps(payload)
+        )
 
-    def json(self):
-        return self._payload
-
-
-class FakeSession:
-    def __init__(self, payload):
-        self._payload = payload
-        self.requests: list[dict] = []
-
-    def get(self, url, params=None, timeout=None):
-        self.requests.append({"url": url, "params": params, "timeout": timeout})
-        return FakeResponse(self._payload)
-
+    return opener
 
 class PolymarketMappingTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -89,7 +80,7 @@ class PolymarketMappingTests(unittest.TestCase):
             (day2.metadata or {})["stable_id"],
         )
         self.assertEqual(
-            collect_news.stable_id(day1, "2026-08-01"),
+            collect_news.item_stable_id(day1, "2026-08-01"),
             (day1.metadata or {})["stable_id"],
         )
 
@@ -132,8 +123,10 @@ class PolymarketSelectionTests(unittest.TestCase):
             "volume24hr": 1,
         }
         payload = markets[:3] + filler + [keyword_market]
-        session = FakeSession(payload)
-        items = collect_news.collect_polymarket(session, 20, None, "2026-08-01")
+        captured: list[dict] = []
+        items = collect_news.collect_polymarket(
+            20, None, "2026-08-01", opener=make_fake_opener(payload, captured)
+        )
         ids = [(item.metadata or {})["market_id"] for item in items]
         # free top 前 10 个不看关键词全保留(3 个高热 + 7 个 filler),
         # 之后的 filler 不命中关键词被过滤,尾部关键词市场保留
@@ -142,11 +135,11 @@ class PolymarketSelectionTests(unittest.TestCase):
         self.assertNotIn("filler-10", ids)
         self.assertLessEqual(len(items), collect_news.POLYMARKET_ITEM_LIMIT)
         # 请求带超时与榜单参数
-        request = session.requests[0]
+        request = captured[0]
         self.assertEqual(request["timeout"], 20)
-        self.assertEqual(request["params"]["order"], "volume24hr")
-        self.assertEqual(request["params"]["active"], "true")
-        self.assertEqual(request["params"]["closed"], "false")
+        self.assertIn("order=volume24hr", request["url"])
+        self.assertIn("active=true", request["url"])
+        self.assertIn("closed=false", request["url"])
 
     def test_collect_respects_limit(self) -> None:
         markets = load_fixture("polymarket_markets.json")
@@ -155,7 +148,7 @@ class PolymarketSelectionTests(unittest.TestCase):
             for idx in range(40)
         ]
         items = collect_news.collect_polymarket(
-            FakeSession(payload), 20, 7, "2026-08-01"
+            20, 7, "2026-08-01", opener=make_fake_opener(payload, [])
         )
         self.assertLessEqual(len(items), 7)
 

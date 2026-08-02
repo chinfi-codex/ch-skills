@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 import feedparser
@@ -1282,27 +1283,29 @@ def build_polymarket_item(
 
 
 def collect_polymarket(
-    session: requests.Session,
     timeout: int,
     limit: int | None,
     date_key: str,
     keywords: list[str] | None = None,
+    opener: http_utils.Opener | None = None,
 ) -> list[NewsItem]:
     keywords = POLYMARKET_KEYWORDS if keywords is None else keywords
     item_limit = limit or POLYMARKET_ITEM_LIMIT
-    response = session.get(
-        POLYMARKET_API_URL,
-        params={
+    query = urlencode(
+        {
             "active": "true",
             "closed": "false",
             "limit": POLYMARKET_FETCH_LIMIT,
             "order": "volume24hr",
             "ascending": "false",
-        },
-        timeout=timeout,
+        }
     )
-    response.raise_for_status()
-    payload = response.json()
+    payload = http_utils.fetch_json(
+        f"{POLYMARKET_API_URL}?{query}",
+        timeout=timeout,
+        family="gamma-api.polymarket.com",
+        opener=opener,
+    )
     if not isinstance(payload, list):
         raise RuntimeError("Unexpected Polymarket Gamma response shape")
     markets = [market for market in payload if isinstance(market, dict)]
@@ -1473,7 +1476,7 @@ def collect_sources(
             comment_limit=args.hn_comments_per_story,
         ),
         "polymarket": lambda: collect_polymarket(
-            session, args.timeout, args.limit, date_key
+            args.timeout, args.limit, date_key
         ),
     }
     for name in selected:

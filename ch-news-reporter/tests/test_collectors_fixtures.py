@@ -21,6 +21,7 @@ sys.path.insert(0, str(SCRIPTS))
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 import collect_news  # noqa: E402
+import http_utils  # noqa: E402
 from collect_news import (  # noqa: E402
     NewsItem,
     collect_github_trending,
@@ -37,38 +38,6 @@ from db_adapter import make_stable_id  # noqa: E402
 
 def load_fixture(name: str) -> str:
     return (FIXTURES / name).read_text(encoding="utf-8")
-
-
-class FakeResponse:
-    def __init__(
-        self,
-        text: str | None = None,
-        json_payload: dict | None = None,
-        content: bytes | None = None,
-    ) -> None:
-        self.text = text or ""
-        self._json_payload = json_payload or {}
-        self.content = content if content is not None else self.text.encode("utf-8")
-
-    def raise_for_status(self) -> None:
-        return None
-
-    def json(self) -> dict:
-        return self._json_payload
-
-
-class FakeSession:
-    """Minimal requests.Session stand-in; maps URL → FakeResponse."""
-
-    def __init__(self, responses: dict[str, FakeResponse], default: FakeResponse | None = None) -> None:
-        self._responses = responses
-        self._default = default or FakeResponse()
-
-    def get(self, url: str, **kwargs: object) -> FakeResponse:
-        return self._responses.get(url, self._default)
-
-    def post(self, url: str, **kwargs: object) -> FakeResponse:
-        return self._responses.get(url, self._default)
 
 
 def assert_required_fields(test: unittest.TestCase, item: NewsItem, source_type: str) -> None:
@@ -97,14 +66,22 @@ class Jin10FixtureTests(unittest.TestCase):
 
 
 class GithubTrendingFixtureTests(unittest.TestCase):
-    def test_parse_trending_html(self) -> None:
-        html = load_fixture("github_trending.html")
-        session = FakeSession({}, default=FakeResponse(text=html))
+    def _collect(self, html: str, limit: int | None) -> list[NewsItem]:
+        # W1 起 transport 收口在 http_utils：trending 页走 fetch_text，
+        # 每 repo 的 API/HTML 元数据走 fetch_github_repo_*，全部在补丁边界替换。
         with (
+            patch.object(
+                collect_news.http_utils, "fetch_text", return_value=html
+            ),
             patch.object(collect_news, "fetch_github_repo_metadata", return_value={}),
-            patch.object(collect_news, "fetch_github_repo_html_metadata", return_value={}),
+            patch.object(
+                collect_news, "fetch_github_repo_html_metadata", return_value={}
+            ),
         ):
-            items = collect_github_trending(session, timeout=5, limit=None)
+            return collect_github_trending(None, timeout=5, limit=limit)
+
+    def test_parse_trending_html(self) -> None:
+        items = self._collect(load_fixture("github_trending.html"), limit=None)
         self.assertEqual(len(items), 3)
         for item in items:
             assert_required_fields(self, item, "github_trending")
@@ -114,13 +91,7 @@ class GithubTrendingFixtureTests(unittest.TestCase):
     def test_stable_id_keyed_by_date(self) -> None:
         # published_at 被压成当日 00:00 快照，id 必须随 date_key 变化，
         # 否则跨天重采会撞成同一行。
-        html = load_fixture("github_trending.html")
-        session = FakeSession({}, default=FakeResponse(text=html))
-        with (
-            patch.object(collect_news, "fetch_github_repo_metadata", return_value={}),
-            patch.object(collect_news, "fetch_github_repo_html_metadata", return_value={}),
-        ):
-            item = collect_github_trending(session, timeout=5, limit=1)[0]
+        item = self._collect(load_fixture("github_trending.html"), limit=1)[0]
         id_day1 = item_stable_id(item, "2026-08-01")
         id_day2 = item_stable_id(item, "2026-08-02")
         self.assertNotEqual(id_day1, id_day2)
@@ -129,9 +100,17 @@ class GithubTrendingFixtureTests(unittest.TestCase):
 class ProductHuntFixtureTests(unittest.TestCase):
     def test_graphql_response_mapping(self) -> None:
         payload = json.loads(load_fixture("product_hunt_posts.json"))
-        session = FakeSession({}, default=FakeResponse(json_payload=payload))
-        with patch.dict("os.environ", {"PRODUCTHUNT_TOKEN": "test-token"}):
-            items = collect_product_hunt(session, timeout=5, limit=None, date_key="2026-08-01")
+        result = http_utils.FetchResult(
+            url=collect_news.PRODUCT_HUNT_GRAPHQL_URL,
+            ok=True,
+            status=200,
+            text=json.dumps(payload),
+        )
+        with (
+            patch.object(collect_news.http_utils, "fetch_response", return_value=result),
+            patch.dict("os.environ", {"PRODUCTHUNT_TOKEN": "test-token"}),
+        ):
+            items = collect_product_hunt(None, timeout=5, limit=None, date_key="2026-08-01")
         self.assertEqual(len(items), 3)
         for item in items:
             assert_required_fields(self, item, "product_hunt")
@@ -184,16 +163,23 @@ class RssFixtureTests(unittest.TestCase):
 
     def _run_collect(self, date_key: str) -> list[NewsItem]:
         rss_xml = load_fixture("rss_feed.xml")
-        session = FakeSession(
-            {
-                "https://example.test/fed.xml": FakeResponse(text=rss_xml),
-                "https://example.test/empty.xml": FakeResponse(text=self.EMPTY_FEED_XML),
-            }
-        )
+        bodies = {
+            "https://example.test/fed.xml": rss_xml,
+            "https://example.test/empty.xml": self.EMPTY_FEED_XML,
+        }
+
+        def fake_fetch_text(url: str, **kwargs: object) -> str:
+            if url not in bodies:
+                raise AssertionError(f"unexpected URL: {url}")
+            return bodies[url]
+
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "sources.yaml"
             self._write_config(config)
-            with patch.object(collect_news, "get_session", return_value=session):
+            # W1 起 RSS 抓取走 http_utils.fetch_text，补丁打在这里而不是 session 上。
+            with patch.object(
+                collect_news.http_utils, "fetch_text", side_effect=fake_fetch_text
+            ):
                 return collect_rss(config, timeout=5, limit=None, date_key=date_key)
 
     def test_rss_entries_parsed(self) -> None:

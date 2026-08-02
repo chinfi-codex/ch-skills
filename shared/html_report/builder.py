@@ -26,6 +26,7 @@ from typing import List, Optional
 
 from .chart_hook import ChartHook
 from .chartkit import chartkit_js
+from .figures import StaticFigure, collect_css, insert_figures
 from .markdown_engine import render_markdown
 from .safe_json import safe_json_for_script
 from .text_validator import validate_text_preserved
@@ -128,11 +129,20 @@ class HtmlReportBuilder:
         self.font_links = font_links
         self._theme_css = _load_theme_css(theme)
         self._hooks: List[ChartHook] = []
+        self._figures: List[StaticFigure] = []
         self._ui_decorations: List[str] = []
         self._decoration_css: List[str] = []
 
     def add_chart_hook(self, hook: ChartHook) -> None:
         self._hooks.append(hook)
+
+    def add_figure(self, figure: StaticFigure) -> None:
+        """Splice a pre-rendered figure into the body at build time.
+
+        Unlike :meth:`add_chart_hook`, the markup lands in the file itself, so
+        the chart still shows in viewers that block inline scripts.
+        """
+        self._figures.append(figure)
 
     def add_ui_decoration(self, js: str) -> None:
         """Append a skill-specific UI decoration IIFE that runs after the
@@ -157,6 +167,8 @@ class HtmlReportBuilder:
 
     def render(self, markdown_text: str, *, validate: bool = True) -> str:
         body_html = render_markdown(markdown_text)
+        if self._figures:
+            body_html = insert_figures(body_html, self._figures)
         chart_envelope = {hook.name: hook.payload for hook in self._hooks}
         chart_json = safe_json_for_script(chart_envelope)
         hook_scripts = "\n".join(
@@ -190,7 +202,7 @@ class HtmlReportBuilder:
   <style>
 {self._theme_css}
 {self.extra_css}
-{chr(10).join(self._decoration_css)}
+{chr(10).join(self._decoration_css + collect_css(self._figures))}
   </style>
   {self.extra_head}
 </head>

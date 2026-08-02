@@ -22,12 +22,15 @@ from .decorations import (
     PillDecoration,
     TimelineDecoration,
 )
+from .figures import StaticFigure, insert_figures
 from .markdown_engine import render_markdown
 from .text_validator import validate_text_preserved
 
 __all__ = [
     "HtmlReportBuilder",
     "ChartHook",
+    "StaticFigure",
+    "insert_figures",
     "RenderJob",
     "render_report",
     "PillDecoration",

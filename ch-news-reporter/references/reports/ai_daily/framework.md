@@ -24,9 +24,14 @@ supersedes: null
 # 但 id 是跨天结算的锚，务必写——见模型区"frame 字段填写约定 · canonical id"）。
 frame:
   agent_eng_vectors: {type: list, required: true}   # 纵轴·能力与技术演进，至少 1 条；每条 {id(稳定), vector(显示名), stage, open_pain, side}
+                                                    #   选填：links(挂钩的形态 id 列表)、graduation(毕业三条布尔)
   product_forms:     {type: list}                   # 横轴·渗透率；每条 {id(稳定), form(显示名), segment, penetration_stage, usage_signal}
+                                                    #   选填：links(挂钩的矢量 id 列表)、five_asks(五追问布尔)
   watch_companies:   {type: list}                   # 预期近期有动作的前沿实验室/厂商
   watch_projects:    {type: list}                   # 待验证热度→趋势的开源项目
+# 顶层选填 axis_objects：当天进正文的对象落在双轴的哪一格，只喂 HTML 双轴定位图。
+# 每条 {name, grade: s_confirmed|s_candidate|a|b, vector_id, form_id, note}；
+# 缺省时渲染器退回只画 frame 本身，不报错。
 
 # regime 失效触发器：慢思考层检测命中即评估"框架换代"
 invalidation_triggers:
@@ -56,6 +61,11 @@ output_sections: [一句话结论, 今日重点·深度拆解, 重点候选·待
 - **`product_forms`（横轴）**：每条 `{id, form, segment: 开发者|专业用户|大众|企业, penetration_stage: 萌芽→早期采用→主流化, usage_signal（真实使用证据，非 star/votes）}`。
 - **canonical id 是跨天结算的锚（务必守）**：每条矢量 / 形态开一个稳定 id——语义短 slug 即可（矢量 `v-长任务可靠性` / `v-推理成本`，形态 `f-企业知识工作`），或 `v-001` / `f-001` 也行。**id 一旦开就不改，显示名（vector / form 文案）随行情随便改**。收敛判定"同一矢量当天 ≥2 证据"、跨天"这条昨天到哪档、今天进没进档"全靠 id 认人；名字换了 id 不换，才接得上。历史教训：一个月里"长任务可靠性"这条矢量换了 ≥5 个显示名（"长任务与 coding agent harness"→"长任务可靠性与自我纠错"→"长任务可靠性/企业级 agent"…），跨天结算直接断线。碰到旧 watchboard 没 id，就现补一版 id 并沿用。
 - **`watch_companies`**：预期近期有动作的重点公司。**`watch_projects`**：标了"值得继续观察"的开源项目/产品，带 id 进台账，等热度兑现成趋势再结算。
+- **HTML 双轴图要用的四个选填字段（填了图才有信息量，不填不报错）**：网页版会把两轴画成一张坐标图，坐标 = **档位整数 + 档内完成度小数**。完成度不是新标准，就是本框架已有的判据结构化一次：
+  - 矢量加 `graduation: {multi_impl, third_party, pain_cleared}` 三个布尔——即"毕业三条"。判档时你本来就要过一遍，顺手记下来；三条全 true 却还写着"收敛中"，图上会顶在格子天花板，等于自查。
+  - 形态加 `five_asks: {carrier, segment, autonomy, real_usage, distribution}` 五个布尔——即横轴五追问，`real_usage` 只认真实使用信号。
+  - 两边各加 `links`（对面的 canonical id 列表）：某条矢量在喂哪个产品形态、某个形态靠哪条矢量撑着。**没挂钩就别写**——图上会落到"未挂钩"带，那本身就是一条判断（有人在做技术，还没有产品接得住）。
+  - 顶层 `axis_objects` 记当天进正文的对象落点：`{name, grade, vector_id, form_id, note}`，grade 用 `s_confirmed / s_candidate / a / b`。S 级也可以只在 `grading_audit` 里加 `axis_hit: {vector_id, form_id}`，渲染器两处都读、按 name 去重。B 级可以不记。
 - **台账预算与母题（防膨胀，务必守）**：open 跟踪项软上限 `open_budget=10`（见 `config/report_profiles.yaml`）。超预算时**先把同一条矢量下的多条细证据归并进一个母题（`sub_items`），别在顶层平铺**——母题占 1 个名额、子线各留独立到期时钟与 status（机制见 `../watchboard.md §4`）。归并后仍超，就把连续 3 期无实质进展的项转 `expired` 或直接结算掉。**别靠加预算解决膨胀**：持续平铺 16-18 条 open、且 `sub_items` 一个都没用，就是该精简的信号（对照地缘日报靠母题把顶层压到 9 条）。
 
 ### 第一性原理：为什么用双引擎

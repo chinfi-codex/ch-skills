@@ -257,6 +257,17 @@ python scripts/render_report_html.py -i reports/macro_daily_2026-05-19.md
 python scripts/render_report_html.py -i reports/geopolitical_daily_2026-06-04.md --watchboard today_watchboard.json
 ```
 
+`ai_daily` 的渲染配置启用**两张双轴图**，同样只要把当天 watchboard 传进来（回写 state 之后再渲染，图才是今天的）：
+
+```bash
+python scripts/render_report_html.py -i reports/ai_daily_2026-08-01.md --watchboard today_watchboard.json
+```
+
+- **双轴定位图**挂在「一句话结论」段末：纵轴能力成熟度 × 横轴渗透度，坐标 = 档位 + 档内完成度（`graduation` / `five_asks`），矢量按 `links` 站到它服务的形态那一列、没挂钩的落进"未挂钩"带，`axis_objects` 里当天的对象高亮叠在上面。
+- **档位迁移带**挂在「本期变更」之前：近 16 天每条矢量 / 形态的档位轨迹（`--history-days` 可调），标出进档、退档，以及**没结算就从 frame 里消失**的项——那正是「本期变更」该交代的东西。
+- 两张图都是**构建时生成的静态 SVG**，不靠运行时 JS，所以 pushplus 推到微信、导出 PDF、邮件里照样看得见（这也是它们不走 `ChartHook` 的原因）。
+- 缺字段只退化不报错：没有 watchboard 就两张都不画；取不到 `report_state` 历史就只留定位图；没有 `graduation` 的矢量画在格子正中。
+
 渲染框架来自仓库通用 `shared/html_report`（随 `shared` bundle 同步到 `scripts/_shared/html_report/`），与 A 股各 skill 共用同一套主题与图表工具；新增样式主题只需在该目录 `themes/` 下放一个 CSS 文件。
 
 ### 8. 自定义主题日报（custom topics）

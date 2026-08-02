@@ -29,6 +29,9 @@ profiles:
       deep_url_max: 6
     render:
       pill_set: ai
+      # 双轴定位图（挂「一句话结论」段末）+ 档位迁移带（挂「本期变更」之前）。
+      # 需要 --watchboard；迁移带与位移箭头另需 report_state 历史，取不到就自动省略。
+      axis_chart: true
     # frame schema 已迁入 references/reports/ai_daily/framework.md 机器区(唯一可信源)
     # 重点公司归类字典:Agent 读取 evidence packet 后用这个字典把当日新闻按公司归类
     # 到"模型发布 / 产品更新 / API & 定价 / 融资 & 政策"四类动作矩阵中。

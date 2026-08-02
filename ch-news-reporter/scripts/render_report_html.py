@@ -8,16 +8,18 @@ as part of the whole ``shared`` bundle this skill already gets for db_core).
 
 This file owns only the news-reporter-specific bits: inferring the report
 profile from the filename, the per-profile pill vocabulary, the "一句话结论"
-hero card, and optional probability charts configured in report_profiles.yaml.
-There is no judgement here: HTML is a presentation
-layer over the finished Markdown, it adds no new conclusions and drops no body
-text (the shared validator enforces the latter).
+hero card, optional probability charts, and the ai_daily two-axis figures —
+all configured in report_profiles.yaml. There is no judgement here: HTML is a
+presentation layer over the finished Markdown, it adds no new conclusions and
+drops no body text (the shared validator enforces the latter).
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -172,6 +174,70 @@ anchor.after(grid);
 
 
 # --------------------------------------------------------------------------- #
+# ai_daily two-axis figures (optional; needs a watchboard JSON, and PostgreSQL
+# for the cross-day parts). Static SVG rather than a ChartHook so the charts
+# survive readers that block inline scripts — pushplus / WeChat being the ones
+# these reports actually get read in.
+# --------------------------------------------------------------------------- #
+DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def report_date(watchboard: Dict[str, Any], stem: str) -> Optional[str]:
+    for candidate in (str(watchboard.get("as_of") or ""), stem):
+        found = DATE_RE.search(candidate)
+        if found:
+            return found.group(1)
+    return None
+
+
+def load_state_history(
+    profile_name: str, end_date: Optional[str], days: int
+) -> List[Tuple[str, Dict[str, Any]]]:
+    """Oldest→newest (date_key, payload) for the trailing window.
+
+    Best-effort: any database problem degrades to an empty history, which drops
+    the migration band and the movement arrows but keeps the map itself.
+    """
+    if not end_date or days < 2:
+        return []
+    try:
+        from db_adapter import get_connection, get_report_state_series  # noqa: E402
+
+        start = (date.fromisoformat(end_date) - timedelta(days=days - 1)).isoformat()
+        with get_connection() as conn:
+            rows = get_report_state_series(conn, profile_name, start, end_date)
+    except Exception:  # noqa: BLE001 — charts must never break the render
+        return []
+    history: List[Tuple[str, Dict[str, Any]]] = []
+    for row in rows:
+        raw = row.get("payload")
+        payload = raw if isinstance(raw, dict) else json.loads(str(raw or "{}"))
+        if isinstance(payload, dict):
+            history.append((str(row.get("date_key")), payload))
+    return history
+
+
+def load_axis_figures(
+    args, profile_name: Optional[str], profile_render: Dict[str, Any], stem: str
+) -> List[Any]:
+    if not (profile_render.get("axis_chart") and args.watchboard and profile_name):
+        return []
+    path = Path(args.watchboard)
+    if not path.exists():
+        return []
+    try:
+        watchboard = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return []
+    if not isinstance(watchboard, dict):
+        return []
+    from ai_axis_charts import build_figures  # noqa: E402
+
+    history = load_state_history(profile_name, report_date(watchboard, stem), args.history_days)
+    return build_figures(watchboard, history)
+
+
+# --------------------------------------------------------------------------- #
 # Title / meta derived from the report's H1 line (e.g. "# 每日宏观日报 | 2026-05-19").
 # --------------------------------------------------------------------------- #
 def derive_title_meta(
@@ -210,7 +276,14 @@ def add_arguments(parser) -> None:
     parser.add_argument(
         "--watchboard",
         default=None,
-        help="Optional watchboard JSON. Profiles can enable a probability chart in config.",
+        help="Optional watchboard JSON. Profiles can enable a probability chart "
+             "or the ai_daily two-axis figures in config.",
+    )
+    parser.add_argument(
+        "--history-days",
+        type=int,
+        default=16,
+        help="Trailing window (days) of report_state used by the ai_daily migration band.",
     )
 
 
@@ -241,6 +314,10 @@ def build_job(args) -> RenderJob:
             builder.add_chart_hook(ChartHook(name="profile-probabilities", payload=payload, js=PATH_PROB_JS))
             chart_added = True
 
+    figures = load_axis_figures(args, profile_name, profile_render, input_path.stem)
+    for figure in figures:
+        builder.add_figure(figure)
+
     return RenderJob(
         markdown_text=markdown_text,
         builder=builder,
@@ -249,6 +326,7 @@ def build_job(args) -> RenderJob:
             "profile": profile_name,
             "pills": bool(pill_rules),
             "probability_chart": chart_added,
+            "axis_figures": len(figures),
         },
     )
 

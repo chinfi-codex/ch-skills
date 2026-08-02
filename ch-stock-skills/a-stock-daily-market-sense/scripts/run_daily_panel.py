@@ -18,7 +18,7 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import market_panel
 
@@ -75,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--context-out", default=None, help="Legacy compact report_context JSON path; written only when set.")
     parser.add_argument("--module-context-dir", default=None, help="Directory for module-level subagent JSON files.")
     parser.add_argument("--no-module-context", action="store_true", help="Skip module-level subagent JSON files.")
+    parser.add_argument("--no-market-state", action="store_true", help="Skip the market_state card (index position/breadth/SW industries/margin/liquidity).")
     parser.add_argument("--stderr-out", default=None, help="Stderr log output path.")
     parser.add_argument("--money-context-limit", type=int, default=80, help="Money-effect rows in context.")
     parser.add_argument("--decline-context-limit", type=int, default=20, help="Volume-decline rows in context.")
@@ -169,11 +170,24 @@ def build_trend_state_card(resolved_date: str) -> Dict[str, Any]:
         return {"available": False, "reason": f"trend_state_card failed: {exc}"}
 
 
-def write_module_contexts(evidence: dict, module_dir: Path, trend_card: Optional[Dict[str, Any]] = None) -> None:
+def build_market_state_card(resolved_date: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
+    """市场状态定位卡（宽基位置/宽度/申万结构/融资趋势/流动性），失败不阻断研报。"""
+    try:
+        import market_state_card
+
+        return market_state_card.build_block(resolved_date, evidence=evidence)
+    except Exception as exc:
+        return {"available": False, "reason": f"market_state_card failed: {exc}"}
+
+
+def write_module_contexts(evidence: dict, module_dir: Path, trend_card: Optional[Dict[str, Any]] = None, market_state: Optional[Dict[str, Any]] = None) -> None:
     module_dir.mkdir(parents=True, exist_ok=True)
     for name, payload in market_panel.build_module_contexts(evidence).items():
-        if name == "module1_market_trend" and trend_card is not None:
-            payload["trend_state_card"] = trend_card
+        if name == "module1_market_trend":
+            if trend_card is not None:
+                payload["trend_state_card"] = trend_card
+            if market_state is not None:
+                payload["market_state"] = market_state
         (module_dir / f"{name}.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -262,6 +276,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         stderr_path.write_text(stderr_buffer.getvalue(), encoding="utf-8")
 
     resolved_date = evidence.get("metadata", {}).get("resolved_trade_date") or market_panel.normalize_date(args.asof)
+    # 市场状态定位卡先进完整 evidence，再随模块级 JSON 注入 module1；
+    # 申万指数首次回填后走 stock_index_daily 缓存，增量很便宜
+    market_state: Optional[Dict[str, Any]] = None
+    if not args.no_market_state:
+        market_state = build_market_state_card(resolved_date, evidence)
+        evidence["market_state"] = market_state
     market_chart_path = refresh_and_verify_market_chart_data(resolved_date)
     evidence_path = Path(args.evidence_out) if args.evidence_out else reports_dir / f"evidence_{resolved_date}_utf8.json"
     if args.stderr_out is None:
@@ -296,11 +316,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.no_module_context:
         trend_card = build_trend_state_card(resolved_date)
         module_context_dir = Path(args.module_context_dir) if args.module_context_dir else reports_dir / f"module_context_{resolved_date}"
-        write_module_contexts(evidence, module_context_dir, trend_card)
+        write_module_contexts(evidence, module_context_dir, trend_card, market_state)
 
     print(json.dumps({
         "resolved_trade_date": resolved_date,
         "trend_state": (trend_card or {}).get("state") if (trend_card or {}).get("available") else (trend_card or {}).get("reason"),
+        "market_state": ("available" if (market_state or {}).get("available") else (market_state or {}).get("reason")),
         "evidence": str(evidence_path),
         "stock_klines": str(kline_path) if kline_payload is not None else None,
         "report_context": str(context_path) if context_path else None,

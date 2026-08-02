@@ -9,7 +9,7 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 
 1. **确定交易日**：解析"今天/最近"或具体日期，默认只使用 D 及以前数据；只有用户明确要求后验时才允许 `--allow-future`。
 
-2. **生成证据包**：运行 `scripts/run_daily_panel.py`。脚本会直接调用数据管线，写出完整 evidence、个股 K 线展示数据（`kline_YYYYMMDD.json`）和模块级 JSON；同时调用 `scripts/trend_state_card.py`（PG `market_history` 趋势轴：五计数器 + 六档状态机，与 AlphaVault 盘前工具同参）把 `trend_state_card` 区块注入 `module1_market_trend.json`。PG 不可达时该区块降级为 `available: false`，不阻断研报。
+2. **生成证据包**：运行 `scripts/run_daily_panel.py`。脚本会直接调用数据管线，写出完整 evidence、个股 K 线展示数据（`kline_YYYYMMDD.json`）和模块级 JSON；同时调用 `scripts/trend_state_card.py`（PG `market_history` 趋势轴：五计数器 + 六档状态机，与 AlphaVault 盘前工具同参）把 `trend_state_card` 区块、`scripts/market_state_card.py`（宽基位置 / 市场宽度 / 申万一级结构 / 融资余额趋势 / 流动性）把 `market_state` 区块注入完整 evidence 与 `module1_market_trend.json`。PG 不可达时这两个区块降级为 `available: false`，不阻断研报；`market_state` 可用 `--no-market-state` 跳过。
 
 3. **生成首轮模块产物**：模块 1、2、4、5 各自只读自己的 JSON、方法论与模板。模块 3 首轮只根据 `module3_money_effect.json` 归纳临时主题、父主题成员与候选细分成员，先写 `stars: null` 的 `module3_theme_map.json`；不要搜索，也不要在统计前凭手算锁星。有 subagent 时分发最小上下文，没有时按相同边界顺序执行。
 
@@ -29,7 +29,7 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 
 | 模块 | JSON | 方法论 | 模板 |
 |---|---|---|---|
-| 1 盘面趋势 | `module1_market_trend.json` | `references/methodology/module1_trend.md` | `references/template/section1.md` |
+| 1 盘面趋势 | `module1_market_trend.json`（含机判 `trend_state_card` 与 `market_state` 区块） | `references/methodology/module1_trend.md`、`references/methodology/market_state_framework.md` | `references/template/section1.md` |
 | 2 集中度 | `module2_concentration.json` | `references/methodology/module2_concentration.md` | `references/template/section2.md` |
 | 3 赚钱效应（首轮） | `module3_money_effect.json` | `references/methodology/module3_money_effect.md` | 先输出临时主题短名单与 `stars: null` 的 `module3_theme_map.json` |
 | 4 爆量下跌 | `module4_decline.json` | `references/methodology/module4_decline.md` | `references/template/section4.md` |

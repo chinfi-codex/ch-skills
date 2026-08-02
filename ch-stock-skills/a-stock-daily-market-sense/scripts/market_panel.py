@@ -3046,7 +3046,9 @@ def build_sentiment_trend(target_date: str, trend_days: int) -> Dict[str, Any]:
     flat = df["平盘"].fillna(0) if "平盘" in df.columns else 0
     breadth_total = df["上涨"] + df["下跌"] + flat
     df["up_ratio"] = df["上涨"] / breadth_total.replace(0, pd.NA)
-    df["limit_up_down_ratio"] = df["涨停"] / df["跌停"].replace(0, pd.NA)
+    # 跌停为 0 时 replace(0, pd.NA) 会把 int 列变成 object，rolling 均值随之报
+    # "No numeric types to aggregate"；强制回数值 dtype，0 跌停日记 NaN
+    df["limit_up_down_ratio"] = pd.to_numeric(df["涨停"] / df["跌停"].replace(0, pd.NA), errors="coerce")
     if "成交额" in df.columns:
         df["amount_trillion_yuan"] = df["成交额"] / 1e9
         df["amount_ma5"] = df["成交额"].rolling(5, min_periods=3).mean()
@@ -4963,7 +4965,7 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
         "meta": {
             "metadata": metadata,
             "subagent_contract": {
-                "module1_market_trend": ["module1_market_trend.json", "references/methodology/module1_trend.md", "references/template/section1.md", "盘面趋势"],
+                "module1_market_trend": ["module1_market_trend.json", "references/methodology/module1_trend.md", "references/methodology/market_state_framework.md", "references/template/section1.md", "盘面趋势"],
                 "module2_concentration": ["module2_concentration.json", "references/methodology/module2_concentration.md", "references/template/section2.md", "成交额集中度"],
                 "module3_money_effect": ["module3_money_effect.json", "references/methodology/module3_money_effect.md", "module3_theme_map.json", "首轮只做临时主题与成员映射，stars 写 null，不写最终正文"],
                 "module3_money_effect_second_stage": [["module3_theme_map.json", "module3_theme_stats.json", "module3_enrichment_pack.json"], "references/methodology/catalyst_subline_mining.md", "references/template/section3.md", "统计后由模型锁星；星级锁定后补催化与细分线路，再写最终模块 3"],

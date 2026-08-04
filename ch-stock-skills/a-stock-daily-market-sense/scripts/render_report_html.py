@@ -31,10 +31,42 @@ sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHA
 from html_report import (  # noqa: E402
     ChartHook,
     HeroDecoration,
+    HookExpectation,
     HtmlReportBuilder,
     PillDecoration,
     RenderJob,
+    SectionContract,
+    SectionSpec,
     render_report,
+)
+
+
+# --------------------------------------------------------------------------- #
+# Section contract — the only place where the report's display titles matter.
+#
+# Section numbers deliberately do not appear in any pattern: they are stripped
+# before matching, because they *do* drift (adding 1.1 市场状态定位 pushed
+# 情绪趋势 from 1.1 to 1.2, which silently detached the trend-chart panel and
+# dumped five charts at the end of the document). Everything downstream
+# addresses these sections by key via ``window.__sec``.
+#
+# Bump the version whenever references/template/section*.md changes structure.
+# --------------------------------------------------------------------------- #
+DMS_CONTRACT = SectionContract(
+    version="dms/1.0.0",
+    sections=[
+        SectionSpec("hero_verdict", [r"一句话盘面判断"], level=3),
+        SectionSpec("market_state", [r"市场状态定位"], level=3),
+        SectionSpec("sentiment_trend", [r"情绪趋势"], level=3),
+        SectionSpec("index_trend", [r"^指数趋势"], level=3),
+        SectionSpec("market_style", [r"^市场风格"], level=3),
+        SectionSpec("m3_mainline", [r"^主线判定"], level=3),
+        SectionSpec("m3_leaders", [r"主线领导股"], level=3),
+        SectionSpec("m5_capacity_up", [r"容量上涨明细"], level=3),
+        SectionSpec("m5_monthly_base", [r"月线平台突破明细", r"月线平台突破"], level=3),
+        SectionSpec("m5_early_limit", [r"前涨停明细"], level=3),
+        SectionSpec("m5_discount_relaunch", [r"折扣启动明细"], level=3),
+    ],
 )
 
 
@@ -314,9 +346,11 @@ MARKET_SENSE_EXTRA_CSS = """
 TREND_STATE_CARD_JS = r"""(function () {
   const root = document.getElementById("report-body");
   if (!root) return;
-  const heading = Array.from(root.querySelectorAll("h2, h3")).find(
-    h => /情绪趋势/.test(h.textContent));
-  if (!heading) return;
+  const heading = window.__sec ? window.__sec.head("sentiment_trend") : null;
+  if (!heading) {
+    if (window.__render) window.__render.fail("decoration:trend-state-card", "section [sentiment_trend] not found");
+    return;
+  }
   const uls = [];
   let cur = heading.nextElementSibling;
   while (cur && !/^H[1-6]$/.test(cur.tagName)) {
@@ -372,16 +406,19 @@ const { svgEl, svgText } = CK;
 const formatDate = CK.fmt.date;
 const formatPercent = CK.fmt.signedPct;
 
+const SEC = window.__sec;
+const REPORT = window.__render;
+
 const indexConfigs = [
-  { key: "shanghai", anchorTexts: ["指数趋势", "上证指数趋势判断", "上证指数趋势"], fallbackTitle: "上证指数" },
-  { key: "chinext", anchorTexts: ["指数趋势", "创业板趋势判断", "创业板指数趋势判断", "创业板指数趋势"], fallbackTitle: "创业板指数" },
-  { key: "star50", anchorTexts: ["指数趋势", "科创50趋势判断", "科创50指数趋势", "科创50"], fallbackTitle: "科创50" }
+  { key: "shanghai", fallbackTitle: "上证指数" },
+  { key: "chinext", fallbackTitle: "创业板指数" },
+  { key: "star50", fallbackTitle: "科创50" }
 ];
 const stockSectionConfigs = [
-  { headingText: "3.3", gridLabel: "module3-leaders" },
-  { headingText: "5.1", gridLabel: "module5-capacity-up" },
-  { headingText: "5.3", gridLabel: "module5-early-limit" },
-  { headingText: "5.4", gridLabel: "module5-discount-relaunch" }
+  { sec: "m3_leaders", hook: "klines.m3_leaders", gridLabel: "module3-leaders" },
+  { sec: "m5_capacity_up", hook: "klines.m5_capacity_up", gridLabel: "module5-capacity-up" },
+  { sec: "m5_early_limit", hook: "klines.m5_early_limit", gridLabel: "module5-early-limit" },
+  { sec: "m5_discount_relaunch", hook: "klines.m5_discount_relaunch", gridLabel: "module5-discount-relaunch" }
 ];
 
 insertIndexKlines();
@@ -389,45 +426,79 @@ insertStockTableKlines();
 insertMonthlyBreakoutKlines();
 
 function insertIndexKlines() {
-  const prepared = indexConfigs.map(config => {
+  const hook = "klines.index";
+  const unmatched = [];
+  const prepared = [];
+  indexConfigs.forEach(config => {
     const indexData = indices[config.key] || {};
     const rows = normalizeRows(indexData.records).slice(-klineDisplayDays);
-    return rows.length ? { ...config, indexData, rows } : null;
-  }).filter(Boolean);
-  if (!prepared.length) return;
+    if (!rows.length) {
+      unmatched.push({
+        name: config.fallbackTitle,
+        reason: (indexData.records || []).length ? "no_records_in_window" : "no_kline_data"
+      });
+      return;
+    }
+    prepared.push({ ...config, indexData, rows });
+  });
 
-  const trendHeading = findHeading("指数趋势");
-  const trendTable = trendHeading ? findNextTableWrap(trendHeading) : null;
-  const anchor = trendTable ? { element: trendTable, insert: "after" } : findInsertionAnchor(indexConfigs[0].anchorTexts) || findInsertionAnchor(indexConfigs.flatMap(c => c.anchorTexts));
-  if (!anchor) return;
+  if (!prepared.length) {
+    REPORT.attest(hook, { rendered: 0, matched: 0, expected: indexConfigs.length, unmatched: unmatched });
+    return;
+  }
+  /* Anchor after the section's own table; no document-tail fallback — a chart
+     that cannot find its section must fail the gate, not relocate itself. */
+  const anchorEl = SEC.find("index_trend", ".table-wrap") || SEC.tail("index_trend");
+  if (!anchorEl) {
+    REPORT.fail("hook:" + hook, "no insertion anchor inside section [index_trend]");
+    return;
+  }
 
   const grid = document.createElement("div");
   grid.className = "kline-grid";
   prepared.forEach(item => {
     grid.appendChild(buildKlineCard(item.rows, item.indexData, item.fallbackTitle));
   });
-  if (anchor.insert === "after") {
-    anchor.element.after(grid);
-  } else {
-    anchor.element.before(grid);
-  }
+  anchorEl.after(grid);
+  REPORT.attest(hook, {
+    rendered: prepared.length, matched: prepared.length,
+    expected: indexConfigs.length, unmatched: unmatched, el: grid
+  });
 }
 
 function insertStockTableKlines() {
   stockSectionConfigs.forEach(config => {
-    const heading = findHeading(config.headingText);
-    if (!heading) return;
-    const tableWrap = findNextTableWrap(heading);
-    if (!tableWrap || tableWrap.dataset.stockKlinesInserted === "1") return;
+    const tableWrap = SEC.find(config.sec, ".table-wrap");
+    if (tableWrap && tableWrap.dataset.stockKlinesInserted === "1") return;
+    const table = readStockTable(tableWrap);
+    if (table.present && !table.hasStockColumn && table.rows) {
+      REPORT.fail("hook:" + config.hook, "table in section [" + config.sec + "] has " + table.rows + " rows but no 股票 column");
+      return;
+    }
+    if (!table.names.length) {
+      /* No candidates today: the report writes 暂无命中 instead of a table. */
+      REPORT.attest(config.hook, {
+        rendered: 0, matched: 0, expected: 0, unmatched: [],
+        note: table.present ? "table present, no rows" : "no table — section reports no candidates"
+      });
+      return;
+    }
 
-    const names = extractStockNames(tableWrap);
-    const prepared = names.map(name => {
+    const names = table.names;
+    const unmatched = [];
+    const prepared = [];
+    names.forEach(name => {
       const stockData = findStockData(name);
-      if (!stockData) return null;
+      if (!stockData) { unmatched.push({ name: name, reason: "no_kline_data" }); return; }
       const rows = normalizeRows(stockData.records).slice(-klineDisplayDays);
-      return rows.length ? { rows, stockData: { ...stockData, name }, fallbackTitle: name } : null;
-    }).filter(Boolean);
-    if (!prepared.length) return;
+      if (!rows.length) { unmatched.push({ name: name, reason: "no_records_in_window" }); return; }
+      prepared.push({ rows, stockData: { ...stockData, name }, fallbackTitle: name });
+    });
+
+    if (!prepared.length) {
+      REPORT.attest(config.hook, { rendered: 0, matched: 0, expected: names.length, unmatched: unmatched });
+      return;
+    }
 
     const grid = document.createElement("div");
     grid.className = `stock-kline-grid stock-kline-grid-${config.gridLabel}`;
@@ -436,23 +507,46 @@ function insertStockTableKlines() {
     });
     tableWrap.after(grid);
     tableWrap.dataset.stockKlinesInserted = "1";
+    REPORT.attest(config.hook, {
+      rendered: prepared.length, matched: prepared.length,
+      expected: names.length, unmatched: unmatched, el: grid
+    });
   });
 }
 
 // 5.2 全市场月线平台突破：画月线 K 线 + 多年底部箱体阴影 + 箱体上沿 pivot 线 + 突破月标记。
 function insertMonthlyBreakoutKlines() {
-  const heading = findHeading("5.2");
-  if (!heading) return;
-  const tableWrap = findNextTableWrap(heading);
-  if (!tableWrap || tableWrap.dataset.stockKlinesInserted === "1") return;
-  const names = extractStockNames(tableWrap);
-  const prepared = names.map(name => {
+  const hook = "klines.m5_monthly_base";
+  const tableWrap = SEC.find("m5_monthly_base", ".table-wrap");
+  if (tableWrap && tableWrap.dataset.stockKlinesInserted === "1") return;
+  const table = readStockTable(tableWrap);
+  if (table.present && !table.hasStockColumn && table.rows) {
+    REPORT.fail("hook:" + hook, "table in section [m5_monthly_base] has " + table.rows + " rows but no 股票 column");
+    return;
+  }
+  if (!table.names.length) {
+    REPORT.attest(hook, {
+      rendered: 0, matched: 0, expected: 0, unmatched: [],
+      note: table.present ? "table present, no rows" : "no table — section reports no candidates"
+    });
+    return;
+  }
+
+  const names = table.names;
+  const unmatched = [];
+  const prepared = [];
+  names.forEach(name => {
     const data = findMonthlyData(name);
-    if (!data) return null;
+    if (!data) { unmatched.push({ name: name, reason: "no_kline_data" }); return; }
     const rows = normalizeRows(data.records).slice(-klineDisplayMonths);
-    return rows.length ? { rows, data: { ...data, name }, fallbackTitle: name } : null;
-  }).filter(Boolean);
-  if (!prepared.length) return;
+    if (!rows.length) { unmatched.push({ name: name, reason: "no_records_in_window" }); return; }
+    prepared.push({ rows, data: { ...data, name }, fallbackTitle: name });
+  });
+
+  if (!prepared.length) {
+    REPORT.attest(hook, { rendered: 0, matched: 0, expected: names.length, unmatched: unmatched });
+    return;
+  }
   const grid = document.createElement("div");
   grid.className = "stock-kline-grid stock-kline-grid-module5-monthly-base";
   prepared.forEach(item => {
@@ -460,6 +554,10 @@ function insertMonthlyBreakoutKlines() {
   });
   tableWrap.after(grid);
   tableWrap.dataset.stockKlinesInserted = "1";
+  REPORT.attest(hook, {
+    rendered: prepared.length, matched: prepared.length,
+    expected: names.length, unmatched: unmatched, el: grid
+  });
 }
 
 function findMonthlyData(name) {
@@ -636,39 +734,20 @@ function formatMonth(value) {
   return formatDate(value);
 }
 
-function findInsertionAnchor(texts) {
-  const anchors = reportBody.querySelectorAll("p, h2, h3, h4");
-  for (const text of texts) {
-    for (const element of anchors) {
-      if (!element.textContent.includes(text)) continue;
-      const tag = element.tagName.toLowerCase();
-      return { element, insert: tag === "h2" || tag === "h3" || tag === "h4" ? "after" : "before" };
-    }
-  }
-  return null;
-}
-
-function findHeading(text) {
-  return Array.from(reportBody.querySelectorAll("h3, h4")).find(e => e.textContent.includes(text));
-}
-
-function findNextTableWrap(heading) {
-  let current = heading.nextElementSibling;
-  while (current) {
-    if (current.classList && current.classList.contains("table-wrap")) return current;
-    if (/^H[234]$/.test(current.tagName || "")) return null;
-    current = current.nextElementSibling;
-  }
-  return null;
-}
-
-function extractStockNames(tableWrap) {
+/* Returns the names plus enough context to tell "this group had no candidates"
+   (a table full of nothing, or the 暂无命中 paragraph the report writes
+   instead of a table) apart from "this table is malformed" — the first is
+   normal on a quiet day, the second is a defect the gate must surface. */
+function readStockTable(tableWrap) {
+  if (!tableWrap) return { names: [], rows: 0, hasStockColumn: false, present: false };
   const headers = Array.from(tableWrap.querySelectorAll("thead th")).map(c => normalizeStockName(c.textContent));
   const stockIndex = headers.indexOf("股票");
-  if (stockIndex < 0) return [];
-  return Array.from(tableWrap.querySelectorAll("tbody tr"))
+  const rows = tableWrap.querySelectorAll("tbody tr").length;
+  if (stockIndex < 0) return { names: [], rows: rows, hasStockColumn: false, present: true };
+  const names = Array.from(tableWrap.querySelectorAll("tbody tr"))
     .map(row => row.children[stockIndex] ? normalizeStockName(row.children[stockIndex].textContent) : "")
     .filter(Boolean);
+  return { names: names, rows: rows, hasStockColumn: true, present: true };
 }
 
 function findStockData(name) {
@@ -901,42 +980,43 @@ const chartDefs = [
   }
 ];
 
-const charts = chartDefs.map(def => prepareChart(def)).filter(Boolean);
-if (!charts.length) return;
+const STYLE_HOOK = "style-compare";
+const styleUnmatched = [];
+const charts = [];
+chartDefs.forEach(def => {
+  const chart = prepareChart(def);
+  if (chart) charts.push(chart);
+  else styleUnmatched.push({ name: def.title, reason: "no_payload" });
+});
 
-const anchor = findStyleAnchor();
-if (!anchor) return;
+if (!charts.length) {
+  window.__render.attest(STYLE_HOOK, {
+    rendered: 0, matched: 0, expected: chartDefs.length, unmatched: styleUnmatched
+  });
+  return;
+}
+
+/* The style panel sits after the 市场风格 table. The old pseudo-heading
+   fallback (<p><strong>1.3 市场风格</strong></p>) is gone: the section contract
+   now requires a real heading, and a report that lost one fails at build time
+   with a message naming the section instead of quietly relocating a chart. */
+const anchorEl = window.__sec.find("market_style", ".table-wrap") || window.__sec.tail("market_style");
+if (!anchorEl) {
+  window.__render.fail("hook:" + STYLE_HOOK, "no insertion anchor inside section [market_style]");
+  return;
+}
 
 const grid = document.createElement("div");
 grid.className = "style-compare-grid";
 charts.forEach(chart => grid.appendChild(buildChartCard(chart)));
-
-if (anchor.table) {
-  anchor.table.after(grid);
-} else {
-  anchor.element.after(grid);
-}
-
-/* Anchor on the 1.3 heading; reports written with bold pseudo-headings
-   (report_template.md style, <p><strong>1.3 市场风格</strong></p>) fall back to
-   that paragraph, with the sibling walk stopping at the next pseudo-heading. */
-function findStyleAnchor() {
-  const heading = CK.findHeading(reportBody, "市场风格", "h2, h3, h4");
-  if (heading) return { element: heading, table: CK.findNextTable(heading) };
-  const strong = Array.from(reportBody.querySelectorAll("p > strong"))
-    .find(el => (el.textContent || "").includes("市场风格"));
-  if (!strong) return null;
-  const para = strong.closest("p");
-  let cur = para.nextElementSibling;
-  let table = null;
-  while (cur) {
-    if (cur.classList && cur.classList.contains("table-wrap")) { table = cur; break; }
-    if (/^H[234]$/.test(cur.tagName || "")) break;
-    if (cur.tagName === "P" && cur.firstElementChild && cur.firstElementChild.tagName === "STRONG") break;
-    cur = cur.nextElementSibling;
-  }
-  return { element: para, table };
-}
+anchorEl.after(grid);
+window.__render.attest(STYLE_HOOK, {
+  rendered: grid.childElementCount,
+  matched: charts.length,
+  expected: chartDefs.length,
+  unmatched: styleUnmatched,
+  el: grid
+});
 
 function prepareChart(def) {
   const sliced = def.keys.map(key => {
@@ -1124,18 +1204,17 @@ function round2(value) { return Math.round(value * 100) / 100; }
 # Market-trend mini-chart panel driven by market_data.json.
 # --------------------------------------------------------------------------- #
 MARKET_TRENDS_JS = r"""
+const HOOK = "market-trends";
 const data = __payload || {};
 const records = Array.isArray(data.records) ? data.records.filter(r => r && r.trade_date).slice(-90) : [];
-if (!records.length) return;
+if (!records.length) {
+  window.__render.fail("hook:" + HOOK, "market_data carries no dated records — the trend panel cannot be drawn");
+  return;
+}
 
 const reportBody = document.getElementById("report-body");
 const { svgEl, svgText } = CK;
 const formatDate = CK.fmt.date;
-const headings = reportBody.querySelectorAll("h2, h3, h4");
-let targetHeading = null;
-for (const h of headings) {
-  if (h.textContent.includes("1.1") && h.textContent.includes("情绪趋势")) { targetHeading = h; break; }
-}
 
 const chartSection = document.createElement("div");
 chartSection.className = "chart-grid";
@@ -1164,18 +1243,23 @@ charts.forEach(config => {
   chartSection.appendChild(card);
 });
 
-if (targetHeading) {
-  let insertAfter = targetHeading;
-  let sibling = targetHeading.nextElementSibling;
-  while (sibling) {
-    if (/^H[234]$/.test(sibling.tagName || "")) break;
-    insertAfter = sibling;
-    sibling = sibling.nextElementSibling;
-  }
-  insertAfter.after(chartSection);
-} else {
-  reportBody.appendChild(chartSection);
+/* The panel belongs at the end of the sentiment-trend section. There is
+   deliberately no "append to the document instead" fallback: that fallback is
+   what silently moved five charts to the bottom of the page the day 情绪趋势
+   was renumbered from 1.1 to 1.2. */
+const insertAfter = window.__sec.tail("sentiment_trend");
+if (!insertAfter) {
+  window.__render.fail("hook:" + HOOK, "section [sentiment_trend] not found — refusing to relocate the trend panel");
+  return;
 }
+insertAfter.after(chartSection);
+window.__render.attest(HOOK, {
+  rendered: chartSection.childElementCount,
+  matched: charts.length,
+  expected: charts.length,
+  unmatched: [],
+  el: chartSection
+});
 
 function drawChart(rows, config, card, subtitle) {
   const width = 480;
@@ -1368,7 +1452,9 @@ def build_job(args) -> RenderJob:
     )
     style_series_payload = extract_style_series_payload(evidence)
 
-    builder = HtmlReportBuilder(title=title, theme=args.theme, extra_css=MARKET_SENSE_EXTRA_CSS)
+    builder = HtmlReportBuilder(
+        title=title, theme=args.theme, extra_css=MARKET_SENSE_EXTRA_CSS, contract=DMS_CONTRACT
+    )
     builder.add_decoration(PillDecoration(MARKET_SENSE_PILL_RULES))
     builder.add_ui_decoration(TREND_STATE_CARD_JS)
     builder.add_decoration(HeroDecoration(
@@ -1380,26 +1466,54 @@ def build_job(args) -> RenderJob:
         keyword_pattern=HERO_KEYWORDS,
         stop_mode="any_heading",
     ))
-    builder.add_chart_hook(ChartHook(
-        name="klines",
-        payload={
-            "index": index_kline_data,
-            "stocks": stock_kline_data,
-            "stocks_monthly": stock_kline_data.get("monthly") or {},
-            "display_days": INDEX_KLINE_DISPLAY_DAYS,
-            "display_months": MONTHLY_KLINE_DISPLAY_MONTHS,
-        },
-        js=KLINE_CHARTS_JS,
-    ))
-    builder.add_chart_hook(ChartHook(name="market-trends", payload=market_data, js=MARKET_TRENDS_JS))
+    builder.add_chart_hook(
+        ChartHook(
+            name="klines",
+            payload={
+                "index": index_kline_data,
+                "stocks": stock_kline_data,
+                "stocks_monthly": stock_kline_data.get("monthly") or {},
+                "display_days": INDEX_KLINE_DISPLAY_DAYS,
+                "display_months": MONTHLY_KLINE_DISPLAY_MONTHS,
+            },
+            js=KLINE_CHARTS_JS,
+        ),
+        # One K-line bundle draws into six sections; each insertion attests
+        # separately, so a single broken section is named rather than hidden
+        # behind a bundle-level "it ran".
+        expects=[
+            HookExpectation(name="klines.index", target_sec="index_trend", expect_count=3,
+                            note="上证 / 创业板 / 科创50"),
+            HookExpectation(name="klines.m3_leaders", target_sec="m3_leaders", expect_from="table_rows"),
+            HookExpectation(name="klines.m5_capacity_up", target_sec="m5_capacity_up", expect_from="table_rows"),
+            HookExpectation(name="klines.m5_monthly_base", target_sec="m5_monthly_base", expect_from="table_rows"),
+            HookExpectation(name="klines.m5_early_limit", target_sec="m5_early_limit", expect_from="table_rows"),
+            HookExpectation(name="klines.m5_discount_relaunch", target_sec="m5_discount_relaunch",
+                            expect_from="table_rows"),
+        ],
+    )
+    builder.add_chart_hook(
+        ChartHook(name="market-trends", payload=market_data, js=MARKET_TRENDS_JS),
+        # The count is declared here and produced there: the JS builds its own
+        # chart list, so a drift between the two is a real signal, not noise.
+        expects=[HookExpectation(name="market-trends", target_sec="sentiment_trend", expect_count=5,
+                                 note="成交额 / 活跃度 / 融资净买入 / 涨跌家数 / 涨跌停家数")],
+    )
     if style_series_payload:
-        builder.add_chart_hook(ChartHook(name="style-compare", payload=style_series_payload, js=STYLE_COMPARE_JS))
+        builder.add_chart_hook(
+            ChartHook(name="style-compare", payload=style_series_payload, js=STYLE_COMPARE_JS),
+            expects=[HookExpectation(name="style-compare", target_sec="market_style", expect_min=1,
+                                     note="规模轴 + 成长/价值/红利，任一轴缺数据记 no_payload")],
+        )
 
     lifecycle_payload = None if args.no_lifecycle else load_lifecycle_payload(input_path, args.lifecycle_days)
     if lifecycle_payload:
         from theme_lifecycle import HOOK_NAME, LIFECYCLE_JS_BODY
 
-        builder.add_chart_hook(ChartHook(name=HOOK_NAME, payload=lifecycle_payload, js=LIFECYCLE_JS_BODY))
+        builder.add_chart_hook(
+            ChartHook(name=HOOK_NAME, payload=lifecycle_payload, js=LIFECYCLE_JS_BODY),
+            expects=[HookExpectation(name="theme-lifecycle", target_sec="m3_mainline", expect_count=1)],
+        )
 
     return RenderJob(
         markdown_text=markdown_text,

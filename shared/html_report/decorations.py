@@ -111,6 +111,13 @@ __NUMBERED_BLOCK__
     cur = next;
   }
   collected.forEach(node => card.appendChild(node));
+  /* Carry the section-contract anchor onto the card: the heading itself is
+     about to be removed, and an anchor that disappears mid-render would fail
+     the deploy gate for a section that is in fact perfectly rendered. */
+  if (summaryH.dataset.sec) {
+    card.dataset.sec = summaryH.dataset.sec;
+    card.dataset.secLevel = summaryH.dataset.secLevel || summaryH.tagName.slice(1);
+  }
   summaryH.replaceWith(card);
 
   collected.forEach(p => {

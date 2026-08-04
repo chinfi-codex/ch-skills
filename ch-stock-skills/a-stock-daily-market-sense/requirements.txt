@@ -1,0 +1,8 @@
+akshare
+baostock
+numpy
+pandas
+playwright
+psycopg2-binary
+requests
+tushare

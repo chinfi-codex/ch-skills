@@ -47,6 +47,15 @@ TAVILY_API_KEY=your_token  # 催化搜索主路径；缺失时可由宿主 Web S
 
 数据库连接统一走 `scripts/_shared/db_core.py`（开发仓库中为 `shared/data/db_core.py`）。首次进入任意 Agent 环境时先运行 `python3 scripts/_shared/db_ping.py --alpha-schema`。
 
+首次安装依赖时运行：
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 -m playwright install chromium
+```
+
+第二条命令安装渲染门禁所需的 Chromium；只安装 Python 包还不能运行浏览器门禁。
+
 基础命令：
 
 ```bash
@@ -62,11 +71,25 @@ python3 scripts/theme_group_stats.py \
   --output reports/module_context_YYYYMMDD/module3_theme_stats.json
 ```
 
-HTML 输出：
+HTML 输出（`--gate` 会在写完文件后用浏览器验一遍渲染契约，不通过就非零退出）：
 
 ```bash
-python3 scripts/render_report_html.py --input reports/report_20260429.md [--theme default|claude|print]
+python3 scripts/render_report_html.py --input reports/report_20260429.md --gate [--theme default|claude|print]
 ```
+
+**上线前必须过渲染门禁。** 报告的图表全部是页面自己在浏览器里画出来的，静态看文件看不出图表画到哪儿了、有没有画。所以本地产物、复制到 Site 之后、线上页面三处各跑一次同一套检查，全绿才允许部署，全绿才允许 cleanup：
+
+```bash
+python3 scripts/_shared/html_report/render_check.py --target reports/report_20260429.html --stage local --out reports/report_20260429.render-check-local.json
+# 从上一步审计 JSON 读取 build_id；site/online 必须与本地产物完全一致
+BUILD_ID=$(python3 -c 'import json; print(json.load(open("reports/report_20260429.render-check-local.json"))["build_id"])')
+python3 scripts/_shared/html_report/render_check.py --target <Site 路径>/report_20260429.html --stage site --expect-contract dms/1.0.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-site.json
+python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stage online --expect-contract dms/1.0.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-online.json
+```
+
+退出码：`0` 通过、`1` 失败（**不得部署、不得 cleanup，留着审计文件排查**）、`2` 只跑了 `--static-only` 冒烟不算门禁。三份 `render-check-*.json` 留在 `reports/` 下，不进发布包。
+
+契约与门禁的工作方式见 `references/render_contract.md`；改章节结构时要同步升 `scripts/render_report_html.py` 里 `DMS_CONTRACT` 的版本号。
 
 常用参数与 `factor_backtest.py` / `factor_lab.py` 说明见 `references/cli_reference.md`。
 

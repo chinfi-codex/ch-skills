@@ -12,10 +12,12 @@ The thin per-skill entrypoint is built from three reusable pieces:
 - ``ChartHook`` + ``window.CK`` (chart kit) — chart contributions.
 """
 
+from .attestation import DEFAULT_UNMATCHED_REASONS, HookExpectation, RenderManifest
 from .builder import HtmlReportBuilder, list_themes
 from .chart_hook import ChartHook
 from .chartkit import chartkit_js
 from .cli import RenderJob, render_report
+from .contract import ContractError, SectionContract, SectionSpec
 from .decorations import (
     CollapsibleUpdatesDecoration,
     HeroDecoration,
@@ -29,6 +31,12 @@ from .text_validator import validate_text_preserved
 __all__ = [
     "HtmlReportBuilder",
     "ChartHook",
+    "SectionContract",
+    "SectionSpec",
+    "ContractError",
+    "HookExpectation",
+    "RenderManifest",
+    "DEFAULT_UNMATCHED_REASONS",
     "StaticFigure",
     "insert_figures",
     "RenderJob",

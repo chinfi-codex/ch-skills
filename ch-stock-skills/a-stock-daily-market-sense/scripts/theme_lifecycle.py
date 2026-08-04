@@ -494,26 +494,20 @@ def cmd_window(args: argparse.Namespace) -> int:
 # the #chart-data envelope; `inject` inlines it).  Finds the 主线判定 heading
 # at view time and appends the block at the end of that subsection.
 LIFECYCLE_JS_BODY = r"""
+  const LIFECYCLE_HOOK = "theme-lifecycle";
   const data = __payload || {};
-  if (!data.dates || !data.dates.length || !data.themes || !data.themes.length) return;
+  if (!data.dates || !data.dates.length || !data.themes || !data.themes.length) {
+    window.__render.fail("hook:" + LIFECYCLE_HOOK, "lifecycle payload was attached but carries no dates or themes");
+    return;
+  }
   if (document.getElementById("theme-lifecycle-block")) return;
   const root = document.getElementById("report-body") || document.body;
-  function findAnchor(text) {
-    const nodes = root.querySelectorAll("h2,h3,h4");
-    for (const el of nodes) {
-      if ((el.textContent || "").indexOf(text) !== -1) return el;
-    }
-    return null;
-  }
-  const anchor = findAnchor("主线判定") || findAnchor("赚钱效应");
-  let insertAfter = null;
-  if (anchor) {
-    insertAfter = anchor;
-    let el = anchor.nextElementSibling;
-    while (el && ["H2", "H3", "H4"].indexOf(el.tagName) === -1) {
-      insertAfter = el;
-      el = el.nextElementSibling;
-    }
+  /* End of the 主线判定 section. No document-tail fallback: a lifecycle band
+     that cannot find its section must red-light the gate, not drift. */
+  const insertAfter = window.__sec.tail("m3_mainline");
+  if (!insertAfter) {
+    window.__render.fail("hook:" + LIFECYCLE_HOOK, "section [m3_mainline] not found");
+    return;
   }
   const COLORS = {
     "主线确认": "#E24B4A",
@@ -659,11 +653,10 @@ LIFECYCLE_JS_BODY = r"""
   foot.style.cssText = "margin-top:8px;font-size:11.5px;color:#80868B;";
   foot.textContent = "红 = 强势在场 · 绿 = 退潮 · 闪电 = 低位启动；点击格子查看当日证据。数据来自 theme_daily_state，证据可回溯当日复盘原文。";
   wrap.appendChild(foot);
-  if (insertAfter) {
-    insertAfter.after(wrap);
-  } else {
-    root.appendChild(wrap);
-  }
+  insertAfter.after(wrap);
+  window.__render.attest(LIFECYCLE_HOOK, {
+    rendered: 1, matched: 1, expected: 1, unmatched: [], el: wrap
+  });
   let defTheme = null;
   let defIdx = lastIdx;
   for (const t of data.themes) {

@@ -87,17 +87,27 @@ def _run(
     parser.add_argument("--strict", action="store_true",
                         help="Abort on text-preservation mismatch instead of warning. Off by default so content "
                              "changes never block HTML generation.")
+    parser.add_argument("--gate", action="store_true",
+                        help="After writing the file, load it in a browser and verify it against its render "
+                             "contract; exit non-zero if it fails. Implies --strict, because a page that dropped "
+                             "text should not pass a deploy gate. Requires a contract-built report.")
     if add_arguments is not None:
         add_arguments(parser)
 
     args = parser.parse_args(argv)
+    if args.gate and args.no_validate:
+        parser.error(
+            "--gate cannot be combined with --no-validate: a deploy gate must run "
+            "Markdown text-preservation validation"
+        )
     job = build_job(args)
 
+    strict = args.strict or args.gate
     validation_warning: Optional[str] = None
     try:
         html_text = job.builder.render(job.markdown_text, validate=not args.no_validate)
     except RuntimeError as exc:
-        if args.strict or args.no_validate:
+        if strict or args.no_validate:
             raise
         # Content and format are decoupled: a preservation mismatch is a warning,
         # never a hard stop (run with --strict to fail instead).
@@ -115,5 +125,18 @@ def _run(
         "validation_warning": validation_warning,
     }
     summary.update(job.summary)
+
+    gate_code = 0
+    if args.gate:
+        from .render_check import main as gate_main
+
+        audit_path = job.output_path.with_name(f"{job.output_path.stem}.render-check-local.json")
+        gate_code = gate_main([
+            "--target", str(job.output_path),
+            "--stage", "local",
+            "--out", str(audit_path),
+        ])
+        summary["render_gate"] = {"exit_code": gate_code, "audit": str(audit_path)}
+
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0
+    return gate_code

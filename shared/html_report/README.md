@@ -38,7 +38,9 @@ if __name__ == "__main__":
         build_job=build_job, add_arguments=add_arguments))
 ```
 
-`render_report` 统一负责:解析 `--input/--output/--title/--theme/--no-validate/--strict`、读 Markdown、跑 `build_job`、以"校验失败转 warning 不阻断"的策略渲染(`--strict` 才硬失败)、写文件、打印 JSON 摘要、把异常收成 `error: …` + 退出码 1。
+`render_report` 统一负责:解析 `--input/--output/--title/--theme/--no-validate/--strict/--gate`、读 Markdown、跑 `build_job`、以"校验失败转 warning 不阻断"的策略渲染(`--strict` 才硬失败)、写文件、打印 JSON 摘要、把异常收成 `error: …` + 退出码 1。`--gate` 强制文本保全校验，不能与 `--no-validate` 混用。
+
+带渲染契约的报告可用 `render_check.py` 跑浏览器门禁。`site` / `online` 阶段必须传 local 审计里的 `--expect-build`，防止同一契约版本下的旧缓存误通过；真实浏览器模式依赖 `playwright` Python 包及 Chromium 浏览器。
 
 ## 四层结构
 

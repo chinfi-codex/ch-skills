@@ -68,6 +68,10 @@ output_sections: [一句话结论, 今日重点·深度拆解, 重点候选·待
   - 顶层 `axis_objects` 记当天进正文的对象落点：`{name, grade, vector_id, form_id, note}`，grade 用 `s_confirmed / s_candidate / a / b`。S 级也可以只在 `grading_audit` 里加 `axis_hit: {vector_id, form_id}`，渲染器两处都读、按 name 去重。B 级可以不记。
 - **台账预算与母题（防膨胀，务必守）**：open 跟踪项软上限 `open_budget=10`（见 `config/report_profiles.yaml`）。超预算时**先把同一条矢量下的多条细证据归并进一个母题（`sub_items`），别在顶层平铺**——母题占 1 个名额、子线各留独立到期时钟与 status（机制见 `../watchboard.md §4`）。归并后仍超，就把连续 3 期无实质进展的项转 `expired` 或直接结算掉。**别靠加预算解决膨胀**：持续平铺 16-18 条 open、且 `sub_items` 一个都没用，就是该精简的信号（对照地缘日报靠母题把顶层压到 9 条）。
 
+  **每条 `tracking_item` 挂一个 `vector_id`（务必守，这是母题能落地的前提）**：写 open 项时带上它属于哪条 canonical 矢量 / 形态（如 `vector_id: v-longtask`）。这样"同一 vector_id 下已经开了几条"一眼可见——**同一 `vector_id` 下 open 项 ≥2，就必须把它们收进一个母题**（父项 = 这条矢量的跟踪母题、子项 = 各细证据），而不是在顶层各开一条。反面教训（2026-07-25 实测）：19 条 open 里 `coding agent 工作台`平铺了 3 条、`企业 agent 数据安全`平铺了 2 条（还写成近重复的两条），全无母题——正因为没挂 vector_id，成簇没人发现。归并后 19→约 10，预算本就够用，缺的是这一步。
+
+  **超预算的硬提示**：`save_report_state` 在 open 超预算且母题零使用时会打 `⚠️` 醒目告警（不阻断写入，但明确点名"这是膨胀不是预算小了"）。看到它就先做上面的 vector_id 归并，别顺手加预算或无视。
+
 ### 第一性原理：为什么用双引擎
 
 AI 行业的边际信息在两个源头交替出现，单看都不够：公司只看不开源会丢早期信号（Agent/MCP/Coding Agent 的前沿常先在 Show HN 和 GH Trending 跑出来）；只看开源不看公司会丢规模化判断（真正决定能不能用、能不能赚钱的还是大厂 API、定价、产品入口）。所以先各自捞齐证据，再收敛到两条坐标轴。

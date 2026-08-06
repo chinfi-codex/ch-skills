@@ -109,6 +109,28 @@
 
 > 没线索的栏直接写"暂无明确预期",别拿空话凑。候选 / 重点对应的行只写"对象 + 盯什么信号(T-编号)",falsifier 和验证点在候选 / 深拆里已有,不重抄。
 
+**每条 `tracking_item` 挂 `vector_id`、同矢量多项收进母题**(防台账膨胀,机制见 framework「台账预算与母题」+ `../watchboard.md §4`):写 open 项时带上它属于哪条 canonical 矢量(`vector_id: v-longtask`);**同一 `vector_id` 下 open ≥2 就必须折叠成一个母题**,父项占 1 个预算位、子项各留自己的到期时钟。照做范例:
+
+```
+# ❌ 顶层平铺(实测 2026-07-25 的膨胀形态,别学)
+T-114 coding agent 工作台推向经济主体
+T-125 coding agent 入口移动化 / Remote Control
+T-126 harness 标准化 + 浏览器 MCP
+T-120 企业 agent 数据安全与信任
+T-132 企业 agent 数据安全与隐私标准     ← 和 T-120 近重复
+
+# ✅ 按 vector_id 折叠成母题(19→约 10,预算够用)
+T-114 [母题] coding agent 工作台演进 (vector_id: v-skills)
+   ├─ 工作台推向经济主体 (原 T-114)
+   ├─ 入口移动化 / Remote Control (原 T-125)
+   └─ harness 标准化 + 浏览器 MCP (原 T-126)
+T-120 [母题] 企业 agent 数据安全与信任 (vector_id: v-security)
+   ├─ Grok Build 事故 (原 T-120)
+   └─ agent 数据采集缺行业标准 (原 T-132,去重合并)
+```
+
+> 超预算且没用母题时,`save_report_state` 会打 `⚠️` 醒目告警——看到就先做上面的折叠,别加预算或无视。
+
 ---
 
 ### 🔄 本期变更(框架 × 跟踪合并)

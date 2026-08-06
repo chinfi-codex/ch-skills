@@ -528,14 +528,29 @@ def validate(
     # it nudges the author to consolidate same-theme items or settle stale ones
     # before opening new ones.
     if open_budget is not None:
-        open_count = sum(
-            1 for it in items if isinstance(it, dict) and it.get("status") == "open"
+        open_top = [
+            it for it in items if isinstance(it, dict) and it.get("status") == "open"
+        ]
+        open_count = len(open_top)
+        # 母题（sub_items）使用量：超预算却一个母题都不用，正是台账膨胀的典型形态。
+        parent_count = sum(
+            1
+            for it in open_top
+            if isinstance(it.get("sub_items"), list) and it.get("sub_items")
         )
         if open_count > open_budget:
-            warnings.append(
-                f"open 跟踪项 {open_count} 条 > 预算 {open_budget} —— 先归并同主题项"
-                "或了断陈旧项，再开新项，别让台账无限膨胀"
-            )
+            if parent_count == 0:
+                warnings.append(
+                    f"⚠️ open 跟踪项 {open_count} 条 > 预算 {open_budget}，且母题(sub_items)"
+                    "零使用 —— 这是台账膨胀的典型形态，不是预算定小了。先把同一主题/同一 "
+                    "vector_id 的细项归并进一个母题（父项占 1 个预算位、子项各留自己的到期"
+                    "时钟），或了断陈旧项；别靠加预算解决膨胀。"
+                )
+            else:
+                warnings.append(
+                    f"open 跟踪项 {open_count} 条 > 预算 {open_budget}（已用 {parent_count} "
+                    "个母题）—— 继续归并同主题项或了断陈旧项，再开新项。"
+                )
 
     nodes = payload.get("next_nodes")
     if nodes is not None and not isinstance(nodes, list):

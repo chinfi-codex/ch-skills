@@ -180,8 +180,8 @@ class RenderGateTest(unittest.TestCase):
         hooks = result["detail"]["hooks"]
         self.assertEqual(hooks["market-trends"]["rendered"], 5)
         self.assertEqual(hooks["klines.index"]["rendered"], 3)
-        self.assertEqual(hooks["market-state.ladder"]["rendered"], 1)
-        self.assertEqual(hooks["market-state.ladder"]["placed_in"], "market_state")
+        self.assertEqual(hooks["market-state.panel"]["rendered"], 1)
+        self.assertEqual(hooks["market-state.panel"]["placed_in"], "market_state")
 
     def test_unmatched_rows_are_allowed_but_must_carry_a_reason(self) -> None:
         """Two fixture stocks deliberately have no K-line data."""
@@ -220,44 +220,68 @@ class RenderGateTest(unittest.TestCase):
         self.assertTrue(card["warnRow"], "数据提示 row should be called out")
         self.assertFalse(card["leftoverNestedUl"])
 
-    def test_drawdown_ladder_fits_its_canvas(self) -> None:
-        """SVG does not clip, so an over-wide label spills outside the card
-        instead of being cut. Assert the columns stay inside the viewBox and
-        clear of each other — this caught a real 24px overflow."""
-        geo = _eval(self.html, """() => {
-          const svg = document.querySelector('.msc-ladder svg');
-          if (!svg) return {svg: false};
-          const box = el => { const b = el.getBBox(); return [b.x, b.x + b.width]; };
-          const viewW = +svg.getAttribute('viewBox').split(' ')[2];
-          const vals = [...svg.querySelectorAll('.msc-val')].map(box);
-          const deltas = [...svg.querySelectorAll('.msc-delta')].map(box);
-          const names = [...svg.querySelectorAll('.msc-name')].map(box);
-          const bars = [...svg.querySelectorAll('rect')].map(r =>
-            [+r.getAttribute('x'), +r.getAttribute('x') + +r.getAttribute('width')]);
+    def test_state_rulers_cover_every_table_dimension(self) -> None:
+        """The panel replaces the drawdown ladder, so it has to carry all five
+        rows of the 1.1 table — not just the one the ladder used to draw."""
+        panel = _eval(self.html, """() => {
+          const secs = [...document.querySelectorAll('.msr-sec')];
           return {
-            svg: true, viewW,
-            rightMost: Math.max(...vals.map(v => v[1]), ...deltas.map(v => v[1])),
-            valRight: Math.max(...vals.map(v => v[1])),
-            deltaLeft: Math.min(...deltas.map(v => v[0])),
-            nameRight: Math.max(...names.map(v => v[1])),
-            barLeft: Math.min(...bars.map(b => b[0])),
-            barCount: bars.length,
-            barClasses: [...svg.querySelectorAll('rect')].map(r => r.getAttribute('class')),
-            widths: bars.map(b => Math.round(b[1] - b[0])),
-            groups: [...svg.querySelectorAll('.msc-group')].map(t => t.textContent)
+            count: secs.length,
+            titles: secs.map(s => s.querySelector('.msr-title').textContent),
+            rowsPerSec: secs.map(s => s.querySelectorAll('.msr-bar').length),
+            ticks: secs.map(s => [...s.querySelectorAll('.msr-tick-label')].map(t => t.textContent)),
+            stamps: secs.map(s => (s.querySelector('.msr-stamp') || {}).textContent || ''),
+            ladderGone: !document.querySelector('.msc-ladder')
           };
         }""")
-        self.assertTrue(geo["svg"], "ladder svg missing")
-        self.assertEqual(geo["barCount"], 6)
-        self.assertLessEqual(geo["rightMost"], geo["viewW"], "value labels spill past the viewBox")
-        self.assertLess(geo["valRight"], geo["deltaLeft"], "回撤 and 环比 columns overlap")
-        self.assertLessEqual(geo["nameRight"], geo["barLeft"], "index names run into the bars")
-        # 权重 first, then 成长小盘; within a group shallowest drawdown first
-        self.assertEqual(geo["groups"], ["权重", "成长小盘"])
-        self.assertEqual(geo["widths"], sorted(geo["widths"]))
-        self.assertEqual(geo["barClasses"][-1], "msc-bar t-bear")
+        self.assertTrue(panel["ladderGone"], "the old ladder should be gone")
+        self.assertEqual(panel["titles"],
+                         ["回撤分层", "市场宽度", "申万一级结构", "融资余额", "流动性"])
+        # 回撤 collapses six indexes into the two groups the framework judges on
+        self.assertEqual(panel["rowsPerSec"], [2, 3, 2, 2, 1])
+        # the manual's thresholds have to be visible, not just the readings
+        self.assertEqual(panel["ticks"][1], ["低位 17", "确认 50"])
+        self.assertEqual(panel["ticks"][2], ["确认 10"])
+        # margin is T-1, so its section must say which day it is
+        self.assertTrue(panel["stamps"][3].startswith("数据日"), panel["stamps"])
 
-    def test_ladder_is_not_promised_when_evidence_lacks_market_state(self) -> None:
+    def test_state_rulers_fit_their_canvases(self) -> None:
+        """SVG does not clip, so an over-wide label overlaps the bar to its left
+        instead of being cut. Every section reserves its value column from the
+        widest label it will draw; assert that holds in all of them — the first
+        cut of this panel really did overlap 回撤's bars."""
+        geo = _eval(self.html, """() => {
+          return [...document.querySelectorAll('.msr-sec')].map(sec => {
+            const svg = sec.querySelector('svg');
+            const box = el => { const b = el.getBBox(); return [b.x, b.x + b.width]; };
+            const bars = [...svg.querySelectorAll('.msr-bar')].map(r =>
+              [+r.getAttribute('x'), +r.getAttribute('x') + +r.getAttribute('width')]);
+            const vals = [...svg.querySelectorAll('.msr-val, .msr-delta')].map(box);
+            const labels = [...svg.querySelectorAll('.msr-label')].map(box);
+            const bands = [...svg.querySelectorAll('.msr-band-label')].map(box);
+            return {
+              title: sec.querySelector('.msr-title').textContent,
+              viewW: +svg.getAttribute('viewBox').split(' ')[2],
+              barRight: Math.max(...bars.map(b => b[1])),
+              barLeft: Math.min(...bars.map(b => b[0])),
+              valLeft: Math.min(...vals.map(v => v[0])),
+              valRight: Math.max(...vals.map(v => v[1])),
+              labelRight: Math.max(...labels.map(v => v[1])),
+              bands: bands
+            };
+          });
+        }""")
+        self.assertEqual(len(geo), 5)
+        for sec in geo:
+            with self.subTest(section=sec["title"]):
+                self.assertLessEqual(sec["valRight"], sec["viewW"] + 0.5, "value column spills past the viewBox")
+                self.assertGreater(sec["valLeft"], sec["barRight"], "value labels overlap the bars")
+                self.assertLessEqual(sec["labelRight"], sec["barLeft"] + 0.5, "row labels run into the bars")
+                for i in range(1, len(sec["bands"])):
+                    self.assertGreaterEqual(sec["bands"][i][0], sec["bands"][i - 1][1],
+                                            "tier band labels overlap each other")
+
+    def test_panel_is_not_promised_when_evidence_lacks_market_state(self) -> None:
         """A missing evidence block is a data gap, not a render failure: the
         hook must not be declared at all, so the gate stays green and the skip
         is reported on stderr instead."""
@@ -279,8 +303,8 @@ class RenderGateTest(unittest.TestCase):
             capture_output=True, text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("跳过宽基回撤阶梯", result.stderr)
-        self.assertNotIn("market-state.ladder", html.read_text(encoding="utf-8"))
+        self.assertIn("跳过状态标尺", result.stderr)
+        self.assertNotIn("market-state.panel", html.read_text(encoding="utf-8"))
         gate = _gate(html)
         self.assertEqual(gate["status"], "ok", _problem_text(gate))
 

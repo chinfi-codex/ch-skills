@@ -59,8 +59,6 @@ def _dataset_handlers() -> Dict[str, DatasetHandler]:
                 limit=args.limit,
                 source=getattr(args, "research_source", "cninfo"),
                 with_text=getattr(args, "with_text", False),
-                max_text_pages=getattr(args, "max_pages", 12) or 12,
-                max_text_chars=getattr(args, "max_chars", 20000) or 20000,
             )
         ),
         "interactive-qa": (

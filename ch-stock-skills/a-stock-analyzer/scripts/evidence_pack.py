@@ -58,10 +58,11 @@ def latest_records(dataset: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
 
 
 def institutional_research_records(dataset: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-    """Return bounded 投资者关系活动记录表 records from either source shape.
+    """Return bounded 投资者关系活动记录表 records from a wrapped evidence-pack dataset.
 
-    CNInfo (default) returns {"records": [...]}; the Tushare fallback returns the
-    same key. Older DataFrame-style payloads fall back to ``latest_records``.
+    ``fetch_or_error`` wraps the payload as ``{"data": <result>}``; the expected
+    result shape is ``{"records": [...]}``. Older DataFrame-style payloads fall
+    back to ``latest_records``.
     """
     data = dataset.get("data") if isinstance(dataset, dict) else None
     if isinstance(data, dict):
@@ -640,6 +641,7 @@ def build_evidence_pack(fetcher: StockDataFetcher, args: argparse.Namespace) -> 
             trade_date=args.trade_date,
             limit=args.research_limit,
             source=getattr(args, "research_source", "cninfo"),
+            with_text=args.with_text,
         ),
     }
 

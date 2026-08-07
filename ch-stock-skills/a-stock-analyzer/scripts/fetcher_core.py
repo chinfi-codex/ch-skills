@@ -49,13 +49,33 @@ from retry import request_with_retry
 from tushare_client import _TushareProxy, get_tushare_pro
 
 class StockDataFetcher:
-    """Atomic data access wrapper around Tushare Pro."""
+    """Atomic data access wrapper around Tushare Pro and CNInfo APIs."""
 
     def __init__(self, token: Optional[str] = None, cache_dir: Optional[str] = None):
-        self.pro = _TushareProxy(get_tushare_pro(token))
+        # Tushare is initialised lazily: CNInfo-backed datasets (announcements,
+        # institutional research, interactive Q&A, periodic-report text) must stay
+        # usable in environments that have no TUSHARE_TOKEN.
+        self._token = token
+        self._pro: Optional[_TushareProxy] = None
         self._stock_list_cache: Optional[pd.DataFrame] = None
         self._cache = JsonTTLCache(Path(cache_dir or os.path.join(os.getcwd(), ".cache", "a_stock_analyzer")))
         self._session = require_requests().Session() if requests else None
+
+    @property
+    def pro(self) -> _TushareProxy:
+        """Tushare Pro proxy, created on first use so missing tokens fail late."""
+        if self._pro is None:
+            self._pro = _TushareProxy(get_tushare_pro(self._token))
+        return self._pro
+
+    @property
+    def tushare_available(self) -> bool:
+        """Whether Tushare Pro can be initialised (used for graceful fallbacks)."""
+        try:
+            _ = self.pro
+        except Exception:
+            return False
+        return True
 
     def get_all_stocks(self) -> pd.DataFrame:
         """Fetch listed A-share stocks (cached 24h)."""
@@ -213,7 +233,7 @@ class StockDataFetcher:
         df = self._sort_by_date(df, "end_date", ascending=False)
         return df.head(limit) if not df.empty else df
 
-    def get_institutional_research(
+    def get_institutional_research_tushare(
         self,
         ts_code: str,
         *,
@@ -222,7 +242,11 @@ class StockDataFetcher:
         trade_date: Optional[str] = None,
         limit: int = 50,
     ) -> pd.DataFrame:
-        """Fetch institutional research records from Tushare stk_surv."""
+        """Fetch institutional research summaries from Tushare stk_surv.
+
+        Returns structured fields only (date / method / staff / attendee count);
+        it does NOT carry the investor-relations record full text.
+        """
         normalized = normalize_ts_code(ts_code)
         request_args: Dict[str, Any] = {"ts_code": normalized}
         normalized_trade_date = normalize_yyyymmdd(trade_date)
@@ -235,6 +259,161 @@ class StockDataFetcher:
         df = self.pro.stk_surv(**request_args)
         df = self._sort_by_date(df, "trade_date", ascending=False)
         return df.head(limit) if not df.empty else df
+
+    def get_institutional_research(
+        self,
+        ts_code: str,
+        *,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        limit: int = 50,
+        source: str = "cninfo",
+        with_text: bool = False,
+        max_text_pages: int = 12,
+        max_text_chars: int = 20000,
+        timeout: int = DEFAULT_CNINFO_TIMEOUT,
+    ) -> Dict[str, Any]:
+        """Fetch institutional research records (投资者关系活动记录表).
+
+        CNInfo is the default source because 投资者关系活动记录表 live in the
+        ``relation`` tab — the default ``fulltext`` announcement search does NOT
+        return them — and only the CNInfo PDF carries the record full text
+        (attending institutions, Q&A content). Tushare ``stk_surv`` is kept as a
+        fallback but yields structured summaries only, and needs TUSHARE_TOKEN.
+
+        Set ``with_text=True`` to also extract each record's PDF text.
+        """
+        normalized = normalize_ts_code(ts_code)
+        requested_source = (source or "cninfo").strip().lower()
+        if requested_source not in {"cninfo", "tushare"}:
+            raise ValueError(f"Unsupported institutional-research source: {source}")
+
+        date_range = self._institutional_research_date_range(start_date, end_date, trade_date)
+        fallback_reason = ""
+
+        if requested_source == "cninfo":
+            try:
+                return self._institutional_research_from_cninfo(
+                    normalized,
+                    date_range=date_range,
+                    limit=limit,
+                    with_text=with_text,
+                    max_text_pages=max_text_pages,
+                    max_text_chars=max_text_chars,
+                    timeout=timeout,
+                )
+            except Exception as exc:  # noqa: BLE001 - fall back to Tushare on any CNInfo failure
+                fallback_reason = f"cninfo failed: {exc}"
+
+        records: List[Dict[str, Any]] = []
+        tushare_error = ""
+        try:
+            df = self.get_institutional_research_tushare(
+                normalized,
+                start_date=start_date,
+                end_date=end_date,
+                trade_date=trade_date,
+                limit=limit,
+            )
+            records = dataframe_to_records(df)
+        except Exception as exc:  # noqa: BLE001 - surface as empty result with reason
+            tushare_error = str(exc)
+
+        return {
+            "query": {
+                "ts_code": normalized,
+                "source": "tushare",
+                "requested_source": requested_source,
+                "date_range": date_range,
+                "limit": limit,
+            },
+            "source": "tushare",
+            "fallback_reason": fallback_reason,
+            "error": tushare_error,
+            "note": "Tushare stk_surv returns structured summaries only, without record full text.",
+            "count": len(records),
+            "records": records,
+        }
+
+    @staticmethod
+    def _institutional_research_date_range(
+        start_date: Optional[str],
+        end_date: Optional[str],
+        trade_date: Optional[str],
+    ) -> str:
+        """Build a CNInfo-style YYYY-MM-DD~YYYY-MM-DD range for research queries."""
+
+        def _fmt(value: Optional[str]) -> Optional[str]:
+            normalized = normalize_yyyymmdd(value)
+            if not normalized:
+                return None
+            return f"{normalized[0:4]}-{normalized[4:6]}-{normalized[6:8]}"
+
+        single = _fmt(trade_date)
+        if single:
+            return f"{single}~{single}"
+        start = _fmt(start_date) or (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        end = _fmt(end_date) or datetime.now().strftime("%Y-%m-%d")
+        return f"{start}~{end}"
+
+    def _institutional_research_from_cninfo(
+        self,
+        ts_code: str,
+        *,
+        date_range: str,
+        limit: int,
+        with_text: bool,
+        max_text_pages: int,
+        max_text_chars: int,
+        timeout: int,
+    ) -> Dict[str, Any]:
+        """Fetch 投资者关系活动记录表 from the CNInfo ``relation`` tab."""
+        result = self.get_announcements(
+            ts_code,
+            tab_type="relation",
+            date_range=date_range,
+            limit=limit,
+            include_excluded=True,
+            page_size=DEFAULT_CNINFO_PAGE_SIZE,
+            timeout=timeout,
+        )
+        records = result.get("announcements", []) or []
+
+        if with_text:
+            for record in records:
+                url = record.get("adjunct_url") or ""
+                if not url:
+                    continue
+                try:
+                    pdf_bytes = self.download_report_bytes(url, timeout=timeout)
+                    record.update(
+                        extract_pdf_text(
+                            pdf_bytes,
+                            max_pages=max_text_pages,
+                            max_chars=max_text_chars,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001 - keep list usable if one PDF fails
+                    record["text_error"] = str(exc)
+
+        return {
+            "query": {
+                "ts_code": normalize_ts_code(ts_code),
+                "source": "cninfo",
+                "requested_source": "cninfo",
+                "tab_type": "relation",
+                "date_range": date_range,
+                "date_range_effective": result.get("query", {}).get("date_range_effective") or result.get("date_range_effective"),
+                "limit": limit,
+                "with_text": with_text,
+            },
+            "source": "cninfo",
+            "note": "投资者关系活动记录表 come from the CNInfo relation tab; the fulltext tab does not return them.",
+            "total_records": result.get("total_records"),
+            "count": len(records),
+            "records": records,
+        }
 
     def get_interactive_qa(
         self,

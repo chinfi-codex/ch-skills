@@ -57,6 +57,10 @@ def _dataset_handlers() -> Dict[str, DatasetHandler]:
                 end_date=args.end_date,
                 trade_date=args.trade_date,
                 limit=args.limit,
+                source=getattr(args, "research_source", "cninfo"),
+                with_text=getattr(args, "with_text", False),
+                max_text_pages=getattr(args, "max_pages", 12) or 12,
+                max_text_chars=getattr(args, "max_chars", 20000) or 20000,
             )
         ),
         "interactive-qa": (
@@ -189,6 +193,17 @@ def _add_shared_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--start-date", help="Tushare start date: YYYYMMDD or YYYY-MM-DD.")
     parser.add_argument("--end-date", help="Tushare end date: YYYYMMDD or YYYY-MM-DD.")
     parser.add_argument("--trade-date", help="Tushare trade/survey date: YYYYMMDD or YYYY-MM-DD.")
+    parser.add_argument(
+        "--research-source",
+        choices=["cninfo", "tushare"],
+        default="cninfo",
+        help="institutional-research 取数源：cninfo 走巨潮 relation 频道（默认，含记录表全文）；tushare 走 stk_surv（仅结构化摘要，需 TUSHARE_TOKEN）。",
+    )
+    parser.add_argument(
+        "--with-text",
+        action="store_true",
+        help="institutional-research 额外抽取每份投资者关系活动记录表的 PDF 正文。",
+    )
     parser.add_argument("--report-type", choices=sorted(CNINFO_REPORT_TYPES), default="all")
     parser.add_argument("--report-year", type=int)
     parser.add_argument("--include-report-variants", action="store_true")

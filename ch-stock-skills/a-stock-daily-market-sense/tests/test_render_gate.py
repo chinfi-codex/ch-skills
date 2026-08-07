@@ -72,6 +72,27 @@ def _problem_text(result) -> str:
     return "\n".join(f"{p.get('scope')}: {p.get('message')}" for p in result["problems"])
 
 
+def _eval(html: Path, expression: str):
+    """Load the page in chromium and read a value back out of the live DOM.
+
+    Decorations and charts only exist after the page's own scripts run, so
+    asserting on the HTML file text would test nothing. The viewport is sized
+    explicitly because ``getBBox`` on a zero-width viewport returns zeros and
+    would make every layout assertion pass vacuously.
+    """
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(html.resolve().as_uri(), wait_until="load")
+            page.wait_for_function("() => document.documentElement.dataset.renderStatus", timeout=15000)
+            return page.evaluate(expression)
+        finally:
+            browser.close()
+
+
 class _QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, _format, *args) -> None:
         pass
@@ -159,6 +180,8 @@ class RenderGateTest(unittest.TestCase):
         hooks = result["detail"]["hooks"]
         self.assertEqual(hooks["market-trends"]["rendered"], 5)
         self.assertEqual(hooks["klines.index"]["rendered"], 3)
+        self.assertEqual(hooks["market-state.ladder"]["rendered"], 1)
+        self.assertEqual(hooks["market-state.ladder"]["placed_in"], "market_state")
 
     def test_unmatched_rows_are_allowed_but_must_carry_a_reason(self) -> None:
         """Two fixture stocks deliberately have no K-line data."""
@@ -171,6 +194,95 @@ class RenderGateTest(unittest.TestCase):
         self.assertTrue(gaps, "fixture should exercise the unmatched path")
         for item in gaps:
             self.assertIn(item["reason"], ("no_kline_data", "no_records_in_window"), item)
+
+    def test_market_state_card_is_built_from_the_11_readings(self) -> None:
+        """1.1 must reach the reader as a card: tier badges, a ✓/✗ checklist and
+        a hit counter — all of it lifted from text the Markdown already wrote."""
+        card = _eval(self.html, """() => {
+          const el = document.querySelector('.market-state-card');
+          if (!el) return {card: false};
+          return {
+            card: true,
+            badges: [...el.querySelectorAll('.msc-badge')].map(b => b.textContent),
+            badgeClasses: [...el.querySelectorAll('.msc-badge')].map(b => b.className),
+            score: (el.querySelector('.msc-score') || {}).textContent || '',
+            marks: [...el.querySelectorAll('.msc-check')].map(c => c.className.replace('msc-check ', '')),
+            warnRow: !!el.querySelector('.msc-warn'),
+            /* the nested <ul> must be gone: it became the checklist */
+            leftoverNestedUl: !!el.querySelector('li ul')
+          };
+        }""")
+        self.assertTrue(card["card"], "1.1 did not become a state card")
+        self.assertEqual(card["badges"], ["权重深度调整", "成长小盘接近技术性熊市"])
+        self.assertEqual(card["badgeClasses"], ["msc-badge t-deep", "msc-badge t-bear"])
+        self.assertEqual(card["score"], "确认三要素 1/3")
+        self.assertEqual(card["marks"], ["k-hit", "k-miss", "k-miss", "k-open"])
+        self.assertTrue(card["warnRow"], "数据提示 row should be called out")
+        self.assertFalse(card["leftoverNestedUl"])
+
+    def test_drawdown_ladder_fits_its_canvas(self) -> None:
+        """SVG does not clip, so an over-wide label spills outside the card
+        instead of being cut. Assert the columns stay inside the viewBox and
+        clear of each other — this caught a real 24px overflow."""
+        geo = _eval(self.html, """() => {
+          const svg = document.querySelector('.msc-ladder svg');
+          if (!svg) return {svg: false};
+          const box = el => { const b = el.getBBox(); return [b.x, b.x + b.width]; };
+          const viewW = +svg.getAttribute('viewBox').split(' ')[2];
+          const vals = [...svg.querySelectorAll('.msc-val')].map(box);
+          const deltas = [...svg.querySelectorAll('.msc-delta')].map(box);
+          const names = [...svg.querySelectorAll('.msc-name')].map(box);
+          const bars = [...svg.querySelectorAll('rect')].map(r =>
+            [+r.getAttribute('x'), +r.getAttribute('x') + +r.getAttribute('width')]);
+          return {
+            svg: true, viewW,
+            rightMost: Math.max(...vals.map(v => v[1]), ...deltas.map(v => v[1])),
+            valRight: Math.max(...vals.map(v => v[1])),
+            deltaLeft: Math.min(...deltas.map(v => v[0])),
+            nameRight: Math.max(...names.map(v => v[1])),
+            barLeft: Math.min(...bars.map(b => b[0])),
+            barCount: bars.length,
+            barClasses: [...svg.querySelectorAll('rect')].map(r => r.getAttribute('class')),
+            widths: bars.map(b => Math.round(b[1] - b[0])),
+            groups: [...svg.querySelectorAll('.msc-group')].map(t => t.textContent)
+          };
+        }""")
+        self.assertTrue(geo["svg"], "ladder svg missing")
+        self.assertEqual(geo["barCount"], 6)
+        self.assertLessEqual(geo["rightMost"], geo["viewW"], "value labels spill past the viewBox")
+        self.assertLess(geo["valRight"], geo["deltaLeft"], "回撤 and 环比 columns overlap")
+        self.assertLessEqual(geo["nameRight"], geo["barLeft"], "index names run into the bars")
+        # 权重 first, then 成长小盘; within a group shallowest drawdown first
+        self.assertEqual(geo["groups"], ["权重", "成长小盘"])
+        self.assertEqual(geo["widths"], sorted(geo["widths"]))
+        self.assertEqual(geo["barClasses"][-1], "msc-bar t-bear")
+
+    def test_ladder_is_not_promised_when_evidence_lacks_market_state(self) -> None:
+        """A missing evidence block is a data gap, not a render failure: the
+        hook must not be declared at all, so the gate stays green and the skip
+        is reported on stderr instead."""
+        stripped = self.out_dir / "no_state"
+        stripped.mkdir(exist_ok=True)
+        for name in ("report_20260803.md", "kline_20260803.json"):
+            shutil.copy(FIXTURES / name, stripped / name)
+        shutil.copy(FIXTURES / "market_data.json", stripped / "market_data.json")
+        evidence = json.loads((FIXTURES / "evidence_20260803_utf8.json").read_text(encoding="utf-8"))
+        evidence.pop("market_state", None)
+        (stripped / "evidence_20260803_utf8.json").write_text(
+            json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
+
+        html = stripped / "report_20260803.html"
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS / "render_report_html.py"),
+             "--input", str(stripped / "report_20260803.md"), "--output", str(html),
+             "--market-data", str(stripped / "market_data.json"), "--no-lifecycle"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("跳过宽基回撤阶梯", result.stderr)
+        self.assertNotIn("market-state.ladder", html.read_text(encoding="utf-8"))
+        gate = _gate(html)
+        self.assertEqual(gate["status"], "ok", _problem_text(gate))
 
     def test_chart_appended_to_document_end_is_caught(self) -> None:
         """Reproduce the 2026-08-03 failure: the hook still believes it worked,

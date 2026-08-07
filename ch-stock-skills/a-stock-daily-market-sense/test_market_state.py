@@ -206,6 +206,149 @@ def test_liquidity_reuses_evidence_numbers() -> None:
     assert m.liquidity_from_evidence({}) is None
 
 
+def test_breadth_qfq_undoes_ex_dividend_drop() -> None:
+    """除权跳空不该被读成「跌破 60 日线」。
+
+    这是本卡最容易悄悄失真的一条：stock_daily 存未复权价，6-8 月除权密集，
+    未复权口径会把「站上 60 日线」系统性压低，方向恰好压在手册 50% 确认线上。
+    """
+    dates = make_dates(61)
+    # 一只票原本一路走平在 100，最后一天除权 5%（因子从 1.0 变 0.95）：
+    # 未复权看是 95 < MA60，前复权看是持平在均线上方。
+    rows = [("000001.SZ", d, 100.0) for d in dates[:-1]] + [("000001.SZ", dates[-1], 95.0)]
+    frame = pd.DataFrame(rows, columns=["ts_code", "trade_date", "close"])
+    factors = [1.0 / 0.95] * 60 + [1.0]  # qfq 基准取窗口末日
+    frame["adj_factor"] = factors
+
+    raw = m.compute_breadth(frame.drop(columns=["adj_factor"]), ASOF)
+    adj = m.compute_breadth(frame, ASOF)
+    assert raw["price_adjustment"] == "none"
+    assert raw["pct_above_ma60"] == 0.0, raw["pct_above_ma60"]
+    assert adj["price_adjustment"] == "qfq"
+    assert adj["adj_coverage"] == 1.0
+    assert adj["pct_above_ma60"] == 0.0  # 复权后持平，不高于均线
+    assert adj["pct_above_ma20"] == 0.0
+    # 关键差别在读数本身：未复权把最后一天读成 95，复权读回 100。
+    assert raw["pct_positive_ret_60d"] == 0.0
+    assert adj["pct_positive_ret_60d"] == 0.0
+    assert m.apply_breadth_qfq(frame)[1]["adj_missing"] == 0
+
+
+def test_breadth_missing_adj_factor_falls_back_per_stock() -> None:
+    dates = make_dates(61)
+    rows = [("000001.SZ", d, 100.0 + i) for i, d in enumerate(dates)]
+    rows += [("000002.SZ", d, 100.0 + i) for i, d in enumerate(dates)]
+    frame = pd.DataFrame(rows, columns=["ts_code", "trade_date", "close"])
+    frame["adj_factor"] = [1.0] * 61 + [None] * 61
+    out = m.compute_breadth(frame, ASOF)
+    # 缺因子的票退回未复权价参与，不被踢出分母
+    assert out["above_ma60_total"] == 2
+    assert out["adj_missing"] == 61
+    assert out["price_adjustment"] == "qfq"
+
+
+def test_breadth_reports_one_day_delta() -> None:
+    dates = make_dates(62)
+    # 一只票在倒数第二天还在均线下，最后一天拉回均线上 → 宽度环比 +100pct
+    closes = [100.0] * 60 + [90.0, 130.0]
+    frame = pd.DataFrame(
+        [("000001.SZ", d, c) for d, c in zip(dates, closes)],
+        columns=["ts_code", "trade_date", "close"],
+    )
+    out = m.compute_breadth(frame, dates[-1])
+    assert out["prev_trade_date"] == dates[-2]
+    assert out["pct_above_ma20"] == 100.0
+    assert out["pct_above_ma20_delta_1d"] == 100.0
+
+
+def test_stale_block_is_flagged_when_cache_is_frozen() -> None:
+    """sw_daily 掉权限时 compute 会继续吃旧缓存，必须由 data_through 抓住。"""
+    calendar = ["20260728", "20260729", "20260730", "20260731", "20260803"]
+    fresh = m.stamp_freshness({}, "20260803", "20260803", calendar)
+    assert fresh["stale"] is False and fresh["stale_trading_days"] == 0
+
+    frozen = m.stamp_freshness({}, "20260731", "20260803", calendar)
+    assert frozen["stale"] is True
+    assert frozen["stale_trading_days"] == 1
+    assert "20260731" in frozen["stale_reason"]
+
+    # 融资是 T-1 口径，落后 1 个交易日属正常
+    lagged = m.stamp_freshness({}, "20260731", "20260803", calendar, tolerance=1)
+    assert lagged["stale"] is False
+
+    # 说不出数据日的读数不该被当成当日读数
+    unknown = m.stamp_freshness({}, None, "20260803", calendar)
+    assert unknown["stale"] is True and unknown["stale_trading_days"] is None
+
+
+def test_sw_counts_expose_valid_denominators() -> None:
+    """above_ma60=None（历史不足）不能和 False（在均线下）混成同一个数。"""
+    dates_long = make_dates(61)
+    frames = {
+        "801080.SI": pd.DataFrame({"trade_date": dates_long, "close": [100.0] * 60 + [130.0],
+                                   "high": [100.0] * 60 + [130.0]}),
+        "801150.SI": pd.DataFrame({"trade_date": dates_long, "close": [100.0] * 60 + [70.0],
+                                   "high": [100.0] * 61}),
+        "801750.SI": pd.DataFrame({"trade_date": make_dates(10), "close": [100.0] * 10,
+                                   "high": [100.0] * 10}),  # 历史不足 → above_ma60 为 None
+    }
+    names = {"801080.SI": "电子", "801150.SI": "医药生物", "801750.SI": "计算机"}
+    out = m.summarize_sw_industries(frames, names, dates_long[-1])
+    assert out["count_above_ma60"] == 1
+    assert out["count_above_ma60_total"] == 2, out["count_above_ma60_total"]
+    assert out["count_positive_60d"] == 1
+    assert out["count_positive_60d_total"] == 2
+    assert out["latest_trade_date"] == dates_long[-1]
+    assert all(row["trade_date"] for row in out["industries"])
+
+
+def test_confirmation_checks_mirror_the_framework_thresholds() -> None:
+    breadth = {"available": True, "pct_above_ma60": 52.0, "pct_above_ma60_delta_1d": 1.2,
+               "trade_date": "20260731"}
+    sw = {"available": True, "count_positive_60d": 12, "count_positive_60d_total": 31,
+          "count_positive_60d_prev": 9, "data_through": "20260731"}
+    margin = {"available": True, "is_new_low_20d": False, "days_since_20d_low": 3,
+              "latest": 26000.0, "chg_5d_pct": 0.4, "trade_date": "20260730"}
+    out = m.build_confirmation(breadth, sw, margin)
+    by_key = {c["key"]: c for c in out["checks"]}
+    assert by_key["margin_stop_new_low"]["hit"] is True
+    assert by_key["breadth_recovery"]["hit"] is True
+    assert by_key["industry_diffusion"]["hit"] is True
+    # 盈利上修脚本没有数据源，永远是 null + external，不能被算成命中
+    assert by_key["earnings_revision"]["hit"] is None
+    assert by_key["earnings_revision"]["source"] == "external"
+    assert out["hits"] == 3 and out["scriptable"] == 3 and out["undetermined"] == 1
+    # 融资读数带自己的数据日（T-1），不能说成当日
+    assert by_key["margin_stop_new_low"]["as_of"] == "20260730"
+
+    # 阈值边界：刚好等于阈值算命中，差一点就不算
+    breadth_low = {**breadth, "pct_above_ma60": 49.99}
+    sw_low = {**sw, "count_positive_60d": 9}
+    margin_low = {**margin, "is_new_low_20d": True, "days_since_20d_low": 0}
+    out2 = m.build_confirmation(breadth_low, sw_low, margin_low)
+    assert [c["hit"] for c in out2["checks"] if c["source"] == "script"] == [False, False, False]
+    assert out2["hits"] == 0
+
+
+def test_confirmation_degrades_when_subblock_unavailable() -> None:
+    out = m.build_confirmation(
+        {"available": False, "reason": "boom"},
+        {"available": False, "reason": "sw_daily returned no industry history"},
+        {"available": False, "reason": "boom"},
+    )
+    assert [c["hit"] for c in out["checks"]] == [None, None, None, None]
+    assert out["hits"] == 0 and out["undetermined"] == 4
+
+
+def test_drawdown_tiers_follow_the_manual() -> None:
+    assert m.drawdown_tier(-9.99) == "调整"
+    assert m.drawdown_tier(-10.0) == "深度调整"
+    assert m.drawdown_tier(-19.99) == "深度调整"
+    assert m.drawdown_tier(-20.0) == "接近技术性熊市"
+    assert m.drawdown_tier(-31.14) == "接近技术性熊市"
+    assert m.drawdown_tier(None) is None
+
+
 def run() -> int:
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

@@ -25,6 +25,12 @@ description: 仅供 a-stock-daily-market-sense 内部按需读取。说明日报
 
 改 `references/template/section*.md` 的章节结构时，**同步升 `DMS_CONTRACT` 的版本号**，否则契约会悄悄和模板失配。
 
+## 章节内部的形状也是契约（1.1 状态卡）
+
+契约管的是「章节在不在」，管不到「章节里长什么样」。1.1 市场状态定位的卡片就靠章节内部的形状定位：一个开头是 `回撤分层` 的列表、其中 `确认三要素` 那条挂着嵌套列表、每条勾选项以 `✓ / ✗ / —` 开头。这套形状写在 `references/template/section1.md` 里，**改模板就要同时改 `MARKET_STATE_CARD_JS` 的解析**。
+
+形状对不上时装饰会安静退出，报告退回成普通列表——这是刻意的：装饰没生效是观感回退，图表没画出来才是数据回退，两者不该用同一种严厉程度对待。所以卡片不签到，只有回撤阶梯签到。
+
 ## 签到：图表画完要报数
 
 每个图表 hook 画完调用 `window.__render.attest(名字, {...})`，报四个数：
@@ -50,7 +56,7 @@ description: 仅供 a-stock-daily-market-sense 内部按需读取。说明日报
 python3 scripts/_shared/html_report/render_check.py --target <本地 HTML> --stage local --out <本地审计文件>
 # 从本地审计文件取 build_id，Site 与线上门禁都必须传 --expect-build
 python3 scripts/_shared/html_report/render_check.py --target <目标> --stage <site|online> \
-  --expect-contract dms/1.0.0 --expect-build <本地审计文件中的 build_id> --out <审计文件>
+  --expect-contract dms/1.1.0 --expect-build <本地审计文件中的 build_id> --out <审计文件>
 ```
 
 三段各查各的问题：
@@ -95,4 +101,6 @@ python3 -m playwright install chromium
 python3 tests/test_render_gate.py
 ```
 
-夹具是真实的 2026-08-03 报告 + 合成 evidence（真 evidence 每天 cleanup 掉了，靠它的测试活不过一天）。11 条用例覆盖：契约能否扛住改编号/改名/降级，以及门禁能否抓住图表落到文末、锚点丢失、脚本被剥、payload 损坏这四类失败。
+夹具是真实的 2026-08-03 报告 + 合成 evidence（真 evidence 每天 cleanup 掉了，靠它的测试活不过一天）。15 条用例覆盖：契约能否扛住改编号/改名/降级；门禁能否抓住图表落到文末、锚点丢失、脚本被剥、payload 损坏这四类失败；以及 1.1 状态卡的三件事——卡片确实由 Markdown 升级而成（徽章 / 勾选 / 计数）、回撤阶梯的两列标签没有溢出画布，和 evidence 缺 `market_state` 时**不声明**该 hook（数据缺口不该让门禁变红）。
+
+后两条是有来历的：SVG 不裁剪，标签超宽不会被切、而是溢到卡片外面，第一版就这么溢了 24px；而如果把 hook 无条件声明成 `expect_count=1`，只要哪天 evidence 少了 `market_state`，门禁就会因为一个数据缺口报红——报红报久了就会被绕过。

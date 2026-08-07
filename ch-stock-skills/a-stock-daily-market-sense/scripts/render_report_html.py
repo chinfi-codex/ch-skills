@@ -53,7 +53,7 @@ from html_report import (  # noqa: E402
 # Bump the version whenever references/template/section*.md changes structure.
 # --------------------------------------------------------------------------- #
 DMS_CONTRACT = SectionContract(
-    version="dms/1.0.0",
+    version="dms/1.1.0",
     sections=[
         SectionSpec("hero_verdict", [r"一句话盘面判断"], level=3),
         SectionSpec("market_state", [r"市场状态定位"], level=3),
@@ -296,6 +296,67 @@ def extract_style_series_payload(evidence: dict, display_days: int = 60) -> Opti
     }
 
 
+MARKET_STATE_TIER_CLASS = {"调整": "t-mild", "深度调整": "t-deep", "接近技术性熊市": "t-bear"}
+
+
+def extract_market_state_payload(evidence: dict, trade_date: Optional[str]) -> Dict[str, Any]:
+    """Ladder rows for 1.1, from the same evidence block 1.1's table is written from.
+
+    Always returns a payload; ``rows`` empty plus ``skip_reason`` when there is
+    nothing to draw, so the hook can attest a *named* gap instead of vanishing.
+
+    The one hard gate is the date. Chart and prose can only disagree if they are
+    reading different days — an evidence file left over from a previous run would
+    otherwise put yesterday's drawdowns under today's heading, silently. Missing
+    indexes are not gated: the table and the ladder come from the same block, so
+    a bar the table omits is extra information, not a contradiction.
+    """
+    state = (evidence or {}).get("market_state") or {}
+    position = state.get("index_position") or {}
+    if not state.get("available") or not position.get("available"):
+        return {"rows": [], "skip_reason": "evidence has no available market_state.index_position"}
+
+    asof = str(state.get("asof") or "").replace("-", "")
+    if trade_date and asof and asof != trade_date:
+        return {"rows": [], "skip_reason": f"market_state.asof={asof} does not match report date {trade_date}"}
+
+    rows: List[Dict[str, Any]] = []
+    for item in position.get("indexes") or []:
+        drawdown = item.get("drawdown_from_high_250d_pct")
+        name = str(item.get("name") or "").strip()
+        if drawdown is None or not name:
+            continue
+        delta = item.get("drawdown_delta_1d")
+        rows.append({
+            "name": name,
+            "group_label": item.get("group_label"),
+            "drawdown": round(float(drawdown), 2),
+            "tier": item.get("tier"),
+            "tier_class": MARKET_STATE_TIER_CLASS.get(item.get("tier") or "", "t-mild"),
+            "value_label": f"{float(drawdown):.2f}%",
+            "delta_label": f"{float(delta):+.2f}" if isinstance(delta, (int, float)) else "",
+        })
+    if not rows:
+        return {"rows": [], "skip_reason": "no index carries a 250d drawdown reading"}
+
+    # 权重在前、成长小盘在后，组内按回撤由浅到深——阶梯要一眼看出分层。
+    order = {"权重": 0, "成长小盘": 1}
+    rows.sort(key=lambda row: (order.get(row["group_label"] or "", 9), -row["drawdown"]))
+
+    bounds = position.get("tier_bounds_pct") or [10, 20]
+    through = position.get("data_through") or ""
+    note_bits = [position.get("caliber_note") or ""]
+    if position.get("stale"):
+        note_bits.append(f"数据日 {through}，落后 {position.get('stale_trading_days')} 个交易日")
+    return {
+        "title": "宽基回撤阶梯（距 250 交易日高点）",
+        "subtitle": (f"数据日 {through}｜" if through else "") + "虚线为 10% / 20% 分层边界，右列为较前一日回撤变化（正 = 收窄）",
+        "rows": rows,
+        "tier_bounds": [float(b) for b in bounds],
+        "note": "；".join(bit for bit in note_bits if bit),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Decorations: pill vocabulary + "一句话盘面判断" hero card (mechanism lives in
 # the shared package; here we only declare the market-sense-specific data).
@@ -316,6 +377,43 @@ MARKET_SENSE_PILL_RULES = [
 
 HERO_KEYWORDS = "上证|创业板|科创50|国证2000|中证红利|半导体设备与材料|电力能源"
 MARKET_SENSE_EXTRA_CSS = """
+.market-state-card { border: 1px solid var(--line-2); border-radius: 12px; padding: 14px 18px 16px; margin: 14px 0 22px; background: rgba(127,127,127,.05); }
+.market-state-card .msc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.market-state-card .msc-badge { font-weight: 700; font-size: 13px; padding: 3px 12px; border-radius: 999px; white-space: nowrap; }
+.market-state-card .msc-badge .msc-badge-k { font-weight: 500; opacity: .72; margin-right: 5px; }
+.market-state-card .t-mild { background: rgba(127,127,127,.16); color: var(--ink-2, #555); }
+.market-state-card .t-deep { background: rgba(230,160,30,.18); color: #b9770e; }
+.market-state-card .t-bear { background: rgba(220,60,60,.16); color: #c0392b; }
+.market-state-card .msc-score { margin-left: auto; font-size: 12.5px; font-weight: 600; padding: 3px 11px; border-radius: 999px; white-space: nowrap; }
+.market-state-card .msc-score.s-pos { background: rgba(40,160,90,.14); color: #1e8449; }
+.market-state-card .msc-score.s-warn { background: rgba(230,160,30,.16); color: #b9770e; }
+.market-state-card .msc-score.s-neg { background: rgba(220,60,60,.14); color: #c0392b; }
+.market-state-card .msc-checks { display: grid; gap: 6px; margin: 0 0 10px; }
+.market-state-card .msc-check { display: grid; grid-template-columns: 20px 1fr; align-items: baseline; gap: 8px; font-size: 13px; line-height: 1.6; padding: 6px 10px; border-radius: 8px; background: rgba(127,127,127,.05); border-left: 3px solid transparent; }
+.market-state-card .msc-check.k-hit { border-left-color: #1e8449; background: rgba(40,160,90,.07); }
+.market-state-card .msc-check.k-miss { border-left-color: rgba(220,60,60,.55); }
+.market-state-card .msc-check.k-open { border-left-color: rgba(127,127,127,.45); }
+.market-state-card .msc-mark { font-weight: 700; text-align: center; font-family: var(--font-mono); }
+.market-state-card .k-hit .msc-mark { color: #1e8449; }
+.market-state-card .k-miss .msc-mark { color: #c0392b; }
+.market-state-card .k-open .msc-mark { color: var(--ink-3); }
+.market-state-card .msc-checks-title { font-size: 12px; color: var(--ink-3); margin-bottom: 4px; }
+.market-state-card ul { margin: 0; padding: 0; list-style: none; }
+.market-state-card > ul > li { padding: 6px 0; border-top: 1px dashed var(--line-2); font-size: 13px; line-height: 1.65; }
+.market-state-card > ul > li:first-child { border-top: 0; }
+.market-state-card > ul > li.msc-warn { border-top: 0; margin-top: 8px; padding: 7px 11px; border-radius: 8px; background: rgba(230,160,30,.10); border-left: 3px solid rgba(230,160,30,.6); }
+.market-state-card .msc-ladder { margin-top: 12px; }
+.market-state-card .msc-ladder .chart-card { background: transparent; border: 0; box-shadow: none; padding: 0; }
+.msc-ladder .msc-bar.t-mild { fill: rgba(127,127,127,.5); }
+.msc-ladder .msc-bar.t-deep { fill: rgba(230,160,30,.72); }
+.msc-ladder .msc-bar.t-bear { fill: rgba(220,60,60,.7); }
+.msc-ladder .msc-name { font-size: 11.5px; fill: var(--ink-2); }
+.msc-ladder .msc-group { font-size: 10.5px; fill: var(--ink-3); letter-spacing: .04em; }
+.msc-ladder .msc-val { font-size: 11.5px; fill: var(--ink-2); font-family: var(--font-mono); }
+.msc-ladder .msc-delta { font-size: 10.5px; fill: var(--ink-3); font-family: var(--font-mono); }
+.msc-ladder .msc-guide { stroke: var(--ink-3); stroke-dasharray: 3 3; stroke-width: 1; opacity: .5; }
+.msc-ladder .msc-guide-label { font-size: 10px; fill: var(--ink-3); }
+.msc-ladder .msc-zero { stroke: var(--line-2); stroke-width: 1.5; }
 .trend-state-card { border: 1px solid var(--line-2); border-radius: 12px; padding: 14px 18px; margin: 14px 0 22px; background: rgba(127,127,127,.05); }
 .trend-state-card .tsc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
 .trend-state-card .tsc-state { font-weight: 700; font-size: 14px; padding: 2px 12px; border-radius: 999px; }
@@ -337,6 +435,197 @@ MARKET_SENSE_EXTRA_CSS = """
 @media (max-width: 900px) { .style-compare-grid { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .kline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .kline-grid { grid-template-columns: 1fr; } }
+"""
+
+
+# Upgrade the readings at the top of "1.1 市场状态定位" into a state card:
+# tier badges for 权重 / 成长小盘, a ✓/✗ checklist for the three confirmation
+# criteria, and a hit counter. Everything it shows is text the Markdown already
+# wrote — the decoration only changes how it reads, never what it says.
+#
+# The shape it keys on is fixed by references/template/section1.md: a leading
+# UL whose first item is 回撤分层, a 确认三要素 item carrying a nested UL, and
+# each check opening with ✓ / ✗ / —. A report written before that template (or
+# one whose 1.1 fell back to a bare table) simply keeps its list: this returns
+# quietly rather than failing the gate, because a missing *decoration* is a
+# cosmetic regression, while a missing *chart* is a data regression.
+MARKET_STATE_CARD_JS = r"""(function () {
+  const heading = window.__sec ? window.__sec.head("market_state") : null;
+  if (!heading) {
+    if (window.__render) window.__render.fail("decoration:market-state-card", "section [market_state] not found");
+    return;
+  }
+  const uls = [];
+  let cur = heading.nextElementSibling;
+  while (cur && !/^H[1-6]$/.test(cur.tagName)) {
+    const next = cur.nextElementSibling;
+    if (cur.tagName === "UL") { uls.push(cur); cur = next; continue; }
+    if (cur.tagName === "BLOCKQUOTE" || cur.tagName === "P") { cur = next; continue; }
+    break;
+  }
+  if (!uls.length || !/回撤分层[：:]/.test(uls[0].textContent)) return;
+
+  const card = document.createElement("aside");
+  card.className = "market-state-card";
+  const head = document.createElement("div");
+  head.className = "msc-head";
+  card.appendChild(head);
+  heading.after(card);
+  uls.forEach(ul => card.appendChild(ul));
+
+  /* Tier badges. 分层 wording is "权重 …，档位；成长小盘 …，档位" — the tier
+     word is matched inside each clause, longest alternative first so that
+     深度调整 never gets read as 调整. */
+  const TIER_CLASS = { "调整": "t-mild", "深度调整": "t-deep", "接近技术性熊市": "t-bear" };
+  const tierRe = "(接近技术性熊市|深度调整|调整)";
+  const layerLi = Array.from(card.querySelectorAll("li")).find(li => /回撤分层[：:]/.test(li.textContent));
+  if (layerLi) {
+    const text = layerLi.textContent;
+    [["权重", new RegExp("权重[^；;]*?" + tierRe)],
+     ["成长小盘", new RegExp("成长小盘[^；;。]*?" + tierRe)]].forEach(([label, re]) => {
+      const hit = re.exec(text);
+      if (!hit) return;
+      const badge = document.createElement("span");
+      badge.className = "msc-badge " + (TIER_CLASS[hit[1]] || "t-mild");
+      badge.innerHTML = '<span class="msc-badge-k"></span>';
+      badge.querySelector(".msc-badge-k").textContent = label;
+      badge.appendChild(document.createTextNode(hit[1]));
+      head.appendChild(badge);
+    });
+  }
+
+  /* Confirmation checklist: lift the nested UL out into marked rows. */
+  const checksLi = Array.from(card.querySelectorAll("li")).find(li => /确认三要素/.test(li.textContent));
+  const nested = checksLi ? checksLi.querySelector("ul") : null;
+  if (nested) {
+    const box = document.createElement("div");
+    box.className = "msc-checks";
+    const title = document.createElement("div");
+    title.className = "msc-checks-title";
+    title.textContent = (checksLi.firstChild && checksLi.firstChild.textContent || "确认三要素").trim().replace(/[：:]\s*$/, "");
+    let hits = 0, decided = 0;
+    Array.from(nested.children).forEach(li => {
+      const raw = li.textContent.trim();
+      const mark = /^[✓✔]/.test(raw) ? "✓" : (/^[✗✘×x]/i.test(raw) ? "✗" : "—");
+      if (mark === "✓") { hits += 1; decided += 1; }
+      else if (mark === "✗") { decided += 1; }
+      const row = document.createElement("div");
+      row.className = "msc-check " + (mark === "✓" ? "k-hit" : mark === "✗" ? "k-miss" : "k-open");
+      const icon = document.createElement("span");
+      icon.className = "msc-mark";
+      icon.textContent = mark;
+      const body = document.createElement("span");
+      body.className = "msc-check-body";
+      /* Keep the node (inline <strong>/<code> survive); drop only the leading mark. */
+      while (li.firstChild) body.appendChild(li.firstChild);
+      const first = body.firstChild;
+      if (first && first.nodeType === 3) first.textContent = first.textContent.replace(/^\s*[✓✔✗✘×x—-]+\s*/i, "");
+      row.append(icon, body);
+      box.appendChild(row);
+    });
+    checksLi.replaceWith(box);
+    box.before(title);
+    const score = document.createElement("span");
+    score.className = "msc-score " + (decided && hits === decided ? "s-pos" : hits === 0 ? "s-neg" : "s-warn");
+    score.textContent = "确认三要素 " + hits + "/" + (decided || 3);
+    head.appendChild(score);
+  }
+  /* 数据提示 only exists on days when a sub-block is stale or unavailable, and
+     it changes how every other number in the card should be read — so it gets
+     called out instead of sitting as the last plain row. */
+  const warnLi = Array.from(card.querySelectorAll(":scope > ul > li")).find(li => /数据提示[：:]/.test(li.textContent));
+  if (warnLi) warnLi.classList.add("msc-warn");
+  if (!head.childElementCount) head.remove();
+})();"""
+
+
+# The drawdown ladder: the six index readings the 1.1 table already lists, drawn
+# against the 10% / 20% tier boundaries so the 权重-vs-成长小盘 split is one
+# glance instead of six numbers. Values come from the evidence block, and the
+# renderer refuses to draw any index the Markdown table does not also name — a
+# chart that could disagree with the prose is worse than no chart.
+MARKET_STATE_CHART_JS = r"""
+const state = __payload || {};
+const rows = state.rows || [];
+const SEC = window.__sec;
+const REPORT = window.__render;
+const hook = "market-state.ladder";
+
+if (!rows.length) {
+  REPORT.attest(hook, {
+    rendered: 0, matched: 0, expected: 1,
+    unmatched: [{ name: "宽基回撤阶梯", reason: "no_payload" }],
+    note: state.skip_reason || "market_state payload absent"
+  });
+  return;
+}
+const stateCard = document.querySelector(".market-state-card");
+const anchor = stateCard || SEC.find("market_state", ".table-wrap") || SEC.tail("market_state");
+if (!anchor) {
+  REPORT.fail("hook:" + hook, "no insertion anchor inside section [market_state]");
+  return;
+}
+
+const { svgEl } = CK;
+/* PAD_R holds two right-aligned columns (回撤 then 环比). SVG does not clip, so
+   a label wider than the pad silently spills outside the card instead of being
+   cut — the columns are laid out from the right edge inwards to make that
+   impossible rather than approximately unlikely. */
+const W = 680, ROW_H = 27, TOP = 26, BOTTOM = 10;
+const PAD_L = 118, PAD_R = 112;
+const VAL_X = W - 54, DELTA_X = W - 2;
+const H = TOP + rows.length * ROW_H + BOTTOM;
+const zeroX = W - PAD_R;
+const guides = state.tier_bounds || [10, 20];
+const maxAbs = Math.max(...rows.map(r => Math.abs(r.drawdown)), ...guides) * 1.12;
+const scale = (zeroX - PAD_L) / maxAbs;
+const xAt = pct => zeroX - Math.abs(pct) * scale;
+const label = (x, y, text, cls, anchorAt) => {
+  const el = svgEl("text", { x: x, y: y, class: cls, "text-anchor": anchorAt || "start" });
+  el.textContent = text;
+  return el;
+};
+
+const wrap = document.createElement("div");
+wrap.className = "msc-ladder";
+const chart = CK.card("chart-card", state.title || "宽基回撤阶梯", state.subtitle || "");
+const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+
+guides.forEach(bound => {
+  const x = xAt(bound);
+  svg.appendChild(svgEl("line", { x1: x, x2: x, y1: TOP - 12, y2: H - BOTTOM, class: "msc-guide" }));
+  svg.appendChild(label(x, TOP - 16, "-" + bound + "%", "msc-guide-label", "middle"));
+});
+svg.appendChild(svgEl("line", { x1: zeroX, x2: zeroX, y1: TOP - 12, y2: H - BOTTOM, class: "msc-zero" }));
+
+let lastGroup = null;
+rows.forEach((row, i) => {
+  const y = TOP + i * ROW_H;
+  const mid = y + ROW_H / 2;
+  if (row.group_label && row.group_label !== lastGroup) {
+    svg.appendChild(label(2, mid + 4, row.group_label, "msc-group"));
+    lastGroup = row.group_label;
+  }
+  svg.appendChild(label(PAD_L - 8, mid + 4, row.name, "msc-name", "end"));
+  const x = xAt(row.drawdown);
+  svg.appendChild(svgEl("rect", {
+    x: x, y: y + 5, width: Math.max(1, zeroX - x), height: ROW_H - 12,
+    rx: 2, class: "msc-bar " + (row.tier_class || "t-mild")
+  }));
+  svg.appendChild(label(VAL_X, mid + 4, row.value_label, "msc-val", "end"));
+  if (row.delta_label) svg.appendChild(label(DELTA_X, mid + 4, row.delta_label, "msc-delta", "end"));
+});
+
+chart.appendChild(svg);
+if (state.note) {
+  const note = document.createElement("div");
+  note.className = "style-compare-note";
+  note.textContent = state.note;
+  chart.appendChild(note);
+}
+wrap.appendChild(chart);
+if (stateCard) stateCard.appendChild(wrap); else anchor.after(wrap);
+REPORT.attest(hook, { rendered: 1, matched: 1, expected: 1, unmatched: [], el: wrap });
 """
 
 
@@ -1451,11 +1740,13 @@ def build_job(args) -> RenderJob:
         missing=bool((evidence.get("metadata") or {}).get("missing")) and not stock_klines_raw,
     )
     style_series_payload = extract_style_series_payload(evidence)
+    market_state_payload = extract_market_state_payload(evidence, report_trade_date(input_path))
 
     builder = HtmlReportBuilder(
         title=title, theme=args.theme, extra_css=MARKET_SENSE_EXTRA_CSS, contract=DMS_CONTRACT
     )
     builder.add_decoration(PillDecoration(MARKET_SENSE_PILL_RULES))
+    builder.add_ui_decoration(MARKET_STATE_CARD_JS)
     builder.add_ui_decoration(TREND_STATE_CARD_JS)
     builder.add_decoration(HeroDecoration(
         heading_prefix="一句话盘面判断",
@@ -1505,6 +1796,23 @@ def build_job(args) -> RenderJob:
             expects=[HookExpectation(name="style-compare", target_sec="market_style", expect_min=1,
                                      note="规模轴 + 成长/价值/红利，任一轴缺数据记 no_payload")],
         )
+    # Declared only when the evidence actually carries drawable rows. "Is there
+    # a market_state block today" is a build-time fact the gate cannot improve
+    # on — promising a chart the build already knows is undrawable turns the
+    # gate red for a data gap, and a gate that goes red on data gaps gets
+    # bypassed. What the gate is for is the other case: rows exist and the
+    # chart still fails to appear, which expect_count=1 catches exactly.
+    if market_state_payload.get("rows"):
+        builder.add_chart_hook(
+            ChartHook(name="market-state", payload=market_state_payload, js=MARKET_STATE_CHART_JS),
+            expects=[HookExpectation(name="market-state.ladder", target_sec="market_state", expect_count=1,
+                                     note="宽基回撤阶梯（6 个宽基，权重在前）")],
+        )
+    else:
+        print(
+            f"[market-state] 跳过宽基回撤阶梯：{market_state_payload.get('skip_reason')}",
+            file=sys.stderr,
+        )
 
     lifecycle_payload = None if args.no_lifecycle else load_lifecycle_payload(input_path, args.lifecycle_days)
     if lifecycle_payload:
@@ -1533,6 +1841,7 @@ def build_job(args) -> RenderJob:
             },
             "records_available": (market_data.get("quality") or {}).get("records_available", 0),
             "market_data_window_end": (market_data.get("metadata") or {}).get("window_end"),
+            "market_state_ladder_rows": len((market_state_payload or {}).get("rows") or []),
             "theme_lifecycle_themes": len(lifecycle_payload["themes"]) if lifecycle_payload else 0,
         },
     )

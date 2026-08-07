@@ -83,8 +83,8 @@ python3 scripts/render_report_html.py --input reports/report_20260429.md --gate 
 python3 scripts/_shared/html_report/render_check.py --target reports/report_20260429.html --stage local --out reports/report_20260429.render-check-local.json
 # 从上一步审计 JSON 读取 build_id；site/online 必须与本地产物完全一致
 BUILD_ID=$(python3 -c 'import json; print(json.load(open("reports/report_20260429.render-check-local.json"))["build_id"])')
-python3 scripts/_shared/html_report/render_check.py --target <Site 路径>/report_20260429.html --stage site --expect-contract dms/1.0.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-site.json
-python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stage online --expect-contract dms/1.0.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-online.json
+python3 scripts/_shared/html_report/render_check.py --target <Site 路径>/report_20260429.html --stage site --expect-contract dms/1.1.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-site.json
+python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stage online --expect-contract dms/1.1.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-online.json
 ```
 
 退出码：`0` 通过、`1` 失败（**不得部署、不得 cleanup，留着审计文件排查**）、`2` 只跑了 `--static-only` 冒烟不算门禁。三份 `render-check-*.json` 留在 `reports/` 下，不进发布包。
@@ -95,7 +95,11 @@ python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stag
 
 ## 输出规范
 
-完整研报按五个模块输出。每个判断段先给自然语言结论，再选择少量关键证据支撑；表格承载细项数据，段落解释这些数据意味着进攻、分歧、退潮、修复、拥挤还是扩散。模块 1 开头先做市场状态定位（宽基与成长小盘的回撤分层、调整是否接近尾声，证据来自 `market_state` 区块，判断手册见 `references/methodology/market_state_framework.md`）。所有强弱判断都要能回到成交额、放量倍数、涨跌幅、相对收益或回撤证据，但不要把所有可用指标塞进同一段。模块 3 的主题分组只作为内部推理步骤，不输出单独的主题分组陈列表，赚钱效应总览后直接进入主线判定。
+完整研报按五个模块输出。每个判断段先给自然语言结论，再选择少量关键证据支撑；表格承载细项数据，段落解释这些数据意味着进攻、分歧、退潮、修复、拥挤还是扩散。
+
+模块 1 开头先做市场状态定位（宽基与成长小盘的回撤分层、调整是否接近尾声，证据来自 `market_state` 区块，判断手册见 `references/methodology/market_state_framework.md`）。1.1 按**状态卡**的形状写：回撤分层一行、确认三要素的勾选清单、边际变化一行，子块超期时再加一行数据提示——形状固定，HTML 渲染器据此升级成卡片和回撤阶梯图。三要素的阈值命中由 `market_state.confirmation` 直接给出，照引即可，不要自己重算；`hit: null` 的那条（盈利上修）脚本没有数据源，只能引外部证据或写明缺这条腿。
+
+**引用 `market_state` 任何读数之前先看 `stale_blocks`。** 申万行业行情在本机 token 无 `sw_daily` 权限时自动兜底到 AKShare 的申万宏源源，而该源官方发布滞后一个交易日——盘后跑 D 日最多拿到 D-1，属正常口径，但引用时必须带上 `sw_industries.data_through`，不能说成当日。`stale_blocks` 里出现它，说明兜底也失败、正在吃旧缓存，那就要在"数据提示"里写清楚。所有强弱判断都要能回到成交额、放量倍数、涨跌幅、相对收益或回撤证据，但不要把所有可用指标塞进同一段。模块 3 的主题分组只作为内部推理步骤，不输出单独的主题分组陈列表，赚钱效应总览后直接进入主线判定。
 
 遵循仓库项目级文风默认：讲人话、减少模板腔；同项罗列用 list 但每条说人话，结构化对照用表格。
 

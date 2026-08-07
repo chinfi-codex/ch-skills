@@ -683,6 +683,49 @@ def normalize_sw_daily_frame(df: pd.DataFrame) -> pd.DataFrame:
     return out[columns]
 
 
+def fetch_sw_daily_akshare(index_code: str) -> pd.DataFrame:
+    """SW industry history from 申万宏源研究 via AKShare, in stock_index_daily's schema.
+
+    The fallback for `sw_daily`, which is a Tushare permission endpoint: when the
+    token loses that permission the Tushare call fails *silently per range* and
+    the caller happily keeps serving a frozen cache. This route needs no token.
+
+    Verified equivalent on 2026-08-06 — over the overlapping window the two
+    sources agree on close/high to |Δ| ≤ 0.005 index points (rounding), and the
+    unit conversions below are exact constants, not estimates:
+      成交量 亿股 → 手   ×1e6
+      成交额 亿元 → 千元 ×1e5
+
+    Caveat worth knowing before you rely on it: 申万宏源 publishes one trading
+    day behind. On a 盘后 run for day D this route tops out at D-1, so the
+    freshness stamp in market_state_card matters — it is a disclosed T-1
+    caliber, like margin, not a silent gap.
+
+    Returns the full available history (the endpoint takes no date range);
+    the caller windows it.
+    """
+    import akshare as ak
+
+    raw = ak.index_hist_sw(symbol=index_code.split(".")[0], period="day")
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=split_fields(DEFAULT_INDEX_FIELDS))
+
+    out = pd.DataFrame({
+        "ts_code": index_code,
+        "trade_date": pd.to_datetime(raw["日期"]).dt.strftime("%Y%m%d"),
+        "open": pd.to_numeric(raw["开盘"], errors="coerce"),
+        "high": pd.to_numeric(raw["最高"], errors="coerce"),
+        "low": pd.to_numeric(raw["最低"], errors="coerce"),
+        "close": pd.to_numeric(raw["收盘"], errors="coerce"),
+        "vol": pd.to_numeric(raw["成交量"], errors="coerce") * 1e6,
+        "amount": pd.to_numeric(raw["成交额"], errors="coerce") * 1e5,
+    }).sort_values("trade_date").reset_index(drop=True)
+    out["pre_close"] = out["close"].shift(1)
+    out["change"] = out["close"] - out["pre_close"]
+    out["pct_chg"] = (out["close"] / out["pre_close"] - 1.0) * 100.0
+    return out[split_fields(DEFAULT_INDEX_FIELDS)]
+
+
 def fetch_sw_daily(
     pro,
     index_code: str,
@@ -691,7 +734,11 @@ def fetch_sw_daily(
     cache_enabled: bool = True,
     refresh_cache: bool = False,
 ) -> pd.DataFrame:
-    """Fetch SW industry history via sw_daily and share stock_index_daily cache."""
+    """Fetch SW industry history via sw_daily and share stock_index_daily cache.
+
+    Falls back to AKShare when Tushare yields nothing new. Tushare stays first
+    so a restored permission is used automatically, with no config to flip.
+    """
     cache_key = index_code
     cached = (
         None
@@ -708,6 +755,7 @@ def fetch_sw_daily(
     if cached is not None and not cached.empty:
         frames.append(cached)
 
+    fetched_rows = 0
     for fetch_start, fetch_end in fetch_ranges:
         try:
             raw = pro.sw_daily(
@@ -726,6 +774,23 @@ def fetch_sw_daily(
         normalized = normalize_sw_daily_frame(raw)
         if not normalized.empty:
             frames.append(normalized)
+            fetched_rows += len(normalized)
+
+    # Only when Tushare added nothing: either it has no permission, or the range
+    # was already covered. Re-fetching the whole AKShare history is cheap (~0.5s)
+    # and de-duplicates against the cache below, so the second case is harmless.
+    if fetch_ranges and fetched_rows == 0:
+        try:
+            fallback = fetch_sw_daily_akshare(index_code)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] akshare sw fallback failed for {index_code}: {exc}", file=sys.stderr)
+        else:
+            # Window before appending: the endpoint returns everything back to
+            # 1999, and merged is what gets written to cache — unwindowed, every
+            # run would rewrite ~6.4k rows per industry for no benefit.
+            fallback = date_range_filter(fallback, "trade_date", start_date, end_date)
+            if not fallback.empty:
+                frames.append(fallback)
 
     if not frames:
         return pd.DataFrame(columns=split_fields(DEFAULT_INDEX_FIELDS))

@@ -1218,10 +1218,23 @@ def emit_markdown(packet: dict[str, Any]) -> None:
             )
         else:
             watchboard = prior.get("watchboard") or {}
-            open_items = [
+            tracking_items = [
                 item
                 for item in (watchboard.get("tracking_items") or [])
-                if isinstance(item, dict) and item.get("status") == "open"
+                if isinstance(item, dict)
+            ]
+            # Keep historical malformed states observable: older rows may have a
+            # settled parent with an open child. The validator now rejects new
+            # writes of that shape, but hiding an existing child would recreate the
+            # exact silent-drop loop this projection is meant to prevent.
+            open_items = [
+                item
+                for item in tracking_items
+                if item.get("status") == "open"
+                or any(
+                    isinstance(sub, dict) and sub.get("status") == "open"
+                    for sub in (item.get("sub_items") or [])
+                )
             ]
             print(f"- State date: {prior.get('state_date_key')}")
             try:
@@ -1247,18 +1260,38 @@ def emit_markdown(packet: dict[str, Any]) -> None:
                 for sub in (item.get("sub_items") or [])
                 if isinstance(sub, dict) and sub.get("status") == "open"
             ]
-            total = len(open_items) + len(open_subs)
-            parents = len({id(parent) for parent, _sub in open_subs})
+            open_top_count = sum(1 for item in open_items if item.get("status") == "open")
+            total = open_top_count + len(open_subs)
+            open_parents = len(
+                {
+                    id(parent)
+                    for parent, _sub in open_subs
+                    if parent.get("status") == "open"
+                }
+            )
+            historical_containers = len(
+                {
+                    id(parent)
+                    for parent, _sub in open_subs
+                    if parent.get("status") != "open"
+                }
+            )
             summary = f"- Open tracking items to reconcile today: {total}"
             if open_subs:
                 summary += (
-                    f"（顶层 {len(open_items)} 条，其中 {parents} 条是母题，"
+                    f"（顶层 {open_top_count} 条，其中 {open_parents} 条是母题，"
                     f"带 {len(open_subs)} 条子项）"
+                )
+            if historical_containers:
+                summary += (
+                    f"；另有 {historical_containers} 条已结算母题仍含 open 子项"
+                    "（历史异常，必须先修复状态）"
                 )
             print(summary)
             for item in open_items:
+                parent_status = item.get("status")
                 print(
-                    f"  - {item.get('id')} (opened {item.get('opened')}): "
+                    f"  - {item.get('id')} (opened {item.get('opened')}, status {parent_status}): "
                     f"{item.get('statement')}"
                 )
                 for sub in item.get("sub_items") or []:

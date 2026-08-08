@@ -104,6 +104,7 @@ watchboard 是一个 JSON 对象,通用骨架(所有 profile 一致):
 - `resolution`:结算时填——发生了什么、推动了什么(影响了哪个 frame 字段)。**status 一旦不是 `open`,resolution 必填**;空着会报错(逼你把"为什么结算"写下来,而不是悄悄改状态)。
 - `expires_after`:**open 项必填、且必须是未来日期**(到期即触发结算,见下"控制台账规模");open 项缺失或已过期 `save_report_state.py` 直接报错(冷启动首期除外)。已结算项可省。
 - `sub_items`(可选):把一个跟踪项变成**母题**,收纳同一变量/路径下的多条子线。子项结构与顶层项相同(id / opened / statement / status / update|resolution / **独立 expires_after**),但**只允许一层**(子项不能再带 sub_items)。
+- `promoted_from` + `promote_reason`（仅子项晋升顶层时使用）：`promoted_from` 必须精确等于上一期原母题 id，`promote_reason` 写清为何该子线已成长为独立母题；两者缺一或母题 id 写错都会被拆平守卫拒绝。
 
 **母题与子项(sub_items)——既瘦顶层又不丢颗粒度:**
 
@@ -112,6 +113,7 @@ watchboard 是一个 JSON 对象,通用骨架(所有 profile 一致):
 - **母题占 1 个 open 预算名额**,子线不计入预算——这是"瘦顶层"的来源。
 - 但**每个子线保留自己的 `expires_after` 时钟和 status**:子线该到期就到期、该单独结算就单独结算,脚本对 open 子线一视同仁地查到期。子线**不会搭母题便车被掩盖**——这正是它和"糊成一条 statement"的本质区别,后者会丢掉子线的独立死活和独立时钟。
 - **降级即归并**:把一个顶层 open 项移进某母题的 `sub_items`,silent-drop guard 视作"已处理"(按 id 仍在、没消失),不报错。
+- **晋升须留痕**:把上一期子项提到顶层时保留原 id，并写 `promoted_from: <原母题 id>` + 非空 `promote_reason`；不能用任意占位值绕过母题拆平守卫。
 - 子线结算(转非 open)后,下一期可从 `sub_items` 移除,母题随之变薄。
 
 **铁律:每个 open 项每天都要被碰一次。** 确认、证伪、顺延、过期,四选一,不许凭空消失。`save_report_state.py` 会对照上一期的 open 项,任何在今天 watchboard 里彻底不见的 id 直接报错——这是防"悄悄忘了承诺"的兜底。

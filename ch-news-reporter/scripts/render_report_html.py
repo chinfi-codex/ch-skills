@@ -72,9 +72,11 @@ MACRO_PILLS = [
 ]
 
 IRAN_PILLS = [
-    (r"^A$", "pill pos"),    # A 续期 / 降级
-    (r"^B$", "pill neg"),    # B 交战 / 升级
-    (r"^C$", "pill warn"),   # C 僵尸化 / 僵持
+    (r"^W1$", "pill warn"),  # 封锁执行 / 代理战
+    (r"^W2$", "pill neg"),   # 美伊直接军事对抗
+    (r"^W3$", "pill neg"),   # 多战线扩大战
+    (r"^W4$", "pill neg"),   # 核阈值 / 系统性战争
+    (r"^De$", "pill pos"),   # 去升级 / 停火重建
     (r"^(升级|恶化)$", "pill neg"),
     (r"^(缓和|降级)$", "pill pos"),
     (r"^(僵持|维持)$", "pill warn"),
@@ -137,7 +139,10 @@ def load_probabilities(
 
 PATH_PROB_JS = r"""
 const probs = (__payload.probabilities) || {};
-const curPath = String(__payload.path || "").trim().charAt(0);
+// Path keys are semantic identifiers, not one-letter display prefixes. v2 uses
+// W1/W2/W3/W4/De, so truncating to the first character makes every W path lose
+// its active highlight and mislabels the card as merely "W".
+const curPath = String(__payload.path || "").trim();
 const root = document.getElementById("report-body");
 if (!root) return;
 const labels = (__payload.labels || []).map(r => [String(r.key || ""), String(r.label || r.key || "")]);

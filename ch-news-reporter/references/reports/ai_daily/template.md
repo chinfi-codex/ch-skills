@@ -120,13 +120,13 @@ T-120 企业 agent 数据安全与信任
 T-132 企业 agent 数据安全与隐私标准     ← 和 T-120 近重复
 
 # ✅ 按 vector_id 折叠成母题(19→约 10,预算够用)
-T-114 [母题] coding agent 工作台演进 (vector_id: v-skills)
-   ├─ 工作台推向经济主体 (原 T-114)
-   ├─ 入口移动化 / Remote Control (原 T-125)
-   └─ harness 标准化 + 浏览器 MCP (原 T-126)
-T-120 [母题] 企业 agent 数据安全与信任 (vector_id: v-security)
-   ├─ Grok Build 事故 (原 T-120)
-   └─ agent 数据采集缺行业标准 (原 T-132,去重合并)
+T-133 [母题] coding agent 工作台演进 (vector_id: v-skills)
+   ├─ T-114 工作台推向经济主体
+   ├─ T-125 入口移动化 / Remote Control
+   └─ T-126 harness 标准化 + 浏览器 MCP
+T-134 [母题] 企业 agent 数据安全与信任 (vector_id: v-security)
+   ├─ T-120 Grok Build 事故
+   └─ T-132 agent 数据采集缺行业标准 (去重合并)
 ```
 
 > 超预算且没用母题时,`save_report_state` 会打 `⚠️` 醒目告警——看到就先做上面的折叠,别加预算或无视。

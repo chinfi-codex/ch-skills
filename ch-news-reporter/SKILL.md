@@ -167,7 +167,7 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 - `references/reports/geopolitical_daily/methodology.md`（方法论常量：边际判定 / 证据处理 / 可信度 / 降级策略）
 - `references/reports/geopolitical_daily/cross_asset_impact_framework.md`
 
-根据问题选择财经、AI、产品观察、开源生态或地缘风险框架。`state_enabled` 的 profile **先读各自 `framework.md`（当前分析框架，唯一可信源）** 与 `watchboard.md`（活动状态机制），再读 `methodology.md`（方法论常量），并逐条结算 packet 里 `prior_state` 的 open 跟踪项。`geopolitical_daily` 的路径（A/B/C/D）、区域主线、行为体权重、传导渠道和信号清单都在 `framework.md` 定义、在 watchboard 里每日滚动，**没有独立 frame 相位文件**；按 `framework.md` 的 path 判定逻辑用近 7-14 天证据现判，再按需要加载跨资产传导框架。框架本身的换代（regime 质变时改 `framework.md`）是慢思考层 + 人在环的动作，不在日报流程里。
+根据问题选择财经、AI、产品观察、开源生态或地缘风险框架。`state_enabled` 的 profile **先读各自 `framework.md`（当前分析框架，唯一可信源）** 与 `watchboard.md`（活动状态机制），再读 `methodology.md`（方法论常量），并逐条结算 packet 里 `prior_state` 的 open 跟踪项。`geopolitical_daily` 当前使用 v2 战时路径（W1/W2/W3/W4/De）；主战线、并行战线、关键通道、升级阶梯、传导渠道和信号清单都在 `framework.md` 定义、在 watchboard 里每日滚动，**没有独立 frame 相位文件**。按 `framework.md` 的 path 判定逻辑用近 7-14 天证据现判，再按需要加载跨资产传导框架。框架本身的换代（regime 质变时改 `framework.md`）是慢思考层 + 人在环的动作，不在日报流程里。
 
 `macro_daily` 必须优先读取 `references/reports/macro_daily/framework.md`（当前框架）与 `methodology.md`（方法论常量），并以 `macro_data_events` 判断当天是否有中国 CPI/PPI/社融/PMI 月度数据更新；没有事件时不引用旧月度数据做“今日更新”。
 
@@ -182,7 +182,7 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 - **事实层**：军事行动、外交/调解、制裁、军援、核活动、航运/能源设施、联盟声明。
 - **行为体压力变量**：主要国家、联盟、国际组织、代理人网络各自的能力、动机和约束是否改变。
 - **市场定价信号**：Brent、天然气、黄金、美元、美债、VIX、航运保险、通胀预期等可观察反应。
-- **路径判定与子分支**：当前处于 A 局部缓和 / B 可控摩擦 / C 扩散升级 / D 系统冲击哪条路径，子分支为何，路径切换信号是否出现；概率调整必须回到当日证据。
+- **战争轨迹判定**：当前处于 W1 封锁执行与代理战 / W2 美伊直接军事对抗 / W3 多战线扩大战 / W4 核阈值与系统性战争 / De 去升级与停火重建哪条路径；主战线、并行战线和升级阶梯为何如此，路径切换信号是否出现。概率调整必须回到当日证据。
 
 ### 5. 输出报告
 
@@ -211,7 +211,7 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 7. 反向场景与风险（流动性方向 vs 市场位置是否矛盾、何种证据会推翻判断）
 8. 后续观察（24-72h 关键数据/会议/价格位）
 
-`geopolitical_daily` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含路径判定（A 局部缓和 / B 可控摩擦 / C 扩散升级 / D 系统冲击）、当前子分支、烈度、今日边际变化、**框架演进与跟踪项结算（逐条结算上一期 open 项）**、区域主线、能源/航运/市场反应、下一关键节点倒计时、路径概率今日变动和 24-72h 观察清单。
+`geopolitical_daily` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含 v2 战争轨迹（W1/W2/W3/W4/De）、主战线、并行战线、关键通道状态、升级阶梯与核阈值、今日边际变化、**框架演进与跟踪项结算（逐条结算上一期 open 项）**、能源/航运/市场重定价、下一关键节点、路径概率今日变动和 24-72h 观察清单。
 
 ### 5b. 简版输出（≤600 字，可选）
 
@@ -255,7 +255,7 @@ python scripts/render_report_html.py -i reports/macro_daily_2026-05-19.md
 - 表格里的 +/- 数值、涨跌方向自动染色；非加粗的分类格（如宏观日报「性质」列的"数据事件/政策表态"）渲染成彩色 pill。
 - `--theme print` 出黑白衬线、A4 友好版，适合导出 PDF 或邮件附件；文件名非标准前缀时用 `--profile` 手动指定。
 
-`geopolitical_daily` 的渲染配置启用**路径概率图**（A/B/C/D 的概率条），把当天 watchboard 传进来即可：
+`geopolitical_daily` 的渲染配置启用 **v2 路径概率图**（W1/W2/W3/W4/De），把当天 watchboard 传进来即可：
 
 ```bash
 python scripts/render_report_html.py -i reports/geopolitical_daily_2026-06-04.md --watchboard today_watchboard.json
@@ -446,8 +446,8 @@ python scripts/macro_monitor.py market
 
 输出应包含：
 
-- 当前路径判定（A 局部缓和 / B 可控摩擦 / C 扩散升级 / D 系统冲击）与子分支。
-- 全球地缘烈度级别与趋势。
+- 当前 v2 路径判定（W1 封锁执行与代理战 / W2 美伊直接军事对抗 / W3 多战线扩大战 / W4 核阈值与系统性战争 / De 去升级与停火重建）。
+- 主战线、并行战线、关键通道状态与升级阶梯趋势。
 - 今日边际变化（1-3 条；按 methodology"边际变化判定"三条线筛选）。
 - 框架演进与跟踪项结算：逐条结算上一期 open 跟踪项，写清新开 / 关闭与框架微调。
 - 中东、俄乌、台海、朝鲜半岛、制裁/联盟等区域主线中真正有边际变化的部分。

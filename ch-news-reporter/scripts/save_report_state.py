@@ -534,25 +534,50 @@ def validate(
                 errors.append(f"tracking_item {lab} 的 sub_items 必须是 list")
             else:
                 for sidx, sub in enumerate(subs):
+                    if (
+                        isinstance(sub, dict)
+                        and sub.get("status") == "open"
+                        and status != "open"
+                    ):
+                        errors.append(
+                            f"tracking_item {lab} 已是 {status!r}，但子项 "
+                            f"{sub.get('id') or sidx} 仍 open —— 有 open 子项时母题必须保持 open，"
+                            "否则下一期无法正确结算这条子线"
+                        )
                     _check_item(sub, f"{lab}/sub[{sidx}]", is_sub=True)
     for idx, item in enumerate(items):
         _check_item(item, idx)
 
     # 母题拆平守卫（硬拦截）。A prior sub-line that reappears at top level is almost
     # always the ledger unravelling, not a deliberate call — so it blocks the write.
-    # Deliberate promotion stays possible: mark the item `promoted_from: <parent id>`
-    # (optionally with `promote_reason`) and it passes.
+    # Deliberate promotion stays possible only when it names the exact prior
+    # parent and explains why. Merely adding any truthy marker would turn the
+    # hard guard into a one-field bypass.
     if prior_sub_parent:
         current_top = {
             str(it["id"]): it
             for it in items
             if isinstance(it, dict) and it.get("id")
         }
-        unravelled = [
-            (tid, prior_sub_parent[tid])
-            for tid in current_top
-            if tid in prior_sub_parent and _is_empty(current_top[tid].get("promoted_from"))
-        ]
+        unravelled: list[tuple[str, str]] = []
+        for tid, item in current_top.items():
+            if tid not in prior_sub_parent:
+                continue
+            expected_parent = prior_sub_parent[tid]
+            promoted_from = item.get("promoted_from")
+            if _is_empty(promoted_from):
+                unravelled.append((tid, expected_parent))
+                continue
+            if str(promoted_from) != expected_parent:
+                errors.append(
+                    f"tracking_item {tid} 的 promoted_from={promoted_from!r} 与上一期原母题 "
+                    f"{expected_parent!r} 不一致 —— 不能用错误母题 id 绕过拆平守卫"
+                )
+            if _is_empty(item.get("promote_reason")):
+                errors.append(
+                    f"tracking_item {tid} 从母题 {expected_parent} 晋升到顶层但缺 "
+                    "promote_reason —— 写明为何该子线已成长为独立母题"
+                )
         if unravelled:
             detail = "、".join(f"{tid}(原属母题 {pid})" for tid, pid in sorted(unravelled))
             errors.append(

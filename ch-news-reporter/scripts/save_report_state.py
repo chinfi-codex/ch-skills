@@ -435,6 +435,20 @@ def validate(
 
     prior_items = _flatten(prior_wb.get("tracking_items"))
 
+    # Which prior ids were *children*, and under which parent. Used below to catch
+    # a 母题 being torn flat: the carry-forward guard demands every prior sub-line
+    # be accounted for, and without this check the easiest way to satisfy it is to
+    # re-emit all the children at top level — which silently destroys the parent
+    # and blows past the open budget (geopolitical_daily 2026-07-30: 7 母题 / 16
+    # 子项 → 0 母题 / 28 flat open in a single day, never recovered).
+    prior_sub_parent: dict[str, str] = {}
+    for _it in prior_wb.get("tracking_items") or []:
+        if not isinstance(_it, dict) or not _it.get("id"):
+            continue
+        for _s in _it.get("sub_items") or []:
+            if isinstance(_s, dict) and _s.get("id"):
+                prior_sub_parent[str(_s["id"])] = str(_it["id"])
+
     # Per-item structural check, shared by top-level items and their sub_items. A
     # parent ("母题") holds one open-budget slot; each sub_item keeps its own
     # statement, status and — crucially — its own expires_after clock, so a quiet
@@ -523,6 +537,31 @@ def validate(
                     _check_item(sub, f"{lab}/sub[{sidx}]", is_sub=True)
     for idx, item in enumerate(items):
         _check_item(item, idx)
+
+    # 母题拆平守卫（硬拦截）。A prior sub-line that reappears at top level is almost
+    # always the ledger unravelling, not a deliberate call — so it blocks the write.
+    # Deliberate promotion stays possible: mark the item `promoted_from: <parent id>`
+    # (optionally with `promote_reason`) and it passes.
+    if prior_sub_parent:
+        current_top = {
+            str(it["id"]): it
+            for it in items
+            if isinstance(it, dict) and it.get("id")
+        }
+        unravelled = [
+            (tid, prior_sub_parent[tid])
+            for tid in current_top
+            if tid in prior_sub_parent and _is_empty(current_top[tid].get("promoted_from"))
+        ]
+        if unravelled:
+            detail = "、".join(f"{tid}(原属母题 {pid})" for tid, pid in sorted(unravelled))
+            errors.append(
+                f"母题被拆平：{len(unravelled)} 个上一期的子项回到了顶层 —— {detail}。"
+                "子项要留在原母题的 sub_items 里（母题占 1 个预算位、子项各留自己的到期"
+                "时钟）。carry-forward 要求每条子线都有交代，但交代方式是嵌在母题下继续"
+                "滚动，不是摊平到顶层。若确属有意晋升（子线长大到该独立成母题），给该项"
+                "加 promoted_from: <原母题 id> 和 promote_reason 说明理由。"
+            )
 
     # Open-item budget: a soft per-profile cap. Over budget never blocks a write;
     # it nudges the author to consolidate same-theme items or settle stale ones

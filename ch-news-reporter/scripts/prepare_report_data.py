@@ -1237,11 +1237,41 @@ def emit_markdown(packet: dict[str, Any]) -> None:
                     "勿把数据空洞误读为局势平静"
                 )
             print(f"- Regime: {watchboard.get('regime')}")
-            print(f"- Open tracking items to reconcile today: {len(open_items)}")
+            # Render 母题 → 子项 nested, and count both levels. The reconcile list is
+            # the shape the next watchboard gets written in, so a flat list here
+            # teaches a flat ledger: children get re-emitted at top level, the parent
+            # dies and the open budget blows out. Show the nesting, keep the nesting.
+            open_subs = [
+                (item, sub)
+                for item in open_items
+                for sub in (item.get("sub_items") or [])
+                if isinstance(sub, dict) and sub.get("status") == "open"
+            ]
+            total = len(open_items) + len(open_subs)
+            parents = len({id(parent) for parent, _sub in open_subs})
+            summary = f"- Open tracking items to reconcile today: {total}"
+            if open_subs:
+                summary += (
+                    f"（顶层 {len(open_items)} 条，其中 {parents} 条是母题，"
+                    f"带 {len(open_subs)} 条子项）"
+                )
+            print(summary)
             for item in open_items:
                 print(
                     f"  - {item.get('id')} (opened {item.get('opened')}): "
                     f"{item.get('statement')}"
+                )
+                for sub in item.get("sub_items") or []:
+                    if not isinstance(sub, dict) or sub.get("status") != "open":
+                        continue
+                    print(
+                        f"      └─ {sub.get('id')} (opened {sub.get('opened')}，"
+                        f"子项 of {item.get('id')}): {sub.get('statement')}"
+                    )
+            if open_subs:
+                print(
+                    "  ↳ 子项必须继续留在各自母题的 sub_items 里滚动结算，"
+                    "不要摊平到顶层（摊平会被 save_report_state 拦截）。"
                 )
             print(
                 "- Full prior watchboard JSON:\n"

@@ -153,8 +153,11 @@ class LazyKlineTests(unittest.TestCase):
         view["klines"] = {"000001.SZ": [["20260710", 10, 11, 9, 10.5, 1000]]}
         html = renderer.render_html(view)
         self.assertIn('"kline_asset_base":"forecast_20260630.klines"', html)
+        self.assertIn('"kline_asset_version":"preview"', html)
         self.assertIn('"kline_shards":', html)
-        self.assertIn("fetch(url,{cache:'force-cache'})", html)
+        self.assertIn("url.searchParams.set('v',DATA.kline_asset_version)", html)
+        self.assertIn("fetch(url,{cache:'no-cache'})", html)
+        self.assertNotIn("force-cache", html)
         self.assertNotIn('"klines":', html)
         self.assertNotIn('DATA.klines', html)
 
@@ -172,6 +175,9 @@ class LazyKlineTests(unittest.TestCase):
             manifest = json.loads((asset_dir / "_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["stock_count"], 2)
             self.assertEqual(manifest["shard_count"], 4)
+            self.assertEqual(manifest["schema_version"], "earnings-kline-shards/v2")
+            self.assertEqual(manifest["latest_trade_date"], "20260710")
+            self.assertEqual(manifest["asset_version"], assets["asset_version"])
             for code, shard in assets["code_to_shard"].items():
                 payload = json.loads((asset_dir / f"{shard}.json").read_text(encoding="utf-8"))
                 self.assertEqual(payload[code], klines[code])

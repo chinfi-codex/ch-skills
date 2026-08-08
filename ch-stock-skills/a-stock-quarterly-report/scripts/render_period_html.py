@@ -39,6 +39,7 @@ _BUNDLED_HTML = Path(_SCRIPT_DIR) / "_shared" / "html_report"
 _DEV_HTML = Path(_SCRIPT_DIR).parents[2] / "shared" / "html_report"
 sys.path.insert(0, str(_BUNDLED_HTML if _BUNDLED_HTML.exists() else _DEV_HTML))
 from safe_json import safe_json_for_script  # noqa: E402
+from assets import write_json_asset_bundle  # noqa: E402
 
 BEIJING_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
 KLINE_BARS = 130
@@ -178,26 +179,29 @@ def write_kline_assets(out_path: str, klines: Dict[str, List[List[Any]]],
         code_to_shard[ts_code] = shard_id
         shard_payloads.setdefault(shard_id, {})[ts_code] = klines[ts_code]
 
-    written = set()
-    for shard_id, payload in shard_payloads.items():
-        name = f"{shard_id}.json"
-        written.add(name)
-        (asset_dir / name).write_text(
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-
-    written.add("_manifest.json")
-    (asset_dir / "_manifest.json").write_text(json.dumps({
-        "schema_version": "qreport-kline-shards/v1", "generated_at": generated_at,
-        "shard_count": shard_count, "nonempty_shards": len(shard_payloads),
-        "stock_count": len(code_to_shard),
-    }, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-
-    for old in asset_dir.glob("*.json"):
-        if old.name not in written:
-            old.unlink()
-
-    return {"asset_dir": str(asset_dir), "asset_base": asset_dir.name,
-            "code_to_shard": code_to_shard, "nonempty_shards": len(shard_payloads)}
+    latest_trade_date = max(
+        (str(rows[-1][0]) for rows in klines.values() if rows),
+        default=None,
+    )
+    bundle = write_json_asset_bundle(
+        asset_dir,
+        {f"{shard_id}.json": payload for shard_id, payload in shard_payloads.items()},
+        schema_version="qreport-kline-shards/v2",
+        generated_at=generated_at,
+        manifest_extra={
+            "shard_count": shard_count,
+            "nonempty_shards": len(shard_payloads),
+            "stock_count": len(code_to_shard),
+            "latest_trade_date": latest_trade_date,
+        },
+    )
+    return {
+        **bundle,
+        "asset_base": asset_dir.name,
+        "code_to_shard": code_to_shard,
+        "nonempty_shards": len(shard_payloads),
+        "latest_trade_date": latest_trade_date,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -800,7 +804,8 @@ async function loadKline(code){
   if(KL_CACHE.has(shard))return KL_CACHE.get(shard)[code]||null;
   if(!KL_PENDING.has(shard)){
     const url=new URL(`${DATA.kline_asset_base}/${shard}.json`,document.baseURI);
-    KL_PENDING.set(shard,fetch(url,{cache:'force-cache'}).then(r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json();})
+    url.searchParams.set('v',DATA.kline_asset_version);
+    KL_PENDING.set(shard,fetch(url,{cache:'no-cache'}).then(r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json();})
       .then(p=>{KL_CACHE.set(shard,p);return p;}).finally(()=>KL_PENDING.delete(shard)));
   }
   const p=await KL_PENDING.get(shard);return p[code]||null;
@@ -886,12 +891,14 @@ def render_html(view: Dict[str, Any], kline_assets: Optional[Dict[str, Any]] = N
     kline_assets = kline_assets or {
         "asset_base": f"qreport_{view['period']}.klines",
         "code_to_shard": {code: _kline_shard_id(code) for code in view.get("klines", {})},
+        "asset_version": "preview",
     }
     data_json = safe_json_for_script({
         "period": view["period"], "trend_net": view["trend_net"],
         "pe_buckets": view["pe_buckets"], "industries": view["industries"],
         "stocks": view["stocks"], "theme_trends": view["theme_trends"],
         "kline_asset_base": kline_assets["asset_base"],
+        "kline_asset_version": kline_assets["asset_version"],
         "kline_shards": kline_assets["code_to_shard"],
     })
     shared_theme = _load_shared_theme("default")
@@ -1001,6 +1008,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "evidence_generated_at": cutoff_info["evidence_generated_at"],
         "kline_asset_dir": kline_assets["asset_dir"],
         "kline_shards": kline_assets["nonempty_shards"],
+        "kline_asset_version": kline_assets["asset_version"],
+        "kline_latest_trade_date": kline_assets["latest_trade_date"],
         "html_bytes": os.path.getsize(out_path), "out": out_path,
     }, ensure_ascii=False, indent=2))
     return 0

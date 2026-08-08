@@ -13,6 +13,7 @@ The thin per-skill entrypoint is built from three reusable pieces:
 """
 
 from .attestation import DEFAULT_UNMATCHED_REASONS, HookExpectation, RenderManifest
+from .assets import verify_json_asset_bundle, write_json_asset_bundle
 from .builder import HtmlReportBuilder, list_themes
 from .chart_hook import ChartHook
 from .chartkit import chartkit_js
@@ -37,6 +38,8 @@ __all__ = [
     "HookExpectation",
     "RenderManifest",
     "DEFAULT_UNMATCHED_REASONS",
+    "write_json_asset_bundle",
+    "verify_json_asset_bundle",
     "StaticFigure",
     "insert_figures",
     "RenderJob",

@@ -42,6 +42,13 @@ if __name__ == "__main__":
 
 带渲染契约的报告可用 `render_check.py` 跑浏览器门禁。`site` / `online` 阶段必须传 local 审计里的 `--expect-build`，防止同一契约版本下的旧缓存误通过；真实浏览器模式依赖 `playwright` Python 包及 Chromium 浏览器。
 
+报告若把 K 线、行情序列或其它 JSON 拆成同名外置资产，必须通过
+`write_json_asset_bundle()` 写入，并把返回的 `asset_version` 注入页面请求
+参数（`?v=<asset_version>`），同时使用 `fetch(..., {cache: "no-cache"})`
+要求浏览器重验证。稳定文件名不能单独作为缓存身份；页面主体与分片必须
+共享同一次构建的内容指纹。`verify_json_asset_bundle()` 用于构建后校验清单、
+字节数与 SHA-256。
+
 ## 四层结构
 
 | 层 | 模块 | 职责 |

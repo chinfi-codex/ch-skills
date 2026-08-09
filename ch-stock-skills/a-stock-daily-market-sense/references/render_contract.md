@@ -50,7 +50,7 @@ description: 仅供 a-stock-daily-market-sense 内部按需读取。说明日报
 python3 scripts/_shared/html_report/render_check.py --target <本地 HTML> --stage local --out <本地审计文件>
 # 从本地审计文件取 build_id，Site 与线上门禁都必须传 --expect-build
 python3 scripts/_shared/html_report/render_check.py --target <目标> --stage <site|online> \
-  --expect-contract dms/1.0.0 --expect-build <本地审计文件中的 build_id> --out <审计文件>
+  --expect-contract dms/1.1.0 --expect-build <本地审计文件中的 build_id> --out <审计文件>
 ```
 
 三段各查各的问题：

@@ -34,7 +34,7 @@ from db_core import (
     close_pool,
 )
 
-DATE_COLUMNS = {"trade_date", "cal_date", "list_date", "date"}
+DATE_COLUMNS = {"trade_date", "cal_date", "list_date", "date", "margin_data_date"}
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +222,22 @@ def write_dataset(
 # ---------------------------------------------------------------------------
 # Market history I/O (replaces market_data.csv)
 # ---------------------------------------------------------------------------
+def _null_out_non_finite(records: list) -> list:
+    """把残存的 NaN / ±inf 换成 None，别让它们进 DECIMAL 列。
+
+    PostgreSQL 的 NUMERIC 接受 'NaN' 这个合法值，于是 `WHERE x IS NOT NULL`
+    会放行、而任何比较又恒为假——缺失就这样伪装成有值，静默污染下游。
+    必须在 records 这一层做：float64 列上把 None 赋回去会被 pandas 重新变成 NaN，
+    `.where(pd.notnull(...))` 因此挡不住它。
+    """
+    import math
+
+    return [
+        tuple(None if isinstance(v, float) and not math.isfinite(v) else v for v in row)
+        for row in records
+    ]
+
+
 def read_market_history() -> Optional["pd.DataFrame"]:
     """Read market_history table as DataFrame."""
     if pd is None:
@@ -247,11 +263,17 @@ def write_market_history(df: "pd.DataFrame") -> None:
     with get_connection() as conn:
         try:
             cur = conn.cursor()
+            # 自愈式迁移：margin_data_date 是后加的列，老库里可能没有。加在 TRUNCATE
+            # 之前，避免整批写入因为一列缺失而失败。
+            cur.execute("ALTER TABLE market_history ADD COLUMN IF NOT EXISTS margin_data_date DATE")
             cur.execute("TRUNCATE TABLE market_history")
 
             columns = list(df.columns)
             col_str = ",".join(columns)
-            records = df[columns].replace({pd.NaT: None}).where(pd.notnull(df), None).to_records(index=False).tolist()
+            records = _null_out_non_finite(
+                df[columns].replace({pd.NaT: None}).where(pd.notnull(df), None)
+                .to_records(index=False).tolist()
+            )
             execute_values(
                 cur,
                 f"INSERT INTO market_history ({col_str}) VALUES %s",

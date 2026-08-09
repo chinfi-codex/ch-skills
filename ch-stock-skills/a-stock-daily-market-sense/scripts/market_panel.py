@@ -88,9 +88,16 @@ MARKET_HISTORY_COLUMNS = [
     "情绪值",
     "成交额",
     "融资净买入",
+    "融资数据日",
     "全市场换手率",
 ]
 MARKET_ACTIVITY_COLUMNS = ["上涨", "涨停", "下跌", "跌停", "平盘", "活跃度", "情绪值", "成交额"]
+# 日期型列：写库时格式化成 YYYY-MM-DD，不能走数值清洗（会被解析成 None）
+MARKET_HISTORY_DATE_COLUMNS = {"日期", "融资数据日"}
+# 图表派生物只保留最近这么多个交易日。PG 里的 market_history 是真源、要留全量
+# （滚动分位要 500 个交易日），但 references/market_data.json 只喂 HTML 的情绪
+# 曲线，最长的一条也只画 120 天，全量 dump 会让这个进版本库的派生物涨到 2MB+。
+MARKET_HISTORY_JSON_WINDOW_DAYS = 200
 CORRUPTED_MARKET_TURNOVER_COLUMNS = {"?????", "??????"}
 MARKET_HISTORY_DB_COLUMNS = {
     "日期": "date",
@@ -103,6 +110,7 @@ MARKET_HISTORY_DB_COLUMNS = {
     "情绪值": "sentiment",
     "成交额": "amount",
     "融资净买入": "margin_net_buy",
+    "融资数据日": "margin_data_date",
     "全市场换手率": "turnover_rate",
 }
 
@@ -1304,7 +1312,7 @@ def skill_relative_path(path: Path) -> str:
 
 
 def clean_market_history_value(column: str, value: Any) -> Any:
-    if column == "日期":
+    if column in MARKET_HISTORY_DATE_COLUMNS:
         return "" if is_blank_value(value) else str(value)
     return parse_market_history_number(value)
 
@@ -1312,8 +1320,15 @@ def clean_market_history_value(column: str, value: Any) -> Any:
 def write_market_history_json(
     csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
     json_path: Optional[Path] = None,
+    end_date: Optional[str] = None,
+    window_days: int = MARKET_HISTORY_JSON_WINDOW_DAYS,
 ) -> Path:
-    """Write a clean JSON derivative of references/market_data.csv for HTML charts."""
+    """Write a clean JSON derivative of the market history for HTML charts.
+
+    只截最近 `window_days` 个交易日。`end_date` 是窗口右端（YYYYMMDD）——回溯
+    渲染历史日报时必须传，否则窗口锚在全表末尾、目标日不在记录里，
+    `market_data_for_report` 的新鲜度门禁会直接判失败。不传就锚在最新一天。
+    """
     if json_path is None:
         json_path = market_history_json_path(csv_path)
 
@@ -1365,6 +1380,12 @@ def write_market_history_json(
     df = raw.copy()
     df["_trade_date"] = df["日期"].apply(history_date_to_trade_date)
     df = df.sort_values("_trade_date", ascending=True, na_position="last").reset_index(drop=True)
+    if end_date:
+        normalized_end = history_date_to_trade_date(end_date) or str(end_date)
+        df = df.loc[df["_trade_date"].notna() & (df["_trade_date"] <= normalized_end)]
+    if window_days and len(df) > window_days:
+        df = df.tail(window_days)
+    df = df.reset_index(drop=True)
     columns = [col for col in df.columns if col != "_trade_date"]
 
     records: List[Dict[str, Any]] = []
@@ -1466,6 +1487,9 @@ def should_update_market_history_field(column: str, current_value: object, new_v
         return should_fill_positive_numeric(current_value, new_value)
     if column in {"情绪值", "融资净买入"}:
         return should_update_numeric(current_value, new_value)
+    if column == "融资数据日":
+        # 与融资净买入配对，新值非空即覆盖——两者不同步会让下游把 T-1 读数当成当日
+        return not is_blank_value(new_value)
     if column in {"涨停", "跌停", "上涨", "下跌", "平盘"}:
         return should_update_count(current_value, new_value)
     return is_blank_value(current_value) and not is_blank_value(new_value)
@@ -1526,7 +1550,7 @@ def write_market_history_df(df: pd.DataFrame, csv_path: Path = DEFAULT_MARKET_HI
         for source_column, db_column in MARKET_HISTORY_DB_COLUMNS.items():
             if source_column not in final_df.columns:
                 continue
-            if source_column == "日期":
+            if source_column in MARKET_HISTORY_DATE_COLUMNS:
                 db_df[db_column] = final_df[source_column].apply(
                     lambda value: (
                         datetime.strptime(history_date_to_trade_date(value), "%Y%m%d").strftime("%Y-%m-%d")
@@ -1828,6 +1852,15 @@ def update_market_history(
         row["融资净买入"] = margin_net_buy
     if "融资净买入" not in columns:
         columns.append("融资净买入")
+
+    # 融资读数的实际数据日显式落库。融资在收盘后才公布，写入方取的是前一交易日，
+    # 于是第 d 行的融资描述的是 d-1 的杠杆行为。以前这条只写在注释里靠下游推断，
+    # 实测线上 174 天里有 80 天存的其实是当日读数——口径不一致会让趋势卡的相位
+    # 配平（"滞后腿不能单独定向"）失去对称性。现在写死一列，消费方一律读它。
+    if margin_net_buy_trade_date:
+        row["融资数据日"] = format_history_date(margin_net_buy_trade_date)
+    if "融资数据日" not in columns:
+        columns.append("融资数据日")
 
     confirmed_values = {
         key: value for key, value in row.items() if key != "日期" and not is_blank_value(value)
@@ -5095,7 +5128,12 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         refresh_cache=args.refresh_cache,
     )
     previous_trade_date = trade_dates[-2] if len(trade_dates) >= 2 else None
-    margin_trade_date = previous_trade_date or target_date
+    # 融资数据日恒等于 target_date 的前一交易日，从窗口里显式取，不用 trade_dates[-2]
+    # 兜底——窗口末端受 offset / allow_future 影响时它未必是 target_date 的前一天，
+    # 旧写法的 `or target_date` 更会在窗口只有一天时把当日读数存成 T-1 口径。
+    # 推不出前一交易日就不写融资，宁可缺一格也不写错口径。
+    ordered_before_target = [d for d in sorted(set(trade_dates)) if str(d) < target_date]
+    margin_trade_date = ordered_before_target[-1] if ordered_before_target else None
     timer.mark("trade_calendar")
 
     with ThreadPoolExecutor(max_workers=min(fetch_workers, 5)) as executor:
@@ -5151,14 +5189,17 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             margin_trade_date,
             cache_enabled,
             args.refresh_cache,
-        )
+        ) if margin_trade_date else None
 
         daily = daily_future.result()
         adj_factors = adj_factor_future.result()
         basic = basic_future.result()
         stock_basic = stock_basic_future.result()
         index_daily = index_daily_future.result()
-        margin_net_buy, margin_net_buy_reason = margin_future.result()
+        margin_net_buy, margin_net_buy_reason = (
+            margin_future.result() if margin_future is not None
+            else (None, "no previous trade date available for the T-1 margin reading")
+        )
     timer.mark("fetch_parallel")
 
     if daily.empty:

@@ -183,8 +183,14 @@ CREATE TABLE IF NOT EXISTS market_history (
     sentiment       DECIMAL(10,4),
     amount          DECIMAL(18,4),
     margin_net_buy  DECIMAL(18,4),
+    -- 融资净买入实际描述的交易日。写入方按"前一交易日"取数（融资在收盘后才公布），
+    -- 但历史上这条约定并不稳定，下游若靠推断就会在转向日把前一天的读数按在
+    -- 盘面相反的一天上。这一列把口径显式落库，消费方一律读它而不是自己推。
+    margin_data_date DATE,
     turnover_rate   DECIMAL(8,4)
 );
+
+ALTER TABLE market_history ADD COLUMN IF NOT EXISTS margin_data_date DATE;
 
 
 -- -------------------------------------------------------------------------

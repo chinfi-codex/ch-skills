@@ -168,8 +168,17 @@ def test_refresh_and_verify_market_chart_data_checks_resolved_date():
                 "metadata": {"window_end": "20260717"},
                 "records": [{"trade_date": "20260717"}],
             }), encoding="utf-8")
-            rdp.market_panel.write_market_history_json = lambda: chart_path
+            seen = {}
+
+            def _stub(end_date=None, **_kwargs):
+                seen["end_date"] = end_date
+                return chart_path
+
+            rdp.market_panel.write_market_history_json = _stub
             assert rdp.refresh_and_verify_market_chart_data("20260717") == chart_path
+            # 窗口必须锚在报告日：只截最新 N 天的话，回溯渲染时目标日不在记录里，
+            # 下面那条 fail-closed 断言就会因为"窗口没覆盖到"而误报
+            assert seen["end_date"] == "20260717"
             try:
                 rdp.refresh_and_verify_market_chart_data("20260718")
                 raise AssertionError("expected missing resolved date to fail closed")

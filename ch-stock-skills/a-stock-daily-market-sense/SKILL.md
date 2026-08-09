@@ -29,7 +29,7 @@ description: 基于 Tushare Pro A 股日线与 Baostock 风格指数生成盘后
 
 ## 工作流程
 
-1. **生成证据包**：解析日期后运行 `scripts/run_daily_panel.py`，产出完整 evidence、模块级 JSON 与 K 线展示数据；模块 1 同时带机判的市场状态定位（`market_state`）与趋势状态卡（`trend_state_card`）区块。详见 `references/execution_flow.md`。
+1. **生成证据包**：解析日期后运行 `scripts/run_daily_panel.py`，产出完整 evidence、模块级 JSON 与 K 线展示数据；模块 1 同时带三张机判卡——市场状态定位（`market_state`）、极值状态（`extreme_state`，底部出清分 / 顶部拥挤分）与趋势状态卡（`trend_state_card`）。详见 `references/execution_flow.md`。
 2. **分模块撰写**：按最小上下文边界加载各模块 JSON + 方法论 + 模板。模块 3 赚钱效应采用两阶段契约：首轮只输出临时主题映射与 `stars: null`；统计脚本完成后由模型按证据锁定星级，再进入催化与细分线路推演。详见 `references/methodology/module3_money_effect.md` 与 `references/execution_flow.md`。
 3. **聚合成稿**：读取模块 1-5 输出与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和语气校准。
 4. **生命周期落库与清理**：报告定稿后，把主线判定沉淀进 PG 生命周期台账，然后清理临时 evidence。详见 `references/theme_lifecycle.md` 与 `references/execution_flow.md`。
@@ -62,6 +62,14 @@ python3 -m playwright install chromium
 python3 scripts/run_daily_panel.py --asof 20260429 --lookback 120 --market-trend-days 90 --index 000300.SH
 ```
 
+极值状态卡的分位基准存在 `dms_extreme_daily` 表里，**新环境第一次跑要先补历史**（只需一次，之后每日增量）：
+
+```bash
+python3 scripts/extreme_state_card.py --asof 20260429 --backfill 300
+```
+
+没补历史也能出卡，只是阈值会退回固定水平，`percentile_source` 会写明。
+
 模块 3 首轮完成后，运行统计脚本：
 
 ```bash
@@ -83,8 +91,8 @@ python3 scripts/render_report_html.py --input reports/report_20260429.md --gate 
 python3 scripts/_shared/html_report/render_check.py --target reports/report_20260429.html --stage local --out reports/report_20260429.render-check-local.json
 # 从上一步审计 JSON 读取 build_id；site/online 必须与本地产物完全一致
 BUILD_ID=$(python3 -c 'import json; print(json.load(open("reports/report_20260429.render-check-local.json"))["build_id"])')
-python3 scripts/_shared/html_report/render_check.py --target <Site 路径>/report_20260429.html --stage site --expect-contract dms/1.0.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-site.json
-python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stage online --expect-contract dms/1.0.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-online.json
+python3 scripts/_shared/html_report/render_check.py --target <Site 路径>/report_20260429.html --stage site --expect-contract dms/1.1.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-site.json
+python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stage online --expect-contract dms/1.1.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-online.json
 ```
 
 退出码：`0` 通过、`1` 失败（**不得部署、不得 cleanup，留着审计文件排查**）、`2` 只跑了 `--static-only` 冒烟不算门禁。三份 `render-check-*.json` 留在 `reports/` 下，不进发布包。
@@ -95,13 +103,15 @@ python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stag
 
 ## 输出规范
 
-完整研报按五个模块输出。每个判断段先给自然语言结论，再选择少量关键证据支撑；表格承载细项数据，段落解释这些数据意味着进攻、分歧、退潮、修复、拥挤还是扩散。模块 1 开头先做市场状态定位（宽基与成长小盘的回撤分层、调整是否接近尾声，证据来自 `market_state` 区块，判断手册见 `references/methodology/market_state_framework.md`）。所有强弱判断都要能回到成交额、放量倍数、涨跌幅、相对收益或回撤证据，但不要把所有可用指标塞进同一段。模块 3 的主题分组只作为内部推理步骤，不输出单独的主题分组陈列表，赚钱效应总览后直接进入主线判定。
+完整研报按五个模块输出。每个判断段先给自然语言结论，再选择少量关键证据支撑；表格承载细项数据，段落解释这些数据意味着进攻、分歧、退潮、修复、拥挤还是扩散。模块 1 开头先做市场状态定位（宽基与成长小盘的回撤分层、调整是否接近尾声，证据来自 `market_state` 与 `extreme_state` 两个区块，判断手册见 `references/methodology/market_state_framework.md`）。所有强弱判断都要能回到成交额、放量倍数、涨跌幅、相对收益或回撤证据，但不要把所有可用指标塞进同一段。模块 3 的主题分组只作为内部推理步骤，不输出单独的主题分组陈列表，赚钱效应总览后直接进入主线判定。
 
 遵循仓库项目级文风默认：讲人话、减少模板腔；同项罗列用 list 但每条说人话，结构化对照用表格。
 
 每个一级大章节（1-5）里已有的总结/定性段落使用 Markdown 高亮样式 `==...==` 包裹。不要为了高亮额外新增“本节总结”段落。
 
 禁止输出买卖建议。可以写“风险传导”“持续性待验证”“主线确认度”，不要写“买入/卖出/止损/目标价”。
+
+**退潮 / 深度退潮 / 冰点是风险状态描述，不等于看空。** 5 年回放（`evals/trend_state_review_2026-08.md`）里，冰点日之后 20 个交易日平均上涨 8.92%、81.8% 的时候在涨，深度退潮 +1.54%，都高于全样本的 +0.44%——档位越差前瞻收益反而越好。写模块 1 时不得把"退潮"翻译成"看空"，也不得暗示应当离场或减仓。同理，趋势轴与极值轴不一致时（退潮档里出现出清极值是 A 股最常见的底部形态）照实并列写，不许为了口径一致改写任一边的读数。
 
 HTML 输出只改变呈现方式：必须保留 Markdown 研报中的所有文字、表格、引用和免责声明。图表只展示 evidence 中已有的 OHLC、成交金额与风格指数收盘序列数据，不得新增与 Markdown 不一致的分析结论。详见 `references/methodology/output_discipline.md`。
 

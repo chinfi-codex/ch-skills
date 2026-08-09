@@ -76,6 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--module-context-dir", default=None, help="Directory for module-level subagent JSON files.")
     parser.add_argument("--no-module-context", action="store_true", help="Skip module-level subagent JSON files.")
     parser.add_argument("--no-market-state", action="store_true", help="Skip the market_state card (index position/breadth/SW industries/margin/liquidity).")
+    parser.add_argument("--no-extreme-state", action="store_true", help="Skip the extreme_state card (bottom washout score / top crowding score).")
+    parser.add_argument("--extreme-backfill", type=int, default=0, help="Backfill N trading days of extreme-state metrics before scoring (first run: 300).")
     parser.add_argument("--stderr-out", default=None, help="Stderr log output path.")
     parser.add_argument("--money-context-limit", type=int, default=80, help="Money-effect rows in context.")
     parser.add_argument("--decline-context-limit", type=int, default=20, help="Volume-decline rows in context.")
@@ -130,7 +132,8 @@ def refresh_and_verify_market_chart_data(resolved_date: str) -> Path:
     row is already present.  The chart JSON is still a derived artifact and
     therefore must be refreshed independently on every report run.
     """
-    chart_path = market_panel.write_market_history_json()
+    # 窗口锚在报告日：回溯历史日报时若锚在全表末尾，目标日不在记录里会被门禁拦下
+    chart_path = market_panel.write_market_history_json(end_date=resolved_date)
     payload = json.loads(chart_path.read_text(encoding="utf-8"))
     records = payload.get("records") or []
     record_dates = {
@@ -180,7 +183,23 @@ def build_market_state_card(resolved_date: str, evidence: Dict[str, Any]) -> Dic
         return {"available": False, "reason": f"market_state_card failed: {exc}"}
 
 
-def write_module_contexts(evidence: dict, module_dir: Path, trend_card: Optional[Dict[str, Any]] = None, market_state: Optional[Dict[str, Any]] = None) -> None:
+def build_extreme_state_card(resolved_date: str, backfill: int = 0) -> Dict[str, Any]:
+    """极值状态卡（底部出清分 + 顶部拥挤分），失败不阻断研报。"""
+    try:
+        import extreme_state_card
+
+        return extreme_state_card.build_block(resolved_date, backfill=backfill)
+    except Exception as exc:
+        return {"available": False, "reason": f"extreme_state_card failed: {exc}"}
+
+
+def write_module_contexts(
+    evidence: dict,
+    module_dir: Path,
+    trend_card: Optional[Dict[str, Any]] = None,
+    market_state: Optional[Dict[str, Any]] = None,
+    extreme_state: Optional[Dict[str, Any]] = None,
+) -> None:
     module_dir.mkdir(parents=True, exist_ok=True)
     for name, payload in market_panel.build_module_contexts(evidence).items():
         if name == "module1_market_trend":
@@ -188,6 +207,8 @@ def write_module_contexts(evidence: dict, module_dir: Path, trend_card: Optional
                 payload["trend_state_card"] = trend_card
             if market_state is not None:
                 payload["market_state"] = market_state
+            if extreme_state is not None:
+                payload["extreme_state"] = extreme_state
         (module_dir / f"{name}.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -282,6 +303,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.no_market_state:
         market_state = build_market_state_card(resolved_date, evidence)
         evidence["market_state"] = market_state
+    # 极值轴与趋势轴正交：前者抓两端拐点（快变量），后者描述所处阶段（慢变量）
+    extreme_state: Optional[Dict[str, Any]] = None
+    if not args.no_extreme_state:
+        extreme_state = build_extreme_state_card(resolved_date, args.extreme_backfill)
+        evidence["extreme_state"] = extreme_state
+    # 趋势卡也进 evidence：HTML 的 20 日档位图要从 evidence 读轨迹，而模块级 JSON
+    # 只给模型看、渲染器不读它
+    trend_card: Optional[Dict[str, Any]] = None
+    if not args.no_module_context:
+        trend_card = build_trend_state_card(resolved_date)
+        evidence["trend_state_card"] = trend_card
     market_chart_path = refresh_and_verify_market_chart_data(resolved_date)
     evidence_path = Path(args.evidence_out) if args.evidence_out else reports_dir / f"evidence_{resolved_date}_utf8.json"
     if args.stderr_out is None:
@@ -312,16 +344,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         context_path.write_text(json.dumps(report_context, ensure_ascii=False, indent=2), encoding="utf-8")
 
     module_context_dir = None
-    trend_card: Optional[Dict[str, Any]] = None
     if not args.no_module_context:
-        trend_card = build_trend_state_card(resolved_date)
         module_context_dir = Path(args.module_context_dir) if args.module_context_dir else reports_dir / f"module_context_{resolved_date}"
-        write_module_contexts(evidence, module_context_dir, trend_card, market_state)
+        write_module_contexts(evidence, module_context_dir, trend_card, market_state, extreme_state)
 
     print(json.dumps({
         "resolved_trade_date": resolved_date,
         "trend_state": (trend_card or {}).get("state") if (trend_card or {}).get("available") else (trend_card or {}).get("reason"),
         "market_state": ("available" if (market_state or {}).get("available") else (market_state or {}).get("reason")),
+        "extreme_state": (
+            f"出清 {(extreme_state or {}).get('washout', {}).get('score')}/6"
+            f"｜顶部 {(extreme_state or {}).get('top', {}).get('score')}/5"
+            if (extreme_state or {}).get("available") else (extreme_state or {}).get("reason")
+        ),
         "evidence": str(evidence_path),
         "stock_klines": str(kline_path) if kline_payload is not None else None,
         "report_context": str(context_path) if context_path else None,

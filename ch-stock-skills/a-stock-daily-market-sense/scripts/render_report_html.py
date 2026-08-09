@@ -53,7 +53,7 @@ from html_report import (  # noqa: E402
 # Bump the version whenever references/template/section*.md changes structure.
 # --------------------------------------------------------------------------- #
 DMS_CONTRACT = SectionContract(
-    version="dms/1.0.0",
+    version="dms/1.1.0",
     sections=[
         SectionSpec("hero_verdict", [r"一句话盘面判断"], level=3),
         SectionSpec("market_state", [r"市场状态定位"], level=3),
@@ -250,6 +250,37 @@ def extract_stock_kline_payload(raw: dict, source_path: Optional[Path], missing:
     return payload
 
 
+def extract_state_timeline_payload(evidence: dict) -> Optional[Dict[str, Any]]:
+    """状态卡的 20 日档位轨迹：趋势档 + 极值分，按交易日对齐。
+
+    两根轴分别来自 `trend_state_card.history` 与 `extreme_state.recent`，都由脚本
+    按日算好；渲染层只负责画，不重算任何读数。任一轴缺失就只画另一轴，两轴都缺
+    才返回 None（此时不注册图表，门禁按 no_payload 记）。
+    """
+    trend = evidence.get("trend_state_card") or {}
+    extreme = evidence.get("extreme_state") or {}
+    states = [
+        {"date": str(row.get("date") or ""), "state": str(row.get("state") or ""),
+         "phase": row.get("phase") or "", "groups": row.get("groups") or []}
+        for row in (trend.get("history") or [])
+        if isinstance(row, dict) and row.get("date") and row.get("state")
+    ] if trend.get("available") else []
+    scores = [
+        {"date": str(row.get("date") or ""), "washout": row.get("washout"), "top": row.get("top")}
+        for row in (extreme.get("recent") or [])
+        if isinstance(row, dict) and row.get("date")
+    ] if extreme.get("available") else []
+    if not states and not scores:
+        return None
+    return {
+        "states": states,
+        "scores": scores,
+        "washout_max": (extreme.get("washout") or {}).get("max_score", 6),
+        "top_max": (extreme.get("top") or {}).get("max_score", 5),
+        "data_through": trend.get("data_through") or extreme.get("data_through"),
+    }
+
+
 def _clean_style_series_records(records: Any, display_days: int) -> List[Dict[str, Any]]:
     cleaned: List[Dict[str, Any]] = []
     if not isinstance(records, list):
@@ -324,9 +355,18 @@ MARKET_SENSE_EXTRA_CSS = """
 .trend-state-card .tsc-state.s-warn { background: rgba(230,160,30,.16); color: #b9770e; }
 .trend-state-card .tsc-state.s-neg { background: rgba(220,60,60,.14); color: #c0392b; }
 .trend-state-card .tsc-state.s-ice { background: rgba(70,120,220,.16); color: #2e5fb8; }
+.trend-state-card .tsc-extreme { font-weight: 600; font-size: 13px; padding: 2px 10px; border-radius: 999px; background: rgba(127,127,127,.12); color: var(--ink-2, #555); }
+.trend-state-card .tsc-extreme.x-wash { background: rgba(70,120,220,.16); color: #2e5fb8; }
+.trend-state-card .tsc-extreme.x-top { background: rgba(230,160,30,.16); color: #b9770e; }
+.trend-state-card .tsc-through { margin-left: auto; font-size: 12px; color: var(--ink-3, #888); }
 .trend-state-card ul { margin: 0; padding: 0; list-style: none; }
 .trend-state-card li { padding: 5px 0; border-top: 1px dashed var(--line-2); font-size: 13px; line-height: 1.65; }
 .trend-state-card li:first-child { border-top: 0; }
+.state-timeline { margin-top: 12px; border-top: 1px dashed var(--line-2); padding-top: 10px; overflow-x: auto; }
+.state-timeline svg { display: block; max-width: 100%; height: auto; }
+.state-timeline .stl-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; font-size: 11px; color: var(--ink-3, #888); }
+.state-timeline .stl-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.state-timeline .stl-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 .kline-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .style-compare-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 12px 0 22px; }
 .style-compare-card { min-width: 0; margin: 0; }
@@ -378,10 +418,198 @@ TREND_STATE_CARD_JS = r"""(function () {
     head.appendChild(badge);
     const li = card.querySelector("li");
     if (li && /^\s*趋势状态[：:]/.test(li.textContent)) li.remove();
-  } else {
-    head.remove();
   }
+  /* 极值轴单独起一个胶囊：它和趋势档是两根正交的轴，并排放才不会被读成
+     "趋势档的补充说明"。行文里那条 li 同样收进卡头，避免重复。 */
+  const ex = /极值轴[：:]\s*出清\s*(\d)\s*\/\s*6[^｜|]*[｜|]\s*顶部\s*(\d)\s*\/\s*5/.exec(text);
+  if (ex) {
+    const wash = Number(ex[1]), top = Number(ex[2]);
+    const pill = document.createElement("span");
+    pill.className = "tsc-extreme" + (wash >= 2 ? " x-wash" : (top >= 2 ? " x-top" : ""));
+    pill.textContent = "出清 " + wash + "/6 ｜ 顶部 " + top + "/5";
+    head.appendChild(pill);
+    Array.from(card.querySelectorAll("li")).forEach(li => {
+      if (/^\s*极值轴[：:]/.test(li.textContent)) li.remove();
+    });
+  }
+  if (!head.childElementCount) head.remove();
 })();"""
+
+
+# --------------------------------------------------------------------------- #
+# 20 日档位时间轴：趋势档色带 + 极值分柱，全部按交易日对齐。
+# 读数来自脚本，这里只负责画。
+# --------------------------------------------------------------------------- #
+STATE_TIMELINE_JS = r"""
+const states = __payload.states || [];
+const scores = __payload.scores || [];
+const washMax = __payload.washout_max || 6;
+const topMax = __payload.top_max || 5;
+const SEC = window.__sec;
+const REPORT = window.__render;
+const hook = "state-timeline";
+
+const anchor = document.querySelector(".trend-state-card") || SEC.head("sentiment_trend");
+if (!anchor) {
+  REPORT.fail("hook:" + hook, "no trend-state-card or [sentiment_trend] heading to anchor to");
+  return;
+}
+if (!states.length && !scores.length) {
+  REPORT.attest(hook, { rendered: 0, matched: 0, expected: 1, unmatched: [{ name: "state-timeline", reason: "no_payload" }] });
+  return;
+}
+
+const STATE_COLOR = {
+  "进攻": "#1e8449", "标准": "#8a8a8a", "谨慎": "#d9a441",
+  "退潮": "#d1604f", "深度退潮": "#a32f22", "冰点": "#2e5fb8"
+};
+const STATE_ORDER = ["进攻", "标准", "谨慎", "退潮", "深度退潮", "冰点"];
+
+/* 两轴的日期取并集后排序：极值卡与趋势卡的可用窗口不一定一样长 */
+const dates = Array.from(new Set([].concat(
+  states.map(s => s.date), scores.map(s => s.date)
+))).filter(Boolean).sort();
+const stateBy = Object.fromEntries(states.map(s => [s.date, s]));
+const scoreBy = Object.fromEntries(scores.map(s => [s.date, s]));
+
+const n = dates.length;
+const padL = 52, padR = 6, padT = 16, padB = 24;
+const cellW = Math.max(18, Math.min(38, Math.floor((700 - padL - padR) / Math.max(n, 1))));
+const W = padL + padR + cellW * n;
+const ribbonH = 26, gap = 10, barH = 26;
+const rows = [{ key: "ribbon", h: ribbonH }];
+if (scores.length) rows.push({ key: "washout", h: barH }, { key: "top", h: barH });
+const H = padT + padB + rows.reduce((a, r) => a + r.h, 0) + gap * (rows.length - 1);
+
+const NS = "http://www.w3.org/2000/svg";
+const svg = document.createElementNS(NS, "svg");
+svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+svg.setAttribute("width", String(W));
+svg.setAttribute("height", String(H));
+svg.setAttribute("role", "img");
+svg.setAttribute("aria-label", "近 20 个交易日的趋势档位与极值分轨迹");
+
+function label(x, y, text, opts) {
+  const t = document.createElementNS(NS, "text");
+  t.setAttribute("x", String(x));
+  t.setAttribute("y", String(y));
+  t.setAttribute("font-size", (opts && opts.size) || "10");
+  t.setAttribute("fill", (opts && opts.fill) || "currentColor");
+  t.setAttribute("text-anchor", (opts && opts.anchor) || "start");
+  if (opts && opts.weight) t.setAttribute("font-weight", opts.weight);
+  t.setAttribute("opacity", (opts && opts.opacity) || "0.75");
+  t.textContent = text;
+  return t;
+}
+
+let y = padT;
+// —— 档位色带：同一档位连续的几天并成一段，段上写档位名
+svg.appendChild(label(4, y + ribbonH / 2 + 4, "趋势档", { size: "11", opacity: "0.85" }));
+let i = 0;
+while (i < n) {
+  const cur = (stateBy[dates[i]] || {}).state || "";
+  let j = i;
+  while (j + 1 < n && ((stateBy[dates[j + 1]] || {}).state || "") === cur) j++;
+  const x = padL + i * cellW;
+  const w = (j - i + 1) * cellW;
+  const rect = document.createElementNS(NS, "rect");
+  rect.setAttribute("x", String(x + 0.5));
+  rect.setAttribute("y", String(y));
+  rect.setAttribute("width", String(Math.max(w - 1, 1)));
+  rect.setAttribute("height", String(ribbonH));
+  rect.setAttribute("rx", "3");
+  rect.setAttribute("fill", cur ? (STATE_COLOR[cur] || "#8a8a8a") : "rgba(127,127,127,.18)");
+  rect.setAttribute("fill-opacity", cur ? "0.85" : "1");
+  const title = document.createElementNS(NS, "title");
+  const phase = (stateBy[dates[i]] || {}).phase || "";
+  title.textContent = dates[i] + (j > i ? " ~ " + dates[j] : "") + "　" + (cur || "无数据") + (phase ? "·" + phase : "");
+  rect.appendChild(title);
+  svg.appendChild(rect);
+  if (cur) {
+    const short = { "深度退潮": "深退", "标准": "标准", "进攻": "进攻" }[cur] || cur;
+    const text = w >= cur.length * 12 + 8 ? cur : (w >= short.length * 10 + 6 ? short : "");
+    if (text) {
+      svg.appendChild(label(x + w / 2, y + ribbonH / 2 + 4, text,
+        { anchor: "middle", fill: "#fff", opacity: "0.95", weight: "600", size: text === cur ? "11" : "9" }));
+    }
+  }
+  i = j + 1;
+}
+y += ribbonH + gap;
+
+// —— 极值分：0~max 的小柱，出清分向上、顶部分向上但换色，阈值线画在 2 分处
+function bars(key, max, color, name, threshold) {
+  svg.appendChild(label(4, y + barH / 2 + 4, name, { size: "11", opacity: "0.85" }));
+  const thrY = y + barH - (threshold / max) * barH;
+  const line = document.createElementNS(NS, "line");
+  line.setAttribute("x1", String(padL)); line.setAttribute("x2", String(padL + n * cellW));
+  line.setAttribute("y1", String(thrY)); line.setAttribute("y2", String(thrY));
+  line.setAttribute("stroke", "currentColor");
+  line.setAttribute("stroke-opacity", "0.25");
+  line.setAttribute("stroke-dasharray", "3 3");
+  svg.appendChild(line);
+  dates.forEach((d, k) => {
+    const v = (scoreBy[d] || {})[key];
+    if (v === null || v === undefined) return;
+    const h = (v / max) * barH;
+    const rect = document.createElementNS(NS, "rect");
+    rect.setAttribute("x", String(padL + k * cellW + 2));
+    rect.setAttribute("y", String(y + barH - h));
+    rect.setAttribute("width", String(Math.max(cellW - 4, 2)));
+    rect.setAttribute("height", String(Math.max(h, v > 0 ? 2 : 1)));
+    rect.setAttribute("rx", "1.5");
+    rect.setAttribute("fill", color);
+    rect.setAttribute("fill-opacity", v >= threshold ? "0.9" : "0.35");
+    const title = document.createElementNS(NS, "title");
+    title.textContent = d + "　" + name + " " + v + "/" + max;
+    rect.appendChild(title);
+    svg.appendChild(rect);
+    if (v >= threshold) {
+      svg.appendChild(label(padL + k * cellW + cellW / 2, y + barH - h - 2, String(v),
+        { anchor: "middle", size: "9", fill: color, opacity: "0.95", weight: "600" }));
+    }
+  });
+  y += barH + gap;
+}
+if (scores.length) {
+  bars("washout", washMax, "#2a9d8f", "出清分", 2);
+  bars("top", topMax, "#b9770e", "顶部分", 2);
+}
+
+// —— 日期轴：密的时候隔几个标一个，末日必标
+const step = cellW >= 34 ? 2 : (cellW >= 24 ? 3 : 4);
+dates.forEach((d, k) => {
+  if (k % step !== 0 && k !== n - 1) return;
+  const md = d.length >= 10 ? d.slice(5) : d;
+  svg.appendChild(label(padL + k * cellW + cellW / 2, H - 6, md, { anchor: "middle", size: "9", opacity: "0.6" }));
+});
+
+const wrap = document.createElement("div");
+wrap.className = "state-timeline";
+const cap = document.createElement("div");
+cap.style.cssText = "font-size:12px;opacity:.7;margin-bottom:4px;";
+cap.textContent = "近 " + n + " 个交易日档位轨迹" + (__payload.data_through ? "（数据截至 " + __payload.data_through + "）" : "");
+wrap.appendChild(cap);
+wrap.appendChild(svg);
+const legend = document.createElement("div");
+legend.className = "stl-legend";
+STATE_ORDER.forEach(s => {
+  const span = document.createElement("span");
+  const dot = document.createElement("i");
+  dot.style.background = STATE_COLOR[s];
+  span.appendChild(dot);
+  span.appendChild(document.createTextNode(s));
+  legend.appendChild(span);
+});
+if (scores.length) {
+  const note = document.createElement("span");
+  note.textContent = "虚线 = 2 分线（出清区 / 顶部风险的起判点）";
+  legend.appendChild(note);
+}
+wrap.appendChild(legend);
+anchor.appendChild(wrap);
+REPORT.attest(hook, { rendered: 1, matched: 1, expected: 1, unmatched: [], el: wrap });
+"""
 
 
 # --------------------------------------------------------------------------- #
@@ -1451,6 +1679,7 @@ def build_job(args) -> RenderJob:
         missing=bool((evidence.get("metadata") or {}).get("missing")) and not stock_klines_raw,
     )
     style_series_payload = extract_style_series_payload(evidence)
+    state_timeline_payload = extract_state_timeline_payload(evidence)
 
     builder = HtmlReportBuilder(
         title=title, theme=args.theme, extra_css=MARKET_SENSE_EXTRA_CSS, contract=DMS_CONTRACT
@@ -1506,6 +1735,15 @@ def build_job(args) -> RenderJob:
                                      note="规模轴 + 成长/价值/红利，任一轴缺数据记 no_payload")],
         )
 
+    if state_timeline_payload:
+        builder.add_chart_hook(
+            # 时间轴挂在状态卡里面，所以要排在 TREND_STATE_CARD_JS 之后执行；
+            # chart hook 本来就在 ui decoration 之后跑，顺序天然成立。
+            ChartHook(name="state-timeline", payload=state_timeline_payload, js=STATE_TIMELINE_JS),
+            expects=[HookExpectation(name="state-timeline", target_sec="sentiment_trend", expect_count=1,
+                                     note="20 日趋势档色带 + 出清分 / 顶部分")],
+        )
+
     lifecycle_payload = None if args.no_lifecycle else load_lifecycle_payload(input_path, args.lifecycle_days)
     if lifecycle_payload:
         from theme_lifecycle import HOOK_NAME, LIFECYCLE_JS_BODY
@@ -1527,6 +1765,7 @@ def build_job(args) -> RenderJob:
                 for key, value in (index_kline_data.get("indices") or {}).items()
             },
             "stock_kline_records": len(stock_kline_data.get("by_ts_code") or {}),
+            "state_timeline_days": len((state_timeline_payload or {}).get("states") or []),
             "style_series_records": {
                 item["key"]: len(item.get("records") or [])
                 for item in (style_series_payload or {}).get("indices", [])

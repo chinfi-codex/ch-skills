@@ -57,6 +57,21 @@ def latest_records(dataset: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
     return []
 
 
+def institutional_research_records(dataset: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    """Return bounded 投资者关系活动记录表 records from a wrapped evidence-pack dataset.
+
+    ``fetch_or_error`` wraps the payload as ``{"data": <result>}``; the expected
+    result shape is ``{"records": [...]}``. Older DataFrame-style payloads fall
+    back to ``latest_records``.
+    """
+    data = dataset.get("data") if isinstance(dataset, dict) else None
+    if isinstance(data, dict):
+        records = data.get("records")
+        if isinstance(records, list):
+            return records[:limit]
+    return latest_records(dataset, limit)
+
+
 def _normalize_product_name(name: str) -> str:
     """Normalize product names to handle slight variations across periods."""
     if not name:
@@ -422,6 +437,12 @@ def build_analysis_context(evidence: Dict[str, Any]) -> Dict[str, Any]:
     ][:5]
 
     research_fields = [
+        # CNInfo relation-tab shape (default source: 投资者关系活动记录表)
+        "announcement_time",
+        "title",
+        "adjunct_url",
+        "announcement_id",
+        # Tushare stk_surv shape (fallback source)
         "ts_code",
         "name",
         "trade_date",
@@ -507,8 +528,9 @@ def build_analysis_context(evidence: Dict[str, Any]) -> Dict[str, Any]:
             )
         },
         "institutional_research": {
+            "source": ((datasets.get("institutional-research") or {}).get("data") or {}).get("source", ""),
             "recent": compact_records(
-                latest_records(datasets.get("institutional-research", {}), 30),
+                institutional_research_records(datasets.get("institutional-research", {}), 30),
                 research_fields,
                 30,
             ),
@@ -618,6 +640,8 @@ def build_evidence_pack(fetcher: StockDataFetcher, args: argparse.Namespace) -> 
             end_date=args.end_date,
             trade_date=args.trade_date,
             limit=args.research_limit,
+            source=getattr(args, "research_source", "cninfo"),
+            with_text=args.with_text,
         ),
     }
 

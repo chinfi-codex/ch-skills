@@ -18,14 +18,32 @@
     market_temperature / sentiment 已算好的数，没有 evidence 时退回
     market_history 自算。
 
+另外输出 confirmation 子块：把手册里「调整接近尾声」的三要素各自的**阈值算术**
+落成 hit true/false，第三要素的伴随条件「盈利上修」脚本无数据源，恒为
+hit: null + source: external。这里只做确定性比较，不做整体定性——
+「是否接近尾声」仍由模型按三要素的「且」关系判断。
+
 数据口径：
   - 所有计算以 asof（含）为止，禁止未来数据；margin 取 <= asof 的最新 trade_date。
   - 宽基历史经 market_panel.fetch_index_daily、申万行业历史经
     market_panel.fetch_sw_daily 获取，并增量写入同一 stock_index_daily 缓存；
     首次回填约 400 个自然日（≈260 个交易日）。
+  - 回撤口径为「当日收盘 vs 250 交易日区间**盘中最高**」，两端不同源是刻意的：
+    高点取盘中最高才是真实的最大回撤参照。口径写在 index_position.caliber 里，
+    卡面与正文都按它表述，不要换算成收盘价口径再比阈值。
+  - 宽度用 **qfq 前复权** 收盘价算 MA20/MA60/60 日收益（stock_daily 存的是未复权
+    原始价，6-8 月除权除息密集期会把 MA60 系统性抬高、把「站上 60 日线」压低约
+    3pct，正好压在手册 50% 那条确认线的方向上）。复权因子取 stock_adj_factor，
+    以 asof 当日因子为基准；缺因子的个股按未复权价参与并计入 adj_missing。
   - 融资余额回填至 stock_margin（约 280 个交易日窗口），按 trade_date 汇总
     各交易所 rzye。
   - 窗口不足时对应字段给 null 并置 insufficient_history: true，不报错。
+
+新鲜度：每个子块输出 data_through + stale_trading_days（读数实际数据日落后
+asof 几个交易日）。这条不是装饰——sw_daily 是权限接口，token 掉权限后 fetch
+静默失败、compute 继续吃 PG 里的旧缓存，"60 日收益为正 1/31" 会以今天的名义
+写进研报而没有任何异常。融资本身是 T-1，容忍 1 个交易日；其余子块容忍 0。
+超出容忍即 stale: true，模板必须把数据日写进正文。
 
 失败降级与 trend_state_card 一致：任一子块异常只置该子块
 available: false + reason，整体 PG 不可达时整个 block 返回
@@ -63,6 +81,18 @@ INDEXES = {
     "000688.SH": "科创50",
 }
 BENCHMARK_INDEX = "000001.SH"
+
+# 分层是手册的核心表述（"权重护盘、成长出清"），机器侧就要把归属固定下来，
+# 而不是让模板每天靠指数名字重新分一次。
+INDEX_GROUPS = {
+    "000001.SH": "weight",
+    "000300.SH": "weight",
+    "000905.SH": "growth_small",
+    "000852.SH": "growth_small",
+    "399006.SZ": "growth_small",
+    "000688.SH": "growth_small",
+}
+GROUP_LABELS = {"weight": "权重", "growth_small": "成长小盘"}
 
 # 申万 2021 一级行业兜底清单（index_classify 失败时使用，与接口返回一致）
 SW_L1_FALLBACK: List[Tuple[str, str]] = [
@@ -106,12 +136,70 @@ BREADTH_FETCH_DAYS = 70      # 宽度取数留的余量
 MARGIN_BACKFILL_TRADING_DAYS = 280
 MARGIN_FIELDS = "trade_date,exchange_id,rzye,rzmre,rzche"
 
+DRAWDOWN_CALIBER = "close_vs_intraday_high_250d"
+DRAWDOWN_TIERS = ((10.0, "调整"), (20.0, "深度调整"), (float("inf"), "接近技术性熊市"))
+
+# 手册 market_state_framework.md「状态确认三要素」的阈值。改这里必须同步改手册，
+# 反过来也一样——阈值只有一处定义，卡面直接显示它，不让模板每天重述一遍。
+BREADTH_CONFIRM_PCT = 50.0
+BREADTH_LOW_PCT = 17.0
+INDUSTRY_CONFIRM_COUNT = 10
+
+# 新鲜度容忍（交易日）：融资是 T-1 口径；申万行业走 AKShare 的申万宏源源，
+# 官方发布本身滞后一个交易日（盘后跑 D 日最多拿到 D-1），两者都按 1 放行、
+# 超出才报 stale。其余子块用当日数据，0 容忍。
+STALE_TOLERANCE = {"index_position": 0, "breadth": 0, "sw_industries": 1, "margin_trend": 1, "liquidity": 0}
+
 _SW_L1_CACHE: Optional[List[Tuple[str, str]]] = None
+
+
+def drawdown_tier(pct: Optional[float]) -> Optional[str]:
+    """回撤量级分层。pct 为负的回撤百分比（-8.42 表示回撤 8.42%）。"""
+    if pct is None:
+        return None
+    depth = abs(float(pct))
+    for bound, label in DRAWDOWN_TIERS:
+        if depth < bound:
+            return label
+    return DRAWDOWN_TIERS[-1][1]
 
 
 # ---------------------------------------------------------------------------
 # 纯计算（IO 与计算分离，测试直接注入合成 DataFrame）
 # ---------------------------------------------------------------------------
+def stamp_freshness(
+    block: Dict[str, Any],
+    data_through: Optional[str],
+    asof: str,
+    trading_days: Optional[List[str]],
+    tolerance: int = 0,
+) -> Dict[str, Any]:
+    """给子块盖数据日与滞后天数，超出容忍即 stale: true。
+
+    滞后按交易日算（trading_days 为升序的交易日历，含 asof）；日历不可用时
+    退回自然日并标 basis。data_through 缺失本身就是 stale——一个说不出自己
+    数据日的读数不该被当成当日读数使用。
+    """
+    block["data_through"] = data_through
+    if not data_through:
+        block["stale"] = True
+        block["stale_reason"] = "block reports no data_through"
+        block["stale_trading_days"] = None
+        return block
+    if trading_days and data_through in trading_days and asof in trading_days:
+        lag = trading_days.index(asof) - trading_days.index(data_through)
+        basis = "trading_days"
+    else:
+        lag = (datetime.strptime(asof, "%Y%m%d") - datetime.strptime(data_through, "%Y%m%d")).days
+        basis = "calendar_days"
+    block["stale_trading_days"] = lag
+    block["stale_basis"] = basis
+    block["stale"] = lag > tolerance
+    if block["stale"]:
+        block["stale_reason"] = f"data_through={data_through} lags asof={asof} by {lag} {basis}"
+    return block
+
+
 def _normalize_price_frame(frame: pd.DataFrame, asof: str) -> pd.DataFrame:
     df = frame.copy()
     df["trade_date"] = df["trade_date"].astype(str).str.replace("-", "")
@@ -172,12 +260,55 @@ def compute_position_metrics(frame: pd.DataFrame, asof: str) -> Dict[str, Any]:
     return out
 
 
+def apply_breadth_qfq(daily: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """把 stock_daily 的未复权 close 换算成以窗口末日为基准的前复权价。
+
+    为什么必须复权：MA20 / MA60 / 60 日收益都是跨日比价，而 stock_daily 存的
+    是 Tushare `daily` 的原始价。除权除息当天原始价直接跳空下移，均线却还挂在
+    除权前的价位上，于是「站上 60 日线」被系统性低估——方向是单边的，因为
+    除权只会向下。2026-08-06 实测：未复权 26.14% vs 前复权 29.64%，差 3.5pct，
+    而手册判「宽度修复」的确认线正是 50%，低估的方向恰好压在这条线上。
+
+    daily 需含 adj_factor 列（缺列即视为拿不到因子，原样返回并说明原因）。
+    """
+    meta: Dict[str, Any] = {"price_adjustment": "qfq", "adj_missing": 0}
+    if daily is None or daily.empty or "adj_factor" not in daily.columns:
+        meta["price_adjustment"] = "none"
+        meta["reason"] = "adj_factor column absent"
+        return daily, meta
+
+    df = daily.copy()
+    df["adj_factor"] = pd.to_numeric(df["adj_factor"], errors="coerce")
+    base = (
+        df.dropna(subset=["adj_factor"])
+        .sort_values("trade_date")
+        .groupby("ts_code")["adj_factor"]
+        .last()
+        .rename("base_adj_factor")
+    )
+    if base.empty:
+        meta["price_adjustment"] = "none"
+        meta["reason"] = "no usable adj_factor rows in window"
+        return daily.drop(columns=["adj_factor"]), meta
+
+    df = df.join(base, on="ts_code")
+    ratio = df["adj_factor"] / df["base_adj_factor"]
+    usable = ratio.notna() & (ratio > 0)
+    meta["adj_missing"] = int((~usable).sum())
+    meta["adj_coverage"] = round(float(usable.mean()), 4)
+    df.loc[usable, "close"] = df.loc[usable, "close"] * ratio[usable]
+    return df.drop(columns=["adj_factor", "base_adj_factor"]), meta
+
+
 def compute_breadth(daily: pd.DataFrame, asof: str) -> Dict[str, Any]:
     """全市场宽度：站上 20/60 日线与 60 日收益为正的个股占比。
 
-    daily 为全市场个股日线（ts_code/trade_date/close），只取 <= asof。
-    分母为最新交易日有交易的个股；个股历史不足导致指标为 NaN 的，从该指标
-    分母剔除。总窗口不足 61 个交易日时 60 日口径指标给 null。
+    daily 为全市场个股日线（ts_code/trade_date/close，可选 adj_factor），
+    只取 <= asof。分母为最新交易日有交易的个股；个股历史不足导致指标为 NaN
+    的，从该指标分母剔除。总窗口不足 61 个交易日时 60 日口径指标给 null。
+
+    同时给出各比例相对**上一交易日**的变化（`*_delta_1d`）：状态卡要回答的是
+    「修复还是恶化」，只给一个静态百分比读不出方向。
     """
     out: Dict[str, Any] = {
         "trade_date": None,
@@ -191,6 +322,10 @@ def compute_breadth(daily: pd.DataFrame, asof: str) -> Dict[str, Any]:
         "pct_positive_ret_60d": None,
         "positive_ret_60d_count": None,
         "positive_ret_60d_total": None,
+        "pct_above_ma20_delta_1d": None,
+        "pct_above_ma60_delta_1d": None,
+        "pct_positive_ret_60d_delta_1d": None,
+        "prev_trade_date": None,
         "insufficient_history": True,
     }
     if daily is None or daily.empty:
@@ -202,6 +337,8 @@ def compute_breadth(daily: pd.DataFrame, asof: str) -> Dict[str, Any]:
     df = df.loc[df["trade_date"] <= asof].dropna(subset=["close"])
     if df.empty:
         return out
+    df, adj_meta = apply_breadth_qfq(df)
+    out.update(adj_meta)
     df = df.sort_values(["ts_code", "trade_date"]).reset_index(drop=True)
 
     distinct_days = int(df["trade_date"].nunique())
@@ -212,26 +349,39 @@ def compute_breadth(daily: pd.DataFrame, asof: str) -> Dict[str, Any]:
     df["close_ma60"] = grouped.transform(lambda s: s.rolling(60, min_periods=60).mean())
     df["ret_60d"] = grouped.pct_change(60) * 100.0
 
-    day = df.loc[df["trade_date"] == df["trade_date"].max()]
-    out["trade_date"] = str(day["trade_date"].iloc[0])
-    out["total"] = int(len(day))
-
-    def _metric(hit_mask: pd.Series, valid_mask: pd.Series, gated: bool) -> Tuple[Optional[float], Optional[int], Optional[int]]:
+    def _metric(hit_mask: pd.Series, valid_mask: pd.Series, gated: bool):
         valid_total = int(valid_mask.sum())
         if gated or valid_total == 0:
             return None, None, None
         count = int((hit_mask & valid_mask).sum())
         return round(100.0 * count / valid_total, 2), count, valid_total
 
-    out["pct_above_ma20"], out["above_ma20_count"], out["above_ma20_total"] = _metric(
-        day["close"] > day["close_ma20"], day["close_ma20"].notna(), distinct_days < 20
-    )
-    out["pct_above_ma60"], out["above_ma60_count"], out["above_ma60_total"] = _metric(
-        day["close"] > day["close_ma60"], day["close_ma60"].notna(), out["insufficient_history"]
-    )
-    out["pct_positive_ret_60d"], out["positive_ret_60d_count"], out["positive_ret_60d_total"] = _metric(
-        day["ret_60d"] > 0, day["ret_60d"].notna(), out["insufficient_history"]
-    )
+    def _day_ratios(day: pd.DataFrame) -> Dict[str, Any]:
+        return {
+            "ma20": _metric(day["close"] > day["close_ma20"], day["close_ma20"].notna(), distinct_days < 20),
+            "ma60": _metric(day["close"] > day["close_ma60"], day["close_ma60"].notna(), out["insufficient_history"]),
+            "ret60": _metric(day["ret_60d"] > 0, day["ret_60d"].notna(), out["insufficient_history"]),
+        }
+
+    dates = sorted(df["trade_date"].unique())
+    day = df.loc[df["trade_date"] == dates[-1]]
+    out["trade_date"] = str(dates[-1])
+    out["total"] = int(len(day))
+    today = _day_ratios(day)
+    out["pct_above_ma20"], out["above_ma20_count"], out["above_ma20_total"] = today["ma20"]
+    out["pct_above_ma60"], out["above_ma60_count"], out["above_ma60_total"] = today["ma60"]
+    out["pct_positive_ret_60d"], out["positive_ret_60d_count"], out["positive_ret_60d_total"] = today["ret60"]
+
+    # 上一交易日同口径重算；窗口边界处 MA60 依赖的历史比今日少一天，
+    # 但比例的分母各自独立，做差仍是同口径对比。
+    if len(dates) >= 2:
+        prev = df.loc[df["trade_date"] == dates[-2]]
+        out["prev_trade_date"] = str(dates[-2])
+        yesterday = _day_ratios(prev)
+        for key, field in (("ma20", "pct_above_ma20"), ("ma60", "pct_above_ma60"), ("ret60", "pct_positive_ret_60d")):
+            now, before = today[key][0], yesterday[key][0]
+            if now is not None and before is not None:
+                out[f"{field}_delta_1d"] = round(now - before, 2)
     return out
 
 
@@ -285,7 +435,16 @@ def summarize_sw_industries(
     asof: str,
     benchmark_frame: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Any]:
-    """申万一级结构：逐行业 60 日收益 / 250 日高点回撤 / 高点日期 + 汇总计数。"""
+    """申万一级结构：逐行业 60 日收益 / 250 日高点回撤 / 高点日期 + 汇总计数。
+
+    每个行业带上自己的 trade_date，块级给 data_through 取其中最早的一天：
+    sw_daily 是权限接口，掉权限后 fetch 静默失败、compute 继续吃旧缓存，
+    没有数据日就没人看得出「1/31」其实是上周的读数。
+
+    两个计数分别给出有效分母（`*_total`）。旧版 count_above_ma60 把
+    above_ma60=None（历史不足）与 False（在均线下方）算成同一类，
+    再按 /31 展示——缺数和利空被混成了一个数。
+    """
     industries: List[Dict[str, Any]] = []
     for ts_code in sorted(frames):
         frame = frames[ts_code]
@@ -293,6 +452,7 @@ def summarize_sw_industries(
         industries.append({
             "ts_code": ts_code,
             "name": names.get(ts_code),
+            "trade_date": metrics["trade_date"],
             "ret_60d": metrics["ret_60d"],
             "drawdown_from_high_250d_pct": metrics["drawdown_from_high_250d_pct"],
             "above_ma60": metrics["above_ma60"],
@@ -302,11 +462,18 @@ def summarize_sw_industries(
     benchmark_high_date = None
     if benchmark_frame is not None and not benchmark_frame.empty:
         benchmark_high_date = compute_position_metrics(benchmark_frame, asof)["high_250d_date"]
+    dates = [row["trade_date"] for row in industries if row["trade_date"]]
+    positive_valid = [row for row in industries if row["ret_60d"] is not None]
+    ma60_valid = [row for row in industries if row["above_ma60"] is not None]
     return {
         "benchmark": BENCHMARK_INDEX,
         "benchmark_high_250d_date": benchmark_high_date,
-        "count_positive_60d": sum(1 for row in industries if row["ret_60d"] is not None and row["ret_60d"] > 0),
-        "count_above_ma60": sum(1 for row in industries if row["above_ma60"]),
+        "count_positive_60d": sum(1 for row in positive_valid if row["ret_60d"] > 0),
+        "count_positive_60d_total": len(positive_valid),
+        "count_above_ma60": sum(1 for row in ma60_valid if row["above_ma60"]),
+        "count_above_ma60_total": len(ma60_valid),
+        "latest_trade_date": max(dates) if dates else None,
+        "oldest_trade_date": min(dates) if dates else None,
         "industries": industries,
     }
 
@@ -317,6 +484,7 @@ def build_sw_industries_block(
     asof: str,
     benchmark_frame: Optional[pd.DataFrame],
     source: str,
+    prev_asof: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Mark the block unavailable when the dedicated SW endpoint yields no data."""
     available_count = sum(
@@ -328,12 +496,107 @@ def build_sw_industries_block(
             "reason": "sw_daily returned no industry history",
             "industry_list_source": source,
         }
-    return {
+    summary = summarize_sw_industries(frames, names, asof, benchmark_frame)
+    block = {
         "available": True,
         "industry_list_source": source,
         "data_available_count": available_count,
         "data_missing_count": len(frames) - available_count,
-        **summarize_sw_industries(frames, names, asof, benchmark_frame),
+        **summary,
+    }
+    # 扩散的方向比它的水平更有信息量：1/31 是在爬还是在退，决定了这条要素
+    # 该写「修复进行中」还是「继续收缩」。上一交易日在同一批 frame 上重算。
+    if prev_asof:
+        prev = summarize_sw_industries(frames, names, prev_asof, None)
+        block["count_positive_60d_prev"] = prev["count_positive_60d"]
+        block["count_above_ma60_prev"] = prev["count_above_ma60"]
+        block["prev_trade_date"] = prev["latest_trade_date"]
+    return block
+
+
+def build_confirmation(
+    breadth: Dict[str, Any],
+    sw_industries: Dict[str, Any],
+    margin_trend: Dict[str, Any],
+) -> Dict[str, Any]:
+    """把手册「状态确认三要素」的阈值算术落成 hit，不做整体定性。
+
+    每条只回答「这条阈值今天过没过」——纯比较，模型无须重算。整体是否
+    「调整接近尾声」是三要素的「且」，仍由模型判断并解释；第三要素的伴随
+    条件「盈利上修」脚本没有数据源，恒为 hit: null + source: external，
+    模型必须引外部证据或写明缺这条腿。
+    """
+    checks: List[Dict[str, Any]] = []
+
+    margin_ok = margin_trend.get("available") and margin_trend.get("is_new_low_20d") is not None
+    days_since = margin_trend.get("days_since_20d_low")
+    checks.append({
+        "key": "margin_stop_new_low",
+        "name": "融资停止创新低",
+        "threshold": "is_new_low_20d = false",
+        "reading": (
+            f"{margin_trend.get('latest')} 亿｜5 日 {margin_trend.get('chg_5d_pct')}%｜"
+            + ("当日即 20 日新低" if margin_trend.get("is_new_low_20d") else f"距 20 日低点 {days_since} 日")
+            if margin_ok else None
+        ),
+        "hit": (not margin_trend.get("is_new_low_20d")) if margin_ok else None,
+        "source": "script",
+        "as_of": margin_trend.get("trade_date"),
+    })
+
+    pct60 = breadth.get("pct_above_ma60") if breadth.get("available") else None
+    checks.append({
+        "key": "breadth_recovery",
+        "name": f"宽度回到 {BREADTH_CONFIRM_PCT:.0f}% 以上",
+        "threshold": f"pct_above_ma60 >= {BREADTH_CONFIRM_PCT:.0f}",
+        "reading": (
+            f"站上 60 日线 {pct60}%"
+            + (f"（较前日 {breadth.get('pct_above_ma60_delta_1d'):+.2f}pct）"
+               if breadth.get("pct_above_ma60_delta_1d") is not None else "")
+            if pct60 is not None else None
+        ),
+        "hit": (pct60 >= BREADTH_CONFIRM_PCT) if pct60 is not None else None,
+        "source": "script",
+        "as_of": breadth.get("trade_date"),
+    })
+
+    count_pos = sw_industries.get("count_positive_60d") if sw_industries.get("available") else None
+    total = sw_industries.get("count_positive_60d_total")
+    prev_pos = sw_industries.get("count_positive_60d_prev")
+    checks.append({
+        "key": "industry_diffusion",
+        "name": f"行业扩散 ≥{INDUSTRY_CONFIRM_COUNT} 个 60 日收益为正",
+        "threshold": f"count_positive_60d >= {INDUSTRY_CONFIRM_COUNT}",
+        "reading": (
+            f"{count_pos}/{total} 个行业为正"
+            + (f"（前一交易日 {prev_pos}）" if prev_pos is not None else "")
+            if count_pos is not None else None
+        ),
+        "hit": (count_pos >= INDUSTRY_CONFIRM_COUNT) if count_pos is not None else None,
+        "source": "script",
+        "as_of": sw_industries.get("data_through") or sw_industries.get("latest_trade_date"),
+    })
+
+    checks.append({
+        "key": "earnings_revision",
+        "name": "盈利上修（第三要素的伴随条件）",
+        "threshold": "外部证据（业绩预告 / 券商一致预期）",
+        "reading": None,
+        "hit": None,
+        "source": "external",
+        "as_of": None,
+    })
+
+    scriptable = [c for c in checks if c["source"] == "script"]
+    return {
+        "available": True,
+        "framework": "references/methodology/market_state_framework.md",
+        "relation": "and",
+        "checks": checks,
+        "hits": sum(1 for c in scriptable if c["hit"] is True),
+        "scriptable": len(scriptable),
+        "undetermined": sum(1 for c in checks if c["hit"] is None),
+        "note": "三要素为「且」关系；hit=null 表示脚本无数据源，须由模型引外部证据。是否「接近尾声」由模型判断，本块不给结论。",
     }
 
 
@@ -387,7 +650,12 @@ def fetch_sw_l1_industries(pro) -> Tuple[List[Tuple[str, str]], str]:
 
 
 def fetch_breadth_frame(asof: str) -> pd.DataFrame:
-    """从 stock_daily 取 asof 前最近若干交易日的全市场 ts_code/trade_date/close。"""
+    """从 stock_daily 取 asof 前最近若干交易日的全市场 ts_code/trade_date/close。
+
+    左连 stock_adj_factor 带出复权因子（compute_breadth 里做 qfq 换算）。
+    用 LEFT JOIN 是刻意的：因子缺失只该让那只票退回未复权价，不该把它从
+    宽度分母里整只删掉——那会悄悄改变分母口径。
+    """
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -401,16 +669,19 @@ def fetch_breadth_frame(asof: str) -> pd.DataFrame:
             )
             dates = [row[0] for row in cur.fetchall()]
             if not dates:
-                return pd.DataFrame(columns=["ts_code", "trade_date", "close"])
+                return pd.DataFrame(columns=["ts_code", "trade_date", "close", "adj_factor"])
             cur.execute(
                 """
-                SELECT ts_code, trade_date, close FROM stock_daily
-                WHERE trade_date = ANY(%s)
+                SELECT d.ts_code, d.trade_date, d.close, a.adj_factor
+                FROM stock_daily d
+                LEFT JOIN stock_adj_factor a
+                  ON a.ts_code = d.ts_code AND a.trade_date = d.trade_date
+                WHERE d.trade_date = ANY(%s)
                 """,
                 (dates,),
             )
             rows = cur.fetchall()
-    return pd.DataFrame(rows, columns=["ts_code", "trade_date", "close"])
+    return pd.DataFrame(rows, columns=["ts_code", "trade_date", "close", "adj_factor"])
 
 
 def _consecutive_ranges(dates: List[str]) -> List[Tuple[str, str]]:
@@ -557,6 +828,14 @@ def build_block(asof: Optional[str] = None, evidence: Optional[Dict[str, Any]] =
     except Exception as exc:
         return {"available": False, "reason": f"tushare unavailable: {exc}"}
 
+    # 交易日历只为「滞后几个交易日」这一个用途取一次；拿不到就退回自然日，
+    # 不因为日历不可用而放弃新鲜度检查。
+    try:
+        _, calendar = _mp().fetch_trade_dates(pro, asof_ymd, 30, 0, False)
+    except Exception:  # noqa: BLE001
+        calendar = None
+    prev_trading_day = calendar[-2] if calendar and len(calendar) >= 2 else None
+
     def _index_position() -> Dict[str, Any]:
         frames: Dict[str, pd.DataFrame] = {}
         entries = []
@@ -564,18 +843,39 @@ def build_block(asof: Optional[str] = None, evidence: Optional[Dict[str, Any]] =
             frame = fetch_index_frame(pro, ts_code, asof_ymd)
             frames[ts_code] = frame
             metrics = compute_position_metrics(frame, asof_ymd)
+            drawdown = metrics["drawdown_from_high_250d_pct"]
+            prev_drawdown = (
+                compute_position_metrics(frame, prev_trading_day)["drawdown_from_high_250d_pct"]
+                if prev_trading_day else None
+            )
             entries.append({
                 "ts_code": ts_code,
                 "name": name,
+                "group": INDEX_GROUPS.get(ts_code),
+                "group_label": GROUP_LABELS.get(INDEX_GROUPS.get(ts_code, "")),
                 **{k: metrics[k] for k in (
-                    "trade_date", "close", "high_250d", "drawdown_from_high_250d_pct",
+                    "trade_date", "close", "high_250d", "high_250d_date",
+                    "drawdown_from_high_250d_pct",
                     "ret_20d", "close_vs_ma60_pct", "above_ma60", "insufficient_history",
                 )},
+                "tier": drawdown_tier(drawdown),
+                "drawdown_delta_1d": (
+                    round(drawdown - prev_drawdown, 2)
+                    if drawdown is not None and prev_drawdown is not None else None
+                ),
             })
+        dates = [e["trade_date"] for e in entries if e["trade_date"]]
         return {
             "available": True,
             "high_window_days": HIGH_WINDOW,
+            "caliber": DRAWDOWN_CALIBER,
+            "caliber_note": "回撤 = 当日收盘 / 250 交易日区间盘中最高 - 1；高点取盘中最高，故略深于收盘价口径",
+            "tier_bounds_pct": [bound for bound, _ in DRAWDOWN_TIERS[:-1]],
+            "tier_labels": [label for _, label in DRAWDOWN_TIERS],
+            "groups": GROUP_LABELS,
             "indexes": entries,
+            "latest_trade_date": max(dates) if dates else None,
+            "oldest_trade_date": min(dates) if dates else None,
             "_frames": frames,
         }
 
@@ -605,7 +905,7 @@ def build_block(asof: Optional[str] = None, evidence: Optional[Dict[str, Any]] =
         frames = {ts_code: fetch_sw_frame(pro, ts_code, asof_ymd) for ts_code, _ in codes}
         benchmark_frame = (index_position.get("_frames") or {}).get(BENCHMARK_INDEX)
         return build_sw_industries_block(
-            frames, names, asof_ymd, benchmark_frame, source
+            frames, names, asof_ymd, benchmark_frame, source, prev_asof=prev_trading_day
         )
 
     sw_industries = _attempt(_sw_industries)
@@ -618,10 +918,29 @@ def build_block(asof: Optional[str] = None, evidence: Optional[Dict[str, Any]] =
         "margin_trend": margin_trend,
         "liquidity": liquidity,
     }
+    # 每个子块自报数据日与滞后；不可用的子块跳过（它已经有 reason 了）。
+    data_through_field = {
+        "index_position": "latest_trade_date",
+        "breadth": "trade_date",
+        "sw_industries": "oldest_trade_date",   # 31 个行业里最旧的一天才是这个计数真正的口径日
+        "margin_trend": "trade_date",
+        "liquidity": "trade_date",
+    }
+    for key, block in sub_blocks.items():
+        if block.get("available"):
+            stamp_freshness(
+                block, block.get(data_through_field[key]), asof_ymd, calendar,
+                tolerance=STALE_TOLERANCE[key],
+            )
+
+    confirmation = _attempt(lambda: build_confirmation(breadth, sw_industries, margin_trend))
+    stale_blocks = [key for key, block in sub_blocks.items() if block.get("stale")]
     return {
         "available": any(block.get("available") for block in sub_blocks.values()),
         "asof": str(asof_date),
+        "stale_blocks": stale_blocks,
         **sub_blocks,
+        "confirmation": confirmation,
     }
 
 

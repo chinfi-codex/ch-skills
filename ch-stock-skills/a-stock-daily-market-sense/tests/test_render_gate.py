@@ -126,7 +126,16 @@ class SectionContractTest(unittest.TestCase):
 
     def test_resolves_every_section_of_the_current_template(self) -> None:
         _, resolved = self.contract.stamp(self.body)
-        self.assertEqual(sorted(resolved), sorted(spec.key for spec in self.contract.sections))
+        self.assertEqual(sorted(resolved), sorted(self.contract.required_keys))
+
+    def test_phase0_contract_shape_is_complete(self) -> None:
+        self.assertEqual(self.contract.version, "dms/1.2.0")
+        self.assertEqual(self.contract.order, "strict")
+        self.assertEqual(len(self.contract.sections), 17)
+        # 3.2 is the only section the template lets vanish (no ★★★ → no section).
+        optional = [spec.key for spec in self.contract.sections if not spec.required]
+        self.assertEqual(optional, ["m3_catalyst"])
+        self.assertTrue(all(spec.source for spec in self.contract.sections))
 
     def test_survives_renumbering(self) -> None:
         """The 1.1 → 1.2 shift that broke the old anchor must be a non-event."""
@@ -152,6 +161,143 @@ class SectionContractTest(unittest.TestCase):
         with self.assertRaises(ContractError) as ctx:
             self.contract.stamp(demoted)
         self.assertIn("h3", str(ctx.exception))
+
+    def test_reordered_heading_fails_the_build(self) -> None:
+        from html_report.contract import ContractError
+
+        reordered = self.body.replace("<h3>1.2 情绪趋势</h3>", "<h3>SWAP</h3>", 1)
+        reordered = reordered.replace("<h3>1.3 指数趋势</h3>", "<h3>1.2 情绪趋势</h3>", 1)
+        reordered = reordered.replace("<h3>SWAP</h3>", "<h3>1.3 指数趋势</h3>", 1)
+        with self.assertRaises(ContractError) as ctx:
+            self.contract.stamp(reordered)
+        self.assertIn("strict section order mismatch", str(ctx.exception))
+
+
+class DmsContentContractTest(unittest.TestCase):
+    def setUp(self) -> None:
+        from render_report_html import DMS_CONTRACT
+
+        self.contract = DMS_CONTRACT
+        self.markdown = (FIXTURES / "report_20260803.md").read_text(encoding="utf-8")
+        self.evidence = json.loads(
+            (FIXTURES / "evidence_20260803_utf8.json").read_text(encoding="utf-8")
+        )
+
+    def test_valid_fixture_records_declared_degradations(self) -> None:
+        from dms_output_contract import validate_dms_content
+
+        audit = validate_dms_content(self.markdown, self.evidence, self.contract)
+        self.assertEqual(audit["status"], "ok")
+        self.assertEqual(audit["section_count"], 17)
+        degraded = {row["section"] for row in audit["degraded"]}
+        self.assertEqual(degraded, {"m5_monthly_base", "m5_discount_relaunch"})
+        # 8-03 had three ★★ mainlines and no ★★★, so 3.2 is legitimately absent.
+        dynamic = audit["detail"]["dynamic_sections"]
+        self.assertEqual((dynamic["three_star_rows"], dynamic["matched"]), (0, 0))
+        self.assertFalse(dynamic["section_present"])
+
+    def test_degradation_without_supporting_evidence_fails(self) -> None:
+        from dms_output_contract import validate_dms_content
+        from html_report.contract import ContractError
+
+        evidence = dict(self.evidence)
+        evidence["feature_group_analysis_samples"] = {
+            "groups": {
+                "monthly_base_breakout": {
+                    "available": True,
+                    "candidates": [{"name": "不应被省略"}],
+                }
+            }
+        }
+        with self.assertRaises(ContractError) as ctx:
+            validate_dms_content(self.markdown, evidence, self.contract)
+        self.assertIn("m5_monthly_base", str(ctx.exception))
+        self.assertIn("not supported by evidence", str(ctx.exception))
+
+    def _with_catalyst(self, body: str) -> str:
+        """Splice a 3.2 section back in, immediately before 3.3."""
+        anchor = "## 3.3 ★★/★★★ 主线领导股与弹性股"
+        return self.markdown.replace(
+            anchor, f"## 3.2 催化与细分线路推演\n\n{body}\n\n{anchor}", 1
+        )
+
+    def _promote_one_to_three_star(self, text: str) -> str:
+        return text.replace(
+            "| 输配电设备与电网技术 | ★★ |", "| 输配电设备与电网技术 | ★★★ |", 1
+        )
+
+    def test_catalyst_section_must_vanish_without_three_star(self) -> None:
+        """No ★★★ means the whole of 3.2 goes — a lingering fallback sentence is
+        exactly what the template forbids, and it used to sail through."""
+        from dms_output_contract import validate_dms_content
+        from html_report.contract import ContractError
+
+        lingering = self._with_catalyst("当日无可进行催化与细分线路推演的三星主线。")
+        with self.assertRaises(ContractError) as ctx:
+            validate_dms_content(lingering, self.evidence, self.contract)
+        self.assertIn("must be omitted entirely", str(ctx.exception))
+
+    def test_catalyst_heading_count_must_close(self) -> None:
+        from dms_output_contract import validate_dms_content
+        from html_report.contract import ContractError
+
+        broken = self._promote_one_to_three_star(self._with_catalyst("（正文缺主线小节）"))
+        with self.assertRaises(ContractError) as ctx:
+            validate_dms_content(broken, self.evidence, self.contract)
+        self.assertIn("dynamic heading count mismatch", str(ctx.exception))
+
+    def test_three_star_with_matching_heading_passes(self) -> None:
+        from dms_output_contract import validate_dms_content
+
+        good = self._promote_one_to_three_star(
+            self._with_catalyst("### 输配电设备与电网技术（★★★）\n\n- 事件：特高压招标金额超去年全年。")
+        )
+        audit = validate_dms_content(good, self.evidence, self.contract)
+        dynamic = audit["detail"]["dynamic_sections"]
+        self.assertEqual((dynamic["three_star_rows"], dynamic["matched"]), (1, 1))
+
+    def test_forbidden_trading_advice_term_is_hard_failure(self) -> None:
+        from dms_output_contract import validate_dms_content
+        from html_report.contract import ContractError
+
+        with self.assertRaises(ContractError) as ctx:
+            validate_dms_content(self.markdown + "\n目标价 20 元。\n", self.evidence, self.contract)
+        self.assertIn("forbidden trading-advice", str(ctx.exception))
+
+    def test_table_numbers_must_exist_in_complete_evidence(self) -> None:
+        from dms_output_contract import _validate_table_numbers
+
+        evidence = {key: {} for key in (
+            "amount_concentration", "market_state", "market_trend",
+            "money_effect_samples", "volume_decline_samples",
+            "feature_group_analysis_samples",
+        )}
+        evidence["amount_concentration"] = {"value": 12.34}
+        problems, warnings = [], []
+        result = _validate_table_numbers(
+            "| 指标 | 今日 |\n|---|---:|\n| 已知 | 12.34 |\n| 编造 | 99.99 |\n",
+            evidence,
+            problems,
+            warnings,
+        )
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["unmatched"], ["99.99"])
+        self.assertTrue(problems)
+
+    def test_real_20260807_regression_is_rejected(self) -> None:
+        from dms_output_contract import validate_dms_content
+        from html_report.contract import ContractError
+
+        old_report = (FIXTURES / "report_20260807.md").read_text(encoding="utf-8")
+        with self.assertRaises(ContractError) as ctx:
+            validate_dms_content(old_report, {}, self.contract)
+        message = str(ctx.exception)
+        self.assertIn("m4_risk_types", message)
+        self.assertIn("m4_decline_details", message)
+        self.assertIn("m5_overlap", message)
+        # 8-07 topped out at ★★, so a missing 3.2 is compliant — the gate must not
+        # blame it for that on top of the sections it really did drop.
+        self.assertNotIn("m3_catalyst", message)
 
 
 class RenderGateTest(unittest.TestCase):
@@ -182,6 +328,8 @@ class RenderGateTest(unittest.TestCase):
         self.assertEqual(hooks["klines.index"]["rendered"], 3)
         self.assertEqual(hooks["market-state.panel"]["rendered"], 1)
         self.assertEqual(hooks["market-state.panel"]["placed_in"], "market_state")
+        self.assertEqual(result["detail"]["content_contract"]["status"], "ok")
+        self.assertEqual(result["detail"]["content_contract"]["section_count"], 17)
 
     def test_unmatched_rows_are_allowed_but_must_carry_a_reason(self) -> None:
         """Two fixture stocks deliberately have no K-line data."""

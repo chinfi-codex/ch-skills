@@ -1,0 +1,102 @@
+schema_version: 1
+skill: a-stock-daily-market-sense
+
+capabilities:
+  daily.build-evidence:
+    kind: command
+    entry: scripts/run_daily_panel.py
+    terminal: false
+    judgment: forbidden
+    required_env: [TUSHARE_TOKEN]
+    effects: [net:tushare, db:alpha_data, "fs:reports/evidence_*.json"]
+    receipt_outputs:
+      - reports/evidence_*.json
+      - reports/report_context_*.json
+      - reports/module_context_*/*.json
+
+  daily.compute-theme-stats:
+    kind: command
+    entry: scripts/theme_group_stats.py
+    terminal: false
+    judgment: forbidden
+    effects: ["fs:reports/module_context_*/module3_theme_stats.json"]
+    receipt_outputs:
+      - reports/module_context_*/module3_theme_stats.json
+
+  daily.backfill-market-history:
+    kind: command
+    entry: scripts/backfill_market_history.py
+    terminal: false
+    judgment: forbidden
+    required_env: [TUSHARE_TOKEN]
+    effects: [net:tushare, db:alpha_data]
+
+  daily.compute-extreme-state:
+    kind: command
+    entry: scripts/extreme_state_card.py
+    terminal: false
+    judgment: forbidden
+    effects: [db:alpha_data.dms_extreme_daily, stdout:json]
+
+  daily.compute-market-state:
+    kind: command
+    entry: scripts/market_state_card.py
+    terminal: false
+    judgment: forbidden
+    effects: [db:read, stdout:json]
+
+  daily.compute-trend-state:
+    kind: command
+    entry: scripts/trend_state_card.py
+    terminal: false
+    judgment: forbidden
+    effects: [db:read, stdout:json]
+
+  lifecycle.update:
+    kind: command
+    entry: scripts/theme_lifecycle.py
+    terminal: false
+    judgment: forbidden
+    effects: [db:alpha_data.theme_daily_state]
+
+  research.factor-backtest:
+    kind: command
+    entry: scripts/factor_backtest.py
+    terminal: false
+    judgment: forbidden
+    effects: [db:read, stdout:json]
+
+  research.factor-lab:
+    kind: command
+    entry: scripts/factor_lab.py
+    terminal: false
+    judgment: forbidden
+    effects: [db:read, "fs:reports/factor_*"]
+
+  research.web-search:
+    kind: command
+    entry: scripts/web_search.py
+    terminal: false
+    judgment: forbidden
+    effects: [net:tavily, stdout:json]
+
+  report.finalize-markdown:
+    kind: finalize
+    terminal: true
+    judgment: forbidden
+    outputs: [dms-markdown]
+    requires_receipts: [daily.build-evidence]
+    effects: ["fs:reports/report_*.md"]
+
+  report.render-html:
+    kind: command
+    entry: scripts/render_report_html.py
+    terminal: true
+    judgment: forbidden
+    outputs: [dms-html]
+    artifact_arg: --output
+    source_arg: --input
+    evidence_arg: --evidence
+    bound_arg_aliases: [-o, -i]
+    fixed_args: [--strict]
+    effects: ["fs:reports/report_*.html"]

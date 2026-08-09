@@ -67,6 +67,8 @@ class SectionSpec:
     patterns: Sequence[str]
     required: bool = True
     level: Optional[int] = None
+    degraded_patterns: Sequence[str] = field(default_factory=tuple)
+    source: str = ""
 
     def __post_init__(self) -> None:
         if not self.key:
@@ -98,12 +100,15 @@ class SectionContract:
 
     version: str
     sections: Sequence[SectionSpec]
+    order: str = "any"
 
     def __post_init__(self) -> None:
         keys = [spec.key for spec in self.sections]
         duplicates = {key for key in keys if keys.count(key) > 1}
         if duplicates:
             raise ValueError(f"duplicate section keys in contract: {sorted(duplicates)}")
+        if self.order not in ("any", "strict"):
+            raise ValueError("SectionContract.order must be 'any' or 'strict'")
 
     @property
     def required_keys(self) -> List[str]:
@@ -119,6 +124,7 @@ class SectionContract:
         headings = _scan_headings(body_html)
         resolved: Dict[str, MatchedSection] = {}
         claimed: Dict[int, str] = {}
+        resolved_indexes: List[Tuple[str, int]] = []
         problems: List[str] = []
 
         for spec in self.sections:
@@ -150,6 +156,16 @@ class SectionContract:
                 continue
             claimed[index] = spec.key
             resolved[spec.key] = MatchedSection(key=spec.key, level=head.level, text=head.text)
+            resolved_indexes.append((spec.key, index))
+
+        if self.order == "strict":
+            actual = [key for key, _ in sorted(resolved_indexes, key=lambda item: item[1])]
+            expected = [spec.key for spec in self.sections if spec.key in resolved]
+            if actual != expected:
+                problems.append(
+                    "strict section order mismatch; "
+                    f"expected {expected}, found {actual}"
+                )
 
         if problems:
             raise ContractError(

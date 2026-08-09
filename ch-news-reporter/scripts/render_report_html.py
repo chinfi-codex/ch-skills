@@ -31,9 +31,12 @@ sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHA
 from html_report import (  # noqa: E402
     ChartHook,
     HeroDecoration,
+    HookExpectation,
     HtmlReportBuilder,
     PillDecoration,
     RenderJob,
+    SectionContract,
+    SectionSpec,
     render_report,
 )
 from profile_config import DEFAULT_PROFILE_CONFIG, load_profile, load_profiles, render_config  # noqa: E402
@@ -175,6 +178,11 @@ rows.forEach((r, i) => {
 card.appendChild(svg);
 grid.appendChild(card);
 anchor.after(grid);
+if (window.__render) {
+  window.__render.attest("profile-probabilities", {
+    el: grid, rendered: 1, matched: 1, expected: 1, unmatched: []
+  });
+}
 """
 
 
@@ -292,6 +300,49 @@ def add_arguments(parser) -> None:
     )
 
 
+def output_id_for_report(profile_name: Optional[str], stem: str) -> str:
+    brief = stem.endswith("_brief")
+    if stem.startswith("custom_daily_"):
+        return "custom-daily-html"
+    mapping = {
+        "ai_daily": "ai-daily-html",
+        "macro_daily": "macro-brief-html" if brief else "macro-daily-html",
+        "geopolitical_daily": (
+            "geopolitical-brief-html" if brief else "geopolitical-daily-html"
+        ),
+    }
+    return mapping.get(str(profile_name or ""), "")
+
+
+def load_output_contract(profile_name: Optional[str], stem: str) -> Optional[SectionContract]:
+    output_id = output_id_for_report(profile_name, stem)
+    if not output_id:
+        return None
+    plan_path = SCRIPT_ROOT.parent / "gate-plan.json"
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        output = plan["outputs"][output_id]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError(f"cannot load compiled output contract {output_id!r}: {exc}") from exc
+    raw_contract = output.get("contract") or {}
+    sections = []
+    for raw in raw_contract.get("sections") or []:
+        level = raw.get("level")
+        sections.append(
+            SectionSpec(
+                key=str(raw["key"]),
+                patterns=[str(item) for item in raw.get("patterns") or []],
+                required=bool(raw.get("required", True)),
+                level=int(level) + 1 if level is not None else None,
+            )
+        )
+    return SectionContract(
+        version=str(output.get("contract_version") or "1"),
+        sections=sections,
+        order=str(raw_contract.get("order") or "any"),
+    )
+
+
 def build_job(args) -> RenderJob:
     input_path = Path(args.input)
     output_path = Path(args.output) if args.output else input_path.with_suffix(".html")
@@ -302,8 +353,11 @@ def build_job(args) -> RenderJob:
     profile_render = render_config(profile or {}) if profile else {}
     title_name, meta_text = derive_title_meta(markdown_text, input_path.stem, profile_name, profile)
     title = args.title or title_name
+    contract = load_output_contract(profile_name, input_path.stem)
 
-    builder = HtmlReportBuilder(title=title, theme=args.theme, meta_text=meta_text)
+    builder = HtmlReportBuilder(
+        title=title, theme=args.theme, meta_text=meta_text, contract=contract
+    )
     # Every news report leads with "一句话结论" — promote it into a hero card.
     builder.add_decoration(HeroDecoration(heading_prefix="一句话结论", stop_mode="section"))
     pill_set = str(profile_render.get("pill_set") or "")
@@ -316,7 +370,22 @@ def build_job(args) -> RenderJob:
         wb_path = Path(args.watchboard) if args.watchboard else None
         payload = load_probabilities(wb_path, configured_probability_labels(profile_render))
         if payload is not None:
-            builder.add_chart_hook(ChartHook(name="profile-probabilities", payload=payload, js=PATH_PROB_JS))
+            contract_keys = {spec.key for spec in contract.sections} if contract else set()
+            expectations = (
+                [
+                    HookExpectation(
+                        name="profile-probabilities",
+                        target_sec="hero",
+                        expect_count=1,
+                    )
+                ]
+                if "hero" in contract_keys
+                else []
+            )
+            builder.add_chart_hook(
+                ChartHook(name="profile-probabilities", payload=payload, js=PATH_PROB_JS),
+                expects=expectations,
+            )
             chart_added = True
 
     figures = load_axis_figures(args, profile_name, profile_render, input_path.stem)

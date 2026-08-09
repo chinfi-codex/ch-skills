@@ -87,6 +87,19 @@ class StampTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             SectionContract("t/1", [SectionSpec("x", [r"a"]), SectionSpec("x", [r"b"])])
 
+    def test_strict_order_rejects_reordered_sections(self) -> None:
+        contract = SectionContract("t/1", [
+            SectionSpec("state", [r"市场状态定位"]),
+            SectionSpec("sentiment", [r"情绪趋势"]),
+        ], order="strict")
+        reordered = BODY.replace(
+            '<h3>1.1 市场状态定位</h3><p>状态</p><h3>1.2 情绪趋势</h3><table></table>',
+            '<h3>1.2 情绪趋势</h3><table></table><h3>1.1 市场状态定位</h3><p>状态</p>',
+        )
+        with self.assertRaises(ContractError) as ctx:
+            contract.stamp(reordered)
+        self.assertIn("strict section order mismatch", str(ctx.exception))
+
 
 class ManifestTest(unittest.TestCase):
     def test_expectations_for_absent_sections_are_dropped(self) -> None:
@@ -122,6 +135,15 @@ class BuilderIntegrationTest(unittest.TestCase):
         self.assertEqual(manifest["contract_version"], "t/1")
         self.assertEqual(manifest["hooks"][0]["expect_count"], 1)
         self.assertTrue(manifest["build_id"].startswith("fixed-"))
+
+    def test_content_contract_audit_is_embedded(self) -> None:
+        builder = HtmlReportBuilder(
+            title="x", contract=CONTRACT, contract_audit={"status": "ok", "degraded": []}
+        )
+        html = builder.render(MD)
+        match = re.search(r'<script id="render-manifest" type="application/json">(.*?)</script>', html, re.DOTALL)
+        manifest = json.loads(match.group(1))
+        self.assertEqual(manifest["content_contract"]["status"], "ok")
 
     def test_expectation_on_unknown_section_is_a_programming_error(self) -> None:
         builder = HtmlReportBuilder(title="x", contract=CONTRACT)

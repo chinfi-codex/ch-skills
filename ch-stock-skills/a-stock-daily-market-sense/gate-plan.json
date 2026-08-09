@@ -1,0 +1,685 @@
+{
+  "outputs": {
+    "dms-html": {
+      "contract": {
+        "browser": {
+          "expect_contract": "dms/1.2.0",
+          "script": "scripts/_shared/html_report/render_check.py"
+        },
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 1000,
+        "order": "strict",
+        "sections": [
+          {
+            "key": "hero_verdict",
+            "level": 2,
+            "patterns": [
+              "^一句话盘面判断$"
+            ]
+          },
+          {
+            "key": "market_state",
+            "level": 2,
+            "patterns": [
+              "^市场状态与盘面定性$",
+              "^市场状态定位$"
+            ]
+          },
+          {
+            "key": "sentiment_trend",
+            "level": 2,
+            "patterns": [
+              "^情绪趋势$"
+            ]
+          },
+          {
+            "key": "index_trend",
+            "level": 2,
+            "patterns": [
+              "^指数趋势$"
+            ]
+          },
+          {
+            "key": "market_style",
+            "level": 2,
+            "patterns": [
+              "^市场风格$"
+            ]
+          },
+          {
+            "key": "m2_concentration",
+            "level": 1,
+            "patterns": [
+              "^成交额集中度与拥挤度$"
+            ]
+          },
+          {
+            "key": "m3_mainline",
+            "level": 2,
+            "patterns": [
+              "^主线判定$"
+            ]
+          },
+          {
+            "key": "m3_catalyst",
+            "level": 2,
+            "patterns": [
+              "^催化与细分线路推演$"
+            ],
+            "required": false
+          },
+          {
+            "key": "m3_leaders",
+            "level": 2,
+            "patterns": [
+              "主线领导股与弹性股"
+            ]
+          },
+          {
+            "key": "m4_decline",
+            "level": 1,
+            "patterns": [
+              "^亏钱效应（爆量下跌）$"
+            ]
+          },
+          {
+            "key": "m4_risk_types",
+            "level": 2,
+            "patterns": [
+              "^风险类型归纳$"
+            ]
+          },
+          {
+            "key": "m4_decline_details",
+            "level": 2,
+            "patterns": [
+              "^高强度爆量下跌(?:个股)?明细$"
+            ]
+          },
+          {
+            "key": "m5_capacity_up",
+            "level": 2,
+            "patterns": [
+              "^容量上涨明细$"
+            ]
+          },
+          {
+            "key": "m5_monthly_base",
+            "level": 2,
+            "patterns": [
+              "^(?:全市场)?月线平台突破明细$"
+            ]
+          },
+          {
+            "key": "m5_early_limit",
+            "level": 2,
+            "patterns": [
+              "^10:30 前涨停明细$"
+            ]
+          },
+          {
+            "key": "m5_discount_relaunch",
+            "level": 2,
+            "patterns": [
+              "^折扣启动明细$"
+            ]
+          },
+          {
+            "key": "m5_overlap",
+            "level": 2,
+            "patterns": [
+              "^交叉命中上涨归因$"
+            ]
+          }
+        ]
+      },
+      "contract_version": "dms/1.2.0",
+      "features": [
+        "evidence-backed",
+        "preserve-source-text",
+        "browser-attestation"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/report_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].html",
+      "source_output": "dms-markdown",
+      "terminal_capability": "report.render-html",
+      "type": "html",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/report_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].html"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 1000
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "html-document",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "strict",
+            "sections": [
+              {
+                "key": "hero_verdict",
+                "level": 3,
+                "patterns": [
+                  "^一句话盘面判断$"
+                ]
+              },
+              {
+                "key": "market_state",
+                "level": 3,
+                "patterns": [
+                  "^市场状态与盘面定性$",
+                  "^市场状态定位$"
+                ]
+              },
+              {
+                "key": "sentiment_trend",
+                "level": 3,
+                "patterns": [
+                  "^情绪趋势$"
+                ]
+              },
+              {
+                "key": "index_trend",
+                "level": 3,
+                "patterns": [
+                  "^指数趋势$"
+                ]
+              },
+              {
+                "key": "market_style",
+                "level": 3,
+                "patterns": [
+                  "^市场风格$"
+                ]
+              },
+              {
+                "key": "m2_concentration",
+                "level": 2,
+                "patterns": [
+                  "^成交额集中度与拥挤度$"
+                ]
+              },
+              {
+                "key": "m3_mainline",
+                "level": 3,
+                "patterns": [
+                  "^主线判定$"
+                ]
+              },
+              {
+                "key": "m3_catalyst",
+                "level": 3,
+                "patterns": [
+                  "^催化与细分线路推演$"
+                ],
+                "required": false
+              },
+              {
+                "key": "m3_leaders",
+                "level": 3,
+                "patterns": [
+                  "主线领导股与弹性股"
+                ]
+              },
+              {
+                "key": "m4_decline",
+                "level": 2,
+                "patterns": [
+                  "^亏钱效应（爆量下跌）$"
+                ]
+              },
+              {
+                "key": "m4_risk_types",
+                "level": 3,
+                "patterns": [
+                  "^风险类型归纳$"
+                ]
+              },
+              {
+                "key": "m4_decline_details",
+                "level": 3,
+                "patterns": [
+                  "^高强度爆量下跌(?:个股)?明细$"
+                ]
+              },
+              {
+                "key": "m5_capacity_up",
+                "level": 3,
+                "patterns": [
+                  "^容量上涨明细$"
+                ]
+              },
+              {
+                "key": "m5_monthly_base",
+                "level": 3,
+                "patterns": [
+                  "^(?:全市场)?月线平台突破明细$"
+                ]
+              },
+              {
+                "key": "m5_early_limit",
+                "level": 3,
+                "patterns": [
+                  "^10:30 前涨停明细$"
+                ]
+              },
+              {
+                "key": "m5_discount_relaunch",
+                "level": 3,
+                "patterns": [
+                  "^折扣启动明细$"
+                ]
+              },
+              {
+                "key": "m5_overlap",
+                "level": 3,
+                "patterns": [
+                  "^交叉命中上涨归因$"
+                ]
+              }
+            ]
+          },
+          "id": "html-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": []
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-receipt",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-text-preserved",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "expect_contract": "dms/1.2.0",
+            "script": "scripts/_shared/html_report/render_check.py"
+          },
+          "id": "browser-attestation",
+          "severity": "hard"
+        }
+      ]
+    },
+    "dms-markdown": {
+      "contract": {
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 1000,
+        "order": "strict",
+        "sections": [
+          {
+            "key": "hero_verdict",
+            "level": 2,
+            "patterns": [
+              "^一句话盘面判断$"
+            ]
+          },
+          {
+            "key": "market_state",
+            "level": 2,
+            "patterns": [
+              "^市场状态与盘面定性$",
+              "^市场状态定位$"
+            ]
+          },
+          {
+            "key": "sentiment_trend",
+            "level": 2,
+            "patterns": [
+              "^情绪趋势$"
+            ]
+          },
+          {
+            "key": "index_trend",
+            "level": 2,
+            "patterns": [
+              "^指数趋势$"
+            ]
+          },
+          {
+            "key": "market_style",
+            "level": 2,
+            "patterns": [
+              "^市场风格$"
+            ]
+          },
+          {
+            "key": "m2_concentration",
+            "level": 1,
+            "patterns": [
+              "^成交额集中度与拥挤度$"
+            ]
+          },
+          {
+            "key": "m3_mainline",
+            "level": 2,
+            "patterns": [
+              "^主线判定$"
+            ]
+          },
+          {
+            "key": "m3_catalyst",
+            "level": 2,
+            "patterns": [
+              "^催化与细分线路推演$"
+            ],
+            "required": false
+          },
+          {
+            "key": "m3_leaders",
+            "level": 2,
+            "patterns": [
+              "主线领导股与弹性股"
+            ]
+          },
+          {
+            "key": "m4_decline",
+            "level": 1,
+            "patterns": [
+              "^亏钱效应（爆量下跌）$"
+            ]
+          },
+          {
+            "key": "m4_risk_types",
+            "level": 2,
+            "patterns": [
+              "^风险类型归纳$"
+            ]
+          },
+          {
+            "key": "m4_decline_details",
+            "level": 2,
+            "patterns": [
+              "^高强度爆量下跌(?:个股)?明细$"
+            ]
+          },
+          {
+            "key": "m5_capacity_up",
+            "level": 2,
+            "patterns": [
+              "^容量上涨明细$"
+            ]
+          },
+          {
+            "key": "m5_monthly_base",
+            "level": 2,
+            "patterns": [
+              "^(?:全市场)?月线平台突破明细$"
+            ]
+          },
+          {
+            "key": "m5_early_limit",
+            "level": 2,
+            "patterns": [
+              "^10:30 前涨停明细$"
+            ]
+          },
+          {
+            "key": "m5_discount_relaunch",
+            "level": 2,
+            "patterns": [
+              "^折扣启动明细$"
+            ]
+          },
+          {
+            "key": "m5_overlap",
+            "level": 2,
+            "patterns": [
+              "^交叉命中上涨归因$"
+            ]
+          }
+        ]
+      },
+      "contract_version": "dms/1.2.0",
+      "features": [
+        "evidence-backed"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/report_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].md",
+      "source_output": null,
+      "terminal_capability": "report.finalize-markdown",
+      "type": "markdown",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/report_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].md"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 1000
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "strict",
+            "sections": [
+              {
+                "key": "hero_verdict",
+                "level": 2,
+                "patterns": [
+                  "^一句话盘面判断$"
+                ]
+              },
+              {
+                "key": "market_state",
+                "level": 2,
+                "patterns": [
+                  "^市场状态与盘面定性$",
+                  "^市场状态定位$"
+                ]
+              },
+              {
+                "key": "sentiment_trend",
+                "level": 2,
+                "patterns": [
+                  "^情绪趋势$"
+                ]
+              },
+              {
+                "key": "index_trend",
+                "level": 2,
+                "patterns": [
+                  "^指数趋势$"
+                ]
+              },
+              {
+                "key": "market_style",
+                "level": 2,
+                "patterns": [
+                  "^市场风格$"
+                ]
+              },
+              {
+                "key": "m2_concentration",
+                "level": 1,
+                "patterns": [
+                  "^成交额集中度与拥挤度$"
+                ]
+              },
+              {
+                "key": "m3_mainline",
+                "level": 2,
+                "patterns": [
+                  "^主线判定$"
+                ]
+              },
+              {
+                "key": "m3_catalyst",
+                "level": 2,
+                "patterns": [
+                  "^催化与细分线路推演$"
+                ],
+                "required": false
+              },
+              {
+                "key": "m3_leaders",
+                "level": 2,
+                "patterns": [
+                  "主线领导股与弹性股"
+                ]
+              },
+              {
+                "key": "m4_decline",
+                "level": 1,
+                "patterns": [
+                  "^亏钱效应（爆量下跌）$"
+                ]
+              },
+              {
+                "key": "m4_risk_types",
+                "level": 2,
+                "patterns": [
+                  "^风险类型归纳$"
+                ]
+              },
+              {
+                "key": "m4_decline_details",
+                "level": 2,
+                "patterns": [
+                  "^高强度爆量下跌(?:个股)?明细$"
+                ]
+              },
+              {
+                "key": "m5_capacity_up",
+                "level": 2,
+                "patterns": [
+                  "^容量上涨明细$"
+                ]
+              },
+              {
+                "key": "m5_monthly_base",
+                "level": 2,
+                "patterns": [
+                  "^(?:全市场)?月线平台突破明细$"
+                ]
+              },
+              {
+                "key": "m5_early_limit",
+                "level": 2,
+                "patterns": [
+                  "^10:30 前涨停明细$"
+                ]
+              },
+              {
+                "key": "m5_discount_relaunch",
+                "level": 2,
+                "patterns": [
+                  "^折扣启动明细$"
+                ]
+              },
+              {
+                "key": "m5_overlap",
+                "level": 2,
+                "patterns": [
+                  "^交叉命中上涨归因$"
+                ]
+              }
+            ]
+          },
+          "id": "markdown-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": []
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "command": [
+              "python3",
+              "scripts/dms_output_contract.py",
+              "--input",
+              "{artifact}",
+              "--evidence",
+              "{evidence}"
+            ],
+            "name": "dms-content-contract"
+          },
+          "id": "command",
+          "severity": "hard"
+        }
+      ]
+    }
+  },
+  "schema_version": 1,
+  "skill": "a-stock-daily-market-sense",
+  "source_sha256": "0f826b784cac267dbab5c4b11b873fb81368fe50d7318c377466d765c57830bd"
+}

@@ -106,7 +106,9 @@ def check_static(target: str) -> Dict[str, Any]:
         "contract_version": (manifest or {}).get("contract_version"),
         "build_id": (manifest or {}).get("build_id"),
         "problems": problems,
-        "detail": {},
+        "detail": {
+            "content_contract": (manifest or {}).get("content_contract") or {},
+        },
         "console_errors": [],
     }
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "A 股盘后市场复盘"
+  short_description: "基于日线证据生成并校验生产级 A 股盘后复盘"
+  default_prompt: "Use $a-stock-daily-market-sense to generate a receipt-backed A-share daily market report and validate every final artifact."

@@ -1,0 +1,91 @@
+schema_version: 1
+skill: ch-news-reporter
+
+capabilities:
+  news.collect:
+    kind: command
+    entry: scripts/collect_news.py
+    terminal: false
+    judgment: forbidden
+    effects: [net:configured-sources, db:alpha_data.items]
+
+  news.prepare-evidence:
+    kind: command
+    entry: scripts/prepare_report_data.py
+    terminal: false
+    judgment: forbidden
+    effects: [db:read, "fs:reports/evidence/*.json"]
+
+  news.enrich:
+    kind: command
+    entry: scripts/enrich_targets.py
+    terminal: false
+    judgment: forbidden
+    effects: [net:target-urls, db:alpha_data.enrichments]
+
+  topic.retrieve:
+    kind: command
+    entry: scripts/topic_retrieve.py
+    terminal: false
+    judgment: forbidden
+    effects: [net:configured-retrievers, db:alpha_data.items]
+
+  news.save-state:
+    kind: command
+    entry: scripts/save_report_state.py
+    terminal: false
+    judgment: forbidden
+    effects: [db:alpha_data.report_state]
+
+  news.migrate-state:
+    kind: command
+    entry: scripts/migrate_profile_state.py
+    terminal: false
+    judgment: forbidden
+    effects: [db:alpha_data.report_state]
+
+  news.save-framework:
+    kind: command
+    entry: scripts/save_framework_state.py
+    terminal: false
+    judgment: forbidden
+    effects: [db:alpha_data.report_state]
+
+  macro.monitor:
+    kind: command
+    entry: scripts/macro_monitor.py
+    terminal: false
+    judgment: forbidden
+    effects: [net:market-data-sources, stdout:json]
+
+  report.finalize-markdown:
+    kind: finalize
+    terminal: true
+    judgment: forbidden
+    outputs:
+      - ai-daily-markdown
+      - macro-daily-markdown
+      - macro-brief-markdown
+      - geopolitical-daily-markdown
+      - geopolitical-brief-markdown
+      - custom-daily-markdown
+    requires_receipts: [news.prepare-evidence]
+    effects: ["fs:reports/*.md"]
+
+  report.render-html:
+    kind: command
+    entry: scripts/render_report_html.py
+    terminal: true
+    judgment: forbidden
+    outputs:
+      - ai-daily-html
+      - macro-daily-html
+      - macro-brief-html
+      - geopolitical-daily-html
+      - geopolitical-brief-html
+      - custom-daily-html
+    artifact_arg: --output
+    source_arg: --input
+    bound_arg_aliases: [-o, -i]
+    fixed_args: [--strict]
+    effects: ["fs:reports/*.html"]

@@ -464,6 +464,16 @@ def link(src: Path, dst: Path, dry_run: bool = False) -> None:
 
 def run_sync(config: dict, mode: str = "copy", dry_run: bool = False) -> None:
     """执行全量同步。"""
+    factory = REPO_ROOT / "scripts" / "skill_factory.py"
+    factory_check = subprocess.run(
+        [sys.executable, str(factory), "check-managed"],
+        cwd=REPO_ROOT,
+        text=True,
+        check=False,
+    )
+    if factory_check.returncode != 0:
+        raise RuntimeError("Skill Factory 检查失败；修复声明或重新生成 gate-plan.json 后再同步")
+
     targets = config.get("targets", {})
     rename = config.get("rename", {})
     exclude = config.get("exclude", {})

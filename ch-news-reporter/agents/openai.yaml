@@ -1,0 +1,4 @@
+interface:
+  display_name: "CH News Reporter"
+  short_description: "多信源采集、证据化分析与生产级日报交付"
+  default_prompt: "Use $ch-news-reporter to build an evidence-backed daily report and deliver only receipt-verified artifacts."

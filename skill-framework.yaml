@@ -1,0 +1,7 @@
+schema_version: 1
+
+# Only these existing Skills are migrated in this phase.  New Skills should
+# enter this list when they adopt capabilities.yaml + outputs.yaml.
+managed_skills:
+  - ch-stock-skills/a-stock-daily-market-sense
+  - ch-news-reporter

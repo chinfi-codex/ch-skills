@@ -1,7 +1,5 @@
-akshare
-baostock
-numpy
-pandas
+beautifulsoup4
+feedparser
 playwright
 psycopg2-binary
 PyYAML

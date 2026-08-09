@@ -131,6 +131,21 @@ description: 触发的唯一字段，把"何时使用 + 做什么 + 不做什么
 
 至少给一个完整的 input → output。示例的价值在于钉死边界条件——例如数据缺失、行业属性模糊、用户问得很短时，产出该长什么样。
 
+### 2.9 生产能力与输出门禁
+
+纳入 `skill-framework.yaml` 的 Skill 必须同时提供 `capabilities.yaml`、`outputs.yaml`、生成态 `gate-plan.json` 与 `agents/openai.yaml`。`SKILL.md` 描述运行机制与判断方法；`capabilities.yaml` 登记可执行的“手”；`outputs.yaml` 声明交付物要求；Skill Factory 在生成期把要求编译为确定性的门禁计划，运行期不允许模型临时选择校验器。
+
+最终产物必须走注册的 terminal capability：模型内容先写 `.staging/`，脚本渲染也先输出到 `.staging/<run_id>/`，硬门禁通过后才能原子晋级。交付必须同时满足成功收据、产物 SHA-256 与通过的 gate audit；失败时不得发布或 cleanup。运行期细则随 `shared/output_gate/references/output_gate.md` 一起打包。
+
+修改受管 Skill 后运行：
+
+```bash
+python3 scripts/skill_factory.py build-managed
+python3 scripts/skill_factory.py check-managed
+```
+
+`scripts/skill_sync.py` 会先执行 `check-managed`，声明缺失或生成物过期时拒绝同步。
+
 ---
 
 ## 三、安全审查

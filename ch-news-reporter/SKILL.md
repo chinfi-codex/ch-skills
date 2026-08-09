@@ -59,12 +59,18 @@ DB-first 的取数/回写脚本(`collect_news.py` / `prepare_report_data.py` / `
 
 ## 工作流程
 
+### 生产运行契约
+
+生产任务只按 `capabilities.yaml` 中的能力 ID 执行，入口为 `scripts/_shared/skill_runtime/runner.py`（源仓库开发态用 `../shared/skill_runtime/runner.py`）。下文直接调用 `scripts/*.py` 的命令仅用于理解参数或底层调试，不形成交付凭证。
+
+模型写报告时只写 `reports/.staging/<文件名>.md`，随后调用 `report.finalize-markdown`；HTML 只调用 `report.render-html`。运行时会按 `outputs.yaml` 编译出的 `gate-plan.json` 校验结构、证据日期、源 Markdown 收据、文本保全和浏览器 attestation，通过后才原子晋级到 `reports/` 正式路径。失败时不得发布或清理，必须保留 `.staging`、`reports/.receipts.jsonl` 和 `*.gate-audit.json`；最终回复必须报告 artifact、`run_id`、audit 与 `gate_pass`。完整规则见 `scripts/_shared/output_gate/references/output_gate.md`。
+
 ### 1. 刷新新闻库（DB-first）
 
 进入 skill 目录后运行采集脚本。默认日期为 Asia/Shanghai 的当天。**默认走 DB-first:先看库里当天有没有数据,缺哪个源才补哪个源。**
 
 ```bash
-python scripts/collect_news.py --date today --only-missing
+python scripts/_shared/skill_runtime/runner.py --skill-root . run news.collect -- --date today --only-missing
 ```
 
 `--only-missing` 会先查库里目标日期各源的行数,只对行数低于阈值的源发起采集,已有的源连网络请求都不发。阈值按源取 `config/sources.yaml` 的 `collect_min_rows`(金十 300 / rss 30 / github_trending 20 / product_hunt 10 / hacker_news 20 / polymarket 10,约为各源典型日产量),`--min-rows N` 可全源统一覆盖;配置缺失时回退默认 1。今天首跑时库空→全采;重跑或补历史日→读库不重采,保证同一报告日的证据可复现(这也是 watchboard 跨天结算能成立的前提)。需要强制重抓时用 `--replace-date`(优先级高于 `--only-missing`)。
@@ -95,7 +101,9 @@ python scripts/collect_news.py --date today --only-missing
 日报、动态跟踪等固定报告优先走 profile 流程。脚本只检索、排序、截断，并输出可二次加工的候选对象池；是否 enrichment 由 Agent 读取日报子方法后判断。
 
 ```bash
-python scripts/prepare_report_data.py --profile ai_daily --date today --format json
+python scripts/_shared/skill_runtime/runner.py --skill-root . run news.prepare-evidence \
+  --capture-stdout reports/evidence/ai_daily_YYYY-MM-DD.json -- \
+  --profile ai_daily --date YYYY-MM-DD --format json
 ```
 
 常用参数：
@@ -200,6 +208,15 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 
 报告不应只罗列新闻，要把证据转化为观点：发生了什么、为何重要、影响哪些资产/产业/公司类型、后续观察什么。
 
+成稿后选择对应 output ID（`ai-daily-markdown`、`macro-daily-markdown`、`macro-brief-markdown`、`geopolitical-daily-markdown`、`geopolitical-brief-markdown`、`custom-daily-markdown`）执行晋级：
+
+```bash
+python scripts/_shared/skill_runtime/runner.py --skill-root . run report.finalize-markdown \
+  --output-id macro-daily-markdown --staged-path reports/.staging/macro_daily_YYYY-MM-DD.md \
+  --final-path reports/macro_daily_YYYY-MM-DD.md \
+  --evidence reports/evidence/macro_daily_YYYY-MM-DD.json
+```
+
 `macro_daily` 报告采用"流动性优先"范式：流动性 → 折现率/风险溢价 → 权益估值 → 市场相对位置 → 边际方向。报告必须覆盖：
 
 1. 一句话结论（必含"流动性边际方向 + 纳指/上证位置档位 + 对权益估值的影响方向"三要素）
@@ -227,7 +244,7 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 `state_enabled` 的 profile（ai_daily / macro_daily / geopolitical_daily）出完报告后,必须把今天的新 watchboard 存回去,供明天 carry-forward:
 
 ```bash
-cat today_watchboard.json | python scripts/save_report_state.py \
+cat today_watchboard.json | python scripts/_shared/skill_runtime/runner.py --skill-root . run news.save-state -- \
     --profile geopolitical_daily --date today --state-file -
 ```
 
@@ -242,11 +259,14 @@ python scripts/migrate_profile_state.py --from-profile iran_dynamic --to-profile
 
 ### 7. 按需生成 HTML（展示层）
 
-当用户要 HTML、网页、可视化或截图风格的日报时，先写好并核对 `reports/<profile>_<date>.md`，再把它渲染成一份自包含单页 HTML（AlphaVault 站点风格，图表不依赖外部 CDN，本地浏览器直接打开；另有 `--theme claude` 暖色风格）。HTML 只是展示层：**不新增任何研报判断，也不删减 Markdown 正文**——共享渲染器会做文本保全校验，缺字报警告不阻断。
+当用户要 HTML、网页、可视化或截图风格的日报时，先让 Markdown 通过终端门禁，再用注册能力渲染成一份自包含单页 HTML（AlphaVault 站点风格，图表不依赖外部 CDN，本地浏览器直接打开；另有 `--theme claude` 暖色风格）。HTML 只是展示层：**不新增任何研报判断，也不删减 Markdown 正文**；文本保全或浏览器契约失败会阻断晋级。
 
 ```bash
-python scripts/render_report_html.py -i reports/macro_daily_2026-05-19.md
-# 默认输出同名 .html；profile 从文件名前缀自动识别（ai_daily / macro_daily / geopolitical_daily）
+python scripts/_shared/skill_runtime/runner.py --skill-root . run report.render-html \
+  --output-id macro-daily-html --final-path reports/macro_daily_2026-05-19.html \
+  --source-artifact reports/macro_daily_2026-05-19.md \
+  --evidence reports/evidence/macro_daily_2026-05-19.json -- \
+  --theme default
 ```
 
 三个 profile 通用的处理：
@@ -258,13 +278,21 @@ python scripts/render_report_html.py -i reports/macro_daily_2026-05-19.md
 `geopolitical_daily` 的渲染配置启用 **v2 路径概率图**（W1/W2/W3/W4/De），把当天 watchboard 传进来即可：
 
 ```bash
-python scripts/render_report_html.py -i reports/geopolitical_daily_2026-06-04.md --watchboard today_watchboard.json
+python scripts/_shared/skill_runtime/runner.py --skill-root . run report.render-html \
+  --output-id geopolitical-daily-html --final-path reports/geopolitical_daily_2026-06-04.html \
+  --source-artifact reports/geopolitical_daily_2026-06-04.md \
+  --evidence reports/evidence/geopolitical_daily_2026-06-04.json -- \
+  --watchboard today_watchboard.json
 ```
 
 `ai_daily` 的渲染配置启用**两张双轴图**，同样只要把当天 watchboard 传进来（回写 state 之后再渲染，图才是今天的）：
 
 ```bash
-python scripts/render_report_html.py -i reports/ai_daily_2026-08-01.md --watchboard today_watchboard.json
+python scripts/_shared/skill_runtime/runner.py --skill-root . run report.render-html \
+  --output-id ai-daily-html --final-path reports/ai_daily_2026-08-01.html \
+  --source-artifact reports/ai_daily_2026-08-01.md \
+  --evidence reports/evidence/ai_daily_2026-08-01.json -- \
+  --watchboard today_watchboard.json
 ```
 
 - **双轴定位图**挂在「一句话结论」段末：纵轴能力成熟度 × 横轴渗透度，坐标 = 档位 + 档内完成度（`graduation` / `five_asks`），矢量按 `links` 站到它服务的形态那一列、没挂钩的落进"未挂钩"带，`axis_objects` 里当天的对象高亮叠在上面。

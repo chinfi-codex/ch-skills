@@ -25,6 +25,15 @@ description: 仅供 a-stock-daily-market-sense 内部按需读取。说明日报
 
 改 `references/template/section*.md` 的章节结构时，**同步升 `DMS_CONTRACT` 的版本号**，否则契约会悄悄和模板失配。
 
+`dms/1.2.0` 同时检查 Markdown 内容，规则一律从 `references/template/section*.md` 投影而来——每个契约条目都带 `source=<模板文件>:<行号>`，改模板就要同步改契约，不允许契约自己猜。
+
+- **17 个章节，顺序与层级固定**。其中 16 个必填，**只有 3.2 允许整节缺席**：模板规定没有 ★★★ 主线时连标题带兜底句一起不输出，所以它的在场与否是双向硬判定——3.1 有 ★★★ 却没有 3.2 会红，没有 ★★★ 却留着 3.2 也会红。在场时，3.2 里 `### 主线名称（★★★）` 的个数必须等于 3.1 表里的 ★★★ 行数。
+- **降级要有据**。模板为某节写明的降级句（如「暂无命中」「风格证据不足，不强行定性」）命中后记进审计的 `detail.content_contract.degraded`，但只有 evidence 确实是 `available=false` 或候选为空才放行；evidence 里明明有候选却写「暂无命中」＝谎报缺数据，直接红。
+- **硬门禁**：`output_discipline.md` 点名的定性高亮段（1.1 市场状态与盘面定性、指数趋势判断、市场风格判断、拥挤度判断、主线 vs 资金轮动结论、风险传导提示、特征分组一句话判断）缺任一即失败；买卖建议禁用词出现即失败。
+- **软告警**（只进审计不红灯）：判断段首句以连续数字开头、同一自然段关键数字超过 3 个、段落里出现既不在 evidence 也不在本页表格里的数字。
+
+表格数值必须能回到 evidence，这是「表格承载脚本给的确定性数据、段落承载判断」的机器化。**已知边界**：它是"这个数在 evidence 里存不存在"的全局包含判定，不是字段级比对。所以写错但恰好在别处出现过的数字抓不到——8-07 报告里国证2000 的 20 日表现写成 `-6.9%`（实际 `-5.97`）被抓到了，同一行今日表现写成 `+1.7%`（实际 `1.91`）却蒙混过关，因为 1.7 在 evidence 别处存在。要收紧就得为每张表建列→字段映射，成本另计。evidence 不完整（合成夹具）时整项跳过并记 warning，不误报。
+
 ## 章节内部的形状也是契约（1.1 状态卡）
 
 契约管的是「章节在不在」，管不到「章节里长什么样」。1.1 市场状态定位的卡片就靠章节内部的形状定位：一个开头是 `回撤分层` 的列表、其中 `确认三要素` 那条挂着嵌套列表、每条勾选项以 `✓ / ✗ / —` 开头。这套形状写在 `references/template/section1.md` 里，**改模板就要同时改 `MARKET_STATE_CARD_JS` 的解析**。
@@ -58,7 +67,7 @@ description: 仅供 a-stock-daily-market-sense 内部按需读取。说明日报
 python3 scripts/_shared/html_report/render_check.py --target <本地 HTML> --stage local --out <本地审计文件>
 # 从本地审计文件取 build_id，Site 与线上门禁都必须传 --expect-build
 python3 scripts/_shared/html_report/render_check.py --target <目标> --stage <site|online> \
-  --expect-contract dms/1.1.0 --expect-build <本地审计文件中的 build_id> --out <审计文件>
+  --expect-contract dms/1.2.0 --expect-build <本地审计文件中的 build_id> --out <审计文件>
 ```
 
 三段各查各的问题：

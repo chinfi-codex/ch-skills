@@ -81,6 +81,7 @@ class RenderManifest:
     sections: Sequence[str] = field(default_factory=tuple)
     hooks: Sequence[HookExpectation] = field(default_factory=tuple)
     unmatched_reasons: Sequence[str] = DEFAULT_UNMATCHED_REASONS
+    content_contract: Dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> Dict[str, Any]:
         return {
@@ -89,6 +90,7 @@ class RenderManifest:
             "sections": list(self.sections),
             "hooks": [hook.to_json() for hook in self.hooks],
             "unmatched_reasons": list(self.unmatched_reasons),
+            "content_contract": self.content_contract,
         }
 
     def filtered_for(self, resolved_sections: Sequence[str]) -> "RenderManifest":
@@ -104,6 +106,7 @@ class RenderManifest:
             sections=[key for key in self.sections if key in available],
             hooks=[hook for hook in self.hooks if hook.target_sec in available],
             unmatched_reasons=self.unmatched_reasons,
+            content_contract=self.content_contract,
         )
 
 
@@ -170,7 +173,11 @@ FINALIZE_RUNTIME_JS = r"""
   function finalize() {
     const manifest = api.manifest;
     const problems = api.errors.slice();
-    const detail = { hooks: {}, sections: {} };
+    const detail = {
+      hooks: {},
+      sections: {},
+      content_contract: (manifest && manifest.content_contract) || {}
+    };
 
     function fail(scope, message, extra) {
       problems.push({ scope: scope, message: message, detail: extra === undefined ? null : extra });

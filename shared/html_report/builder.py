@@ -145,6 +145,7 @@ class HtmlReportBuilder:
         font_links: bool = True,
         contract: Optional[SectionContract] = None,
         build_id: str = "",
+        contract_audit: Optional[Dict[str, object]] = None,
     ) -> None:
         self.title = title
         self.theme = theme
@@ -157,6 +158,7 @@ class HtmlReportBuilder:
         self.font_links = font_links
         self.contract = contract
         self.build_id = build_id or datetime.now().strftime("%Y%m%dT%H%M%S")
+        self.contract_audit = dict(contract_audit or {})
         self._theme_css = _load_theme_css(theme)
         self._hooks: List[ChartHook] = []
         self._figures: List[StaticFigure] = []
@@ -239,6 +241,7 @@ class HtmlReportBuilder:
                 build_id=self._build_fingerprint(markdown_text),
                 sections=[spec.key for spec in self.contract.sections],
                 hooks=self._expectations,
+                content_contract=self.contract_audit,
             ).filtered_for(list(self._sections))
             manifest_block = manifest_script(manifest) + "\n"
             runtime_block = (

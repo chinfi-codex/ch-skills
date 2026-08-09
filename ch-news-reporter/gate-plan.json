@@ -1,0 +1,1959 @@
+{
+  "outputs": {
+    "ai-daily-html": {
+      "contract": {
+        "browser": {
+          "script": "scripts/_shared/html_report/render_check.py"
+        },
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 800,
+        "order": "strict",
+        "sections": [
+          {
+            "key": "hero",
+            "level": 2,
+            "patterns": [
+              "^一句话结论$"
+            ]
+          },
+          {
+            "key": "focus",
+            "level": 2,
+            "patterns": [
+              "^今日重点 · 深度拆解$"
+            ],
+            "required": false
+          },
+          {
+            "key": "candidates",
+            "level": 2,
+            "patterns": [
+              "^重点候选 · 待验证$"
+            ],
+            "required": false
+          },
+          {
+            "key": "capability_axis",
+            "level": 2,
+            "patterns": [
+              "^纵轴 · 能力与技术演进$"
+            ]
+          },
+          {
+            "key": "adoption_axis",
+            "level": 2,
+            "patterns": [
+              "^横轴 · 渗透率$"
+            ]
+          },
+          {
+            "key": "capital_policy",
+            "level": 2,
+            "patterns": [
+              "^资本与政策$"
+            ]
+          },
+          {
+            "key": "tracking",
+            "level": 2,
+            "patterns": [
+              "^待跟踪 & 本期变更$"
+            ]
+          }
+        ]
+      },
+      "contract_version": "news/ai-daily/1.0.0",
+      "features": [
+        "evidence-backed",
+        "preserve-source-text",
+        "browser-attestation"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/ai_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html",
+      "source_output": "ai-daily-markdown",
+      "terminal_capability": "report.render-html",
+      "type": "html",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/ai_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 800
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "html-document",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "strict",
+            "sections": [
+              {
+                "key": "hero",
+                "level": 3,
+                "patterns": [
+                  "^一句话结论$"
+                ]
+              },
+              {
+                "key": "focus",
+                "level": 3,
+                "patterns": [
+                  "^今日重点 · 深度拆解$"
+                ],
+                "required": false
+              },
+              {
+                "key": "candidates",
+                "level": 3,
+                "patterns": [
+                  "^重点候选 · 待验证$"
+                ],
+                "required": false
+              },
+              {
+                "key": "capability_axis",
+                "level": 3,
+                "patterns": [
+                  "^纵轴 · 能力与技术演进$"
+                ]
+              },
+              {
+                "key": "adoption_axis",
+                "level": 3,
+                "patterns": [
+                  "^横轴 · 渗透率$"
+                ]
+              },
+              {
+                "key": "capital_policy",
+                "level": 3,
+                "patterns": [
+                  "^资本与政策$"
+                ]
+              },
+              {
+                "key": "tracking",
+                "level": 3,
+                "patterns": [
+                  "^待跟踪 & 本期变更$"
+                ]
+              }
+            ]
+          },
+          "id": "html-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": []
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-receipt",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-text-preserved",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "expect_contract": "news/ai-daily/1.0.0",
+            "script": "scripts/_shared/html_report/render_check.py"
+          },
+          "id": "browser-attestation",
+          "severity": "hard"
+        }
+      ]
+    },
+    "ai-daily-markdown": {
+      "contract": {
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 800,
+        "order": "strict",
+        "sections": [
+          {
+            "key": "hero",
+            "level": 2,
+            "patterns": [
+              "^一句话结论$"
+            ]
+          },
+          {
+            "key": "focus",
+            "level": 2,
+            "patterns": [
+              "^今日重点 · 深度拆解$"
+            ],
+            "required": false
+          },
+          {
+            "key": "candidates",
+            "level": 2,
+            "patterns": [
+              "^重点候选 · 待验证$"
+            ],
+            "required": false
+          },
+          {
+            "key": "capability_axis",
+            "level": 2,
+            "patterns": [
+              "^纵轴 · 能力与技术演进$"
+            ]
+          },
+          {
+            "key": "adoption_axis",
+            "level": 2,
+            "patterns": [
+              "^横轴 · 渗透率$"
+            ]
+          },
+          {
+            "key": "capital_policy",
+            "level": 2,
+            "patterns": [
+              "^资本与政策$"
+            ]
+          },
+          {
+            "key": "tracking",
+            "level": 2,
+            "patterns": [
+              "^待跟踪 & 本期变更$"
+            ]
+          }
+        ]
+      },
+      "contract_version": "news/ai-daily/1.0.0",
+      "features": [
+        "evidence-backed"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/ai_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md",
+      "source_output": null,
+      "terminal_capability": "report.finalize-markdown",
+      "type": "markdown",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/ai_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 800
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "strict",
+            "sections": [
+              {
+                "key": "hero",
+                "level": 2,
+                "patterns": [
+                  "^一句话结论$"
+                ]
+              },
+              {
+                "key": "focus",
+                "level": 2,
+                "patterns": [
+                  "^今日重点 · 深度拆解$"
+                ],
+                "required": false
+              },
+              {
+                "key": "candidates",
+                "level": 2,
+                "patterns": [
+                  "^重点候选 · 待验证$"
+                ],
+                "required": false
+              },
+              {
+                "key": "capability_axis",
+                "level": 2,
+                "patterns": [
+                  "^纵轴 · 能力与技术演进$"
+                ]
+              },
+              {
+                "key": "adoption_axis",
+                "level": 2,
+                "patterns": [
+                  "^横轴 · 渗透率$"
+                ]
+              },
+              {
+                "key": "capital_policy",
+                "level": 2,
+                "patterns": [
+                  "^资本与政策$"
+                ]
+              },
+              {
+                "key": "tracking",
+                "level": 2,
+                "patterns": [
+                  "^待跟踪 & 本期变更$"
+                ]
+              }
+            ]
+          },
+          "id": "markdown-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": []
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "allow_source_markers": true,
+            "min_citations": 1
+          },
+          "id": "evidence-citations",
+          "severity": "hard"
+        }
+      ]
+    },
+    "custom-daily-html": {
+      "contract": {
+        "browser": {
+          "script": "scripts/_shared/html_report/render_check.py"
+        },
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 500,
+        "order": "strict",
+        "sections": [
+          {
+            "key": "hero",
+            "level": 2,
+            "patterns": [
+              "^一句话结论$"
+            ]
+          },
+          {
+            "key": "next",
+            "level": 2,
+            "patterns": [
+              "^24-72h 观察点$"
+            ]
+          },
+          {
+            "key": "coverage",
+            "level": 2,
+            "patterns": [
+              "^覆盖说明$"
+            ]
+          }
+        ]
+      },
+      "contract_version": "news/custom-daily/1.0.0",
+      "features": [
+        "evidence-backed",
+        "preserve-source-text",
+        "browser-attestation"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/custom_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html",
+      "source_output": "custom-daily-markdown",
+      "terminal_capability": "report.render-html",
+      "type": "html",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/custom_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 500
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "html-document",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "strict",
+            "sections": [
+              {
+                "key": "hero",
+                "level": 3,
+                "patterns": [
+                  "^一句话结论$"
+                ]
+              },
+              {
+                "key": "next",
+                "level": 3,
+                "patterns": [
+                  "^24-72h 观察点$"
+                ]
+              },
+              {
+                "key": "coverage",
+                "level": 3,
+                "patterns": [
+                  "^覆盖说明$"
+                ]
+              }
+            ]
+          },
+          "id": "html-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": []
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-receipt",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-text-preserved",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "expect_contract": "news/custom-daily/1.0.0",
+            "script": "scripts/_shared/html_report/render_check.py"
+          },
+          "id": "browser-attestation",
+          "severity": "hard"
+        }
+      ]
+    },
+    "custom-daily-markdown": {
+      "contract": {
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 500,
+        "order": "strict",
+        "sections": [
+          {
+            "key": "hero",
+            "level": 2,
+            "patterns": [
+              "^一句话结论$"
+            ]
+          },
+          {
+            "key": "next",
+            "level": 2,
+            "patterns": [
+              "^24-72h 观察点$"
+            ]
+          },
+          {
+            "key": "coverage",
+            "level": 2,
+            "patterns": [
+              "^覆盖说明$"
+            ]
+          }
+        ]
+      },
+      "contract_version": "news/custom-daily/1.0.0",
+      "features": [
+        "evidence-backed"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/custom_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md",
+      "source_output": null,
+      "terminal_capability": "report.finalize-markdown",
+      "type": "markdown",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/custom_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 500
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "strict",
+            "sections": [
+              {
+                "key": "hero",
+                "level": 2,
+                "patterns": [
+                  "^一句话结论$"
+                ]
+              },
+              {
+                "key": "next",
+                "level": 2,
+                "patterns": [
+                  "^24-72h 观察点$"
+                ]
+              },
+              {
+                "key": "coverage",
+                "level": 2,
+                "patterns": [
+                  "^覆盖说明$"
+                ]
+              }
+            ]
+          },
+          "id": "markdown-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": []
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "allow_source_markers": true,
+            "min_citations": 1
+          },
+          "id": "evidence-citations",
+          "severity": "hard"
+        }
+      ]
+    },
+    "geopolitical-brief-html": {
+      "contract": {
+        "browser": {
+          "script": "scripts/_shared/html_report/render_check.py"
+        },
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 300,
+        "required_patterns": [
+          "一句话判断",
+          "今日边际变化",
+          "主战线与并行战线",
+          "能源/航运/市场",
+          "推演",
+          "跟踪项"
+        ]
+      },
+      "contract_version": "news/geopolitical-brief/1.0.0",
+      "features": [
+        "evidence-backed",
+        "preserve-source-text",
+        "browser-attestation"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/geopolitical_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_brief.html",
+      "source_output": "geopolitical-brief-markdown",
+      "terminal_capability": "report.render-html",
+      "type": "html",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/geopolitical_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_brief.html"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 300
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "html-document",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "any",
+            "sections": []
+          },
+          "id": "html-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": [
+              "一句话判断",
+              "今日边际变化",
+              "主战线与并行战线",
+              "能源/航运/市场",
+              "推演",
+              "跟踪项"
+            ]
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-receipt",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-text-preserved",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "expect_contract": "news/geopolitical-brief/1.0.0",
+            "script": "scripts/_shared/html_report/render_check.py"
+          },
+          "id": "browser-attestation",
+          "severity": "hard"
+        }
+      ]
+    },
+    "geopolitical-brief-markdown": {
+      "contract": {
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 300,
+        "required_patterns": [
+          "一句话判断",
+          "今日边际变化",
+          "主战线与并行战线",
+          "能源/航运/市场",
+          "推演",
+          "跟踪项"
+        ]
+      },
+      "contract_version": "news/geopolitical-brief/1.0.0",
+      "features": [
+        "evidence-backed"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/geopolitical_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_brief.md",
+      "source_output": null,
+      "terminal_capability": "report.finalize-markdown",
+      "type": "markdown",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/geopolitical_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_brief.md"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 300
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "any",
+            "sections": []
+          },
+          "id": "markdown-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": [
+              "一句话判断",
+              "今日边际变化",
+              "主战线与并行战线",
+              "能源/航运/市场",
+              "推演",
+              "跟踪项"
+            ]
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "allow_source_markers": true,
+            "min_citations": 1
+          },
+          "id": "evidence-citations",
+          "severity": "hard"
+        }
+      ]
+    },
+    "geopolitical-daily-html": {
+      "contract": {
+        "browser": {
+          "script": "scripts/_shared/html_report/render_check.py"
+        },
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 800,
+        "order": "strict",
+        "sections": [
+          {
+            "key": "hero",
+            "level": 2,
+            "patterns": [
+              "^一句话结论$"
+            ]
+          },
+          {
+            "key": "overview",
+            "level": 2,
+            "patterns": [
+              "^战况速览$"
+            ]
+          },
+          {
+            "key": "primary",
+            "level": 2,
+            "patterns": [
+              "^主战线$"
+            ]
+          },
+          {
+            "key": "parallel",
+            "level": 2,
+            "patterns": [
+              "^并行战线$"
+            ]
+          },
+          {
+            "key": "markets",
+            "level": 2,
+            "patterns": [
+              "^能源航运与市场重定价$"
+            ]
+          },
+          {
+            "key": "escalation",
+            "level": 2,
+            "patterns": [
+              "^升级阶梯与核阈值$"
+            ]
+          },
+          {
+            "key": "changes",
+            "level": 2,
+            "patterns": [
+              "^本期变更（框架 × 跟踪合并）$"
+            ]
+          }
+        ]
+      },
+      "contract_version": "news/geopolitical-daily/1.0.0",
+      "features": [
+        "evidence-backed",
+        "preserve-source-text",
+        "browser-attestation"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/geopolitical_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html",
+      "source_output": "geopolitical-daily-markdown",
+      "terminal_capability": "report.render-html",
+      "type": "html",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/geopolitical_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 800
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "html-document",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "strict",
+            "sections": [
+              {
+                "key": "hero",
+                "level": 3,
+                "patterns": [
+                  "^一句话结论$"
+                ]
+              },
+              {
+                "key": "overview",
+                "level": 3,
+                "patterns": [
+                  "^战况速览$"
+                ]
+              },
+              {
+                "key": "primary",
+                "level": 3,
+                "patterns": [
+                  "^主战线$"
+                ]
+              },
+              {
+                "key": "parallel",
+                "level": 3,
+                "patterns": [
+                  "^并行战线$"
+                ]
+              },
+              {
+                "key": "markets",
+                "level": 3,
+                "patterns": [
+                  "^能源航运与市场重定价$"
+                ]
+              },
+              {
+                "key": "escalation",
+                "level": 3,
+                "patterns": [
+                  "^升级阶梯与核阈值$"
+                ]
+              },
+              {
+                "key": "changes",
+                "level": 3,
+                "patterns": [
+                  "^本期变更（框架 × 跟踪合并）$"
+                ]
+              }
+            ]
+          },
+          "id": "html-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": []
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-receipt",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-text-preserved",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "expect_contract": "news/geopolitical-daily/1.0.0",
+            "script": "scripts/_shared/html_report/render_check.py"
+          },
+          "id": "browser-attestation",
+          "severity": "hard"
+        }
+      ]
+    },
+    "geopolitical-daily-markdown": {
+      "contract": {
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 800,
+        "order": "strict",
+        "sections": [
+          {
+            "key": "hero",
+            "level": 2,
+            "patterns": [
+              "^一句话结论$"
+            ]
+          },
+          {
+            "key": "overview",
+            "level": 2,
+            "patterns": [
+              "^战况速览$"
+            ]
+          },
+          {
+            "key": "primary",
+            "level": 2,
+            "patterns": [
+              "^主战线$"
+            ]
+          },
+          {
+            "key": "parallel",
+            "level": 2,
+            "patterns": [
+              "^并行战线$"
+            ]
+          },
+          {
+            "key": "markets",
+            "level": 2,
+            "patterns": [
+              "^能源航运与市场重定价$"
+            ]
+          },
+          {
+            "key": "escalation",
+            "level": 2,
+            "patterns": [
+              "^升级阶梯与核阈值$"
+            ]
+          },
+          {
+            "key": "changes",
+            "level": 2,
+            "patterns": [
+              "^本期变更（框架 × 跟踪合并）$"
+            ]
+          }
+        ]
+      },
+      "contract_version": "news/geopolitical-daily/1.0.0",
+      "features": [
+        "evidence-backed"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/geopolitical_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md",
+      "source_output": null,
+      "terminal_capability": "report.finalize-markdown",
+      "type": "markdown",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/geopolitical_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 800
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "strict",
+            "sections": [
+              {
+                "key": "hero",
+                "level": 2,
+                "patterns": [
+                  "^一句话结论$"
+                ]
+              },
+              {
+                "key": "overview",
+                "level": 2,
+                "patterns": [
+                  "^战况速览$"
+                ]
+              },
+              {
+                "key": "primary",
+                "level": 2,
+                "patterns": [
+                  "^主战线$"
+                ]
+              },
+              {
+                "key": "parallel",
+                "level": 2,
+                "patterns": [
+                  "^并行战线$"
+                ]
+              },
+              {
+                "key": "markets",
+                "level": 2,
+                "patterns": [
+                  "^能源航运与市场重定价$"
+                ]
+              },
+              {
+                "key": "escalation",
+                "level": 2,
+                "patterns": [
+                  "^升级阶梯与核阈值$"
+                ]
+              },
+              {
+                "key": "changes",
+                "level": 2,
+                "patterns": [
+                  "^本期变更（框架 × 跟踪合并）$"
+                ]
+              }
+            ]
+          },
+          "id": "markdown-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": []
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "allow_source_markers": true,
+            "min_citations": 1
+          },
+          "id": "evidence-citations",
+          "severity": "hard"
+        }
+      ]
+    },
+    "macro-brief-html": {
+      "contract": {
+        "browser": {
+          "script": "scripts/_shared/html_report/render_check.py"
+        },
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 300,
+        "required_patterns": [
+          "一句话结论",
+          "关键读数",
+          "今日关键边际信号",
+          "月度数据",
+          "反向风险",
+          "跟踪项"
+        ]
+      },
+      "contract_version": "news/macro-brief/1.0.0",
+      "features": [
+        "evidence-backed",
+        "preserve-source-text",
+        "browser-attestation"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/macro_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_brief.html",
+      "source_output": "macro-brief-markdown",
+      "terminal_capability": "report.render-html",
+      "type": "html",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/macro_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_brief.html"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 300
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "html-document",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "any",
+            "sections": []
+          },
+          "id": "html-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": [
+              "一句话结论",
+              "关键读数",
+              "今日关键边际信号",
+              "月度数据",
+              "反向风险",
+              "跟踪项"
+            ]
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-receipt",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-text-preserved",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "expect_contract": "news/macro-brief/1.0.0",
+            "script": "scripts/_shared/html_report/render_check.py"
+          },
+          "id": "browser-attestation",
+          "severity": "hard"
+        }
+      ]
+    },
+    "macro-brief-markdown": {
+      "contract": {
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 300,
+        "required_patterns": [
+          "一句话结论",
+          "关键读数",
+          "今日关键边际信号",
+          "月度数据",
+          "反向风险",
+          "跟踪项"
+        ]
+      },
+      "contract_version": "news/macro-brief/1.0.0",
+      "features": [
+        "evidence-backed"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/macro_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_brief.md",
+      "source_output": null,
+      "terminal_capability": "report.finalize-markdown",
+      "type": "markdown",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/macro_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_brief.md"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 300
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "any",
+            "sections": []
+          },
+          "id": "markdown-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": [
+              "一句话结论",
+              "关键读数",
+              "今日关键边际信号",
+              "月度数据",
+              "反向风险",
+              "跟踪项"
+            ]
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "allow_source_markers": true,
+            "min_citations": 1
+          },
+          "id": "evidence-citations",
+          "severity": "hard"
+        }
+      ]
+    },
+    "macro-daily-html": {
+      "contract": {
+        "browser": {
+          "script": "scripts/_shared/html_report/render_check.py"
+        },
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 800,
+        "order": "strict",
+        "sections": [
+          {
+            "key": "hero",
+            "level": 2,
+            "patterns": [
+              "^一句话结论$"
+            ]
+          },
+          {
+            "key": "liquidity",
+            "level": 2,
+            "patterns": [
+              "^流动性总图$"
+            ]
+          },
+          {
+            "key": "position",
+            "level": 2,
+            "patterns": [
+              "^市场相对位置（估值锚）$"
+            ]
+          },
+          {
+            "key": "signals",
+            "level": 2,
+            "patterns": [
+              "^今日 3 个关键边际信号$"
+            ]
+          },
+          {
+            "key": "transmission",
+            "level": 2,
+            "patterns": [
+              "^流动性传导推断$"
+            ]
+          },
+          {
+            "key": "events",
+            "level": 2,
+            "patterns": [
+              "^宏观新闻与数据事件$"
+            ]
+          },
+          {
+            "key": "china",
+            "level": 2,
+            "patterns": [
+              "^中国政策与流动性$"
+            ]
+          },
+          {
+            "key": "us",
+            "level": 2,
+            "patterns": [
+              "^美国政策与流动性$"
+            ]
+          },
+          {
+            "key": "risks",
+            "level": 2,
+            "patterns": [
+              "^反向场景与风险$"
+            ]
+          },
+          {
+            "key": "next",
+            "level": 2,
+            "patterns": [
+              "^后续观察（24-72h）$"
+            ]
+          },
+          {
+            "key": "changes",
+            "level": 2,
+            "patterns": [
+              "^🔄 本期变更（框架 × 跟踪合并）$"
+            ]
+          }
+        ]
+      },
+      "contract_version": "news/macro-daily/1.0.0",
+      "features": [
+        "evidence-backed",
+        "preserve-source-text",
+        "browser-attestation"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/macro_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html",
+      "source_output": "macro-daily-markdown",
+      "terminal_capability": "report.render-html",
+      "type": "html",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/macro_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 800
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "html-document",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "strict",
+            "sections": [
+              {
+                "key": "hero",
+                "level": 3,
+                "patterns": [
+                  "^一句话结论$"
+                ]
+              },
+              {
+                "key": "liquidity",
+                "level": 3,
+                "patterns": [
+                  "^流动性总图$"
+                ]
+              },
+              {
+                "key": "position",
+                "level": 3,
+                "patterns": [
+                  "^市场相对位置（估值锚）$"
+                ]
+              },
+              {
+                "key": "signals",
+                "level": 3,
+                "patterns": [
+                  "^今日 3 个关键边际信号$"
+                ]
+              },
+              {
+                "key": "transmission",
+                "level": 3,
+                "patterns": [
+                  "^流动性传导推断$"
+                ]
+              },
+              {
+                "key": "events",
+                "level": 3,
+                "patterns": [
+                  "^宏观新闻与数据事件$"
+                ]
+              },
+              {
+                "key": "china",
+                "level": 3,
+                "patterns": [
+                  "^中国政策与流动性$"
+                ]
+              },
+              {
+                "key": "us",
+                "level": 3,
+                "patterns": [
+                  "^美国政策与流动性$"
+                ]
+              },
+              {
+                "key": "risks",
+                "level": 3,
+                "patterns": [
+                  "^反向场景与风险$"
+                ]
+              },
+              {
+                "key": "next",
+                "level": 3,
+                "patterns": [
+                  "^后续观察（24-72h）$"
+                ]
+              },
+              {
+                "key": "changes",
+                "level": 3,
+                "patterns": [
+                  "^🔄 本期变更（框架 × 跟踪合并）$"
+                ]
+              }
+            ]
+          },
+          "id": "html-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": []
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-receipt",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "source-text-preserved",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "expect_contract": "news/macro-daily/1.0.0",
+            "script": "scripts/_shared/html_report/render_check.py"
+          },
+          "id": "browser-attestation",
+          "severity": "hard"
+        }
+      ]
+    },
+    "macro-daily-markdown": {
+      "contract": {
+        "forbidden_patterns": [
+          "买入|卖出|加仓|止损|目标价"
+        ],
+        "min_bytes": 800,
+        "order": "strict",
+        "sections": [
+          {
+            "key": "hero",
+            "level": 2,
+            "patterns": [
+              "^一句话结论$"
+            ]
+          },
+          {
+            "key": "liquidity",
+            "level": 2,
+            "patterns": [
+              "^流动性总图$"
+            ]
+          },
+          {
+            "key": "position",
+            "level": 2,
+            "patterns": [
+              "^市场相对位置（估值锚）$"
+            ]
+          },
+          {
+            "key": "signals",
+            "level": 2,
+            "patterns": [
+              "^今日 3 个关键边际信号$"
+            ]
+          },
+          {
+            "key": "transmission",
+            "level": 2,
+            "patterns": [
+              "^流动性传导推断$"
+            ]
+          },
+          {
+            "key": "events",
+            "level": 2,
+            "patterns": [
+              "^宏观新闻与数据事件$"
+            ]
+          },
+          {
+            "key": "china",
+            "level": 2,
+            "patterns": [
+              "^中国政策与流动性$"
+            ]
+          },
+          {
+            "key": "us",
+            "level": 2,
+            "patterns": [
+              "^美国政策与流动性$"
+            ]
+          },
+          {
+            "key": "risks",
+            "level": 2,
+            "patterns": [
+              "^反向场景与风险$"
+            ]
+          },
+          {
+            "key": "next",
+            "level": 2,
+            "patterns": [
+              "^后续观察（24-72h）$"
+            ]
+          },
+          {
+            "key": "changes",
+            "level": 2,
+            "patterns": [
+              "^🔄 本期变更（框架 × 跟踪合并）$"
+            ]
+          }
+        ]
+      },
+      "contract_version": "news/macro-daily/1.0.0",
+      "features": [
+        "evidence-backed"
+      ],
+      "gate_policy": "hard",
+      "path_glob": "reports/macro_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md",
+      "source_output": null,
+      "terminal_capability": "report.finalize-markdown",
+      "type": "markdown",
+      "validators": [
+        {
+          "config": {},
+          "id": "artifact-exists",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "path_glob": "reports/macro_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md"
+          },
+          "id": "path-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "min_bytes": 800
+          },
+          "id": "artifact-size",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "utf8",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "order": "strict",
+            "sections": [
+              {
+                "key": "hero",
+                "level": 2,
+                "patterns": [
+                  "^一句话结论$"
+                ]
+              },
+              {
+                "key": "liquidity",
+                "level": 2,
+                "patterns": [
+                  "^流动性总图$"
+                ]
+              },
+              {
+                "key": "position",
+                "level": 2,
+                "patterns": [
+                  "^市场相对位置（估值锚）$"
+                ]
+              },
+              {
+                "key": "signals",
+                "level": 2,
+                "patterns": [
+                  "^今日 3 个关键边际信号$"
+                ]
+              },
+              {
+                "key": "transmission",
+                "level": 2,
+                "patterns": [
+                  "^流动性传导推断$"
+                ]
+              },
+              {
+                "key": "events",
+                "level": 2,
+                "patterns": [
+                  "^宏观新闻与数据事件$"
+                ]
+              },
+              {
+                "key": "china",
+                "level": 2,
+                "patterns": [
+                  "^中国政策与流动性$"
+                ]
+              },
+              {
+                "key": "us",
+                "level": 2,
+                "patterns": [
+                  "^美国政策与流动性$"
+                ]
+              },
+              {
+                "key": "risks",
+                "level": 2,
+                "patterns": [
+                  "^反向场景与风险$"
+                ]
+              },
+              {
+                "key": "next",
+                "level": 2,
+                "patterns": [
+                  "^后续观察（24-72h）$"
+                ]
+              },
+              {
+                "key": "changes",
+                "level": 2,
+                "patterns": [
+                  "^🔄 本期变更（框架 × 跟踪合并）$"
+                ]
+              }
+            ]
+          },
+          "id": "markdown-headings",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "forbidden_patterns": [
+              "买入|卖出|加仓|止损|目标价"
+            ],
+            "required_patterns": []
+          },
+          "id": "regex-policy",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "evidence-required",
+          "severity": "hard"
+        },
+        {
+          "config": {},
+          "id": "date-alignment",
+          "severity": "hard"
+        },
+        {
+          "config": {
+            "allow_source_markers": true,
+            "min_citations": 1
+          },
+          "id": "evidence-citations",
+          "severity": "hard"
+        }
+      ]
+    }
+  },
+  "schema_version": 1,
+  "skill": "ch-news-reporter",
+  "source_sha256": "a469cc487d51774b4e8f51e706f375d734e5d90193b3671e6a0a7de17e8b0db3"
+}

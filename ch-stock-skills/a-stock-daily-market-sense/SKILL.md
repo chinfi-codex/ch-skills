@@ -32,7 +32,8 @@ description: 基于 Tushare Pro A 股日线与 Baostock 风格指数生成盘后
 1. **生成证据包**：解析日期后运行 `scripts/run_daily_panel.py`，产出完整 evidence、模块级 JSON 与 K 线展示数据；模块 1 同时带三张机判卡——市场状态定位（`market_state`）、极值状态（`extreme_state`，底部出清分 / 顶部拥挤分）与趋势状态卡（`trend_state_card`）。详见 `references/execution_flow.md`。
 2. **分模块撰写**：按最小上下文边界加载各模块 JSON + 方法论 + 模板。模块 3 赚钱效应采用两阶段契约：首轮只输出临时主题映射与 `stars: null`；统计脚本完成后由模型按证据锁定星级，只有存在 ★★★ 主线时才触发 3.2 催化与细分线路推演。详见 `references/methodology/module3_money_effect.md` 与 `references/execution_flow.md`。
 3. **聚合成稿**：读取模块 1-5 输出与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和语气校准。
-4. **生命周期落库与清理**：报告定稿后，把主线判定沉淀进 PG 生命周期台账，然后清理临时 evidence。详见 `references/theme_lifecycle.md` 与 `references/execution_flow.md`。
+4. **门禁晋级**：模型只把草稿写入 `reports/.staging/`；用 `report.finalize-markdown` 校验结构、数值证据与禁用语后原子晋级。HTML 只能由 `report.render-html` 基于已有成功收据的 Markdown 生成。
+5. **生命周期落库与清理**：报告通过门禁后，把主线判定沉淀进 PG 生命周期台账；只有最终收据与审计均通过才清理临时 evidence。详见 `references/theme_lifecycle.md` 与 `references/execution_flow.md`。
 
 ## 数据获取
 
@@ -56,10 +57,13 @@ python3 -m playwright install chromium
 
 第二条命令安装渲染门禁所需的 Chromium；只安装 Python 包还不能运行浏览器门禁。
 
+生产执行统一走能力运行时。同步后的 Skill 使用 `scripts/_shared/skill_runtime/runner.py`；源仓库开发态对应 `../../shared/skill_runtime/runner.py`。底层脚本只用于调试，直接调用不会产生可交付收据。
+
 基础命令：
 
 ```bash
-python3 scripts/run_daily_panel.py --asof 20260429 --lookback 120 --market-trend-days 90 --index 000300.SH
+python3 scripts/_shared/skill_runtime/runner.py --skill-root . run daily.build-evidence -- \
+  --asof 20260429 --lookback 120 --market-trend-days 90 --index 000300.SH
 ```
 
 极值状态卡的分位基准存在 `dms_extreme_daily` 表里，**新环境第一次跑要先补历史**（只需一次，之后每日增量）：
@@ -73,29 +77,38 @@ python3 scripts/extreme_state_card.py --asof 20260429 --backfill 300
 模块 3 首轮完成后，运行统计脚本：
 
 ```bash
-python3 scripts/theme_group_stats.py \
+python3 scripts/_shared/skill_runtime/runner.py --skill-root . run daily.compute-theme-stats -- \
   --context reports/module_context_YYYYMMDD/module3_money_effect.json \
   --mapping reports/module_context_YYYYMMDD/module3_theme_map.json \
   --output reports/module_context_YYYYMMDD/module3_theme_stats.json
 ```
 
-HTML 输出（`--gate` 会在写完文件后用浏览器验一遍渲染契约，不通过就非零退出）：
+模型聚合后先写暂存稿，再完成 Markdown 和 HTML 两阶段晋级：
 
 ```bash
-python3 scripts/render_report_html.py --input reports/report_20260429.md --gate [--theme default|claude|print]
+python3 scripts/_shared/skill_runtime/runner.py --skill-root . run report.finalize-markdown \
+  --output-id dms-markdown --staged-path reports/.staging/report_20260429.md \
+  --final-path reports/report_20260429.md --evidence reports/evidence_20260429_utf8.json
+
+python3 scripts/_shared/skill_runtime/runner.py --skill-root . run report.render-html \
+  --output-id dms-html --final-path reports/report_20260429.html \
+  --source-artifact reports/report_20260429.md --evidence reports/evidence_20260429_utf8.json -- \
+  --theme default
 ```
 
-**上线前必须过渲染门禁。** 报告的图表全部是页面自己在浏览器里画出来的，静态看文件看不出图表画到哪儿了、有没有画。所以本地产物、复制到 Site 之后、线上页面三处各跑一次同一套检查，全绿才允许部署，全绿才允许 cleanup：
+运行时把结果写到 `.staging/<run_id>/`，完成内容、文本保全和浏览器门禁后才用原子替换写入正式路径。失败时不得发布或 cleanup；保留暂存件、`reports/.receipts.jsonl` 与同名 `*.gate-audit.json`，并在回复中给出 `run_id`、审计路径和首批失败项。完整规则见 `scripts/_shared/output_gate/references/output_gate.md`。
+
+复制到 Site 或上线后仍要复验同一个构建，防止搬运或 CSP 破坏页面：
 
 ```bash
 python3 scripts/_shared/html_report/render_check.py --target reports/report_20260429.html --stage local --out reports/report_20260429.render-check-local.json
 # 从上一步审计 JSON 读取 build_id；site/online 必须与本地产物完全一致
 BUILD_ID=$(python3 -c 'import json; print(json.load(open("reports/report_20260429.render-check-local.json"))["build_id"])')
-python3 scripts/_shared/html_report/render_check.py --target <Site 路径>/report_20260429.html --stage site --expect-contract dms/1.1.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-site.json
-python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stage online --expect-contract dms/1.1.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-online.json
+python3 scripts/_shared/html_report/render_check.py --target <Site 路径>/report_20260429.html --stage site --expect-contract dms/1.2.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-site.json
+python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stage online --expect-contract dms/1.2.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-online.json
 ```
 
-退出码：`0` 通过、`1` 失败（**不得部署、不得 cleanup，留着审计文件排查**）、`2` 只跑了 `--static-only` 冒烟不算门禁。三份 `render-check-*.json` 留在 `reports/` 下，不进发布包。
+退出码：`0` 通过、`1` 失败（**不得部署、不得 cleanup，留着审计文件排查**）、`2` 只跑了 `--static-only` 冒烟不算门禁。Site/online 审计留在 `reports/` 下，不进发布包。
 
 契约与门禁的工作方式见 `references/render_contract.md`；改章节结构时要同步升 `scripts/render_report_html.py` 里 `DMS_CONTRACT` 的版本号。
 
@@ -128,8 +141,8 @@ HTML 输出只改变呈现方式：必须保留 Markdown 研报中的所有文�
 ### 执行
 
 ```bash
-python3 scripts/run_daily_panel.py --asof 20260429
-python3 scripts/theme_group_stats.py \
+python3 scripts/_shared/skill_runtime/runner.py --skill-root . run daily.build-evidence -- --asof 20260429
+python3 scripts/_shared/skill_runtime/runner.py --skill-root . run daily.compute-theme-stats -- \
   --context reports/module_context_20260429/module3_money_effect.json \
   --mapping reports/module_context_20260429/module3_theme_map.json \
   --output reports/module_context_20260429/module3_theme_stats.json

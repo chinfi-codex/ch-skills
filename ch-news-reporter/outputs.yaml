@@ -1,0 +1,189 @@
+schema_version: 1
+skill: ch-news-reporter
+
+outputs:
+  ai-daily-markdown:
+    type: markdown
+    terminal_capability: report.finalize-markdown
+    path_glob: reports/ai_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md
+    contract_version: news/ai-daily/1.0.0
+    gate_policy: hard
+    features: [evidence-backed]
+    contract: &ai_contract
+      min_bytes: 800
+      order: strict
+      forbidden_patterns: ['买入|卖出|加仓|止损|目标价']
+      sections:
+        - {key: hero, patterns: ['^一句话结论$'], level: 2}
+        - {key: focus, patterns: ['^今日重点 · 深度拆解$'], level: 2, required: false}
+        - {key: candidates, patterns: ['^重点候选 · 待验证$'], level: 2, required: false}
+        - {key: capability_axis, patterns: ['^纵轴 · 能力与技术演进$'], level: 2}
+        - {key: adoption_axis, patterns: ['^横轴 · 渗透率$'], level: 2}
+        - {key: capital_policy, patterns: ['^资本与政策$'], level: 2}
+        - {key: tracking, patterns: ['^待跟踪 & 本期变更$'], level: 2}
+    validators: &citation_gate
+      - id: evidence-citations
+        severity: hard
+        config: {min_citations: 1, allow_source_markers: true}
+
+  ai-daily-html:
+    type: html
+    terminal_capability: report.render-html
+    path_glob: reports/ai_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html
+    source_output: ai-daily-markdown
+    contract_version: news/ai-daily/1.0.0
+    gate_policy: hard
+    features: [evidence-backed, preserve-source-text, browser-attestation]
+    contract:
+      <<: *ai_contract
+      browser: &browser
+        script: scripts/_shared/html_report/render_check.py
+
+  macro-daily-markdown:
+    type: markdown
+    terminal_capability: report.finalize-markdown
+    path_glob: reports/macro_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md
+    contract_version: news/macro-daily/1.0.0
+    gate_policy: hard
+    features: [evidence-backed]
+    contract: &macro_contract
+      min_bytes: 800
+      order: strict
+      forbidden_patterns: ['买入|卖出|加仓|止损|目标价']
+      sections:
+        - {key: hero, patterns: ['^一句话结论$'], level: 2}
+        - {key: liquidity, patterns: ['^流动性总图$'], level: 2}
+        - {key: position, patterns: ['^市场相对位置（估值锚）$'], level: 2}
+        - {key: signals, patterns: ['^今日 3 个关键边际信号$'], level: 2}
+        - {key: transmission, patterns: ['^流动性传导推断$'], level: 2}
+        - {key: events, patterns: ['^宏观新闻与数据事件$'], level: 2}
+        - {key: china, patterns: ['^中国政策与流动性$'], level: 2}
+        - {key: us, patterns: ['^美国政策与流动性$'], level: 2}
+        - {key: risks, patterns: ['^反向场景与风险$'], level: 2}
+        - {key: next, patterns: ['^后续观察（24-72h）$'], level: 2}
+        - {key: changes, patterns: ['^🔄 本期变更（框架 × 跟踪合并）$'], level: 2}
+    validators: *citation_gate
+
+  macro-daily-html:
+    type: html
+    terminal_capability: report.render-html
+    path_glob: reports/macro_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html
+    source_output: macro-daily-markdown
+    contract_version: news/macro-daily/1.0.0
+    gate_policy: hard
+    features: [evidence-backed, preserve-source-text, browser-attestation]
+    contract:
+      <<: *macro_contract
+      browser: *browser
+
+  macro-brief-markdown:
+    type: markdown
+    terminal_capability: report.finalize-markdown
+    path_glob: reports/macro_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_brief.md
+    contract_version: news/macro-brief/1.0.0
+    gate_policy: hard
+    features: [evidence-backed]
+    contract: &macro_brief_contract
+      min_bytes: 300
+      forbidden_patterns: ['买入|卖出|加仓|止损|目标价']
+      required_patterns: ['一句话结论', '关键读数', '今日关键边际信号', '月度数据', '反向风险', '跟踪项']
+    validators: *citation_gate
+
+  macro-brief-html:
+    type: html
+    terminal_capability: report.render-html
+    path_glob: reports/macro_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_brief.html
+    source_output: macro-brief-markdown
+    contract_version: news/macro-brief/1.0.0
+    gate_policy: hard
+    features: [evidence-backed, preserve-source-text, browser-attestation]
+    contract:
+      <<: *macro_brief_contract
+      browser: *browser
+
+  geopolitical-daily-markdown:
+    type: markdown
+    terminal_capability: report.finalize-markdown
+    path_glob: reports/geopolitical_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md
+    contract_version: news/geopolitical-daily/1.0.0
+    gate_policy: hard
+    features: [evidence-backed]
+    contract: &geo_contract
+      min_bytes: 800
+      order: strict
+      forbidden_patterns: ['买入|卖出|加仓|止损|目标价']
+      sections:
+        - {key: hero, patterns: ['^一句话结论$'], level: 2}
+        - {key: overview, patterns: ['^战况速览$'], level: 2}
+        - {key: primary, patterns: ['^主战线$'], level: 2}
+        - {key: parallel, patterns: ['^并行战线$'], level: 2}
+        - {key: markets, patterns: ['^能源航运与市场重定价$'], level: 2}
+        - {key: escalation, patterns: ['^升级阶梯与核阈值$'], level: 2}
+        - {key: changes, patterns: ['^本期变更（框架 × 跟踪合并）$'], level: 2}
+    validators: *citation_gate
+
+  geopolitical-daily-html:
+    type: html
+    terminal_capability: report.render-html
+    path_glob: reports/geopolitical_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html
+    source_output: geopolitical-daily-markdown
+    contract_version: news/geopolitical-daily/1.0.0
+    gate_policy: hard
+    features: [evidence-backed, preserve-source-text, browser-attestation]
+    contract:
+      <<: *geo_contract
+      browser: *browser
+
+  geopolitical-brief-markdown:
+    type: markdown
+    terminal_capability: report.finalize-markdown
+    path_glob: reports/geopolitical_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_brief.md
+    contract_version: news/geopolitical-brief/1.0.0
+    gate_policy: hard
+    features: [evidence-backed]
+    contract: &geo_brief_contract
+      min_bytes: 300
+      forbidden_patterns: ['买入|卖出|加仓|止损|目标价']
+      required_patterns: ['一句话判断', '今日边际变化', '主战线与并行战线', '能源/航运/市场', '推演', '跟踪项']
+    validators: *citation_gate
+
+  geopolitical-brief-html:
+    type: html
+    terminal_capability: report.render-html
+    path_glob: reports/geopolitical_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_brief.html
+    source_output: geopolitical-brief-markdown
+    contract_version: news/geopolitical-brief/1.0.0
+    gate_policy: hard
+    features: [evidence-backed, preserve-source-text, browser-attestation]
+    contract:
+      <<: *geo_brief_contract
+      browser: *browser
+
+  custom-daily-markdown:
+    type: markdown
+    terminal_capability: report.finalize-markdown
+    path_glob: reports/custom_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md
+    contract_version: news/custom-daily/1.0.0
+    gate_policy: hard
+    features: [evidence-backed]
+    contract: &custom_contract
+      min_bytes: 500
+      order: strict
+      forbidden_patterns: ['买入|卖出|加仓|止损|目标价']
+      sections:
+        - {key: hero, patterns: ['^一句话结论$'], level: 2}
+        - {key: next, patterns: ['^24-72h 观察点$'], level: 2}
+        - {key: coverage, patterns: ['^覆盖说明$'], level: 2}
+    validators: *citation_gate
+
+  custom-daily-html:
+    type: html
+    terminal_capability: report.render-html
+    path_glob: reports/custom_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html
+    source_output: custom-daily-markdown
+    contract_version: news/custom-daily/1.0.0
+    gate_policy: hard
+    features: [evidence-backed, preserve-source-text, browser-attestation]
+    contract:
+      <<: *custom_contract
+      browser: *browser

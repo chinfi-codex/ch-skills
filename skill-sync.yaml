@@ -52,6 +52,18 @@ shared:
         - a-stock-daily-market-sense
         - ch-tech-explainer
         - us-ai-semi-earnings
+    # 生产输出门禁：声明编译结果的确定性执行器。
+    - source: shared/output_gate
+      dest: scripts/_shared/output_gate
+      skills:
+        - ch-news-reporter
+        - a-stock-daily-market-sense
+    # 生产能力运行时：能力 ID、staging、收据和原子晋级。
+    - source: shared/skill_runtime
+      dest: scripts/_shared/skill_runtime
+      skills:
+        - ch-news-reporter
+        - a-stock-daily-market-sense
     # web_search 能力：Tavily 联网检索（WebFetch/WebSearch 在部分网络下不可达时的主路径）
     - source: shared/web_search
       dest: scripts/_shared/web_search
@@ -83,6 +95,7 @@ exclude:
     - node_modules
     - venv
     - .venv
+    - .staging
   files:
     - benchmark.json
     - benchmark.md
@@ -101,6 +114,9 @@ exclude:
     # ch-news-reporter 运行时残留:watchboard 状态、enrichment targets,运行时自动重建,不进发布包
     - "*watchboard.json"
     - selected_targets.json
+    - .receipts.jsonl
+    - "*.gate-audit.json"
+    - "*.gate-audit.render.json"
   # skill 根级排除：{skill 名: [根下目录名]}，只命中该 skill 根下的目录，
   # 不误伤嵌套同名目录（如 ch-news-reporter/references/reports 仍正常同步）。
   # 被排除目录在 Agent 目标端也不会被镜像删除，运行时产物得以保留。

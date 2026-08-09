@@ -34,6 +34,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - `scripts/` 是可执行代码,一个脚本只做一件原子事
    - `references/` 是模型按需读进上下文的文档
    - `assets/` 是不读但出现在最终产物里的素材(模板、Logo)
+5. **受管 Skill 的生产交付必须可证明**。以 `skill-framework.yaml` 为范围，修改后运行 `python3 scripts/skill_factory.py build-managed`；最终文件只能经 `capabilities.yaml` 的 terminal capability 从 `.staging` 晋级，并同时具备成功 receipt 与通过的 gate audit。`scripts/skill_sync.py` 会拒绝同步过期的 `gate-plan.json`。
 
 ### 反模式(看到要改)
 

@@ -39,6 +39,7 @@ from html_report import (  # noqa: E402
     SectionSpec,
     render_report,
 )
+from dms_output_contract import validate_dms_content  # noqa: E402
 
 
 # --------------------------------------------------------------------------- #
@@ -53,20 +54,58 @@ from html_report import (  # noqa: E402
 # Bump the version whenever references/template/section*.md changes structure.
 # --------------------------------------------------------------------------- #
 DMS_CONTRACT = SectionContract(
-    version="dms/1.1.0",
+    version="dms/1.2.0",
     sections=[
-        SectionSpec("hero_verdict", [r"一句话盘面判断"], level=3),
-        SectionSpec("market_state", [r"市场状态定位"], level=3),
-        SectionSpec("sentiment_trend", [r"情绪趋势"], level=3),
-        SectionSpec("index_trend", [r"^指数趋势"], level=3),
-        SectionSpec("market_style", [r"^市场风格"], level=3),
-        SectionSpec("m3_mainline", [r"^主线判定"], level=3),
-        SectionSpec("m3_leaders", [r"主线领导股"], level=3),
-        SectionSpec("m5_capacity_up", [r"容量上涨明细"], level=3),
-        SectionSpec("m5_monthly_base", [r"月线平台突破明细", r"月线平台突破"], level=3),
-        SectionSpec("m5_early_limit", [r"前涨停明细"], level=3),
-        SectionSpec("m5_discount_relaunch", [r"折扣启动明细"], level=3),
+        SectionSpec("hero_verdict", [r"^一句话盘面判断$"], level=3,
+                    source="references/report_template.md:1"),
+        # 1.1 合并「市场状态 + 盘面定性」（d63d4a2）。旧名保留为兜底模式，
+        # 让改名之前的历史报告仍能解析；新报告按模板写合并后的标题。
+        SectionSpec("market_state", [r"^市场状态与盘面定性$", r"^市场状态定位$"], level=3,
+                    degraded_patterns=[r"市场状态定位不可用[（(].+?[）)]"],
+                    source="references/template/section1.md:3"),
+        SectionSpec("sentiment_trend", [r"^情绪趋势$"], level=3,
+                    source="references/template/section1.md:32"),
+        SectionSpec("index_trend", [r"^指数趋势$"], level=3,
+                    source="references/template/section1.md:53"),
+        SectionSpec("market_style", [r"^市场风格$"], level=3,
+                    degraded_patterns=[r"风格证据不足，不强行定性"],
+                    source="references/template/section1.md:63"),
+        SectionSpec("m2_concentration", [r"^成交额集中度与拥挤度$"], level=2,
+                    source="references/template/section2.md:1"),
+        SectionSpec("m3_mainline", [r"^主线判定$"], level=3,
+                    degraded_patterns=[r"无二星/三星主线，赚钱效应偏资金轮动"],
+                    source="references/template/section3.md:7"),
+        # 唯一允许整节缺席的一节：没有 ★★★ 主线时模板要求连标题带兜底句一起不输出
+        # （d63d4a2）。所以它不是「降级为一句话」，而是真的不在——没有 degraded_patterns。
+        # 在场与否由 _validate_dynamic_catalyst 对着 3.1 的 ★★★ 行数双向判定。
+        SectionSpec("m3_catalyst", [r"^催化与细分线路推演$"], level=3, required=False,
+                    source="references/template/section3.md:27"),
+        SectionSpec("m3_leaders", [r"主线领导股与弹性股"], level=3,
+                    degraded_patterns=[r"(?:领导股尚未浮现|暂无可靠的(?:领导股|弹性股)|(?:领导股|弹性股)证据不足)"],
+                    source="references/template/section3.md:44"),
+        SectionSpec("m4_decline", [r"^亏钱效应（爆量下跌）$"], level=2,
+                    source="references/template/section4.md:1"),
+        SectionSpec("m4_risk_types", [r"^风险类型归纳$"], level=3,
+                    source="references/template/section4.md:5"),
+        SectionSpec("m4_decline_details", [r"^高强度爆量下跌(?:个股)?明细$"], level=3,
+                    source="references/template/section4.md:11"),
+        SectionSpec("m5_capacity_up", [r"^容量上涨明细$"], level=3,
+                    degraded_patterns=[r"暂无命中"],
+                    source="references/template/section5.md:5"),
+        SectionSpec("m5_monthly_base", [r"^(?:全市场)?月线平台突破明细$"], level=3,
+                    degraded_patterns=[r"暂无命中", r"(?:月线|Tushare).*(?:不可用|失败).+"],
+                    source="references/template/section5.md:13"),
+        SectionSpec("m5_early_limit", [r"^10:30 前涨停明细$"], level=3,
+                    degraded_patterns=[r"暂无命中", r"JRJ.*(?:不可用|error|错误)"],
+                    source="references/template/section5.md:21"),
+        SectionSpec("m5_discount_relaunch", [r"^折扣启动明细$"], level=3,
+                    degraded_patterns=[r"暂无命中"],
+                    source="references/template/section5.md:29"),
+        SectionSpec("m5_overlap", [r"^交叉命中上涨归因$"], level=3,
+                    degraded_patterns=[r"今日四组之间无交叉命中股票"],
+                    source="references/template/section5.md:37"),
     ],
+    order="strict",
 )
 
 
@@ -2203,6 +2242,7 @@ def build_job(args) -> RenderJob:
         market_data_path,
     )
     evidence = load_evidence(evidence_path)
+    content_contract_audit = validate_dms_content(markdown_text, evidence, DMS_CONTRACT)
     index_kline_data = extract_index_kline_payload(evidence, evidence_path)
     stock_klines_raw = load_stock_klines(evidence, kline_path)
     stock_kline_source = kline_path if kline_path is not None and kline_path.exists() else evidence_path
@@ -2216,7 +2256,11 @@ def build_job(args) -> RenderJob:
     market_state_payload = extract_market_state_payload(evidence, report_trade_date(input_path))
 
     builder = HtmlReportBuilder(
-        title=title, theme=args.theme, extra_css=MARKET_SENSE_EXTRA_CSS, contract=DMS_CONTRACT
+        title=title,
+        theme=args.theme,
+        extra_css=MARKET_SENSE_EXTRA_CSS,
+        contract=DMS_CONTRACT,
+        contract_audit=content_contract_audit,
     )
     builder.add_decoration(PillDecoration(MARKET_SENSE_PILL_RULES))
     builder.add_ui_decoration(MARKET_STATE_CARD_JS)
@@ -2326,6 +2370,7 @@ def build_job(args) -> RenderJob:
             "market_data_window_end": (market_data.get("metadata") or {}).get("window_end"),
             "market_state_sections": [s["key"] for s in (market_state_payload or {}).get("sections") or []],
             "theme_lifecycle_themes": len(lifecycle_payload["themes"]) if lifecycle_payload else 0,
+            "content_contract": content_contract_audit,
         },
     )
 

@@ -188,6 +188,38 @@ def test_refresh_and_verify_market_chart_data_checks_resolved_date():
         rdp.market_panel.write_market_history_json = original
 
 
+def test_market_history_json_preserves_margin_data_date_as_a_date():
+    original_backend = mp.BACKEND
+    original_reader = mp.read_market_history
+    try:
+        mp.BACKEND = mp.Backend.POSTGRESQL
+        mp.read_market_history = lambda: pd.DataFrame([{
+            "date": "20260807",
+            "rise": 2855,
+            "limit_up": 76,
+            "fall": 2536,
+            "limit_down": 4,
+            "flat": 144,
+            "activity": 51.84,
+            "sentiment": 51.84,
+            "amount": 2683401729.382,
+            "margin_net_buy": 11057565565,
+            "margin_data_date": "20260806",
+            "turnover_rate": 2.6757,
+        }])
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "market_data.json"
+            mp.write_market_history_json(json_path=out)
+            payload = json.loads(out.read_text(encoding="utf-8"))
+        assert "融资数据日" in payload["columns"]
+        assert "margin_data_date" not in payload["columns"]
+        assert payload["records"][0]["融资数据日"] == "20260806"
+        assert "融资数据日" not in payload["series"]
+    finally:
+        mp.BACKEND = original_backend
+        mp.read_market_history = original_reader
+
+
 # --------------------------------------------------------------------------- #
 # Sentiment
 # --------------------------------------------------------------------------- #

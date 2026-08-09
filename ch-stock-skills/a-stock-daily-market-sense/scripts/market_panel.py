@@ -1344,6 +1344,7 @@ def write_market_history_json(
             "sentiment": "情绪值",
             "amount": "成交额",
             "margin_net_buy": "融资净买入",
+            "margin_data_date": "融资数据日",
             "turnover_rate": "全市场换手率",
         }
         raw = read_market_history()
@@ -1391,7 +1392,7 @@ def write_market_history_json(
     records: List[Dict[str, Any]] = []
     numeric_columns: List[str] = []
     for column in columns:
-        if column == "日期":
+        if column in MARKET_HISTORY_DATE_COLUMNS:
             continue
         cleaned_values = [clean_market_history_value(column, value) for value in df[column].tolist()]
         if any(value is not None for value in cleaned_values):

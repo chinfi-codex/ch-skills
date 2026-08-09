@@ -25,7 +25,6 @@ from output_gate.gate import GateExecutionError, run_gate  # noqa: E402
 from skill_runtime.receipts import (  # noqa: E402
     append_receipt,
     artifact_record,
-    find_success,
     read_receipts,
     sha256_file,
 )
@@ -65,8 +64,12 @@ def _staging_path(final_path: Path, run_id: str) -> Path:
     return final_path.parent / ".staging" / run_id / final_path.name
 
 
-def _audit_path(final_path: Path) -> Path:
-    return final_path.with_name(final_path.name + ".gate-audit.json")
+def _audit_path(final_path: Path, run_id: str) -> Path:
+    return final_path.parent / ".audits" / run_id / (final_path.name + ".gate-audit.json")
+
+
+def _staged_audit_path(staged_path: Path, run_id: str) -> Path:
+    return staged_path.with_name(staged_path.name + f".{run_id}.gate-audit.json")
 
 
 def _check_required_env(capability: Mapping[str, Any]) -> None:
@@ -75,8 +78,19 @@ def _check_required_env(capability: Mapping[str, Any]) -> None:
         raise RuntimeFailure(f"required environment variables are missing: {', '.join(missing)}")
 
 
+def _receipt_output_matches(receipt: Mapping[str, Any], path: Path, digest: str) -> bool:
+    return any(
+        Path(str(item.get("path") or "")).resolve() == path.resolve()
+        and item.get("sha256") == digest
+        for item in receipt.get("outputs") or []
+    )
+
+
 def _check_dependencies(
-    capability: Mapping[str, Any], receipts_path: Path, date_key: str
+    capability: Mapping[str, Any],
+    receipts_path: Path,
+    date_key: str,
+    evidence: Sequence[Path],
 ) -> None:
     required = [str(item) for item in (capability.get("requires_receipts") or [])]
     if not required:
@@ -84,10 +98,37 @@ def _check_dependencies(
     if not date_key:
         raise RuntimeFailure("cannot verify required receipts because no YYYY-MM-DD date was found")
     rows = read_receipts(receipts_path)
-    missing = [item for item in required if find_success(rows, capability_id=item, date_key=date_key) is None]
+    matching = {
+        item: [
+            row
+            for row in rows
+            if row.get("status") == "success"
+            and row.get("capability_id") == item
+            and row.get("date_key") == date_key
+        ]
+        for item in required
+    }
+    missing = [item for item, receipts in matching.items() if not receipts]
     if missing:
         raise RuntimeFailure(
             f"missing successful same-date prerequisite receipts: {', '.join(missing)}"
+        )
+    prerequisite_receipts = [receipt for receipts in matching.values() for receipt in receipts]
+    unbound: list[str] = []
+    for path in evidence:
+        if not path.is_file():
+            unbound.append(str(path))
+            continue
+        digest = sha256_file(path)
+        if not any(
+            _receipt_output_matches(receipt, path, digest)
+            for receipt in prerequisite_receipts
+        ):
+            unbound.append(str(path))
+    if unbound:
+        raise RuntimeFailure(
+            "evidence is not an exact output of a successful same-date prerequisite receipt: "
+            + ", ".join(unbound)
         )
 
 
@@ -210,6 +251,7 @@ def execute_capability(
     command: list[str] = []
     subprocess_result: Optional[subprocess.CompletedProcess[str]] = None
     audit: Optional[dict[str, Any]] = None
+    audit_path: Optional[Path] = None
     output_paths: list[Path] = []
     status = "failed"
     error = ""
@@ -217,7 +259,6 @@ def execute_capability(
 
     try:
         _check_required_env(capability)
-        _check_dependencies(capability, receipts_path, date_key)
         if capability["terminal"]:
             if not output_id or output_id not in capability["outputs"]:
                 raise RuntimeFailure(
@@ -230,6 +271,9 @@ def execute_capability(
                 raise RuntimeFailure(
                     f"output {output_id!r} belongs to {declared_terminal!r}, not {capability_id!r}"
                 )
+            if resolved_capture is not None:
+                raise RuntimeFailure("terminal capability does not support --capture-stdout")
+        _check_dependencies(capability, receipts_path, date_key, resolved_evidence)
 
         if capability["kind"] == "finalize":
             if args:
@@ -297,7 +341,7 @@ def execute_capability(
             assert resolved_staging is not None and resolved_final is not None
             if not resolved_staging.is_file():
                 raise RuntimeFailure(f"terminal capability did not create {resolved_staging}")
-            audit_path = _audit_path(resolved_final)
+            audit_path = _staged_audit_path(resolved_staging, run_id)
             audit = run_gate(
                 skill_root=root,
                 gate_plan=registry["gate_plan"],
@@ -314,6 +358,10 @@ def execute_capability(
             if not audit["gate_pass"]:
                 failures = [row["message"] for row in audit["validators"] if row["status"] == "fail"]
                 raise RuntimeFailure("output gate failed: " + "; ".join(failures[:5]))
+            delivered_audit = _audit_path(resolved_final, run_id)
+            delivered_audit.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(audit_path, delivered_audit)
+            audit_path = delivered_audit
             resolved_final.parent.mkdir(parents=True, exist_ok=True)
             os.replace(resolved_staging, resolved_final)
             output_paths = [resolved_final]
@@ -348,10 +396,10 @@ def execute_capability(
             "outputs": [artifact_record(path) for path in output_paths if path.is_file()],
             "evidence": [artifact_record(path) for path in resolved_evidence if path.is_file()],
             "source_artifact": artifact_record(resolved_source) if resolved_source and resolved_source.is_file() else None,
-            "audit": str(_audit_path(resolved_final)) if audit and resolved_final else None,
+            "audit": str(audit_path) if audit and audit_path else None,
             "audit_sha256": (
-                sha256_file(_audit_path(resolved_final))
-                if audit and resolved_final and _audit_path(resolved_final).is_file()
+                sha256_file(audit_path)
+                if audit and audit_path and audit_path.is_file()
                 else None
             ),
             "gate_pass": audit.get("gate_pass") if audit else None,
@@ -390,19 +438,28 @@ def verify_delivery(
     if matching is None:
         raise RuntimeFailure("delivered artifact has no matching successful terminal receipt")
     audit_raw = str(matching.get("audit") or "")
-    if not audit_raw or not Path(audit_raw).is_file():
+    if not audit_raw:
         raise RuntimeFailure("matching receipt has no gate audit")
-    if matching.get("audit_sha256") != sha256_file(Path(audit_raw)):
+    audit_path = _inside(root, Path(audit_raw))
+    if not audit_path.is_file():
+        raise RuntimeFailure("matching receipt has no gate audit")
+    if matching.get("audit_sha256") != sha256_file(audit_path):
         raise RuntimeFailure("gate audit hash does not match the delivery receipt")
-    audit = json.loads(Path(audit_raw).read_text(encoding="utf-8"))
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
     if not audit.get("gate_pass") or audit.get("output_id") != output_id:
         raise RuntimeFailure("matching gate audit is not a passing audit for this output")
+    if audit.get("run_id") != matching.get("run_id"):
+        raise RuntimeFailure("gate audit run_id does not match the delivery receipt")
+    if audit.get("artifact_sha256") != digest:
+        raise RuntimeFailure("gate audit artifact hash does not match the delivered artifact")
+    if Path(str(audit.get("final_path") or "")).resolve() != delivered.resolve():
+        raise RuntimeFailure("gate audit final path does not match the delivered artifact")
     return {
         "verified": True,
         "artifact": str(delivered),
         "sha256": digest,
         "run_id": matching["run_id"],
-        "audit": audit_raw,
+        "audit": str(audit_path),
         "gate_pass": True,
     }
 

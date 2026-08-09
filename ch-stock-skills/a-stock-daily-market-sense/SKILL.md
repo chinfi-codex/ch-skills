@@ -96,7 +96,7 @@ python3 scripts/_shared/skill_runtime/runner.py --skill-root . run report.render
   --theme default
 ```
 
-运行时把结果写到 `.staging/<run_id>/`，完成内容、文本保全和浏览器门禁后才用原子替换写入正式路径。失败时不得发布或 cleanup；保留暂存件、`reports/.receipts.jsonl` 与同名 `*.gate-audit.json`，并在回复中给出 `run_id`、审计路径和首批失败项。完整规则见 `scripts/_shared/output_gate/references/output_gate.md`。
+运行时把结果写到 `.staging/<run_id>/`，核对 evidence 与同日前置收据的路径和 SHA-256，完成内容、文本保全和浏览器门禁后才用原子替换写入正式路径。成功 audit 按运行保存在 `reports/.audits/<run_id>/`；失败时不得发布或 cleanup，保留暂存件、`reports/.receipts.jsonl` 与失败 audit，并在回复中给出 `run_id`、审计路径和首批失败项。完整规则见 `scripts/_shared/output_gate/references/output_gate.md`。
 
 复制到 Site 或上线后仍要复验同一个构建，防止搬运或 CSP 破坏页面：
 

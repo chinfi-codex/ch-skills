@@ -88,4 +88,5 @@ capabilities:
     source_arg: --input
     bound_arg_aliases: [-o, -i]
     fixed_args: [--strict]
+    requires_receipts: [news.prepare-evidence]
     effects: ["fs:reports/*.html"]

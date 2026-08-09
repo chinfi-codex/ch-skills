@@ -63,7 +63,7 @@ DB-first 的取数/回写脚本(`collect_news.py` / `prepare_report_data.py` / `
 
 生产任务只按 `capabilities.yaml` 中的能力 ID 执行，入口为 `scripts/_shared/skill_runtime/runner.py`（源仓库开发态用 `../shared/skill_runtime/runner.py`）。下文直接调用 `scripts/*.py` 的命令仅用于理解参数或底层调试，不形成交付凭证。
 
-模型写报告时只写 `reports/.staging/<文件名>.md`，随后调用 `report.finalize-markdown`；HTML 只调用 `report.render-html`。运行时会按 `outputs.yaml` 编译出的 `gate-plan.json` 校验结构、证据日期、源 Markdown 收据、文本保全和浏览器 attestation，通过后才原子晋级到 `reports/` 正式路径。失败时不得发布或清理，必须保留 `.staging`、`reports/.receipts.jsonl` 和 `*.gate-audit.json`；最终回复必须报告 artifact、`run_id`、audit 与 `gate_pass`。完整规则见 `scripts/_shared/output_gate/references/output_gate.md`。
+模型写报告时只写 `reports/.staging/<文件名>.md`，随后调用 `report.finalize-markdown`；HTML 只调用 `report.render-html`。运行时会按 `outputs.yaml` 编译出的 `gate-plan.json` 校验结构、证据收据与哈希、源 Markdown 收据、文本保全和浏览器 attestation，通过后才原子晋级到 `reports/` 正式路径。成功 audit 按运行保存在 `reports/.audits/<run_id>/`；失败时不得发布或清理，必须保留 `.staging`、`reports/.receipts.jsonl` 和失败 audit。最终回复必须报告 artifact、`run_id`、audit 与 `gate_pass`。完整规则见 `scripts/_shared/output_gate/references/output_gate.md`。
 
 ### 1. 刷新新闻库（DB-first）
 

@@ -29,7 +29,21 @@ from html_report.markdown_engine import render_markdown
 _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?(?:\s*:?-+:?\s*\|)+\s*$")
 _NUMBER_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?%?")
-_FORBIDDEN_TERMS = ("买入", "卖出", "加仓", "止损", "目标价")
+_FORBIDDEN_ADVICE_PATTERNS = {
+    "actionable_trade_instruction": re.compile(
+        r"(?:建议读者|建议投资者|我们建议|操作建议|交易建议|可考虑|应当|应该|宜|请|务必)"
+        r"[^。；\n]{0,24}(?:买入|卖出|加仓|止损)"
+    ),
+    "direct_trade_instruction": re.compile(
+        r"^(?:[-*]\s*)?(?:买入|卖出|加仓|止损)(?:[：:\s]|$)",
+        re.MULTILINE,
+    ),
+    "standalone_price_target": re.compile(
+        r"^(?:[-*]\s*)?(?:目标价|止损价)\s*(?:为|设为|看到|上看|下看|[:：])?"
+        r"\s*(?:人民币|[¥￥$])?\s*\d",
+        re.MULTILINE,
+    ),
+}
 _NUMERIC_EVIDENCE_KEYS = {
     "amount_concentration",
     "market_state",
@@ -93,7 +107,11 @@ def validate_dms_content(
 
     highlight_detail = _validate_highlights(sections, markdown_text, problems)
 
-    forbidden = [term for term in _FORBIDDEN_TERMS if term in markdown_text]
+    forbidden = [
+        name
+        for name, pattern in _FORBIDDEN_ADVICE_PATTERNS.items()
+        if pattern.search(markdown_text)
+    ]
     if forbidden:
         problems.append(f"forbidden trading-advice terms present: {forbidden}")
 

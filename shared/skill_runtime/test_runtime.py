@@ -50,6 +50,20 @@ class RuntimeTest(unittest.TestCase):
                     "terminal": False,
                     "judgment": "forbidden",
                 },
+                "evidence.prepare": {
+                    "kind": "command",
+                    "entry": "scripts/copy.py",
+                    "terminal": False,
+                    "judgment": "forbidden",
+                    "receipt_outputs": ["reports/evidence_*.json"],
+                },
+                "evidence-report.finalize": {
+                    "kind": "finalize",
+                    "terminal": True,
+                    "judgment": "forbidden",
+                    "outputs": ["evidence-report"],
+                    "requires_receipts": ["evidence.prepare"],
+                },
             },
         }
         outputs = {
@@ -73,6 +87,19 @@ class RuntimeTest(unittest.TestCase):
                     "terminal_capability": "report.render",
                     "path_glob": "reports/rendered_*.md",
                     "contract_version": "demo/1",
+                    "contract": {
+                        "min_bytes": 5,
+                        "sections": [
+                            {"key": "hero", "patterns": ["^结论$"], "level": 1}
+                        ],
+                    },
+                },
+                "evidence-report": {
+                    "type": "markdown",
+                    "terminal_capability": "evidence-report.finalize",
+                    "path_glob": "reports/evidence_report_*.md",
+                    "contract_version": "demo/1",
+                    "features": ["evidence-backed"],
                     "contract": {
                         "min_bytes": 5,
                         "sections": [
@@ -165,6 +192,95 @@ class RuntimeTest(unittest.TestCase):
                 user_args=["--output", str(final)],
             )
         self.assertFalse(final.exists())
+
+    def test_terminal_capability_rejects_capture_stdout(self) -> None:
+        source = self.root / "reports" / "source_2026-08-11.md"
+        source.parent.mkdir(parents=True)
+        source.write_text("# 结论\n\n正文。\n", encoding="utf-8")
+        final = self.root / "reports" / "rendered_2026-08-11.md"
+        rogue = self.root / "reports" / "report_2026-08-11.md"
+        with self.assertRaises(RuntimeFailure):
+            execute_capability(
+                skill_root=self.root,
+                capability_id="report.render",
+                output_id="rendered",
+                final_path=final,
+                source_artifact=source,
+                capture_stdout=rogue,
+            )
+        self.assertFalse(rogue.exists())
+        self.assertFalse(final.exists())
+
+    def test_failed_replacement_does_not_invalidate_existing_delivery(self) -> None:
+        final = self.root / "reports" / "report_2026-08-14.md"
+        good = self.root / "reports" / ".staging" / "good" / final.name
+        good.parent.mkdir(parents=True)
+        good.write_text("# 结论\n\n有效正文。\n", encoding="utf-8")
+        first = execute_capability(
+            skill_root=self.root,
+            capability_id="report.finalize",
+            output_id="report",
+            staged_path=good,
+            final_path=final,
+        )
+        bad = self.root / "reports" / ".staging" / "bad" / final.name
+        bad.parent.mkdir(parents=True)
+        bad.write_text("# 错误标题\n\n无效正文。\n", encoding="utf-8")
+        with self.assertRaises(RuntimeFailure):
+            execute_capability(
+                skill_root=self.root,
+                capability_id="report.finalize",
+                output_id="report",
+                staged_path=bad,
+                final_path=final,
+            )
+        verified = verify_delivery(
+            skill_root=self.root,
+            output_id="report",
+            artifact=final,
+            receipt_run_id=first["run_id"],
+        )
+        self.assertTrue(verified["verified"])
+        self.assertTrue(Path(first["audit"]).is_file())
+
+    def test_evidence_must_match_prerequisite_receipt_output(self) -> None:
+        date = "2026-08-15"
+        arbitrary = self.root / "reports" / f"evidence_arbitrary_{date}.json"
+        arbitrary.parent.mkdir(parents=True)
+        arbitrary.write_text('{"source":"unreceipted"}\n', encoding="utf-8")
+        source = self.root / "source.json"
+        source.write_text('{"source":"receipted"}\n', encoding="utf-8")
+        prepared = self.root / "reports" / f"evidence_{date}.json"
+        execute_capability(
+            skill_root=self.root,
+            capability_id="evidence.prepare",
+            user_args=["--input", str(source), "--output", str(prepared)],
+        )
+        final = self.root / "reports" / f"evidence_report_{date}.md"
+        rejected = self.root / "reports" / ".staging" / "rejected" / final.name
+        rejected.parent.mkdir(parents=True)
+        rejected.write_text("# 结论\n\n正文。\n", encoding="utf-8")
+        with self.assertRaises(RuntimeFailure):
+            execute_capability(
+                skill_root=self.root,
+                capability_id="evidence-report.finalize",
+                output_id="evidence-report",
+                staged_path=rejected,
+                final_path=final,
+                evidence=[arbitrary],
+            )
+        accepted = self.root / "reports" / ".staging" / "accepted" / final.name
+        accepted.parent.mkdir(parents=True)
+        accepted.write_text("# 结论\n\n正文。\n", encoding="utf-8")
+        receipt = execute_capability(
+            skill_root=self.root,
+            capability_id="evidence-report.finalize",
+            output_id="evidence-report",
+            staged_path=accepted,
+            final_path=final,
+            evidence=[prepared],
+        )
+        self.assertEqual(receipt["status"], "success")
 
     def test_nonterminal_capability_cannot_target_final_output_glob(self) -> None:
         source = self.root / "source.md"

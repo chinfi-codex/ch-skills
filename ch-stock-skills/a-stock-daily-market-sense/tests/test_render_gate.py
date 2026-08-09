@@ -264,6 +264,13 @@ class DmsContentContractTest(unittest.TestCase):
             validate_dms_content(self.markdown + "\n目标价 20 元。\n", self.evidence, self.contract)
         self.assertIn("forbidden trading-advice", str(ctx.exception))
 
+    def test_factual_buying_language_is_not_treated_as_trading_advice(self) -> None:
+        from dms_output_contract import validate_dms_content
+
+        factual = self.markdown + "\n北向资金当日净买入，央行同时买入国债。\n"
+        audit = validate_dms_content(factual, self.evidence, self.contract)
+        self.assertEqual(audit["status"], "ok")
+
     def test_table_numbers_must_exist_in_complete_evidence(self) -> None:
         from dms_output_contract import _validate_table_numbers
 

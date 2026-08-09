@@ -150,6 +150,54 @@ class OutputGateTest(unittest.TestCase):
             )
             self.assertFalse(audit["gate_pass"])
 
+    def test_trading_advice_policy_allows_factual_buying_language(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "demo"
+            artifact = root / "reports" / ".staging" / "news_2026-08-09.md"
+            final = root / "reports" / "news_2026-08-09.md"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("# 结论\n\n央行买入国债，资金净买入黄金。\n", encoding="utf-8")
+            advice_patterns = [
+                r"(?:建议读者|建议投资者|我们建议|操作建议|交易建议|可考虑|应当|应该|宜|请|务必)[^。；\n]{0,24}(?:买入|卖出|加仓|止损)",
+                r"(?m)^(?:[-*]\s*)?(?:买入|卖出|加仓|止损)(?:[：:\s]|$)",
+                r"(?m)^(?:[-*]\s*)?(?:目标价|止损价)\s*(?:为|设为|看到|上看|下看|[:：])?\s*(?:人民币|[¥￥$])?\s*\d",
+            ]
+            plan = compile_gate_plan(
+                {
+                    "schema_version": 1,
+                    "skill": "demo",
+                    "outputs": {
+                        "news": {
+                            "type": "markdown",
+                            "terminal_capability": "finalize",
+                            "path_glob": "reports/news_*.md",
+                            "contract": {"forbidden_patterns": advice_patterns},
+                        }
+                    },
+                }
+            )
+            audit = run_gate(
+                skill_root=root,
+                gate_plan=plan,
+                output_id="news",
+                artifact=artifact,
+                final_path=final,
+                receipts_path=root / "reports" / ".receipts.jsonl",
+                audit_path=root / "reports" / "audit.json",
+            )
+            self.assertTrue(audit["gate_pass"])
+            artifact.write_text("# 结论\n\n我们建议投资者立即买入。\n", encoding="utf-8")
+            audit = run_gate(
+                skill_root=root,
+                gate_plan=plan,
+                output_id="news",
+                artifact=artifact,
+                final_path=final,
+                receipts_path=root / "reports" / ".receipts.jsonl",
+                audit_path=root / "reports" / "audit-advice.json",
+            )
+            self.assertFalse(audit["gate_pass"])
+
 
 if __name__ == "__main__":
     unittest.main()

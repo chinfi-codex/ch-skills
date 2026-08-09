@@ -99,4 +99,5 @@ capabilities:
     evidence_arg: --evidence
     bound_arg_aliases: [-o, -i]
     fixed_args: [--strict]
+    requires_receipts: [daily.build-evidence]
     effects: ["fs:reports/report_*.html"]

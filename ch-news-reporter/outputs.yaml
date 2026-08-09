@@ -12,7 +12,10 @@ outputs:
     contract: &ai_contract
       min_bytes: 800
       order: strict
-      forbidden_patterns: ['买入|卖出|加仓|止损|目标价']
+      forbidden_patterns: &trading_advice_patterns
+        - '(?:建议读者|建议投资者|我们建议|操作建议|交易建议|可考虑|应当|应该|宜|请|务必)[^。；\n]{0,24}(?:买入|卖出|加仓|止损)'
+        - '(?m)^(?:[-*]\s*)?(?:买入|卖出|加仓|止损)(?:[：:\s]|$)'
+        - '(?m)^(?:[-*]\s*)?(?:目标价|止损价)\s*(?:为|设为|看到|上看|下看|[:：])?\s*(?:人民币|[¥￥$])?\s*\d'
       sections:
         - {key: hero, patterns: ['^一句话结论$'], level: 2}
         - {key: focus, patterns: ['^今日重点 · 深度拆解$'], level: 2, required: false}
@@ -49,7 +52,7 @@ outputs:
     contract: &macro_contract
       min_bytes: 800
       order: strict
-      forbidden_patterns: ['买入|卖出|加仓|止损|目标价']
+      forbidden_patterns: *trading_advice_patterns
       sections:
         - {key: hero, patterns: ['^一句话结论$'], level: 2}
         - {key: liquidity, patterns: ['^流动性总图$'], level: 2}
@@ -85,7 +88,7 @@ outputs:
     features: [evidence-backed]
     contract: &macro_brief_contract
       min_bytes: 300
-      forbidden_patterns: ['买入|卖出|加仓|止损|目标价']
+      forbidden_patterns: *trading_advice_patterns
       required_patterns: ['一句话结论', '关键读数', '今日关键边际信号', '月度数据', '反向风险', '跟踪项']
     validators: *citation_gate
 
@@ -111,7 +114,7 @@ outputs:
     contract: &geo_contract
       min_bytes: 800
       order: strict
-      forbidden_patterns: ['买入|卖出|加仓|止损|目标价']
+      forbidden_patterns: *trading_advice_patterns
       sections:
         - {key: hero, patterns: ['^一句话结论$'], level: 2}
         - {key: overview, patterns: ['^战况速览$'], level: 2}
@@ -143,7 +146,7 @@ outputs:
     features: [evidence-backed]
     contract: &geo_brief_contract
       min_bytes: 300
-      forbidden_patterns: ['买入|卖出|加仓|止损|目标价']
+      forbidden_patterns: *trading_advice_patterns
       required_patterns: ['一句话判断', '今日边际变化', '主战线与并行战线', '能源/航运/市场', '推演', '跟踪项']
     validators: *citation_gate
 
@@ -169,7 +172,7 @@ outputs:
     contract: &custom_contract
       min_bytes: 500
       order: strict
-      forbidden_patterns: ['买入|卖出|加仓|止损|目标价']
+      forbidden_patterns: *trading_advice_patterns
       sections:
         - {key: hero, patterns: ['^一句话结论$'], level: 2}
         - {key: next, patterns: ['^24-72h 观察点$'], level: 2}

@@ -30,7 +30,7 @@ description: 基于 Tushare Pro A 股日线与 Baostock 风格指数生成盘后
 ## 工作流程
 
 1. **生成证据包**：解析日期后运行 `scripts/run_daily_panel.py`，产出完整 evidence、模块级 JSON 与 K 线展示数据；模块 1 同时带三张机判卡——市场状态定位（`market_state`）、极值状态（`extreme_state`，底部出清分 / 顶部拥挤分）与趋势状态卡（`trend_state_card`）。详见 `references/execution_flow.md`。
-2. **分模块撰写**：按最小上下文边界加载各模块 JSON + 方法论 + 模板。模块 3 赚钱效应采用两阶段契约：首轮只输出临时主题映射与 `stars: null`；统计脚本完成后由模型按证据锁定星级，再进入催化与细分线路推演。详见 `references/methodology/module3_money_effect.md` 与 `references/execution_flow.md`。
+2. **分模块撰写**：按最小上下文边界加载各模块 JSON + 方法论 + 模板。模块 3 赚钱效应采用两阶段契约：首轮只输出临时主题映射与 `stars: null`；统计脚本完成后由模型按证据锁定星级，只有存在 ★★★ 主线时才触发 3.2 催化与细分线路推演。详见 `references/methodology/module3_money_effect.md` 与 `references/execution_flow.md`。
 3. **聚合成稿**：读取模块 1-5 输出与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和语气校准。
 4. **生命周期落库与清理**：报告定稿后，把主线判定沉淀进 PG 生命周期台账，然后清理临时 evidence。详见 `references/theme_lifecycle.md` 与 `references/execution_flow.md`。
 
@@ -103,7 +103,7 @@ python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stag
 
 ## 输出规范
 
-完整研报按五个模块输出。每个判断段先给自然语言结论，再选择少量关键证据支撑；表格承载细项数据，段落解释这些数据意味着进攻、分歧、退潮、修复、拥挤还是扩散。模块 1 开头先做市场状态定位（宽基与成长小盘的回撤分层、调整是否接近尾声，证据来自 `market_state` 与 `extreme_state` 两个区块，判断手册见 `references/methodology/market_state_framework.md`）。所有强弱判断都要能回到成交额、放量倍数、涨跌幅、相对收益或回撤证据，但不要把所有可用指标塞进同一段。模块 3 的主题分组只作为内部推理步骤，不输出单独的主题分组陈列表，赚钱效应总览后直接进入主线判定。
+完整研报按五个模块输出。每个判断段先给自然语言结论，再选择少量关键证据支撑；表格承载细项数据，段落解释这些数据意味着进攻、分歧、退潮、修复、拥挤还是扩散。模块 1 开头的 1.1 合并输出市场状态与盘面定性：既做宽基与成长小盘的回撤分层、判断调整是否接近尾声（证据来自 `market_state` 与 `extreme_state`，判断手册见 `references/methodology/market_state_framework.md`），也综合指数、风格与情绪判断共振、背离或分化；不再在模块末尾单列盘面定性。所有强弱判断都要能回到成交额、放量倍数、涨跌幅、相对收益或回撤证据，但不要把所有可用指标塞进同一段。模块 3 的主题分组只作为内部推理步骤，不输出单独的主题分组陈列表，赚钱效应总览后直接进入主线判定。
 
 遵循仓库项目级文风默认：讲人话、减少模板腔；同项罗列用 list 但每条说人话，结构化对照用表格。
 

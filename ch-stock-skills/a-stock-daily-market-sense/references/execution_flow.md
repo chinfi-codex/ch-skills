@@ -17,9 +17,9 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 
 3. **生成首轮模块产物**：模块 1、2、4、5 各自只读自己的 JSON、方法论与模板。模块 3 首轮只根据 `module3_money_effect.json` 归纳临时主题、父主题成员与候选细分成员，先写 `stars: null` 的 `module3_theme_map.json`；不要搜索，也不要在统计前凭手算锁星。有 subagent 时分发最小上下文，没有时按相同边界顺序执行。
 
-4. **统计并锁定模块 3 星级**：运行 `theme_group_stats.py` 生成 `module3_theme_stats.json`，再由模型严格按 Market Evidence Pack 与统计结果写回 `stars: 1/2/3`。星级锁定后，只对当日 ★★/★★★ 主线强制尝试搜索，并按宿主能力选读知识库或产业链资料；★ 级方向不搜索、不做产业推演、不进入 3.2。主 agent 将 Web 结果、可选的宿主知识证据与查询错误压缩成 `module3_enrichment_pack.json`。外部资料只用于解释催化、推演产业变量与挖掘细分线路，绝不回写或上调 3.1 星级。详细搜索、证据和评级纪律见 `references/methodology/catalyst_subline_mining.md`。
+4. **统计并锁定模块 3 星级**：运行 `theme_group_stats.py` 生成 `module3_theme_stats.json`，再由模型严格按 Market Evidence Pack 与统计结果写回 `stars: 1/2/3`。星级锁定后，只对当日 ★★★ 主线强制尝试搜索，并按宿主能力选读知识库或产业链资料；★ 与 ★★ 方向都不搜索、不做产业推演、不进入 3.2。主 agent 将 Web 结果、可选的宿主知识证据与查询错误压缩成 `module3_enrichment_pack.json`。外部资料只用于解释催化、推演产业变量与挖掘细分线路，绝不回写或上调 3.1 星级。详细搜索、证据和评级纪律见 `references/methodology/catalyst_subline_mining.md`。
 
-5. **聚合成稿**：模块 3 第二阶段只读取 theme map、统计结果、enrichment pack、方法论与模板，完成 3.1 主线判定、3.2 催化与细分线路推演、3.3 领导股与弹性股。主 agent 再读取模块 1-5 输出、`assembled_checks.json` 与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。搜索或知识查询失败不阻断日报，但要披露证据缺口并降低产业推演确定性。
+5. **聚合成稿**：模块 3 第二阶段只读取 theme map、统计结果、enrichment pack、方法论与模板，完成 3.1 主线判定和 3.3 领导股与弹性股；仅当存在 ★★★ 主线时才在两者之间输出 3.2 催化与细分线路推演，没有 ★★★ 时整节省略。主 agent 再读取模块 1-5 输出、`assembled_checks.json` 与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。搜索或知识查询失败不阻断日报，但要披露证据缺口并降低产业推演确定性。
 
 6. **主线生命周期落库**：报告定稿后，把当日 3.1 主线判定沉淀进 PG 生命周期台账。先运行 `python3 scripts/theme_lifecycle.py context --asof YYYYMMDD` 取注册表、各主线近期状态与 watchlist；模型完成别名归一（当日临时主题名 → canonical theme_id）和生命周期状态判定（低位启动/在场候选/主线确认/高位分歧/退潮/修复/再聚焦/沉寂），写出 `reports/lifecycle_YYYYMMDD.json` 后运行 `python3 scripts/theme_lifecycle.py record --input reports/lifecycle_YYYYMMDD.json` 落库。脚本只做确定性校验（枚举、状态机转移合法性、theme_id 存在性），判断留给模型；输入格式、状态机与判定基准见 `references/theme_lifecycle.md`。
 

@@ -25,7 +25,7 @@ description: 仅供 a-stock-daily-market-sense 内部按需读取。说明日报
 
 改 `references/template/section*.md` 的章节结构时，**同步升 `DMS_CONTRACT` 的版本号**，否则契约会悄悄和模板失配。
 
-`dms/1.2.0` 同时检查 Markdown 内容，规则一律从 `references/template/section*.md` 投影而来——每个契约条目都带 `source=<模板文件>:<行号>`，改模板就要同步改契约，不允许契约自己猜。
+`dms/1.3.0` 同时检查 Markdown 内容，规则一律从 `references/template/section*.md` 投影而来——每个契约条目都带 `source=<模板文件>:<行号>`，改模板就要同步改契约，不允许契约自己猜。
 
 - **17 个章节，顺序与层级固定**。其中 16 个必填，**只有 3.2 允许整节缺席**：模板规定没有 ★★★ 主线时连标题带兜底句一起不输出，所以它的在场与否是双向硬判定——3.1 有 ★★★ 却没有 3.2 会红，没有 ★★★ 却留着 3.2 也会红。在场时，3.2 里 `### 主线名称（★★★）` 的个数必须等于 3.1 表里的 ★★★ 行数。
 - **降级要有据**。模板为某节写明的降级句（如「暂无命中」「风格证据不足，不强行定性」）命中后记进审计的 `detail.content_contract.degraded`，但只有 evidence 确实是 `available=false` 或候选为空才放行；evidence 里明明有候选却写「暂无命中」＝谎报缺数据，直接红。
@@ -40,7 +40,7 @@ description: 仅供 a-stock-daily-market-sense 内部按需读取。说明日报
 
 形状对不上时装饰会安静退出，报告退回成普通列表——这是刻意的：装饰没生效是观感回退，图表没画出来才是数据回退，两者不该用同一种严厉程度对待。所以卡片不签到，只有状态标尺（`market-state.panel`）签到。
 
-标尺本身是「一个读数 + 它的参照线」重复五遍：回撤分层 / 市场宽度 / 申万一级结构 / 融资余额 / 流动性，各自带独立坐标轴。**轴不共用是刻意的**——回撤 0→-23%、宽度 0→100%、扩散 0→31、融资 ±13%、量能围绕 1.0，硬拉到一根轴上会让本来不可比的条形看起来可比。每格的数值列宽在 Python 侧按最长标签算好（CJK 计双宽）传给 JS，轨道吃剩下的空间；这是因为 SVG 不裁剪，标签超宽会压在条形上而不是被切掉。
+1.1 不再输出 Markdown 表格。标尺直接从 `market_state` evidence 取数，是五个横向维度的完整读数，不能因表格移除而省略。它把「一个读数 + 它的参照线」重复五遍：回撤分层 / 市场宽度 / 申万一级结构 / 融资余额 / 流动性，各自带独立坐标轴。**轴不共用是刻意的**——回撤 0→-23%、宽度 0→100%、扩散 0→31、融资 ±13%、量能围绕 1.0，硬拉到一根轴上会让本来不可比的条形看起来可比。每格的数值列宽在 Python 侧按最长标签算好（CJK 计双宽）传给 JS，轨道吃剩下的空间；这是因为 SVG 不裁剪，标签超宽会压在条形上而不是被切掉。
 
 ## 签到：图表画完要报数
 
@@ -67,7 +67,7 @@ description: 仅供 a-stock-daily-market-sense 内部按需读取。说明日报
 python3 scripts/_shared/html_report/render_check.py --target <本地 HTML> --stage local --out <本地审计文件>
 # 从本地审计文件取 build_id，Site 与线上门禁都必须传 --expect-build
 python3 scripts/_shared/html_report/render_check.py --target <目标> --stage <site|online> \
-  --expect-contract dms/1.2.0 --expect-build <本地审计文件中的 build_id> --out <审计文件>
+  --expect-contract dms/1.3.0 --expect-build <本地审计文件中的 build_id> --out <审计文件>
 ```
 
 三段各查各的问题：

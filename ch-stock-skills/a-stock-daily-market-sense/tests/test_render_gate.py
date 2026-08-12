@@ -129,7 +129,7 @@ class SectionContractTest(unittest.TestCase):
         self.assertEqual(sorted(resolved), sorted(self.contract.required_keys))
 
     def test_phase0_contract_shape_is_complete(self) -> None:
-        self.assertEqual(self.contract.version, "dms/1.2.0")
+        self.assertEqual(self.contract.version, "dms/1.3.0")
         self.assertEqual(self.contract.order, "strict")
         self.assertEqual(len(self.contract.sections), 17)
         # 3.2 is the only section the template lets vanish (no ★★★ → no section).
@@ -375,12 +375,20 @@ class RenderGateTest(unittest.TestCase):
         self.assertTrue(card["warnRow"], "数据提示 row should be called out")
         self.assertFalse(card["leftoverNestedUl"])
 
-    def test_state_rulers_cover_every_table_dimension(self) -> None:
-        """The panel replaces the drawdown ladder, so it has to carry all five
-        rows of the 1.1 table — not just the one the ladder used to draw."""
+    def test_state_rulers_survive_without_the_11_table(self) -> None:
+        """1.1 no longer has a Markdown table, but its evidence-driven panel
+        must still carry all five horizontal dimensions."""
         panel = _eval(self.html, """() => {
+          const heading = window.__sec.head('market_state');
+          let tableCount = 0;
+          let node = heading && heading.nextElementSibling;
+          while (node && !/^H[1-6]$/.test(node.tagName)) {
+            if (node.matches('table, .table-wrap')) tableCount += 1;
+            node = node.nextElementSibling;
+          }
           const secs = [...document.querySelectorAll('.msr-sec')];
           return {
+            tableCount,
             count: secs.length,
             titles: secs.map(s => s.querySelector('.msr-title').textContent),
             rowsPerSec: secs.map(s => s.querySelectorAll('.msr-bar').length),
@@ -389,6 +397,7 @@ class RenderGateTest(unittest.TestCase):
             ladderGone: !document.querySelector('.msc-ladder')
           };
         }""")
+        self.assertEqual(panel["tableCount"], 0, "1.1 Markdown table should stay removed")
         self.assertTrue(panel["ladderGone"], "the old ladder should be gone")
         self.assertEqual(panel["titles"],
                          ["回撤分层", "市场宽度", "申万一级结构", "融资余额", "流动性"])

@@ -54,7 +54,7 @@ from dms_output_contract import validate_dms_content  # noqa: E402
 # Bump the version whenever references/template/section*.md changes structure.
 # --------------------------------------------------------------------------- #
 DMS_CONTRACT = SectionContract(
-    version="dms/1.2.0",
+    version="dms/1.3.0",
     sections=[
         SectionSpec("hero_verdict", [r"^一句话盘面判断$"], level=3,
                     source="references/report_template.md:1"),
@@ -811,9 +811,10 @@ MARKET_STATE_CARD_JS = r"""(function () {
 })();"""
 
 
-# The 1.1 readings as threshold rulers. One generic row renderer serves all five
-# sections because they are all the same statement — a reading against a
-# reference line — and drawing them alike is the whole point.
+# The 1.1 evidence as threshold rulers. These charts are the complete horizontal
+# readout after the Markdown table was removed; they are built directly from
+# market_state rather than parsed from report prose. One generic row renderer
+# serves all five sections because each is a reading against a reference line.
 #
 # Each section keeps its own axis. That is deliberate: 回撤 runs 0→-23%, 宽度
 # 0→100%, 扩散 0→31, 融资 ±13%, 量能 around 1.0. Forcing them onto one scale

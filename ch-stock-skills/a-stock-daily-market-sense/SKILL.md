@@ -104,8 +104,8 @@ python3 scripts/_shared/skill_runtime/runner.py --skill-root . run report.render
 python3 scripts/_shared/html_report/render_check.py --target reports/report_20260429.html --stage local --out reports/report_20260429.render-check-local.json
 # 从上一步审计 JSON 读取 build_id；site/online 必须与本地产物完全一致
 BUILD_ID=$(python3 -c 'import json; print(json.load(open("reports/report_20260429.render-check-local.json"))["build_id"])')
-python3 scripts/_shared/html_report/render_check.py --target <Site 路径>/report_20260429.html --stage site --expect-contract dms/1.2.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-site.json
-python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stage online --expect-contract dms/1.2.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-online.json
+python3 scripts/_shared/html_report/render_check.py --target <Site 路径>/report_20260429.html --stage site --expect-contract dms/1.3.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-site.json
+python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stage online --expect-contract dms/1.3.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-online.json
 ```
 
 退出码：`0` 通过、`1` 失败（**不得部署、不得 cleanup，留着审计文件排查**）、`2` 只跑了 `--static-only` 冒烟不算门禁。Site/online 审计留在 `reports/` 下，不进发布包。
@@ -118,7 +118,7 @@ python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stag
 
 完整研报按五个模块输出。每个判断段先给自然语言结论，再选择少量关键证据支撑；表格承载细项数据，段落解释这些数据意味着进攻、分歧、退潮、修复、拥挤还是扩散。模块 1 开头的 1.1 合并输出市场状态与盘面定性：既做宽基与成长小盘的回撤分层、判断调整是否接近尾声（证据来自 `market_state` 与 `extreme_state`，判断手册见 `references/methodology/market_state_framework.md`），也综合指数、风格与情绪判断共振、背离或分化；不再在模块末尾单列盘面定性。
 
-1.1 的 Markdown 读数按 `references/template/section1.md` 保持状态卡结构；HTML 渲染器会把同源状态表升级为五格**状态标尺**（回撤分层 / 市场宽度 / 申万一级结构 / 融资余额 / 流动性）。引用 `market_state` 任何读数前先检查 `stale_blocks`，并为滞后子块写明各自 `data_through`；状态标尺只改变呈现，不替代正文数字，也不改变 `extreme_state` 与趋势轴的判断纪律。
+1.1 的 Markdown 按 `references/template/section1.md` 保持状态卡结构，**不输出表格**；HTML 渲染器直接从 `market_state` evidence 生成五格**状态标尺**（回撤分层 / 市场宽度 / 申万一级结构 / 融资余额 / 流动性），图表必须保留。引用 `market_state` 任何读数前先检查 `stale_blocks`，并为滞后子块写明各自 `data_through`；关键数字写进状态卡与定性段，状态标尺负责完整横向读数，也不改变 `extreme_state` 与趋势轴的判断纪律。
 
 所有强弱判断都要能回到成交额、放量倍数、涨跌幅、相对收益或回撤证据，但不要把所有可用指标塞进同一段。模块 3 的主题分组只作为内部推理步骤，不输出单独的主题分组陈列表，赚钱效应总览后直接进入主线判定。
 

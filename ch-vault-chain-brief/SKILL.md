@@ -63,7 +63,7 @@ description: 当用户要把 AlphaVault 知识库本周期内新增的 ingest / 
 
 | 脚本 | 职责 | 调用方式 | 返回 |
 |---|---|---|---|
-| `scripts/vault_delta.py` | 按时间窗提取金库摄取登记、wiki 结论、催化事件、地缘状态 | `python3 scripts/vault_delta.py --since 2026-08-03 --until 2026-08-08` | JSON |
+| `scripts/vault_delta.py` | 按时间窗提取金库摄取登记、wiki 结论原文、催化事件、地缘状态 | `python3 scripts/vault_delta.py --since 2026-08-03 --until 2026-08-08` | JSON；`conclusions.rows[].text` 保留可核对的原结论块 |
 | `scripts/macro_snapshot.py` | 按时间窗提取宏观核心指标的区间变动，并做数据健康检查 | `python3 scripts/macro_snapshot.py --start 2026-07-31 --end 2026-08-07` | JSON |
 
 常用变体：

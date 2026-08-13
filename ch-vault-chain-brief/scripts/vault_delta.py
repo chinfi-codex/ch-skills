@@ -56,6 +56,25 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8-sig")
 
 
+def iso_date(value: str) -> str:
+    """Argparse type: accept real ISO calendar dates only."""
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid date {value!r}; expected YYYY-MM-DD") from exc
+
+
+def positive_int(value: str) -> int:
+    """Argparse type for inclusive window sizes and text limits."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid integer {value!r}") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be at least 1")
+    return parsed
+
+
 def load_json(path: Path) -> Any:
     return json.loads(read_text(path))
 
@@ -167,7 +186,8 @@ def extract_conclusions(vault: Path, since: str, until: str) -> Dict[str, Any]:
             continue
         rel = md.relative_to(vault).as_posix()
         for block in CONCLUSION_SPLIT.split(section.group(1)):
-            head = CONCLUSION_HEAD.match(block.strip())
+            conclusion_text = block.strip()
+            head = CONCLUSION_HEAD.match(conclusion_text)
             if not head:
                 continue
             meta = head.group(2)
@@ -187,7 +207,10 @@ def extract_conclusions(vault: Path, since: str, until: str) -> Dict[str, Any]:
                     "weight": first_weight(meta),
                     "confidence": fields[0] if fields else None,
                     "status": fields[1] if len(fields) > 1 else None,
-                    "chars": len(block),
+                    # Keep the original conclusion block. Metadata alone cannot
+                    # support the report's fact/inference and source-weight work.
+                    "text": conclusion_text,
+                    "chars": len(conclusion_text),
                 }
             )
 
@@ -287,8 +310,10 @@ def extract_geo(vault: Path) -> Dict[str, Any]:
 def resolve_window(args: argparse.Namespace) -> tuple[str, str]:
     until = args.until or date.today().isoformat()
     if args.since:
+        if args.since > until:
+            raise ValueError("--since must not be later than --until")
         return args.since, until
-    end = datetime.strptime(until, "%Y-%m-%d").date()
+    end = date.fromisoformat(until)
     if args.days:
         return (end - timedelta(days=args.days - 1)).isoformat(), until
     # 默认按"本周"：结束日所在周的周一
@@ -298,17 +323,18 @@ def resolve_window(args: argparse.Namespace) -> tuple[str, str]:
 def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="提取 AlphaVault 指定时间窗内的摄取与结论增量")
     parser.add_argument("--vault", help="金库根目录；缺省读环境变量 ALPHAVAULT_ROOT")
-    parser.add_argument("--since", help="窗口起始日 YYYY-MM-DD")
-    parser.add_argument("--until", help="窗口结束日 YYYY-MM-DD，默认今天")
-    parser.add_argument("--days", type=int, help="窗口天数（含结束日），与 --since 互斥")
-    parser.add_argument("--week", action="store_true", help="按结束日所在自然周（周一起）取窗口")
+    window = parser.add_mutually_exclusive_group()
+    window.add_argument("--since", type=iso_date, help="窗口起始日 YYYY-MM-DD")
+    window.add_argument("--days", type=positive_int, help="窗口天数（含结束日）")
+    window.add_argument("--week", action="store_true", help="按结束日所在自然周（周一起）取窗口")
+    parser.add_argument("--until", type=iso_date, help="窗口结束日 YYYY-MM-DD，默认今天")
     parser.add_argument(
         "--part",
         default="all",
         choices=["all", "registry", "conclusions", "catalysts", "geo"],
         help="只取某一段，默认全取",
     )
-    parser.add_argument("--desc-chars", type=int, default=220, help="催化事件描述截断长度")
+    parser.add_argument("--desc-chars", type=positive_int, default=220, help="催化事件描述截断长度")
     parser.add_argument("--indent", type=int, default=None, help="JSON 缩进，便于人读")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -328,7 +354,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         print()
         return 2
 
-    since, until = resolve_window(args)
+    try:
+        since, until = resolve_window(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     out: Dict[str, Any] = {
         "vault": str(vault),
         "window": {"since": since, "until": until},

@@ -46,6 +46,25 @@ from db_core import get_connection  # noqa: E402
 MACRO_SCALARS = ("BRENT", "GOLD", "US_TREASURY_10Y", "USD_CNY", "WTI", "NATURAL_GAS", "BTC")
 
 
+def iso_date(value: str) -> str:
+    """Argparse type: accept real ISO calendar dates only."""
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid date {value!r}; expected YYYY-MM-DD") from exc
+
+
+def positive_int(value: str) -> int:
+    """Argparse type for inclusive window sizes and stale-run thresholds."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid integer {value!r}") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be at least 1")
+    return parsed
+
+
 def _rows_to_dicts(cur) -> List[Dict[str, Any]]:
     cols = [c[0] for c in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -156,23 +175,29 @@ def extract_macro(conn, start: str, end: str, stale_days: int) -> Dict[str, Any]
 def resolve_window(args: argparse.Namespace) -> tuple[str, str]:
     end = args.end or date.today().isoformat()
     if args.start:
+        if args.start > end:
+            raise ValueError("--start must not be later than --end")
         return args.start, end
-    stop = datetime.strptime(end, "%Y-%m-%d").date()
+    stop = date.fromisoformat(end)
     if args.days:
         return (stop - timedelta(days=args.days - 1)).isoformat(), end
-    return (stop - timedelta(days=stop.weekday() + 1)).isoformat(), end
+    return (stop - timedelta(days=stop.weekday())).isoformat(), end
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="提取宏观核心指标快照（PG）")
-    parser.add_argument("--start", help="窗口起始日 YYYY-MM-DD；变动幅度以该日为基准")
-    parser.add_argument("--end", help="窗口结束日 YYYY-MM-DD，默认今天")
-    parser.add_argument("--days", type=int, help="窗口天数（含结束日），与 --start 互斥")
-    parser.add_argument("--stale-days", type=int, default=3, help="连续几日同值判为源端卡值")
+    window = parser.add_mutually_exclusive_group()
+    window.add_argument("--start", type=iso_date, help="窗口起始日 YYYY-MM-DD；变动幅度以该日为基准")
+    window.add_argument("--days", type=positive_int, help="窗口天数（含结束日）")
+    parser.add_argument("--end", type=iso_date, help="窗口结束日 YYYY-MM-DD，默认今天")
+    parser.add_argument("--stale-days", type=positive_int, default=3, help="连续几日同值判为源端卡值")
     parser.add_argument("--indent", type=int, default=None, help="JSON 缩进")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    start, end = resolve_window(args)
+    try:
+        start, end = resolve_window(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     out: Dict[str, Any] = {
         "window": {"start": start, "end": end},
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),

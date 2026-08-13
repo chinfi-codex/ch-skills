@@ -38,7 +38,6 @@ groups:
   - CRWV
   - NBIS
   - APLD
-  - IREN
 - name: Semi
   desc: 半导体设备 + 代工（含部分设计端）
   emoji: 🔬
@@ -48,10 +47,7 @@ groups:
   - KLAC
   - ASML
   - AMAT
-  - AVGO
   - INTC
-  - AMD
-  - QCOM
 - name: IGV
   desc: 软件 / SaaS / AI 应用
   emoji: 🧩
@@ -61,8 +57,10 @@ groups:
   - SNOW
   - FIG
   - PLTR
-  - CRWD
   - NOW
+  - CRM
+  - FINT
+  - TEAM
 - name: AI Server
   desc: AI 服务器 / AI Factory 集成商（DELL / HPE / SMCI 等供应链）
   emoji: 🖥️
@@ -70,17 +68,38 @@ groups:
 - name: AI硬件
   desc: ''
   emoji: ''
+  stocks: []
+- name: AI光
+  desc: ''
+  emoji: ''
   stocks:
   - LITE
   - COHR
   - MRVL
   - TSEM
-  - APH
   - CRDO
+  - ALAB
+- name: AI存储
+  desc: ''
+  emoji: ''
+  stocks:
   - MU
   - SNDK
   - WDC
-  - CRDO
+  - SKHY
+- name: AI芯
+  desc: ''
+  emoji: ''
+  stocks:
+  - AVGO
+  - AMD
+  - QCOM
+- name: 太空
+  desc: ''
+  emoji: ''
+  stocks:
+  - SPCX
+  - RKLB
 thresholds:
   drop: -7.0
   rise: 7.0

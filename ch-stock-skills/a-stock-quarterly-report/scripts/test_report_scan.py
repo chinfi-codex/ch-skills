@@ -23,7 +23,7 @@ import report_scan as rs  # noqa: E402
 import cninfo_client as cn  # noqa: E402
 import render_period_html as renderer  # noqa: E402
 import verdict  # noqa: E402
-from store import qfq_adjust_bars  # noqa: E402
+from store import Store, qfq_adjust_bars  # noqa: E402
 
 
 def test_period_arithmetic() -> None:
@@ -219,6 +219,48 @@ def test_reference_scan_returns_latest_rows_without_database() -> None:
     rows = rs.scan_reference_values(
         Pro(), NoStore(), "20260331", "20260402", 0, [], workers=2)
     assert len(rows) == 1 and rows[0]["ann_date"] == "20260402"
+
+
+def test_formal_only_reference_scan_never_calls_forecast() -> None:
+    class Pro:
+        def forecast(self, **_: object) -> pd.DataFrame:
+            raise AssertionError("formal-only must never call Tushare forecast")
+
+        def express(self, **_: object) -> pd.DataFrame:
+            return pd.DataFrame([{
+                "ts_code": "000001.SZ", "ann_date": "20260812",
+                "end_date": "20260630", "revenue": 10.0,
+                "n_income": 2.0, "yoy_net_profit": 30.0,
+            }])
+
+    class ExpressOnlyStore:
+        def upsert_forecast_ref(self, rows: object) -> bool:
+            assert all(row["kind"] == "express" for row in rows)
+            return True
+
+    rows = rs.scan_reference_values(
+        Pro(), ExpressOnlyStore(), "20260630", "20260813", 3, [],
+        workers=2, include_forecast=False,
+    )
+    assert len(rows) == 1 and rows[0]["kind"] == "express"
+
+
+def test_formal_only_cache_query_filters_kind_in_sql() -> None:
+    class CaptureStore(Store):
+        def __init__(self) -> None:
+            self.available = True
+            self.sql = ""
+            self.params = []
+
+        def _rows(self, sql, params, columns):  # type: ignore[no-untyped-def]
+            self.sql = sql
+            self.params = params
+            return []
+
+    store = CaptureStore()
+    assert store.load_forecast_ref("20260630", kinds=("express",)) == {}
+    assert "kind IN (?)" in store.sql
+    assert store.params == ["20260630", "express"]
 
 
 def test_growth_guards() -> None:

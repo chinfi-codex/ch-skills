@@ -42,7 +42,7 @@ description: A 股正式季报/半年报/年报全市场扫描与优秀个股筛
 ## 工作流程
 
 1. **定报告期**：解析用户说的季度/半年/年报；未指定就用当前最新季度末（脚本 `--period` 缺省即"今天之前最近的季度末"）。2026 半年报 → `20260630`。
-2. **跑证据脚本**：交互运行 `python3 scripts/report_scan.py --period 20260630`；自动化先算 `NEXT_ANN_DATE=<北京时间运行日+1>` 再显式传 `--end-ann`。脚本按披露日历发现已披露公司，增量取四张表，扫预告/快报作兑现度参照，按交易日抓全市场前复权日线算断层，最后出三口径、质量、边际、资产负债表信号、兑现度、估值、行业聚合与机械漏斗。产出决策包 `reports/qreport_scan_<period>.json` 与全样本 `reports/qreport_universe_<period>.json`。
+2. **跑证据脚本**：交互运行 `python3 scripts/report_scan.py --period 20260630`；自动化先算 `NEXT_ANN_DATE=<北京时间运行日+1>` 再显式传 `--end-ann`。脚本按披露日历发现已披露公司，增量取四张表，按交易日抓全市场前复权日线算断层，最后出三口径、质量、边际、资产负债表信号、估值、行业聚合与机械漏斗。默认交互模式可扫描预告/快报作兑现度参照；**禁止触碰业绩预告的正式报告单源自动化必须显式传 `--formal-only`**：该模式不调用 Tushare `forecast`，SQL 不读取旧 `kind=forecast` 行，也不写 forecast fetch log，只保留业绩快报 `express` 参照。产出决策包 `reports/qreport_scan_<period>.json` 与全样本 `reports/qreport_universe_<period>.json`。
 3. **模型读证据做初筛**：读决策包（不要读全样本文件，它是给查询和渲染用的）。按方法论**逐股判断是否优秀并排序**——用 `growth`（四条线三口径）、`quality`（三件套）、`margins`（边际 pp）、`balance_signals`（前瞻）、`fulfillment`（兑现度）、`screen.hits`（机械命中，不是结论）。先圈出「强 / 中 / 观察」候选池。
 4. **需要原文才开 PDF**：数字之外的问题——增长来自哪个产品线？管理层怎么解释毛利率变化？非经常损益是处置还是补助？——用 `python3 scripts/report_pdf.py --period 20260630 --code 300750.SZ --sections segment,mdna,nonrecurring`。**不要凭数字编故事**：没读原文就说不出"因为某产品放量"。何时该开、开哪一节、季报和年报的差别见 `references/pdf_on_demand.md`。
 5. **判分 + 质量成色 + 兑现度 + 主线匹配 + 行业趋势落台账**：跑 `python3 scripts/verdict.py context --period 20260630` 拿到待判集合（新披露 + 追溯调整/增速漂移的待复判）、主线注册表（daily-market-sense 的 `theme_registry`，只读）与待判主线的强/弱/无断层成员简报。模型逐只判 **`tier`（强/中/观察/剔除）+ `quality_call`（扎实/尚可/存疑/虚高）+ `fulfillment`（超预告上限/落区间上沿/符合/落区间下沿/低于预告/无预告）+ `theme_id`**，逐主线判 `theme_trends[]`。写 `reports/qreport_verdict_<period>.json`，再 `python3 scripts/verdict.py record --period 20260630 --input reports/qreport_verdict_<period>.json` 落 `qreport_verdict` / `qreport_theme_trend`。台账增量累积，每天只判 context 列出的增量。细则见 `references/verdict_and_html.md`。
@@ -77,6 +77,8 @@ python3 scripts/report_scan.py --period 20260630 --min-rank 8     # 用分数线
 python3 scripts/report_scan.py --period 20260630 --codes 300750.SZ,603986.SH   # 定向核验
 # 自动化/发布：NEXT_ANN_DATE 按北京时间取运行日+1
 python3 scripts/report_scan.py --period 20260630 --end-ann "$NEXT_ANN_DATE"
+# 正式报告单源自动化：禁止读取/扫描/写入任何业绩预告数据
+python3 scripts/report_scan.py --period 20260630 --end-ann "$NEXT_ANN_DATE" --formal-only
 
 # 第二步（按需）：抽正式报告 PDF 的指定章节
 python3 scripts/report_pdf.py --list-sections
@@ -110,6 +112,7 @@ python3 scripts/test_report_scan.py
 | `--no-price` / `--price-lookback` | 跳过断层 / 股价窗口回看天数（决定 `pre_pos_pct` 的样本长度） | 关闭 / 380 |
 | `--gap-min` | 跳空幅度 ≥ N% 记为断层 | 2.0 |
 | `--no-cninfo` | 跳过公告溯源（不影响任何数值） | 关闭 |
+| `--formal-only` | 正式报告单源：禁用 forecast endpoint 与 forecast kind 缓存读写；仅保留快报 express 参照 | 关闭 |
 | `--th-*` | 九个漏斗阈值（营收/利润同比、扣非占比、现金覆盖、ROE、毛利 pp、订单、扩产、gap pp） | 见 `--help` |
 | `--require-ann-cutoff` | 披露截止日门禁，不符返回 2 | 关闭 |
 

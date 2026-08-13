@@ -11,8 +11,9 @@ Pipeline
    current period plus every base period the decomposition needs, so four calls
    cover a stock for good. Rows land in `qreport_fin_cache` keyed by
    (ts_code, cumulative period).
-3. **Reference values** — `forecast(ann_date=…)`日扫 + `express(period=…)` give the
-   预告/快报 the report is measured against (兑现度).
+3. **Reference values** — the default interactive workflow can read forecast +
+   express references.  ``--formal-only`` disables every forecast read/write and
+   keeps only ``express(period=…)`` as an optional official-report reference.
 4. **Prices** — daily bars are fetched **full-market by trade_date** (one call per
    trading day, not per stock) and de-adjusted to qfq, so the 断层 read is
    available for every released stock rather than only the screened ones.
@@ -943,24 +944,27 @@ def screen_block(growth: Dict[str, Dict[str, Any]], quality: Dict[str, Any],
 # Reference values (forecast / express) for 兑现度
 # --------------------------------------------------------------------------- #
 def scan_reference_values(pro: TushareProxy, store: Store, period: str, end_ann: str,
-                          refetch_days: int, notes: List[str],
-                          workers: int = 4) -> List[Dict[str, Any]]:
+                           refetch_days: int, notes: List[str],
+                           workers: int = 4,
+                           include_forecast: bool = True) -> List[Dict[str, Any]]:
     """Populate `qreport_forecast_ref` with 业绩预告 (day-scanned) and 业绩快报.
 
     `forecast` rejects a period-only query, so it is scanned by announcement day
     the way the earnings-forecast skill does; `express` accepts `period=` and is
     a single call.
     """
-    start_ann = shift_ymd(period, -75)
-    days = []
-    d0 = dt.datetime.strptime(start_ann, "%Y%m%d").date()
-    d1 = dt.datetime.strptime(end_ann, "%Y%m%d").date()
-    while d0 <= d1:
-        days.append(d0.strftime("%Y%m%d"))
-        d0 += dt.timedelta(days=1)
-    done = store.logged_forecast_ann_dates(period)
-    cutoff = shift_ymd(end_ann, -max(0, refetch_days))
-    todo = [d for d in days if d not in done or d >= cutoff]
+    todo: List[str] = []
+    if include_forecast:
+        start_ann = shift_ymd(period, -75)
+        days = []
+        d0 = dt.datetime.strptime(start_ann, "%Y%m%d").date()
+        d1 = dt.datetime.strptime(end_ann, "%Y%m%d").date()
+        while d0 <= d1:
+            days.append(d0.strftime("%Y%m%d"))
+            d0 += dt.timedelta(days=1)
+        done = store.logged_forecast_ann_dates(period)
+        cutoff = shift_ymd(end_ann, -max(0, refetch_days))
+        todo = [d for d in days if d not in done or d >= cutoff]
 
     def one(day: str) -> Tuple[str, List[Dict[str, Any]]]:
         df = pro.forecast(ann_date=day, fields=(
@@ -983,7 +987,7 @@ def scan_reference_values(pro: TushareProxy, store: Store, period: str, end_ann:
 
     day_counts: Dict[str, int] = {}
     batch: List[Dict[str, Any]] = []
-    if todo:
+    if include_forecast and todo:
         with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
             for fut in as_completed([pool.submit(one, d) for d in todo]):
                 try:
@@ -1000,7 +1004,7 @@ def scan_reference_values(pro: TushareProxy, store: Store, period: str, end_ann:
         if prev is None or str(row.get("ann_date") or "") > str(prev.get("ann_date") or ""):
             latest[key] = row
     batch = list(latest.values())
-    if store.upsert_forecast_ref(batch):
+    if include_forecast and store.upsert_forecast_ref(batch):
         store.record_forecast_fetch_days(period, day_counts)
 
     try:
@@ -1134,6 +1138,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--price-lookback", type=int, default=380, help="股价窗口起点＝最早披露日往前 N 个日历日")
     ap.add_argument("--gap-min", type=float, default=2.0, help="跳空幅度 ≥ N%% 记为断层")
     ap.add_argument("--no-cninfo", action="store_true", help="跳过 CNInfo 公告溯源（不影响数值）")
+    ap.add_argument(
+        "--formal-only",
+        action="store_true",
+        help=("正式报告单源模式：不调用 Tushare forecast，不读写任何 forecast kind 参照；"
+              "只允许业绩快报 express 作为正式报告兑现度参照"),
+    )
     ap.add_argument("--require-ann-cutoff", default=None, help="断言披露截止日与该值一致，否则非零退出")
     ap.add_argument("--out", default=None, help="决策包输出路径")
     ap.add_argument("--universe-out", default=None, help="全样本紧凑表输出路径")
@@ -1282,10 +1292,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     }
 
     # -- 3. reference values ------------------------------------------------
+    # The automation's formal-only contract is stronger than merely ignoring
+    # forecast fields later: it must never call the forecast endpoint and its
+    # SQL must never read legacy forecast rows.
     fresh_refs = scan_reference_values(
         pro, store, period, end_ann, args.refetch_days, notes,
-        workers=min(4, args.fetch_workers))
-    refs = store.load_forecast_ref(period)
+        workers=min(4, args.fetch_workers),
+        include_forecast=not args.formal_only)
+    reference_kinds = ("express",) if args.formal_only else None
+    refs = store.load_forecast_ref(period, kinds=reference_kinds)
     for row in fresh_refs:
         slot = refs.setdefault(str(row["ts_code"]), {})
         kind = str(row["kind"])
@@ -1515,6 +1530,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             round(released_total / len(scheduled_codes) * 100, 1)
             if scheduled_codes else None),
         "run_scope": run_scope,
+        "evidence_mode": "formal_only" if args.formal_only else "formal_with_references",
+        "reference_mode": "express_only" if args.formal_only else "forecast_and_express",
+        "forecast_reference_access": {
+            "endpoint_called": False if args.formal_only else True,
+            "cache_read": False if args.formal_only else True,
+            "cache_write": False if args.formal_only else True,
+        },
         "primary_source": "tushare_statements",
         "pdf_role": "on_demand_only",
         "cninfo_role": "provenance_and_on_demand_pdf",

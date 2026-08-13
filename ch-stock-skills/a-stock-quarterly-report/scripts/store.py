@@ -572,14 +572,29 @@ class Store:
         except Exception:  # noqa: BLE001
             return False
 
-    def load_forecast_ref(self, period: str) -> Dict[str, Dict[str, Dict[str, Any]]]:
-        """{ts_code: {kind: row}} where kind is 'forecast' or 'express'."""
+    def load_forecast_ref(
+        self,
+        period: str,
+        kinds: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """Load only the requested reference kinds.
+
+        ``kinds=("express",)`` is the formal-only automation boundary: the SQL
+        never reads legacy ``kind='forecast'`` rows.  Leaving ``kinds`` unset
+        preserves the interactive forecast + express workflow.
+        """
         if not self.available:
             return {}
+        requested = tuple(dict.fromkeys(str(kind) for kind in (kinds or ())))
         try:
+            where = "period = ?"
+            params: List[Any] = [period]
+            if requested:
+                where += f" AND kind IN ({', '.join('?' for _ in requested)})"
+                params.extend(requested)
             rows = self._rows(
-                f"SELECT {', '.join(_FCREF_COLS[:-1])} FROM qreport_forecast_ref WHERE period = ?",
-                [period], _FCREF_COLS[:-1],
+                f"SELECT {', '.join(_FCREF_COLS[:-1])} FROM qreport_forecast_ref WHERE {where}",
+                params, _FCREF_COLS[:-1],
             )
         except Exception:  # noqa: BLE001
             return {}

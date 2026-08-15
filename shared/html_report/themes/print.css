@@ -99,7 +99,7 @@ td, th, code, pre { font-feature-settings: "tnum"; }
 .report h3 { font-size: 15px; font-weight: 700; margin: 24px 0 10px; color: var(--ink-1); font-family: Georgia, serif; }
 .report h4 { font-size: 13.5px; font-weight: 700; margin: 16px 0 8px; color: var(--ink-2); font-family: Georgia, serif; }
 .report p { margin: 10px 0; color: var(--ink-1); font-size: 13.5px; line-height: 1.75; }
-.report ul { margin: 10px 0 10px 4px; padding-left: 22px; color: var(--ink-1); }
+.report ul, .report ol { margin: 10px 0 10px 4px; padding-left: 22px; color: var(--ink-1); }
 .report li { margin: 4px 0; font-size: 13.5px; line-height: 1.7; }
 
 .report blockquote {

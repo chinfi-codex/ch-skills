@@ -255,7 +255,7 @@ def extract_stock_kline_payload(raw: dict, source_path: Optional[Path], missing:
             "records": records,
         }
 
-    # 月线平台突破组（5.2）的月线序列：多年底部箱体 + pivot + 突破月，供月线 K 线图。
+    # 月线平台突破组（4.2）的月线序列：多年底部箱体 + pivot + 突破月，供月线 K 线图。
     monthly_raw = raw.get("monthly") if isinstance(raw, dict) else None
     if isinstance(monthly_raw, dict):
         m_by = monthly_raw.get("by_ts_code")
@@ -775,7 +775,7 @@ function insertStockTableKlines() {
   });
 }
 
-// 5.2 全市场月线平台突破：画月线 K 线 + 多年底部箱体阴影 + 箱体上沿 pivot 线 + 突破月标记。
+// 4.2 全市场月线平台突破：画月线 K 线 + 多年底部箱体阴影 + 箱体上沿 pivot 线 + 突破月标记。
 function insertMonthlyBreakoutKlines() {
   const hook = "klines.m5_monthly_base";
   const tableWrap = SEC.find("m5_monthly_base", ".table-wrap");

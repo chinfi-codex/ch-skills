@@ -100,6 +100,19 @@ class ReadabilityTests(unittest.TestCase):
         self.assertIn("<ol><li>子项一</li><li>子项二</li></ol>", rendered)
         self.assertTrue(rendered.startswith("<ul><li>顶层"))
 
+    def test_adjacent_mixed_child_lists_stay_inside_the_parent_item(self) -> None:
+        markdown = "- 顶层\n  1. 第一步\n  - 补充说明\n- 结论\n"
+        rendered = render_markdown(markdown)
+        self.assertEqual(
+            rendered,
+            "<ul><li>顶层<ol><li>第一步</li></ol>"
+            "<ul><li>补充说明</li></ul></li><li>结论</li></ul>",
+        )
+
+    def test_ordered_list_preserves_a_nondefault_start(self) -> None:
+        rendered = render_markdown("3. 第三步\n4. 第四步\n")
+        self.assertEqual(rendered, '<ol start="3"><li>第三步</li><li>第四步</li></ol>')
+
     def test_author_line_breaks_survive_inside_a_paragraph(self) -> None:
         # 事实一行、`→` 推断一行，是作者有意的两行，不能被软合并成一大段。
         markdown = "设备订单强劲，交期拉长至 32 周。\n→ 超级周期从建模进入业绩实证。\n"

@@ -162,7 +162,7 @@ a:hover { text-decoration: underline; }
 .report h3 { font-size: 18px; font-weight: 500; margin: 28px 0 12px; }
 .report h4 { font-size: 15px; font-weight: 500; margin: 20px 0 10px; color: var(--ink-2); }
 .report p { margin: 12px 0; color: var(--ink-2); font-size: 15px; line-height: 1.8; text-wrap: pretty; }
-.report ul { margin: 12px 0 12px 4px; padding-left: 22px; color: var(--ink-2); }
+.report ul, .report ol { margin: 12px 0 12px 4px; padding-left: 22px; color: var(--ink-2); }
 .report li { margin: 6px 0; font-size: 15px; line-height: 1.75; }
 
 .report blockquote {

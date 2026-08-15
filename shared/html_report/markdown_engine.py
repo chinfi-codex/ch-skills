@@ -193,8 +193,8 @@ def render_table(lines: List[str]) -> str:
     return "".join(html_rows)
 
 
-def _list_item(line: str) -> tuple[int, bool, str] | None:
-    """Return ``(indent, ordered, text)`` for a list line, or ``None``.
+def _list_item(line: str) -> tuple[int, bool, int | None, str] | None:
+    """Return ``(indent, ordered, start, text)`` for a list line, or ``None``.
 
     Ordered items (``1.`` / ``2)``) were previously unrecognised and fell
     through to the paragraph buffer, so a numbered summary rendered as one
@@ -202,10 +202,15 @@ def _list_item(line: str) -> tuple[int, bool, str] | None:
     """
     match = re.match(r"^(\s*)[-*]\s+(.+)$", line)
     if match:
-        return len(match.group(1).expandtabs(4)), False, match.group(2)
-    match = re.match(r"^(\s*)\d{1,3}[.)]\s+(.+)$", line)
+        return len(match.group(1).expandtabs(4)), False, None, match.group(2)
+    match = re.match(r"^(\s*)(\d{1,3})[.)]\s+(.+)$", line)
     if match:
-        return len(match.group(1).expandtabs(4)), True, match.group(2)
+        return (
+            len(match.group(1).expandtabs(4)),
+            True,
+            int(match.group(2)),
+            match.group(3),
+        )
     return None
 
 
@@ -217,9 +222,11 @@ def render_list(lines: List[str]) -> str:
 
     def render_level(index: int, indent: int, ordered: bool) -> tuple[str, int]:
         tag = "ol" if ordered else "ul"
-        out = [f"<{tag}>"]
+        start = items[index][2]
+        start_attr = f' start="{start}"' if ordered and start != 1 else ""
+        out = [f"<{tag}{start_attr}>"]
         while index < len(items):
-            item_indent, item_ordered, text = items[index]
+            item_indent, item_ordered, _item_start, text = items[index]
             if item_indent < indent:
                 break
             # A switch between bullets and numbers at the same depth starts a
@@ -236,7 +243,12 @@ def render_list(lines: List[str]) -> str:
 
             index += 1
             out.append(f"<li>{inline_markdown(text)}")
-            if index < len(items) and items[index][0] > indent:
+            # One parent item may contain adjacent child lists of different
+            # kinds (for example numbered steps followed by bullet notes).
+            # Keep consuming child chunks so each one remains inside the
+            # parent's <li>; emitting a later chunk at the current list level
+            # would create invalid HTML such as <ul><li>...</li><ol>...</ol>.
+            while index < len(items) and items[index][0] > indent:
                 nested, index = render_level(index, items[index][0], items[index][1])
                 out.append(nested)
             out.append("</li>")

@@ -16,6 +16,15 @@
 #   创作者 / YouTube(channel feed,仅标题+描述,无字幕): AI Explained / Matthew Berman /
 #     Two Minute Papers / Yannic Kilcher / 3Blue1Brown / Fireship
 #
+# 商业航天信源层(category: space,服务 custom_topics 的 commercial_space 主题):
+#   产业与资本: SpaceNews / Payload / TechCrunch Space
+#   发射与工程: NASASpaceflight / Spaceflight Now / Ars Technica Space
+#   官方与政策: NASA Breaking News / SpacePolicyOnline
+#   区域补充:   European Spaceflight(欧洲民营) / Space.com(广谱,含 ISS 与任务动态)
+#   已核实但不入表: ESA Space News(rssfeed/Our_Activities/Space_News 抓得到但内容停在 2026-01,
+#     每天只会写 feed_empty 诊断行);国内商业航天(蓝箭/天兵/星际荣耀/垣信/中国星网/各院所)
+#     没有可抓的官方 RSS,靠金十电报 + 主题 Tavily 中文 query + AlphaVault 笔记补。
+
 # 已核实但本 skill 抓不到(不入下表,需 enrich/浏览器兜底):
 #   The Rundown AI、Superhuman AI —— beehiiv RSS token 仅客户端注入,SSR HTML 取不到
 #   The Batch(Andrew Ng) —— rss.xml 上游持续返回 HTTP 500
@@ -24,7 +33,7 @@
 # 低于阈值视为"覆盖不足"并重采,避免旧默认"一条即齐"的假覆盖。典型日产量注释在旁。
 collect_min_rows:
   jin10: 300            # 金十电报典型日产量 300-600 条
-  rss: 30               # 34 个 feed,典型日合计 30-80 条
+  rss: 45               # 45 个 feed(含 10 个商业航天源),典型日合计 80-160 条
   github_trending: 20   # 日榜约 25 个仓库
   product_hunt: 10      # featured 日榜约 10-20 个
   hacker_news: 20       # top/best 合并去重后约 30-60 条
@@ -184,4 +193,49 @@ rss:
   - name: Maritime Executive
     url: https://www.maritime-executive.com/rss
     category: geopolitics
+    enabled: true
+
+  # --- 商业航天层(category: space) ---
+  #   服务 custom_topics 的 commercial_space 主题:火箭与发射、卫星与载荷、星座部署、
+  #   深空与空间站、政府合同与政策、一级市场融资。固定三日报按 rss_categories 过滤,
+  #   不会被这一层污染。国内公司与院所无可抓 RSS,由金十 + Tavily 中文检索兜底。
+  - name: SpaceNews
+    url: https://spacenews.com/feed/
+    category: space
+    enabled: true
+  - name: Payload
+    url: https://payloadspace.com/feed/
+    category: space
+    enabled: true
+  - name: TechCrunch Space
+    url: https://techcrunch.com/category/space/feed/
+    category: space
+    enabled: true
+  - name: Ars Technica Space
+    url: https://arstechnica.com/space/feed/
+    category: space
+    enabled: true
+  - name: NASASpaceflight
+    url: https://www.nasaspaceflight.com/feed/
+    category: space
+    enabled: true
+  - name: Spaceflight Now
+    url: https://spaceflightnow.com/feed/
+    category: space
+    enabled: true
+  - name: NASA Breaking News
+    url: https://www.nasa.gov/rss/dyn/breaking_news.rss
+    category: space
+    enabled: true
+  - name: SpacePolicyOnline
+    url: https://spacepolicyonline.com/feed/
+    category: space
+    enabled: true
+  - name: European Spaceflight
+    url: https://europeanspaceflight.com/feed/
+    category: space
+    enabled: true
+  - name: Space.com
+    url: https://www.space.com/feeds/all
+    category: space
     enabled: true

@@ -49,15 +49,19 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = ROOT_DIR / "assets" / "stock_pool.yaml"
 UNIVERSE_PATH = ROOT_DIR / "assets" / "nasdaq_tech_universe.yaml"
 HISTORY_DAYS = 260  # ≈ 52 周的交易日；够算 52 周位置 + 20 日均量 + 20 日趋势
-QQQ_KLINE_DAYS = 120  # 嵌入证据包的 QQQ K 线展示窗口（HTML 头部蜡烛图）
+QQQ_KLINE_DAYS = 120  # 嵌入证据包的大盘 K 线展示窗口（HTML 头部蜡烛图）
+# 大盘 K 线固定画两条：QQQ（观察池唯一基准）+ SOXX（半导体周期的先行参照，只看图不做基准）。
+# 名单由代码持有而不是配置：assets/stock_pool.yaml 每次运行都被飞书同步覆写，写在那边会被抹掉。
+KLINE_INDICES: list[Dict[str, str]] = [
+    {"ticker": "QQQ", "name": "纳指100"},
+    {"ticker": "SOXX", "name": "半导体ETF"},
+]
 GROUP_INDEX_DAYS = QQQ_KLINE_DAYS  # 分组等权 ETF 指数展示窗口（与 QQQ K 线同窗，便于热力墙下方多线对比）
 EVIDENCE_TYPE = "us_market_watchlist_evidence"
 YAHOO_CHART_PATH = "/v8/finance/chart/{ticker}"  # host chosen per attempt by yahoo_get
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "indices": [
-        {"ticker": "QQQ", "name": "纳指100"},
-    ],
+    "indices": [dict(item) for item in KLINE_INDICES],
     "groups": [],
     "thresholds": {
         "drop": -7.0,
@@ -70,11 +74,27 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
+def ensure_kline_indices(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Guarantee every `KLINE_INDICES` ticker is present in `config["indices"]`.
+
+    The sheet keeps its own naming for tickers it already lists (QQQ today); the
+    rest are appended in `KLINE_INDICES` order. Called on every load so a Lark
+    sync that drops SOXX cannot silently remove the second K-line.
+    """
+    indices = [item for item in (config.get("indices") or []) if isinstance(item, dict)]
+    present = {str(item.get("ticker") or "").upper() for item in indices}
+    for item in KLINE_INDICES:
+        if item["ticker"] not in present:
+            indices.append(dict(item))
+    config["indices"] = indices
+    return config
+
+
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     """Load watchlist config and merge missing keys from defaults."""
     path = Path(config_path).expanduser().resolve() if config_path else DEFAULT_CONFIG_PATH
     if not path.exists():
-        return json.loads(json.dumps(DEFAULT_CONFIG))
+        return ensure_kline_indices(json.loads(json.dumps(DEFAULT_CONFIG)))
 
     with path.open("r", encoding="utf-8") as file:
         loaded = yaml.safe_load(file) or {}
@@ -85,7 +105,7 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
             merged[key].update(value)
         else:
             merged[key] = value
-    return merged
+    return ensure_kline_indices(merged)
 
 
 def parse_report_date(value: Optional[str]) -> Optional[date]:

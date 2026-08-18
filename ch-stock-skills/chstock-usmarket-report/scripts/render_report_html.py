@@ -4,11 +4,11 @@
 The Markdown report remains the truth source. This wrapper only builds the
 browser layer: frontmatter stripping, generic Markdown->HTML rendering, and an
 evidence-driven chart hook that visualizes the report's layers —
-大盘+广度 / 板块赚钱效应 / 观察池热力墙 + 分组 ETF 指数对比 / 池外新方向.
+大盘 K 线 / 板块赚钱效应 / 观察池热力墙 + 分组 ETF 指数对比 / 池外新方向.
 
 Chart data sources, all deterministic:
-- evidence JSON (`--evidence`): QQQ + pool snapshots (vs-QQQ / 52w / 量比) +
-  `universe_scan` buckets for the breadth/rotation chart.
+- evidence JSON (`--evidence`): index K-lines (QQQ + SOXX) + pool snapshots
+  (vs-QQQ / 52w / 量比).
 - themes JSON (`--themes`, default outputs/lifecycle_<date>.json): the same
   structured theme blocks the cross-day ledger consumes — reused here so the
   sector money-effect chart has the model's theme grouping without a separate
@@ -111,17 +111,27 @@ const pct0 = v => Number.isFinite(CK.num(v)) ? Math.round(CK.num(v) * 100) + "%"
 const ratX = v => Number.isFinite(CK.num(v)) ? CK.num(v).toFixed(1) + "x" : "—";
 const stars = n => "★".repeat(Math.max(0, Math.min(3, n || 0)));
 
-insertQqqKline();
-insertSectorCharts();
+insertIndexKlines();
+insertSectorChart();
 insertPoolCharts();
 insertNewDirections();
 
-function insertQqqKline() {
-  const k = data.qqq_kline || {};
-  const rows = normalizeRows(k.records).slice(-(k.days_requested || 120));
-  if (rows.length < 2) return;
-  const card = buildKlineCard(rows, k.name || "QQQ", k.days_requested || rows.length);
-  CK.insertAfter(root, ["大盘", "QQQ"], card);
+/* 大盘小节下的指数 K 线：QQQ 与 SOXX 并排一行两列（只有一条时仍走单张宽图）。 */
+function insertIndexKlines() {
+  const prepared = [];
+  (Array.isArray(data.index_klines) ? data.index_klines : []).forEach(k => {
+    const rows = normalizeRows(k.records).slice(-(k.days_requested || 120));
+    if (rows.length >= 2) prepared.push({ meta: k, rows: rows });
+  });
+  if (!prepared.length) return;
+
+  const paired = prepared.length > 1;
+  const cards = prepared.map(item => buildKlineCard(item.rows, item.meta, paired));
+  if (!paired) { CK.insertAfter(root, ["大盘", "QQQ"], cards[0]); return; }
+  const grid = document.createElement("div");
+  grid.className = "kline-grid";
+  cards.forEach(card => grid.appendChild(card));
+  CK.insertAfter(root, ["大盘", "QQQ"], grid);
 }
 
 function normalizeRows(records) {
@@ -135,23 +145,30 @@ function normalizeRows(records) {
     .sort((a, b) => a.trade_date.localeCompare(b.trade_date));
 }
 
-function buildKlineCard(rows, name, displayDays) {
-  const card = CK.card("kline-card", `${name} ${rows.length}日K线`, null);
+function buildKlineCard(rows, meta, compact) {
+  const ticker = meta.ticker || "";
+  const name = meta.name && meta.name !== ticker ? meta.name : "";
+  const displayDays = meta.days_requested || rows.length;
+  const label = [ticker, name].filter(Boolean).join(" · ") || "指数";
+  const card = CK.card("kline-card", `${label} ${rows.length}日K线`, null);
   card.style.position = "relative";
   const first = rows[0], last = rows[rows.length - 1];
+  const change = CK.num(meta.change_pct);
   const sub = document.createElement("div");
   sub.className = "chart-subtitle";
-  sub.textContent = `${CK.fmt.date(first.trade_date)} 至 ${CK.fmt.date(last.trade_date)} · ${rows.length}/${displayDays} 个交易日`;
+  sub.textContent = `${CK.fmt.date(first.trade_date)} 至 ${CK.fmt.date(last.trade_date)} · ${rows.length}/${displayDays} 个交易日`
+    + (Number.isFinite(change) ? ` · 当日 ${fmtPct(change)}` : "");
   card.appendChild(sub);
-  card.appendChild(drawKline(rows, card));
+  card.appendChild(drawKline(rows, card, compact));
   card.appendChild(CK.legend([["K线", "var(--neg)"], ["MA20", "var(--blue)"], ["MA60", "var(--orange)"], ["成交额", "rgba(100,116,139,0.55)"]]));
   return card;
 }
 
-function drawKline(rows, card) {
+function drawKline(rows, card, compact) {
   const { svgEl, svgText } = CK;
   const enriched = rows.map((row, idx) => ({ ...row, idx, ma20: rollingAverage(rows, idx, 20), ma60: rollingAverage(rows, idx, 60) }));
-  const width = 760, height = 300;
+  /* 并排两列时缩窄 viewBox：卡片渲染宽度只剩一半，viewBox 不跟着收会把轴标签缩到看不清。 */
+  const width = compact ? 560 : 760, height = compact ? 320 : 300;
   const pad = { left: 52, right: 14, top: 12, bottom: 22 };
   const usableW = width - pad.left - pad.right;
   const amountPanelH = 52, panelGap = 14;
@@ -221,13 +238,11 @@ function klineAmount(v) {
   return "$" + v.toFixed(0);
 }
 
-function insertSectorCharts() {
-  const grid = CK.grid("chart-grid");
+function insertSectorChart() {
   const sec = sectorMoneyEffectCard(data.themes);
-  const uni = universeRotationCard((data.universe || {}).buckets);
-  if (sec) grid.appendChild(sec);
-  if (uni) grid.appendChild(uni);
-  if (grid.children.length) CK.insertAfter(root, ["板块赚钱效应", "板块"], grid);
+  if (!sec) return;
+  sec.style.margin = "16px 0 8px";
+  CK.insertAfter(root, ["板块赚钱效应", "板块"], sec);
 }
 
 function insertPoolCharts() {
@@ -367,7 +382,8 @@ function sectorMoneyEffectCard(themes) {
     .sort((a, b) => (b.dollar_vol_share || 0) - (a.dollar_vol_share || 0)).slice(0, 10);
   if (!rows.length) return null;
   const c = CK.card("chart-card", "板块赚钱效应", "主题按 dollar-volume 占比 · ★=主线确认度 · 新=池外新方向");
-  const W = 520, rowH = 28, top = 12, bottom = 8, labelW = 158, barMax = W - labelW - 78;
+  /* 独占整行：viewBox 按内容区宽度取，别让浏览器把 520 的图拉伸到两倍字号。 */
+  const W = 940, rowH = 30, top = 12, bottom = 8, labelW = 180, barMax = W - labelW - 90;
   const H = top + rows.length * rowH + bottom;
   const svg = CK.svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
   const maxShare = Math.max(0.01, ...rows.map(r => r.dollar_vol_share || 0));
@@ -382,20 +398,6 @@ function sectorMoneyEffectCard(themes) {
   });
   c.appendChild(svg);
   return c;
-}
-
-/* bucket rotation: 5d vs-QQQ median, green = money in / red = bleeding out */
-function universeRotationCard(buckets) {
-  const rows = (buckets || []).filter(b => Number.isFinite(CK.num(b.median_vs_qqq_5d)))
-    .sort((a, b) => CK.num(b.median_vs_qqq_5d) - CK.num(a.median_vs_qqq_5d))
-    .map(b => ({ label: b.bucket, value: CK.num(b.median_vs_qqq_5d), meta: `${b.up || 0}/${b.down || 0}` }));
-  if (!rows.length) return null;
-  return CK.horizontalBarCard({
-    title: "板块广度与轮动（universe）",
-    subtitle: "各 bucket 5日 vs-QQQ 中位 · 绿=钱流入 / 红=失血 · meta=涨/跌家数",
-    rows,
-    maxRows: 12
-  });
 }
 
 /* 各分组等权合成 ETF 指数，全部 rebase 到 base(=100) 叠在一张图里对比，QQQ 虚线为基准。
@@ -660,6 +662,20 @@ def to_number(value: Any) -> Optional[float]:
     return number if number == number else None
 
 
+def short_name(name: Any, fallback: str) -> str:
+    """First clause of a config name, for chart titles.
+
+    The Lark sheet stores annotations in the same cell as the label (QQQ reads
+    "纳指100；本观察池仅以纳指为大盘锚"), which is far too long for a card title
+    once two K-lines sit side by side.
+    """
+    text = str(name or "").strip()
+    if not text:
+        return fallback
+    head = re.split(r"[；;，,（(]", text)[0].strip()
+    return head or fallback
+
+
 def compact_snapshot(ticker: str, snapshot: Optional[dict], **extra: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(snapshot, dict):
         return None
@@ -688,21 +704,27 @@ def extract_chart_payload(
         }
 
     qqq: Optional[Dict[str, Any]] = None
-    qqq_kline: Optional[Dict[str, Any]] = None
+    index_klines: List[Dict[str, Any]] = []
     for item in evidence.get("indices") or []:
         if not isinstance(item, dict):
             continue
-        ticker = item.get("ticker") or ((item.get("snapshot") or {}).get("ticker"))
-        if str(ticker).upper() == "QQQ":
-            qqq = compact_snapshot("QQQ", item.get("snapshot"), name=(item.get("snapshot") or {}).get("name"))
-            records = item.get("kline_records") or []
-            if records:
-                qqq_kline = {
+        snapshot = item.get("snapshot") or {}
+        ticker = str(item.get("ticker") or snapshot.get("ticker") or "").upper()
+        if not ticker:
+            continue
+        if ticker == "QQQ" and qqq is None:
+            qqq = compact_snapshot("QQQ", item.get("snapshot"), name=snapshot.get("name"))
+        records = item.get("kline_records") or []
+        if records:
+            index_klines.append(
+                {
+                    "ticker": ticker,
                     "records": records,
-                    "name": (item.get("snapshot") or {}).get("name") or "QQQ",
+                    "name": short_name(snapshot.get("name"), ticker),
                     "days_requested": item.get("kline_days_requested"),
+                    "change_pct": to_number(snapshot.get("change_pct")),
                 }
-            break
+            )
 
     groups: List[Dict[str, Any]] = []
     watchlist_rows: List[Dict[str, Any]] = []
@@ -745,22 +767,6 @@ def extract_chart_payload(
                 abnormal.append(row)
     abnormal.sort(key=lambda item: abs(item.get("change_pct") or 0), reverse=True)
 
-    # universe_scan: bucket breadth/rotation (only present with --scan-universe)
-    universe_raw = evidence.get("universe_scan") or {}
-    universe_buckets: List[Dict[str, Any]] = []
-    for bucket in universe_raw.get("buckets") or []:
-        if not isinstance(bucket, dict):
-            continue
-        universe_buckets.append(
-            {
-                "bucket": bucket.get("bucket"),
-                "up": bucket.get("up") or 0,
-                "down": bucket.get("down") or 0,
-                "median_vs_qqq_5d": to_number(bucket.get("median_vs_qqq_5d")),
-                "dollar_volume_million": to_number(bucket.get("dollar_volume_million")),
-            }
-        )
-
     valid_count = len([item for item in watchlist_rows if item.get("change_pct") is not None])
     up_count = len([item for item in watchlist_rows if (item.get("change_pct") or 0) > 0])
 
@@ -772,7 +778,7 @@ def extract_chart_payload(
             "generated_at": evidence.get("generated_at"),
         },
         "index": qqq or {},
-        "qqq_kline": qqq_kline,
+        "index_klines": index_klines,
         "stats": {
             "valid_count": valid_count,
             "up_count": up_count,
@@ -782,7 +788,6 @@ def extract_chart_payload(
         "pool_relative": watchlist_rows,
         "group_indices": evidence.get("group_indices") or {},
         "watchlist_abnormal": abnormal[:12],
-        "universe": {"buckets": universe_buckets},
         "themes": themes or [],
     }
 
@@ -839,8 +844,8 @@ def build_job(args: Any) -> RenderJob:
             "data_date": meta_date,
             "frontmatter_stripped": frontmatter_stripped,
             "charts": {
+                "index_klines": len(payload.get("index_klines") or []),
                 "themes": len(payload.get("themes") or []),
-                "universe_buckets": len((payload.get("universe") or {}).get("buckets") or []),
                 "pool_relative": len(payload.get("pool_relative") or []),
                 "group_index_series": len((payload.get("group_indices") or {}).get("series") or []),
             },

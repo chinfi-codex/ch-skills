@@ -53,6 +53,7 @@ shared:
         - a-stock-daily-market-sense
         - ch-tech-explainer
         - us-ai-semi-earnings
+        - md-pushplus
     # 生产输出门禁：声明编译结果的确定性执行器。
     - source: shared/output_gate
       dest: scripts/_shared/output_gate

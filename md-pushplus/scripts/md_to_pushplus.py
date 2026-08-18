@@ -4,11 +4,17 @@
 这是一个原子工具：只做「渲染 + 发送」两件确定性的事，不做任何内容判断。
 标题、要推送哪个文件、推给哪个群组/渠道，都由调用方（模型/用户）决定后用参数传入。
 
+渲染默认走仓库共享的 `shared/html_report` 主题模板（与各报告型 skill 出的 HTML
+同源，默认 default 主题），推送 template 固定用 PushPlus 的 `html`。
+`--renderer inline` 是降级路径：纯内联样式、体积小，用于对 <style> 支持差的
+老邮件客户端；共享包导入不到时也会自动回落到它，并在 stderr 说明原因。
+
 PushPlus 文档：https://www.pushplus.plus/doc/
 
 用法示例：
     export PUSHPLUS_TOKEN=xxxx
     python md_to_pushplus.py report.md --title "今日宏观日报"
+    python md_to_pushplus.py report.md --theme claude               # 换共享主题
     python md_to_pushplus.py report.md --dry-run --save-html out.html   # 只渲染、不发送
     python md_to_pushplus.py report.md --topic mygroup --channel mail   # 群组/邮件渠道
 """
@@ -22,16 +28,35 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 PUSHPLUS_ENDPOINT = "https://www.pushplus.plus/send"
 # PushPlus 对 content 长度有上限（约 4 万字符），超出会被服务端拒绝。
 CONTENT_LIMIT = 40000
 
+# 共享渲染框架：装包后用 scripts/_shared，开发时回落仓库根的 shared/。
+SCRIPT_ROOT = Path(__file__).resolve().parent
+_BUNDLED_SHARED = SCRIPT_ROOT / "_shared"
+_DEV_SHARED = SCRIPT_ROOT.parents[1] / "shared"
+sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
+
+try:  # 共享包缺失不该让推送整个失败——降级到内联渲染即可。
+    from html_report import HtmlReportBuilder, list_themes  # noqa: E402
+
+    SHARED_THEMES = list_themes()
+    SHARED_IMPORT_ERROR: Optional[str] = None
+except Exception as exc:  # noqa: BLE001 — 任何导入期异常都只降级，不中断
+    HtmlReportBuilder = None  # type: ignore[assignment]
+    SHARED_THEMES = ["default", "claude", "print"]
+    SHARED_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+
+DEFAULT_THEME = "default"
+
 
 # --------------------------------------------------------------------------- #
-# Markdown → HTML（纯标准库，自包含；支持标题/段落/列表/引用/表格/代码/行内样式）
+# 降级渲染：Markdown → HTML（纯标准库，自包含；样式全部内联）
 # --------------------------------------------------------------------------- #
 def _is_table_sep(line: str) -> bool:
     s = line.strip()
@@ -98,7 +123,7 @@ def _render_table(lines: List[str]) -> str:
     return "".join(h)
 
 
-def render_markdown(md: str) -> str:
+def render_markdown_inline(md: str) -> str:
     lines = md.splitlines()
     out: List[str] = []
     para: List[str] = []
@@ -210,9 +235,9 @@ def render_markdown(md: str) -> str:
     return "\n".join(out)
 
 
-def wrap_html(body: str) -> str:
-    """套一层有节制的内联样式容器。PushPlus 网页/邮件渠道会完整渲染；
-    微信公众号渠道会降级，但结构仍可读。"""
+def wrap_html_inline(body: str) -> str:
+    """套一层有节制的内联样式容器。降级路径专用：不依赖 <style>，
+    在过滤样式块的老客户端里也能保住基本排版。"""
     return (
         '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\','
         'PingFang SC,Helvetica,Arial,sans-serif;font-size:15px;color:#24292e;'
@@ -220,6 +245,50 @@ def wrap_html(body: str) -> str:
         + body
         + "</div>"
     )
+
+
+# --------------------------------------------------------------------------- #
+# 默认渲染：shared/html_report 主题模板
+# --------------------------------------------------------------------------- #
+_STYLE_BLOCK_RE = re.compile(r"(<style>)(.*?)(</style>)", re.DOTALL)
+
+
+def slim_css(page_html: str) -> str:
+    """把 <style> 块里的注释和缩进去掉。
+
+    主题 CSS 有一万多字符的注释与缩进，而 PushPlus 的 content 有约 4 万字符上限；
+    推送包里没人读这些注释，省下的额度留给正文。只删注释与行首尾空白、不合并行，
+    选择器和声明本身一个字节不动。
+    """
+
+    def repl(m: "re.Match[str]") -> str:
+        css = re.sub(r"/\*.*?\*/", "", m.group(2), flags=re.DOTALL)
+        kept = [ln.strip() for ln in css.splitlines()]
+        return m.group(1) + "\n".join(ln for ln in kept if ln) + m.group(3)
+
+    return _STYLE_BLOCK_RE.sub(repl, page_html)
+
+
+def render_with_theme(body_md: str, title: str, theme: str, *, meta_text: str) -> str:
+    """用共享主题模板渲染成自包含单页 HTML。
+
+    校验失败只警告不阻断（与 shared/html_report 的 CLI 同策略）：内容与排版解耦，
+    文本保全对不上不该拦住一次推送。
+    """
+    assert HtmlReportBuilder is not None  # 调用方已确认共享包可用
+    builder = HtmlReportBuilder(
+        title=title,
+        theme=theme,
+        meta_text=meta_text,
+        # 推送包要自包含：外链 Google Fonts 在微信/邮件里既加载不稳也没被主题字体族用到。
+        font_links=False,
+    )
+    try:
+        page = builder.render(body_md, validate=True)
+    except RuntimeError as exc:
+        print(f"WARNING: text preservation check failed: {exc}", file=sys.stderr)
+        page = builder.render(body_md, validate=False)
+    return slim_css(page)
 
 
 # --------------------------------------------------------------------------- #
@@ -279,6 +348,11 @@ def main() -> int:
     ap.add_argument("--token", default=os.environ.get("PUSHPLUS_TOKEN", ""),
                     help="PushPlus token (default: $PUSHPLUS_TOKEN)")
     ap.add_argument("--template", default="html", help="PushPlus template (default: html)")
+    ap.add_argument("--renderer", default="theme", choices=["theme", "inline"],
+                    help="theme = shared/html_report theme template (default); "
+                         "inline = self-contained inline-style fallback for clients that strip <style>")
+    ap.add_argument("--theme", default=DEFAULT_THEME, choices=SHARED_THEMES,
+                    help=f"Shared theme name for --renderer theme (default: {DEFAULT_THEME})")
     ap.add_argument("--topic", default="", help="Group code for one-to-many push (optional)")
     ap.add_argument("--channel", default="", help="Channel: wechat|mail|webhook|cp|sms (optional)")
     ap.add_argument("--save-html", default=None, help="Also write the rendered HTML to this path")
@@ -293,18 +367,33 @@ def main() -> int:
     meta, body = strip_frontmatter(md_text)
 
     title = args.title or derive_title(body, meta, md_path.stem)
-    content = wrap_html(render_markdown(body))
+
+    renderer = args.renderer
+    if renderer == "theme" and HtmlReportBuilder is None:
+        print(f"WARNING: shared/html_report unavailable ({SHARED_IMPORT_ERROR}); "
+              "falling back to --renderer inline.", file=sys.stderr)
+        renderer = "inline"
+
+    if renderer == "theme":
+        content = render_with_theme(
+            body, title, args.theme,
+            meta_text=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        )
+        style_note = f"theme:{args.theme}"
+    else:
+        content = wrap_html_inline(render_markdown_inline(body))
+        style_note = "inline"
 
     if args.save_html:
         Path(args.save_html).write_text(content, encoding="utf-8")
-        print(f"Saved HTML → {args.save_html} ({len(content)} chars)")
+        print(f"Saved HTML → {args.save_html} ({len(content)} chars, {style_note})")
 
     if len(content) > CONTENT_LIMIT:
         print(f"WARNING: content is {len(content)} chars, over PushPlus limit ~{CONTENT_LIMIT}. "
               "PushPlus may reject it. Consider splitting the report.", file=sys.stderr)
 
     if args.dry_run:
-        print(f"[dry-run] title={title!r}, content={len(content)} chars, not sent.")
+        print(f"[dry-run] title={title!r}, renderer={style_note}, content={len(content)} chars, not sent.")
         return 0
 
     if not args.token:
@@ -320,7 +409,7 @@ def main() -> int:
 
     print(json.dumps(result, ensure_ascii=False))
     if result.get("code") == 200:
-        print(f"OK: pushed '{title}'.")
+        print(f"OK: pushed '{title}' ({style_note}, {len(content)} chars).")
         return 0
     print(f"FAILED: PushPlus returned code={result.get('code')} msg={result.get('msg')}", file=sys.stderr)
     return 1

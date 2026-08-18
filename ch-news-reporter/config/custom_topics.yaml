@@ -167,26 +167,34 @@ topics:
     status: active
     frequency: daily
     focus: |
-      跟踪全球商业航天产业的实际进度,不写发射流水账——每条事件都要接回下面五条主线之一,
+      跟踪全球商业航天产业的实际进度,不写发射流水账——每条事件都要接回下面四条主线之一,
       并说清它改变了谁的相对位置:
 
       1) 发射与运力:入轨成功/失败、年度发射节奏、可重复使用的复用次数与周转天数、
          单公斤入轨成本、发射工位与发射场产能、新型号首飞与定型进度。
       2) 卫星与载荷:星座在轨数量与组网进度、卫星批产线产能与交付节奏、载荷能力代际
          (相控阵、激光星间链路、直连手机、遥感分辨率与重访)、频轨资源期限压力。
-      3) 地外探索与空间站:探月/火星/小行星任务节点、载人登月计划进度、ISS 退役时间表与
-         商业空间站(Axiom / Vast / Starlab 等)接棒进度、天宫在轨运行与国际合作。
-      4) 订单披露:政府与军方合同(NASA、太空军、欧空局、国内政府采购与军方)的中标方、
+      3) 订单披露:政府与军方合同(NASA、太空军、欧空局、国内政府采购与军方)的中标方、
          金额、周期与交付节点,发射服务与星座采购合同,卫星与载荷的批量订单,上市公司
          公告口径的合同金额,以及订单转收入的兑现进度(签了多少、确认了多少)。
-      5) 产业融资:一级市场融资轮次、金额与估值(标明口径),并购与战略投资,IPO 全流程
+      4) 产业融资:一级市场融资轮次、金额与估值(标明口径),并购与战略投资,IPO 全流程
          节点(辅导备案/受理/问询/递表/注册/发行),老股转让与股权变动,地方产业基金与
          国家级基金的出资,上市公司定增募投中投向航天业务的部分。
 
+      国内同行事件是本主题的重点,单列一条说明:凡是国内同行(民营公司与院所)的具体动作,
+      都算够格增量,不适用"信息量不大就不写"的门槛——对同行相对位置的判断,正是靠这些
+      动作一条条累积出来的。至少要覆盖:战略合作与框架协议的签订、供货与采购协议、产业
+      活动的组织与出席(发布会、论坛、专家会议、开放日、招标会)、火箭进场与转运、总装
+      测试与出厂评审、试车与静力试验、发射与回收试验、发射工位与产线的竣工投产、重要
+      人事与股权变动。按事件性质归进上面四条主线;归不进去的(典型如活动组织、人事变动)
+      就挂在该公司当天的段落里一并说清,不为它单开小节。
+
+      报告结构上国内在前、海外在后:国内按上面四条主线分节写,海外不分主线、全部合并成
+      一节(取舍与篇幅见 references/reports/custom_topic/commercial_space_output.md)。
+
       重点主体分两条线跟。国外:NASA、SpaceX(Starship / Falcon / Starlink)、Blue Origin、
       Rocket Lab、ULA、Arianespace 与 ESA、Amazon Kuiper、AST SpaceMobile、Planet、
-      Intuitive Machines、Firefly、Stoke、Relativity、Sierra Space、Axiom、Vast,以及
-      ISRO / JAXA / Roscosmos 等国家机构。国内:航天科技集团与航天科工(含运载火箭技术研究院、
+      Firefly、Stoke、Relativity,以及 ISRO / JAXA / Roscosmos 等国家机构。国内:航天科技集团与航天科工(含运载火箭技术研究院、
       空间技术研究院、上海航天技术研究院、航天推进技术研究院等院所)、中科院微小卫星创新研究院、
       中国星网与垣信(千帆星座),以及蓝箭航天、天兵科技、星际荣耀、星河动力、中科宇航、
       东方空间、深蓝航天、银河航天、长光卫星、微纳星空、国星宇航等民营公司。
@@ -201,24 +209,24 @@ topics:
       不要用一边的节奏去推断另一边。
 
       边界:低空经济、eVTOL、民航客机、纯天文科普不进本主题,除非与航天主体直接相关
-      (可重复使用飞行器、空天飞机、卫星应用落地场景)。
+      (可重复使用飞行器、空天飞机、卫星应用落地场景)。地外探索与空间站(探月、火星、
+      小行星、载人登月、ISS 与商业空间站、天宫)也不在本主题范围内——这类任务只有在它
+      直接改变某家公司的发射订单、运力占用或产能时,才作为发射与运力那条主线的证据带一句。
     keywords: [
       # --- 国外主体与型号 ---
-      SpaceX, Starship, '"Falcon 9"', '"Falcon Heavy"', Starlink, NASA, Artemis,
+      SpaceX, Starship, '"Falcon 9"', '"Falcon Heavy"', Starlink, NASA,
       '"Blue Origin"', '"New Glenn"', '"Rocket Lab"', Neutron, '"United Launch Alliance"',
       '"Vulcan Centaur"', '"Vulcan rocket"', Arianespace, '"Ariane 6"',
       '"European Space Agency"', Roscosmos, ISRO, JAXA, Kuiper,
-      '"AST SpaceMobile"', '"Planet Labs"', '"Intuitive Machines"', '"Firefly Aerospace"',
-      '"Stoke Space"',
-      '"Relativity Space"', '"Sierra Space"', '"Axiom Space"', '"Space Force"', Starshield,
+      '"AST SpaceMobile"', '"Planet Labs"', '"Firefly Aerospace"', '"Stoke Space"',
+      '"Relativity Space"', '"Space Force"', Starshield,
       # --- 国外通用词(刻意避开 space / constellation 这类会误伤 workspace、
       #     Constellation Energy 的宽词) ---
       satellite, spacecraft, spaceflight, spaceport, '"launch vehicle"', '"orbital launch"',
-      '"space station"', '"deep space"', cislunar, smallsat, '"space startup"',
+      smallsat, '"space startup"',
       # --- 国内主体、型号与任务 ---
       航天, 商业航天, 运载火箭, 可重复使用, 一箭多星, 发射场, 卫星互联网, 卫星制造,
       卫星载荷, 遥感卫星, 星座组网, 低轨, 在轨, 入轨, 星链, 千帆星座, 中国星网, 北斗,
-      空间站, 天宫, 神舟, 天舟, 嫦娥, 探月, 载人登月, 天问, 火星探测, 深空探测,
       长征, 朱雀, 天龙二号, 天龙三号, 引力一号, 力箭, 谷神星, 快舟, 捷龙,
       # 注:星际荣耀的公司全名是"星际荣耀航天科技集团股份有限公司",会连带命中
       #     航天科技集团(CASC)这个词;两个词同时出现在 matched_keywords 时按民营公司算
@@ -285,7 +293,7 @@ topics:
           - "商业航天 民营火箭 卫星互联网 发射 中标 融资 进展"
           - "commercial space launch satellite company contract award"
           - "space startup funding round investment valuation satellite"
-          - "NASA Artemis lunar mission commercial space station ISS transition"
+          - "商业航天 战略合作 签约 中标 火箭出厂 转运 试车 发射工位 竣工"
         max_queries_per_day: 4
       alpha_vault:
         enabled: true
@@ -297,5 +305,5 @@ topics:
           - "wiki/05-行业研判/"
           - "wiki/01-个股词条/"
     state_enabled: true
-    # 五条主线各留 1-2 条 open 跟踪项(订单与融资两条通常最活跃)
+    # 四条主线各留 1-2 条 open 跟踪项(订单与融资两条通常最活跃)
     open_budget: 6

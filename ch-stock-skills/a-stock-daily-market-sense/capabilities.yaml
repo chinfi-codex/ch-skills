@@ -38,13 +38,6 @@ capabilities:
     judgment: forbidden
     effects: [db:alpha_data.dms_extreme_daily, stdout:json]
 
-  daily.compute-market-state:
-    kind: command
-    entry: scripts/market_state_card.py
-    terminal: false
-    judgment: forbidden
-    effects: [db:read, stdout:json]
-
   daily.compute-trend-state:
     kind: command
     entry: scripts/trend_state_card.py

@@ -46,32 +46,26 @@ from dms_output_contract import validate_dms_content  # noqa: E402
 # Section contract — the only place where the report's display titles matter.
 #
 # Section numbers deliberately do not appear in any pattern: they are stripped
-# before matching, because they *do* drift (adding 1.1 市场状态定位 pushed
-# 情绪趋势 from 1.1 to 1.2, which silently detached the trend-chart panel and
-# dumped five charts at the end of the document). Everything downstream
-# addresses these sections by key via ``window.__sec``.
+# before matching, because they *do* drift — adding 1.1 市场状态定位 once pushed
+# 情绪趋势 from 1.1 to 1.2 (silently detaching the trend-chart panel and dumping
+# five charts at the end of the document), and removing that same section in
+# 2026-08 pushed it straight back. Everything downstream addresses these
+# sections by key via ``window.__sec``, so neither move touches the charts.
 #
 # Bump the version whenever references/template/section*.md changes structure.
 # --------------------------------------------------------------------------- #
 DMS_CONTRACT = SectionContract(
-    version="dms/1.3.0",
+    version="dms/1.4.0",
     sections=[
         SectionSpec("hero_verdict", [r"^一句话盘面判断$"], level=3,
                     source="references/report_template.md:1"),
-        # 1.1 合并「市场状态 + 盘面定性」（d63d4a2）。旧名保留为兜底模式，
-        # 让改名之前的历史报告仍能解析；新报告按模板写合并后的标题。
-        SectionSpec("market_state", [r"^市场状态与盘面定性$", r"^市场状态定位$"], level=3,
-                    degraded_patterns=[r"市场状态定位不可用[（(].+?[）)]"],
-                    source="references/template/section1.md:3"),
         SectionSpec("sentiment_trend", [r"^情绪趋势$"], level=3,
-                    source="references/template/section1.md:32"),
+                    source="references/template/section1.md:3"),
         SectionSpec("index_trend", [r"^指数趋势$"], level=3,
-                    source="references/template/section1.md:53"),
+                    source="references/template/section1.md:24"),
         SectionSpec("market_style", [r"^市场风格$"], level=3,
                     degraded_patterns=[r"风格证据不足，不强行定性"],
-                    source="references/template/section1.md:63"),
-        SectionSpec("m2_concentration", [r"^成交额集中度与拥挤度$"], level=2,
-                    source="references/template/section2.md:1"),
+                    source="references/template/section1.md:34"),
         SectionSpec("m3_mainline", [r"^主线判定$"], level=3,
                     degraded_patterns=[r"无二星/三星主线，赚钱效应偏资金轮动"],
                     source="references/template/section3.md:7"),
@@ -261,7 +255,7 @@ def extract_stock_kline_payload(raw: dict, source_path: Optional[Path], missing:
             "records": records,
         }
 
-    # 月线平台突破组（5.2）的月线序列：多年底部箱体 + pivot + 突破月，供月线 K 线图。
+    # 月线平台突破组（4.2）的月线序列：多年底部箱体 + pivot + 突破月，供月线 K 线图。
     monthly_raw = raw.get("monthly") if isinstance(raw, dict) else None
     if isinstance(monthly_raw, dict):
         m_by = monthly_raw.get("by_ts_code")
@@ -366,246 +360,6 @@ def extract_style_series_payload(evidence: dict, display_days: int = 60) -> Opti
     }
 
 
-MARKET_STATE_TIER_CLASS = {"调整": "t-mild", "深度调整": "t-deep", "接近技术性熊市": "t-bear"}
-
-
-def _msc_stamp(block: dict) -> str:
-    """Per-section data date, shown only when it is not the report's own day.
-
-    A section that silently carries a different date is the failure mode this
-    whole card was built to close, so the stamp is part of the picture rather
-    than a footnote under it."""
-    if not block.get("available"):
-        return ""
-    through = str(block.get("data_through") or "")
-    if not through or not block.get("stale_trading_days"):
-        return ""
-    return f"数据日 {through[4:6]}-{through[6:8]}"
-
-
-def _msc_tone(hit: Optional[bool]) -> str:
-    return {True: "pos", False: "neg"}.get(hit, "neutral")
-
-
-def _msc_value_width(rows: List[Dict[str, Any]]) -> int:
-    """Reserve the value column from the widest label the section will draw.
-
-    SVG does not clip: a value label wider than its column overlaps the bar to
-    its left instead of being cut. Measuring here (CJK counts double) and letting
-    the track absorb the remainder keeps that structurally impossible rather than
-    a thing to eyeball after every content change."""
-    widest = 0
-    for row in rows:
-        for key in ("value_label", "delta_label"):
-            label = str(row.get(key) or "")
-            width = sum(2 if ord(ch) > 0x2E80 else 1 for ch in label)
-            widest = max(widest, width)
-    return max(56, min(126, int(widest * 6.3) + 10))
-
-
-def extract_market_state_payload(evidence: dict, trade_date: Optional[str]) -> Dict[str, Any]:
-    """The 1.1 readings as threshold rulers — one section per table dimension.
-
-    Every row of the 1.1 table is the same kind of statement: *a reading placed
-    against a reference threshold* (回撤 vs 10%/20%, 宽度 vs 17%/50%, 扩散 vs 10,
-    融资 vs 走平, 量能 vs 20 日均). Drawing them all the same way is what makes
-    "离确认还有多远" readable at a glance instead of five separate mental
-    conversions. Each section keeps its own axis — the scales are genuinely
-    different, and stretching them onto one would be a lie about magnitude.
-
-    Always returns a payload; ``sections`` empty plus ``skip_reason`` when there
-    is nothing to draw, so the hook can attest a *named* gap instead of
-    vanishing. The one hard gate is the date: an evidence file left over from a
-    previous run would otherwise put yesterday's readings under today's heading.
-    """
-    state = (evidence or {}).get("market_state") or {}
-    if not state.get("available"):
-        return {"sections": [], "skip_reason": "evidence has no available market_state"}
-
-    asof = str(state.get("asof") or "").replace("-", "")
-    if trade_date and asof and asof != trade_date:
-        return {"sections": [], "skip_reason": f"market_state.asof={asof} does not match report date {trade_date}"}
-
-    position = state.get("index_position") or {}
-    breadth = state.get("breadth") or {}
-    industries = state.get("sw_industries") or {}
-    margin = state.get("margin_trend") or {}
-    liquidity = state.get("liquidity") or {}
-    checks = {c.get("key"): c for c in ((state.get("confirmation") or {}).get("checks") or [])}
-
-    sections: List[Dict[str, Any]] = []
-
-    # 1) 回撤分层 — the judgment is 权重 vs 成长小盘, so each group is one span
-    # bar rather than six separate bars. The span *is* the 分层 statement.
-    entries = [
-        item for item in (position.get("indexes") or [])
-        if item.get("drawdown_from_high_250d_pct") is not None
-    ]
-    if position.get("available") and entries:
-        bounds = [float(b) for b in (position.get("tier_bounds_pct") or [10, 20])]
-        depths = [abs(float(i["drawdown_from_high_250d_pct"])) for i in entries]
-        axis_max = max(max(depths) * 1.12, bounds[-1] * 1.15)
-        rows = []
-        for group in ("权重", "成长小盘"):
-            members = [i for i in entries if i.get("group_label") == group]
-            if not members:
-                continue
-            members.sort(key=lambda i: abs(float(i["drawdown_from_high_250d_pct"])))
-            lo = abs(float(members[0]["drawdown_from_high_250d_pct"]))
-            hi = abs(float(members[-1]["drawdown_from_high_250d_pct"]))
-            deepest_tier = members[-1].get("tier")
-            rows.append({
-                "label": group,
-                "span": [round(lo, 2), round(hi, 2)],
-                "value_label": (f"-{lo:.2f}%" if len(members) == 1 else f"-{lo:.2f}% ~ -{hi:.2f}%"),
-                "detail": " · ".join(str(i.get("name")) for i in members),
-                "tone_class": MARKET_STATE_TIER_CLASS.get(deepest_tier or "", "t-mild"),
-                "tier": deepest_tier,
-            })
-        sections.append({
-            "key": "drawdown",
-            "title": "回撤分层",
-            "unit": "距 250 交易日盘中高点",
-            "stamp": _msc_stamp(position),
-            "axis": {"min": 0, "max": round(axis_max, 2), "suffix": "%"},
-            "value_width": _msc_value_width(rows),
-            "bands": [
-                {"to": bounds[0], "tone_class": "t-mild", "label": "调整"},
-                {"to": bounds[1], "tone_class": "t-deep", "label": "深度调整"},
-                {"to": round(axis_max, 2), "tone_class": "t-bear", "label": "接近熊市"},
-            ],
-            "rows": rows,
-        })
-
-    # 2) 市场宽度 — 0–100 with the manual's 低位 / 确认 marks
-    if breadth.get("available") and breadth.get("pct_above_ma20") is not None:
-        def _breadth_row(label, key, tone="neutral"):
-            value = breadth.get(key)
-            if value is None:
-                return None
-            delta = breadth.get(f"{key}_delta_1d")
-            return {
-                "label": label,
-                "value": round(float(value), 2),
-                "value_label": f"{float(value):.2f}%",
-                "delta_label": f"{float(delta):+.2f}pct" if isinstance(delta, (int, float)) else "",
-                "tone_class": f"v-{tone}",
-            }
-        rows = [
-            _breadth_row("站上 20 日线", "pct_above_ma20"),
-            _breadth_row("站上 60 日线", "pct_above_ma60",
-                         _msc_tone((checks.get("breadth_recovery") or {}).get("hit"))),
-            _breadth_row("60 日收益为正", "pct_positive_ret_60d"),
-        ]
-        sections.append({
-            "key": "breadth",
-            "title": "市场宽度",
-            "unit": "前复权，占全市场",
-            "stamp": _msc_stamp(breadth),
-            "axis": {"min": 0, "max": 100, "suffix": "%"},
-            "value_width": _msc_value_width([r for r in rows if r]),
-            "ticks": [
-                {"at": 17, "label": "低位 17"},
-                {"at": 50, "label": "确认 50"},
-            ],
-            "rows": [r for r in rows if r],
-        })
-
-    # 3) 申万一级结构 — scale is the count of industries that actually have data
-    total = industries.get("count_positive_60d_total") or industries.get("count_above_ma60_total")
-    if industries.get("available") and industries.get("count_positive_60d") is not None and total:
-        pos, above = industries.get("count_positive_60d"), industries.get("count_above_ma60")
-        prev = industries.get("count_positive_60d_prev")
-        rows = [{
-            "label": "60 日收益为正",
-            "value": int(pos),
-            "value_label": f"{pos}/{total}",
-            "delta_label": f"前值 {prev}" if isinstance(prev, int) else "",
-            "tone_class": f"v-{_msc_tone((checks.get('industry_diffusion') or {}).get('hit'))}",
-        }]
-        if above is not None:
-            rows.append({
-                "label": "站上 60 日线",
-                "value": int(above),
-                "value_label": f"{above}/{industries.get('count_above_ma60_total') or total}",
-                "delta_label": "",
-                "tone_class": "v-neutral",
-            })
-        sections.append({
-            "key": "industries",
-            "title": "申万一级结构",
-            "unit": f"{total} 个有效行业",
-            "stamp": _msc_stamp(industries),
-            "axis": {"min": 0, "max": int(total), "suffix": ""},
-            "value_width": _msc_value_width(rows),
-            "ticks": [{"at": 10, "label": "确认 10"}],
-            "rows": rows,
-        })
-
-    # 4) 融资余额 — diverging around zero; the question is direction, not level
-    if margin.get("available") and margin.get("chg_5d_pct") is not None:
-        moves = [margin.get("chg_5d_pct"), margin.get("chg_20d_pct")]
-        span = max(abs(float(v)) for v in moves if v is not None) * 1.2 or 1.0
-        rows = []
-        for label, key in (("5 日", "chg_5d_pct"), ("20 日", "chg_20d_pct")):
-            value = margin.get(key)
-            if value is None:
-                continue
-            rows.append({
-                "label": label,
-                "value": round(float(value), 2),
-                "value_label": f"{float(value):+.2f}%",
-                "delta_label": "",
-                "tone_class": "v-pos" if float(value) > 0 else "v-neg",
-            })
-        days = margin.get("days_since_20d_low")
-        sections.append({
-            "key": "margin",
-            "title": "融资余额",
-            "unit": f"{margin.get('latest')} 亿·T-1",
-            "stamp": _msc_stamp(margin) or (f"数据日 {str(margin.get('data_through'))[4:6]}-{str(margin.get('data_through'))[6:8]}"
-                                            if margin.get("data_through") else ""),
-            "axis": {"min": round(-span, 2), "max": round(span, 2), "suffix": "%"},
-            "value_width": _msc_value_width(rows),
-            "ticks": [{"at": 0, "label": "走平"}],
-            "rows": rows,
-            "footnote": (
-                ("当日即 20 日新低" if margin.get("is_new_low_20d") else f"距 20 日低点 {days} 日")
-                if days is not None else ""
-            ),
-        })
-
-    # 5) 流动性 — the reference is its own 20-day average, so the axis is a ratio
-    if liquidity.get("available") and liquidity.get("ratio") is not None:
-        ratio = float(liquidity["ratio"])
-        span = max(0.35, abs(ratio - 1.0) * 1.6)
-        sections.append({
-            "key": "liquidity",
-            "title": "流动性",
-            "unit": f"{liquidity.get('amount_today_yi')} 亿 / 20 日均 {liquidity.get('amount_ma20_yi')} 亿",
-            "stamp": _msc_stamp(liquidity),
-            "axis": {"min": round(1.0 - span, 2), "max": round(1.0 + span, 2), "suffix": "x"},
-            "baseline": 1.0,
-            "ticks": [{"at": 1.0, "label": "20 日均量"}],
-            "value_width": 56,
-            "rows": [{
-                "label": "量能比值",
-                "value": round(ratio, 3),
-                "value_label": f"{ratio:.2f}x",
-                "delta_label": "",
-                "tone_class": "v-pos" if ratio >= 1.0 else "v-neg",
-            }],
-        })
-
-    if not sections:
-        return {"sections": [], "skip_reason": "no market_state sub-block carries a drawable reading"}
-    return {
-        "title": "状态标尺",
-        "subtitle": "每格是一个读数与它的参照线：竖标为阈值，条形为当前位置",
-        "sections": sections,
-    }
-
-
 # --------------------------------------------------------------------------- #
 # Decorations: pill vocabulary + "一句话盘面判断" hero card (mechanism lives in
 # the shared package; here we only declare the market-sense-specific data).
@@ -626,57 +380,6 @@ MARKET_SENSE_PILL_RULES = [
 
 HERO_KEYWORDS = "上证|创业板|科创50|国证2000|中证红利|半导体设备与材料|电力能源"
 MARKET_SENSE_EXTRA_CSS = """
-.market-state-card { border: 1px solid var(--line-2); border-radius: 12px; padding: 14px 18px 16px; margin: 14px 0 22px; background: rgba(127,127,127,.05); }
-.market-state-card .msc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-.market-state-card .msc-badge { font-weight: 700; font-size: 13px; padding: 3px 12px; border-radius: 999px; white-space: nowrap; }
-.market-state-card .msc-badge .msc-badge-k { font-weight: 500; opacity: .72; margin-right: 5px; }
-.market-state-card .t-mild { background: rgba(127,127,127,.16); color: var(--ink-2, #555); }
-.market-state-card .t-deep { background: rgba(230,160,30,.18); color: #b9770e; }
-.market-state-card .t-bear { background: rgba(220,60,60,.16); color: #c0392b; }
-.market-state-card .msc-score { margin-left: auto; font-size: 12.5px; font-weight: 600; padding: 3px 11px; border-radius: 999px; white-space: nowrap; }
-.market-state-card .msc-score.s-pos { background: rgba(40,160,90,.14); color: #1e8449; }
-.market-state-card .msc-score.s-warn { background: rgba(230,160,30,.16); color: #b9770e; }
-.market-state-card .msc-score.s-neg { background: rgba(220,60,60,.14); color: #c0392b; }
-.market-state-card .msc-checks { display: grid; gap: 6px; margin: 0 0 10px; }
-.market-state-card .msc-check { display: grid; grid-template-columns: 20px 1fr; align-items: baseline; gap: 8px; font-size: 13px; line-height: 1.6; padding: 6px 10px; border-radius: 8px; background: rgba(127,127,127,.05); border-left: 3px solid transparent; }
-.market-state-card .msc-check.k-hit { border-left-color: #1e8449; background: rgba(40,160,90,.07); }
-.market-state-card .msc-check.k-miss { border-left-color: rgba(220,60,60,.55); }
-.market-state-card .msc-check.k-open { border-left-color: rgba(127,127,127,.45); }
-.market-state-card .msc-mark { font-weight: 700; text-align: center; font-family: var(--font-mono); }
-.market-state-card .k-hit .msc-mark { color: #1e8449; }
-.market-state-card .k-miss .msc-mark { color: #c0392b; }
-.market-state-card .k-open .msc-mark { color: var(--ink-3); }
-.market-state-card .msc-checks-title { font-size: 12px; color: var(--ink-3); margin-bottom: 4px; }
-.market-state-card ul { margin: 0; padding: 0; list-style: none; }
-.market-state-card > ul > li { padding: 6px 0; border-top: 1px dashed var(--line-2); font-size: 13px; line-height: 1.65; }
-.market-state-card > ul > li:first-child { border-top: 0; }
-.market-state-card > ul > li.msc-warn { border-top: 0; margin-top: 8px; padding: 7px 11px; border-radius: 8px; background: rgba(230,160,30,.10); border-left: 3px solid rgba(230,160,30,.6); }
-.market-state-card .msc-rulers { margin-top: 12px; }
-.market-state-card .msc-rulers .chart-card { background: transparent; border: 0; box-shadow: none; padding: 0; }
-.msr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px 20px; margin-top: 8px; }
-.msr-sec { min-width: 0; padding: 8px 10px 4px; border-radius: 8px; background: rgba(127,127,127,.05); }
-.msr-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
-.msr-title { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
-.msr-unit { font-size: 10.5px; color: var(--ink-3); }
-.msr-stamp { margin-left: auto; font-size: 10px; color: #b9770e; background: rgba(230,160,30,.14); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
-.msr-sec svg { display: block; width: 100%; height: auto; overflow: visible; }
-.msr-band.t-mild { fill: rgba(127,127,127,.10); }
-.msr-band.t-deep { fill: rgba(230,160,30,.12); }
-.msr-band.t-bear { fill: rgba(220,60,60,.10); }
-.msr-band-label { font-size: 9.5px; fill: var(--ink-3); }
-.msr-bar.t-mild { fill: rgba(110,110,110,.62); }
-.msr-bar.t-deep { fill: rgba(230,160,30,.78); }
-.msr-bar.t-bear { fill: rgba(220,60,60,.72); }
-.msr-bar.v-pos { fill: rgba(40,160,90,.62); }
-.msr-bar.v-neg { fill: rgba(220,60,60,.55); }
-.msr-bar.v-neutral { fill: rgba(110,130,170,.55); }
-.msr-label { font-size: 11px; fill: var(--ink-2); }
-.msr-val { font-size: 11px; fill: var(--ink-2); font-family: var(--font-mono); }
-.msr-delta { font-size: 9.5px; fill: var(--ink-3); font-family: var(--font-mono); }
-.msr-foot { font-size: 10px; fill: var(--ink-3); }
-.msr-tick { stroke: var(--ink-3); stroke-dasharray: 3 3; stroke-width: 1; opacity: .62; }
-.msr-tick-label { font-size: 9.5px; fill: var(--ink-3); }
-.msr-base { stroke: var(--line-2); stroke-width: 1.5; }
 .trend-state-card { border: 1px solid var(--line-2); border-radius: 12px; padding: 14px 18px; margin: 14px 0 22px; background: rgba(127,127,127,.05); }
 .trend-state-card .tsc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
 .trend-state-card .tsc-state { font-weight: 700; font-size: 14px; padding: 2px 12px; border-radius: 999px; }
@@ -707,249 +410,6 @@ MARKET_SENSE_EXTRA_CSS = """
 @media (max-width: 900px) { .style-compare-grid { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .kline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .kline-grid { grid-template-columns: 1fr; } }
-"""
-
-
-# Upgrade the readings at the top of "1.1 市场状态定位" into a state card:
-# tier badges for 权重 / 成长小盘, a ✓/✗ checklist for the three confirmation
-# criteria, and a hit counter. Everything it shows is text the Markdown already
-# wrote — the decoration only changes how it reads, never what it says.
-#
-# The shape it keys on is fixed by references/template/section1.md: a leading
-# UL whose first item is 回撤分层, a 确认三要素 item carrying a nested UL, and
-# each check opening with ✓ / ✗ / —. A report written before that template (or
-# one whose 1.1 fell back to a bare table) simply keeps its list: this returns
-# quietly rather than failing the gate, because a missing *decoration* is a
-# cosmetic regression, while a missing *chart* is a data regression.
-MARKET_STATE_CARD_JS = r"""(function () {
-  const heading = window.__sec ? window.__sec.head("market_state") : null;
-  if (!heading) {
-    if (window.__render) window.__render.fail("decoration:market-state-card", "section [market_state] not found");
-    return;
-  }
-  const uls = [];
-  let cur = heading.nextElementSibling;
-  while (cur && !/^H[1-6]$/.test(cur.tagName)) {
-    const next = cur.nextElementSibling;
-    if (cur.tagName === "UL") { uls.push(cur); cur = next; continue; }
-    if (cur.tagName === "BLOCKQUOTE" || cur.tagName === "P") { cur = next; continue; }
-    break;
-  }
-  if (!uls.length || !/回撤分层[：:]/.test(uls[0].textContent)) return;
-
-  const card = document.createElement("aside");
-  card.className = "market-state-card";
-  const head = document.createElement("div");
-  head.className = "msc-head";
-  card.appendChild(head);
-  heading.after(card);
-  uls.forEach(ul => card.appendChild(ul));
-
-  /* Tier badges. 分层 wording is "权重 …，档位；成长小盘 …，档位" — the tier
-     word is matched inside each clause, longest alternative first so that
-     深度调整 never gets read as 调整. */
-  const TIER_CLASS = { "调整": "t-mild", "深度调整": "t-deep", "接近技术性熊市": "t-bear" };
-  const tierRe = "(接近技术性熊市|深度调整|调整)";
-  const layerLi = Array.from(card.querySelectorAll("li")).find(li => /回撤分层[：:]/.test(li.textContent));
-  if (layerLi) {
-    const text = layerLi.textContent;
-    [["权重", new RegExp("权重[^；;]*?" + tierRe)],
-     ["成长小盘", new RegExp("成长小盘[^；;。]*?" + tierRe)]].forEach(([label, re]) => {
-      const hit = re.exec(text);
-      if (!hit) return;
-      const badge = document.createElement("span");
-      badge.className = "msc-badge " + (TIER_CLASS[hit[1]] || "t-mild");
-      badge.innerHTML = '<span class="msc-badge-k"></span>';
-      badge.querySelector(".msc-badge-k").textContent = label;
-      badge.appendChild(document.createTextNode(hit[1]));
-      head.appendChild(badge);
-    });
-  }
-
-  /* Confirmation checklist: lift the nested UL out into marked rows. */
-  const checksLi = Array.from(card.querySelectorAll("li")).find(li => /确认三要素/.test(li.textContent));
-  const nested = checksLi ? checksLi.querySelector("ul") : null;
-  if (nested) {
-    const box = document.createElement("div");
-    box.className = "msc-checks";
-    const title = document.createElement("div");
-    title.className = "msc-checks-title";
-    title.textContent = (checksLi.firstChild && checksLi.firstChild.textContent || "确认三要素").trim().replace(/[：:]\s*$/, "");
-    let hits = 0, decided = 0;
-    Array.from(nested.children).forEach(li => {
-      const raw = li.textContent.trim();
-      const mark = /^[✓✔]/.test(raw) ? "✓" : (/^[✗✘×x]/i.test(raw) ? "✗" : "—");
-      if (mark === "✓") { hits += 1; decided += 1; }
-      else if (mark === "✗") { decided += 1; }
-      const row = document.createElement("div");
-      row.className = "msc-check " + (mark === "✓" ? "k-hit" : mark === "✗" ? "k-miss" : "k-open");
-      const icon = document.createElement("span");
-      icon.className = "msc-mark";
-      icon.textContent = mark;
-      const body = document.createElement("span");
-      body.className = "msc-check-body";
-      /* Keep the node (inline <strong>/<code> survive); drop only the leading mark. */
-      while (li.firstChild) body.appendChild(li.firstChild);
-      const first = body.firstChild;
-      if (first && first.nodeType === 3) first.textContent = first.textContent.replace(/^\s*[✓✔✗✘×x—-]+\s*/i, "");
-      row.append(icon, body);
-      box.appendChild(row);
-    });
-    checksLi.replaceWith(box);
-    box.before(title);
-    const score = document.createElement("span");
-    score.className = "msc-score " + (decided && hits === decided ? "s-pos" : hits === 0 ? "s-neg" : "s-warn");
-    score.textContent = "确认三要素 " + hits + "/" + (decided || 3);
-    head.appendChild(score);
-  }
-  /* 数据提示 only exists on days when a sub-block is stale or unavailable, and
-     it changes how every other number in the card should be read — so it gets
-     called out instead of sitting as the last plain row. */
-  const warnLi = Array.from(card.querySelectorAll(":scope > ul > li")).find(li => /数据提示[：:]/.test(li.textContent));
-  if (warnLi) warnLi.classList.add("msc-warn");
-  if (!head.childElementCount) head.remove();
-})();"""
-
-
-# The 1.1 evidence as threshold rulers. These charts are the complete horizontal
-# readout after the Markdown table was removed; they are built directly from
-# market_state rather than parsed from report prose. One generic row renderer
-# serves all five sections because each is a reading against a reference line.
-#
-# Each section keeps its own axis. That is deliberate: 回撤 runs 0→-23%, 宽度
-# 0→100%, 扩散 0→31, 融资 ±13%, 量能 around 1.0. Forcing them onto one scale
-# would make bar lengths comparable across rows that are not comparable at all.
-MARKET_STATE_CHART_JS = r"""
-const state = __payload || {};
-const sections = state.sections || [];
-const SEC = window.__sec;
-const REPORT = window.__render;
-const hook = "market-state.panel";
-
-if (!sections.length) {
-  REPORT.attest(hook, {
-    rendered: 0, matched: 0, expected: 1,
-    unmatched: [{ name: "状态标尺", reason: "no_payload" }],
-    note: state.skip_reason || "market_state payload absent"
-  });
-  return;
-}
-const stateCard = document.querySelector(".market-state-card");
-const anchor = stateCard || SEC.find("market_state", ".table-wrap") || SEC.tail("market_state");
-if (!anchor) {
-  REPORT.fail("hook:" + hook, "no insertion anchor inside section [market_state]");
-  return;
-}
-
-const { svgEl } = CK;
-const text = (x, y, str, cls, anchorAt) => {
-  const el = svgEl("text", { x: x, y: y, class: cls, "text-anchor": anchorAt || "start" });
-  el.textContent = str;
-  return el;
-};
-
-/* Geometry is laid out from both edges inwards: the label column is fixed on
-   the left and the value column on the right, so the track absorbs any slack.
-   SVG does not clip, so a value wider than its column would spill outside the
-   card rather than be cut — reserving the column up front is what prevents it. */
-const W = 336, PAD_L = 84, ROW_H = 26, HEAD = 22, FOOT = 16;
-
-function buildSection(sec) {
-  const rows = sec.rows || [];
-  const axis = sec.axis || { min: 0, max: 100 };
-  const span = (axis.max - axis.min) || 1;
-  const trackL = PAD_L, trackR = W - (sec.value_width || 74);
-  const xAt = v => trackL + ((Math.min(Math.max(v, axis.min), axis.max) - axis.min) / span) * (trackR - trackL);
-  const H = HEAD + rows.length * ROW_H + FOOT + (sec.footnote ? 14 : 0);
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
-
-  /* tier bands sit behind everything, drawn once across the full row block */
-  const bandTop = HEAD - 6, bandBot = HEAD + rows.length * ROW_H;
-  let from = axis.min;
-  (sec.bands || []).forEach(band => {
-    const x0 = xAt(from), x1 = xAt(band.to);
-    svg.appendChild(svgEl("rect", {
-      x: x0, y: bandTop, width: Math.max(0, x1 - x0), height: bandBot - bandTop,
-      class: "msr-band " + (band.tone_class || "")
-    }));
-    /* Drop the label when its own band cannot hold it — CJK glyphs run about
-       one em wide at this size, so a fixed pixel threshold lets 深度调整 spill
-       into its neighbour on a narrow axis. */
-    if (band.label && x1 - x0 > band.label.length * 9.5 + 6) {
-      svg.appendChild(text((x0 + x1) / 2, HEAD - 10, band.label, "msr-band-label", "middle"));
-    }
-    from = band.to;
-  });
-
-  (sec.ticks || []).forEach(tick => {
-    const x = xAt(tick.at);
-    svg.appendChild(svgEl("line", { x1: x, x2: x, y1: bandTop, y2: bandBot + 3, class: "msr-tick" }));
-    svg.appendChild(text(x, HEAD - 10, tick.label, "msr-tick-label", "middle"));
-  });
-
-  /* Bars grow from the reading's reference point: an explicit baseline where
-     the section has one (量能比值 measures against 1.0, not against zero),
-     zero on a diverging axis, else the left edge. */
-  const baseValue = sec.baseline != null ? sec.baseline
-                  : ((axis.min < 0 && axis.max > 0) ? 0 : axis.min);
-  const baseX = xAt(baseValue);
-  svg.appendChild(svgEl("line", { x1: baseX, x2: baseX, y1: bandTop, y2: bandBot + 3, class: "msr-base" }));
-
-  rows.forEach((row, i) => {
-    const y = HEAD + i * ROW_H, mid = y + ROW_H / 2;
-    svg.appendChild(text(PAD_L - 8, mid + 4, row.label, "msr-label", "end"));
-    let x0, x1;
-    if (Array.isArray(row.span)) {          // 回撤分层: a range, not a point
-      x0 = xAt(row.span[0]); x1 = xAt(row.span[1]);
-    } else {
-      x0 = Math.min(baseX, xAt(row.value)); x1 = Math.max(baseX, xAt(row.value));
-    }
-    svg.appendChild(svgEl("rect", {
-      x: x0, y: y + 7, width: Math.max(2, x1 - x0), height: ROW_H - 15,
-      rx: 2, class: "msr-bar " + (row.tone_class || "")
-    }));
-    svg.appendChild(text(W - 4, mid + 1, row.value_label, "msr-val", "end"));
-    if (row.delta_label) svg.appendChild(text(W - 4, mid + 11, row.delta_label, "msr-delta", "end"));
-  });
-
-  if (sec.footnote) {
-    svg.appendChild(text(PAD_L - 8, bandBot + 17, sec.footnote, "msr-foot", "end"));
-  }
-
-  const card = document.createElement("section");
-  card.className = "msr-sec";
-  const head = document.createElement("div");
-  head.className = "msr-head";
-  const title = document.createElement("span");
-  title.className = "msr-title";
-  title.textContent = sec.title || "";
-  const unit = document.createElement("span");
-  unit.className = "msr-unit";
-  unit.textContent = sec.unit || "";
-  head.append(title, unit);
-  if (sec.stamp) {
-    const stamp = document.createElement("span");
-    stamp.className = "msr-stamp";
-    stamp.textContent = sec.stamp;
-    head.appendChild(stamp);
-  }
-  card.append(head, svg);
-  return card;
-}
-
-const wrap = document.createElement("div");
-wrap.className = "msc-rulers";
-const chart = CK.card("chart-card", state.title || "状态标尺", state.subtitle || "");
-const grid = document.createElement("div");
-grid.className = "msr-grid";
-sections.forEach(sec => grid.appendChild(buildSection(sec)));
-chart.appendChild(grid);
-wrap.appendChild(chart);
-if (stateCard) stateCard.appendChild(wrap); else anchor.after(wrap);
-REPORT.attest(hook, {
-  rendered: 1, matched: 1, expected: 1, unmatched: [],
-  note: sections.length + " sections", el: wrap
-});
 """
 
 
@@ -1315,7 +775,7 @@ function insertStockTableKlines() {
   });
 }
 
-// 5.2 全市场月线平台突破：画月线 K 线 + 多年底部箱体阴影 + 箱体上沿 pivot 线 + 突破月标记。
+// 4.2 全市场月线平台突破：画月线 K 线 + 多年底部箱体阴影 + 箱体上沿 pivot 线 + 突破月标记。
 function insertMonthlyBreakoutKlines() {
   const hook = "klines.m5_monthly_base";
   const tableWrap = SEC.find("m5_monthly_base", ".table-wrap");
@@ -2254,7 +1714,6 @@ def build_job(args) -> RenderJob:
     )
     style_series_payload = extract_style_series_payload(evidence)
     state_timeline_payload = extract_state_timeline_payload(evidence)
-    market_state_payload = extract_market_state_payload(evidence, report_trade_date(input_path))
 
     builder = HtmlReportBuilder(
         title=title,
@@ -2264,7 +1723,6 @@ def build_job(args) -> RenderJob:
         contract_audit=content_contract_audit,
     )
     builder.add_decoration(PillDecoration(MARKET_SENSE_PILL_RULES))
-    builder.add_ui_decoration(MARKET_STATE_CARD_JS)
     builder.add_ui_decoration(TREND_STATE_CARD_JS)
     builder.add_decoration(HeroDecoration(
         heading_prefix="一句话盘面判断",
@@ -2314,24 +1772,6 @@ def build_job(args) -> RenderJob:
             expects=[HookExpectation(name="style-compare", target_sec="market_style", expect_min=1,
                                      note="规模轴 + 成长/价值/红利，任一轴缺数据记 no_payload")],
         )
-    # Declared only when the evidence actually carries drawable rows. "Is there
-    # a market_state block today" is a build-time fact the gate cannot improve
-    # on — promising a chart the build already knows is undrawable turns the
-    # gate red for a data gap, and a gate that goes red on data gaps gets
-    # bypassed. What the gate is for is the other case: rows exist and the
-    # chart still fails to appear, which expect_count=1 catches exactly.
-    if market_state_payload.get("sections"):
-        builder.add_chart_hook(
-            ChartHook(name="market-state", payload=market_state_payload, js=MARKET_STATE_CHART_JS),
-            expects=[HookExpectation(name="market-state.panel", target_sec="market_state", expect_count=1,
-                                     note="状态标尺：回撤分层 / 宽度 / 行业结构 / 融资 / 流动性")],
-        )
-    else:
-        print(
-            f"[market-state] 跳过状态标尺：{market_state_payload.get('skip_reason')}",
-            file=sys.stderr,
-        )
-
     if state_timeline_payload:
         builder.add_chart_hook(
             # 时间轴挂在状态卡里面，所以要排在 TREND_STATE_CARD_JS 之后执行；
@@ -2369,7 +1809,6 @@ def build_job(args) -> RenderJob:
             },
             "records_available": (market_data.get("quality") or {}).get("records_available", 0),
             "market_data_window_end": (market_data.get("metadata") or {}).get("window_end"),
-            "market_state_sections": [s["key"] for s in (market_state_payload or {}).get("sections") or []],
             "theme_lifecycle_themes": len(lifecycle_payload["themes"]) if lifecycle_payload else 0,
             "content_contract": content_contract_audit,
         },

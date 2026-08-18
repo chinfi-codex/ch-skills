@@ -675,145 +675,6 @@ def fetch_index_daily(
     return date_range_filter(merged, "trade_date", start_date, end_date)
 
 
-def normalize_sw_daily_frame(df: pd.DataFrame) -> pd.DataFrame:
-    """Map Tushare sw_daily columns onto stock_index_daily's shared schema."""
-    if df is None or df.empty:
-        return pd.DataFrame(columns=split_fields(DEFAULT_INDEX_FIELDS))
-    out = df.copy().rename(columns={"pct_change": "pct_chg"})
-    if "pre_close" not in out.columns:
-        close = pd.to_numeric(out.get("close"), errors="coerce")
-        change = pd.to_numeric(out.get("change"), errors="coerce")
-        out["pre_close"] = close - change
-    columns = split_fields(DEFAULT_INDEX_FIELDS)
-    for column in columns:
-        if column not in out.columns:
-            out[column] = None
-    return out[columns]
-
-
-def fetch_sw_daily_akshare(index_code: str) -> pd.DataFrame:
-    """SW industry history from 申万宏源研究 via AKShare, in stock_index_daily's schema.
-
-    The fallback for `sw_daily`, which is a Tushare permission endpoint: when the
-    token loses that permission the Tushare call fails *silently per range* and
-    the caller happily keeps serving a frozen cache. This route needs no token.
-
-    Verified equivalent on 2026-08-06 — over the overlapping window the two
-    sources agree on close/high to |Δ| ≤ 0.005 index points (rounding), and the
-    unit conversions below are exact constants, not estimates:
-      成交量 亿股 → 手   ×1e6
-      成交额 亿元 → 千元 ×1e5
-
-    Caveat worth knowing before you rely on it: 申万宏源 publishes one trading
-    day behind. On a 盘后 run for day D this route tops out at D-1, so the
-    freshness stamp in market_state_card matters — it is a disclosed T-1
-    caliber, like margin, not a silent gap.
-
-    Returns the full available history (the endpoint takes no date range);
-    the caller windows it.
-    """
-    import akshare as ak
-
-    raw = ak.index_hist_sw(symbol=index_code.split(".")[0], period="day")
-    if raw is None or raw.empty:
-        return pd.DataFrame(columns=split_fields(DEFAULT_INDEX_FIELDS))
-
-    out = pd.DataFrame({
-        "ts_code": index_code,
-        "trade_date": pd.to_datetime(raw["日期"]).dt.strftime("%Y%m%d"),
-        "open": pd.to_numeric(raw["开盘"], errors="coerce"),
-        "high": pd.to_numeric(raw["最高"], errors="coerce"),
-        "low": pd.to_numeric(raw["最低"], errors="coerce"),
-        "close": pd.to_numeric(raw["收盘"], errors="coerce"),
-        "vol": pd.to_numeric(raw["成交量"], errors="coerce") * 1e6,
-        "amount": pd.to_numeric(raw["成交额"], errors="coerce") * 1e5,
-    }).sort_values("trade_date").reset_index(drop=True)
-    out["pre_close"] = out["close"].shift(1)
-    out["change"] = out["close"] - out["pre_close"]
-    out["pct_chg"] = (out["close"] / out["pre_close"] - 1.0) * 100.0
-    return out[split_fields(DEFAULT_INDEX_FIELDS)]
-
-
-def fetch_sw_daily(
-    pro,
-    index_code: str,
-    start_date: str,
-    end_date: str,
-    cache_enabled: bool = True,
-    refresh_cache: bool = False,
-) -> pd.DataFrame:
-    """Fetch SW industry history via sw_daily and share stock_index_daily cache.
-
-    Falls back to AKShare when Tushare yields nothing new. Tushare stays first
-    so a restored permission is used automatically, with no config to flip.
-    """
-    cache_key = index_code
-    cached = (
-        None
-        if refresh_cache or not cache_enabled
-        else read_cached_dataset("index_daily", cache_key, DEFAULT_INDEX_FIELDS)
-    )
-    fetch_ranges = (
-        missing_edge_ranges(cached, "trade_date", start_date, end_date)
-        if cached is not None
-        else [(start_date, end_date)]
-    )
-
-    frames: List[pd.DataFrame] = []
-    if cached is not None and not cached.empty:
-        frames.append(cached)
-
-    fetched_rows = 0
-    for fetch_start, fetch_end in fetch_ranges:
-        try:
-            raw = pro.sw_daily(
-                ts_code=index_code,
-                start_date=fetch_start,
-                end_date=fetch_end,
-                fields=SW_DAILY_FIELDS,
-            )
-        except Exception as exc:
-            print(
-                f"[warn] sw_daily failed for {index_code} "
-                f"{fetch_start}-{fetch_end}: {exc}",
-                file=sys.stderr,
-            )
-            continue
-        normalized = normalize_sw_daily_frame(raw)
-        if not normalized.empty:
-            frames.append(normalized)
-            fetched_rows += len(normalized)
-
-    # Only when Tushare added nothing: either it has no permission, or the range
-    # was already covered. Re-fetching the whole AKShare history is cheap (~0.5s)
-    # and de-duplicates against the cache below, so the second case is harmless.
-    if fetch_ranges and fetched_rows == 0:
-        try:
-            fallback = fetch_sw_daily_akshare(index_code)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[warn] akshare sw fallback failed for {index_code}: {exc}", file=sys.stderr)
-        else:
-            # Window before appending: the endpoint returns everything back to
-            # 1999, and merged is what gets written to cache — unwindowed, every
-            # run would rewrite ~6.4k rows per industry for no benefit.
-            fallback = date_range_filter(fallback, "trade_date", start_date, end_date)
-            if not fallback.empty:
-                frames.append(fallback)
-
-    if not frames:
-        return pd.DataFrame(columns=split_fields(DEFAULT_INDEX_FIELDS))
-
-    merged = (
-        pd.concat(frames, ignore_index=True)
-        .drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
-    )
-    merged["trade_date"] = merged["trade_date"].astype(str)
-    merged = merged.sort_values("trade_date")
-    if cache_enabled and not merged.empty:
-        write_cached_dataset("index_daily", cache_key, merged)
-    return date_range_filter(merged, "trade_date", start_date, end_date)
-
-
 def fetch_limit_list(pro, trade_date: str) -> pd.DataFrame:
     try:
         df = pro.limit_list_d(trade_date=trade_date)
@@ -5139,8 +5000,7 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
         "meta": {
             "metadata": metadata,
             "subagent_contract": {
-                "module1_market_trend": ["module1_market_trend.json", "references/methodology/module1_trend.md", "references/methodology/market_state_framework.md", "references/template/section1.md", "盘面趋势"],
-                "module2_concentration": ["module2_concentration.json", "references/methodology/module2_concentration.md", "references/template/section2.md", "成交额集中度"],
+                "module1_market_trend": ["module1_market_trend.json", "references/methodology/module1_trend.md", "references/methodology/extreme_state_framework.md", "references/template/section1.md", "盘面趋势"],
                 "module3_money_effect": ["module3_money_effect.json", "references/methodology/module3_money_effect.md", "module3_theme_map.json", "首轮只做临时主题与成员映射，stars 写 null，不写最终正文"],
                 "module3_money_effect_second_stage": [["module3_theme_map.json", "module3_theme_stats.json", "module3_enrichment_pack.json"], "references/methodology/catalyst_subline_mining.md", "references/template/section3.md", "统计后由模型锁星；星级锁定后补催化与细分线路，再写最终模块 3"],
                 "module4_decline": ["module4_decline.json", "references/methodology/module4_decline.md", "references/template/section4.md", "爆量下跌风险"],
@@ -5154,13 +5014,13 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
             "limit_stats": evidence.get("limit_stats"),
             "limit_stats_change": evidence.get("limit_stats_change"),
         },
-        "module2_concentration": {
-            "metadata": metadata,
-            "amount_concentration": context.get("amount_concentration"),
-        },
         "module3_money_effect": {
             "metadata": metadata,
             "money_effect": context.get("money_effect"),
+            # 成交额榜跟着赚钱效应走：2026-08 移除集中度章节后，它唯一的消费者
+            # 是 2.1 主线表的「拥挤度」列（代表股有没有进 Top10/20），所以证据
+            # 直接发到用它的那个模块，而不是留一个没人读的模块 JSON。
+            "amount_concentration": context.get("amount_concentration"),
         },
         "module4_decline": {
             "metadata": metadata,
@@ -5527,7 +5387,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "Tushare daily 的 amount 单位为千元；total_amount_100m_yuan 已换算为亿元。",
             "limit_up_count / limit_down_count 默认按板制规则精确判定：未复权前收盘 ×(1±板块限幅) 四舍五入到分后与收盘价比对（主板10%、ST 5%、创业/科创20%、北交所30%），limit_detection=board_rule_price_match；flags 不可用时退回 ±9.8% 近似（pct_chg_approx）。判定口径为收盘封板，不含盘中触板回落；官方 limit_list_d 仍可用 --with-limit 拉取对照。",
             "market_trend 只作为模块 1 证据：上证指数、创业板指数、科创50、Baostock 风格代理指数，以及 references/market_data.csv 的情绪趋势。",
-            "amount_concentration 只衡量成交额集中度，不分配主题或行业。",
+            "amount_concentration 只衡量成交额集中度，不分配主题或行业；它只为 2.1 主线表的拥挤度列定档，不单独成章。",
             "个股价格序列统一使用前复权口径：Tushare daily OHLC * adj_factor / 目标日前最新 adj_factor；成交额和成交量仍为原始口径。",
             "指数 K 线来自 Tushare index_daily，不涉及个股复权口径。",
             "市场风格代理指数来自 Baostock query_history_k_data_plus；amount 原始单位为元，amount_100m_yuan 已换算为亿元。Baostock 指数字典未见直接微盘指数，默认用国证2000代理小微盘风格。",

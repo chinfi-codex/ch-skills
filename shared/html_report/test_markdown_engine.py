@@ -82,5 +82,52 @@ class HighlightAndCalloutTests(unittest.TestCase):
         self.assertIn("季度收入", rendered)
 
 
+class ReadabilityTests(unittest.TestCase):
+    def test_numbered_summary_renders_as_ordered_list(self) -> None:
+        markdown = "## 摘要\n\n1. 第一条判断。\n2. 第二条判断。\n"
+        rendered = render_markdown(markdown)
+        self.assertIn("<ol><li>第一条判断。</li><li>第二条判断。</li></ol>", rendered)
+
+    def test_bullets_and_numbers_do_not_absorb_each_other(self) -> None:
+        markdown = "- 甲\n- 乙\n\n1. 一\n2. 二\n"
+        rendered = render_markdown(markdown)
+        self.assertIn("<ul><li>甲</li><li>乙</li></ul>", rendered)
+        self.assertIn("<ol><li>一</li><li>二</li></ol>", rendered)
+
+    def test_nested_numbers_under_a_bullet_keep_their_own_tag(self) -> None:
+        markdown = "- 顶层\n  1. 子项一\n  2. 子项二\n"
+        rendered = render_markdown(markdown)
+        self.assertIn("<ol><li>子项一</li><li>子项二</li></ol>", rendered)
+        self.assertTrue(rendered.startswith("<ul><li>顶层"))
+
+    def test_adjacent_mixed_child_lists_stay_inside_the_parent_item(self) -> None:
+        markdown = "- 顶层\n  1. 第一步\n  - 补充说明\n- 结论\n"
+        rendered = render_markdown(markdown)
+        self.assertEqual(
+            rendered,
+            "<ul><li>顶层<ol><li>第一步</li></ol>"
+            "<ul><li>补充说明</li></ul></li><li>结论</li></ul>",
+        )
+
+    def test_ordered_list_preserves_a_nondefault_start(self) -> None:
+        rendered = render_markdown("3. 第三步\n4. 第四步\n")
+        self.assertEqual(rendered, '<ol start="3"><li>第三步</li><li>第四步</li></ol>')
+
+    def test_author_line_breaks_survive_inside_a_paragraph(self) -> None:
+        # 事实一行、`→` 推断一行，是作者有意的两行，不能被软合并成一大段。
+        markdown = "设备订单强劲，交期拉长至 32 周。\n→ 超级周期从建模进入业绩实证。\n"
+        rendered = render_markdown(markdown)
+        self.assertIn(
+            "<p>设备订单强劲，交期拉长至 32 周。<br>→ 超级周期从建模进入业绩实证。</p>",
+            rendered,
+        )
+
+    def test_blank_line_still_starts_a_new_paragraph(self) -> None:
+        rendered = render_markdown("第一段。\n\n第二段。\n")
+        self.assertIn("<p>第一段。</p>", rendered)
+        self.assertIn("<p>第二段。</p>", rendered)
+        self.assertNotIn("<br>", rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

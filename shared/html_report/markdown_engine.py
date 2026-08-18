@@ -141,11 +141,17 @@ def render_callout(lines: List[str]) -> str:
 
 
 def flush_paragraph(parts: List[str], out: List[str]) -> None:
-    if not parts:
-        return
-    text = " ".join(part.strip() for part in parts if part.strip())
-    if text:
-        out.append(f"<p>{inline_markdown(text)}</p>")
+    """Render buffered lines as one paragraph, keeping the author's line breaks.
+
+    These reports are written in Obsidian and read back on the site, so a
+    newline inside a paragraph is meant literally — a lead-in line and the
+    ``→`` conclusion that follows it are two visual lines, not one. CommonMark
+    would soft-join them into a single 400-character run, which is what made
+    the rendered reports hard to read. Blank lines still separate paragraphs.
+    """
+    lines = [part.strip() for part in parts if part.strip()]
+    if lines:
+        out.append("<p>" + "<br>".join(inline_markdown(line) for line in lines) + "</p>")
     parts.clear()
 
 
@@ -187,46 +193,74 @@ def render_table(lines: List[str]) -> str:
     return "".join(html_rows)
 
 
-def _list_item(line: str) -> tuple[int, str] | None:
-    """Return ``(indent, text)`` for an unordered-list line."""
+def _list_item(line: str) -> tuple[int, bool, int | None, str] | None:
+    """Return ``(indent, ordered, start, text)`` for a list line, or ``None``.
+
+    Ordered items (``1.`` / ``2)``) were previously unrecognised and fell
+    through to the paragraph buffer, so a numbered summary rendered as one
+    undifferentiated block of prose.
+    """
     match = re.match(r"^(\s*)[-*]\s+(.+)$", line)
-    if not match:
-        return None
-    indent = len(match.group(1).expandtabs(4))
-    return indent, match.group(2)
+    if match:
+        return len(match.group(1).expandtabs(4)), False, None, match.group(2)
+    match = re.match(r"^(\s*)(\d{1,3})[.)]\s+(.+)$", line)
+    if match:
+        return (
+            len(match.group(1).expandtabs(4)),
+            True,
+            int(match.group(2)),
+            match.group(3),
+        )
+    return None
 
 
 def render_list(lines: List[str]) -> str:
-    """Render consecutive unordered-list lines, preserving indentation levels."""
+    """Render consecutive list lines, preserving indentation and list type."""
     items = [item for line in lines if (item := _list_item(line)) is not None]
     if not items:
         return ""
 
-    def render_level(index: int, indent: int) -> tuple[str, int]:
-        out = ["<ul>"]
+    def render_level(index: int, indent: int, ordered: bool) -> tuple[str, int]:
+        tag = "ol" if ordered else "ul"
+        start = items[index][2]
+        start_attr = f' start="{start}"' if ordered and start != 1 else ""
+        out = [f"<{tag}{start_attr}>"]
         while index < len(items):
-            item_indent, text = items[index]
+            item_indent, item_ordered, _item_start, text = items[index]
             if item_indent < indent:
+                break
+            # A switch between bullets and numbers at the same depth starts a
+            # new list rather than silently absorbing items of the other kind.
+            if item_indent == indent and item_ordered is not ordered:
                 break
             if item_indent > indent:
                 # A malformed indent jump still belongs to the previous item;
                 # the recursive level uses the actual whitespace rather than
                 # inventing a fixed nesting width.
-                nested, index = render_level(index, item_indent)
+                nested, index = render_level(index, item_indent, item_ordered)
                 out.append(nested)
                 continue
 
             index += 1
             out.append(f"<li>{inline_markdown(text)}")
-            if index < len(items) and items[index][0] > indent:
-                nested, index = render_level(index, items[index][0])
+            # One parent item may contain adjacent child lists of different
+            # kinds (for example numbered steps followed by bullet notes).
+            # Keep consuming child chunks so each one remains inside the
+            # parent's <li>; emitting a later chunk at the current list level
+            # would create invalid HTML such as <ul><li>...</li><ol>...</ol>.
+            while index < len(items) and items[index][0] > indent:
+                nested, index = render_level(index, items[index][0], items[index][1])
                 out.append(nested)
             out.append("</li>")
-        out.append("</ul>")
+        out.append(f"</{tag}>")
         return "".join(out), index
 
-    rendered, _ = render_level(0, items[0][0])
-    return rendered
+    rendered: List[str] = []
+    index = 0
+    while index < len(items):
+        chunk, index = render_level(index, items[index][0], items[index][1])
+        rendered.append(chunk)
+    return "".join(rendered)
 
 
 def render_markdown(markdown_text: str) -> str:

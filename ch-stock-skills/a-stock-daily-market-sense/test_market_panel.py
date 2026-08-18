@@ -16,7 +16,6 @@ import datetime
 import json
 import sys
 import tempfile
-import types
 from pathlib import Path
 
 import pandas as pd
@@ -79,46 +78,6 @@ def test_missing_edge_ranges():
     assert mp.missing_edge_ranges(pd.DataFrame(), "trade_date", "20260601", "20260609") == [
         ("20260601", "20260609")
     ]
-
-
-def test_fetch_sw_daily_uses_dedicated_api_and_normalizes_schema():
-    class FakePro:
-        def __init__(self):
-            self.calls = []
-
-        def index_daily(self, **_kwargs):
-            raise AssertionError("SW codes must not use index_daily")
-
-        def sw_daily(self, **kwargs):
-            self.calls.append(kwargs)
-            return pd.DataFrame([
-                {
-                    "ts_code": "801010.SI",
-                    "trade_date": "20260801",
-                    "open": 101.0,
-                    "high": 103.0,
-                    "low": 99.0,
-                    "close": 102.0,
-                    "change": 2.0,
-                    "pct_change": 2.0,
-                    "vol": 10.0,
-                    "amount": 20.0,
-                }
-            ])
-
-    pro = FakePro()
-    out = mp.fetch_sw_daily(
-        pro,
-        "801010.SI",
-        "20260801",
-        "20260801",
-        cache_enabled=False,
-    )
-    assert len(pro.calls) == 1
-    assert pro.calls[0]["fields"] == mp.SW_DAILY_FIELDS
-    assert list(out.columns) == mp.split_fields(mp.DEFAULT_INDEX_FIELDS)
-    assert out.iloc[0]["pct_chg"] == 2.0
-    assert out.iloc[0]["pre_close"] == 100.0
 
 
 def test_market_history_backfill_dates():
@@ -865,67 +824,6 @@ def test_cleanup_intermediates():
 # --------------------------------------------------------------------------- #
 # Runner
 # --------------------------------------------------------------------------- #
-def test_akshare_sw_fallback_normalizes_units_and_schema() -> None:
-    """AKShare 的申万行情要能原样填进 Tushare 的 stock_index_daily 口径。
-
-    两个单位换算是这条路径唯一会静默出错的地方：成交量 亿股→手 ×1e6、
-    成交额 亿元→千元 ×1e5。写错了不会报错，只会往共享缓存里灌一列量级不对的
-    数——而缓存里 Tushare 来的行就在旁边，没人看得出接缝在哪。常数取自
-    2026-08-06 与 Tushare 缓存的逐日实测（比值恒定，不是估的）。
-    """
-    import market_panel as mp
-
-    raw = pd.DataFrame({
-        "代码": ["801080"] * 3,
-        "日期": ["2026-08-03", "2026-08-04", "2026-08-05"],
-        "收盘": [7637.58, 8075.25, 8532.27],
-        "开盘": [7863.85, 7726.17, 8002.89],
-        "最高": [7905.34, 8126.07, 8638.65],
-        "最低": [7600.23, 7680.15, 8002.89],
-        "成交量": [124.312201, 142.430630, 177.577302],
-        "成交额": [5534.530257, 6078.572749, 7785.922152],
-    })
-    original = sys.modules.get("akshare")
-    stub = types.SimpleNamespace(index_hist_sw=lambda symbol, period: raw.copy())
-    sys.modules["akshare"] = stub
-    try:
-        out = mp.fetch_sw_daily_akshare("801080.SI")
-    finally:
-        if original is None:
-            sys.modules.pop("akshare", None)
-        else:
-            sys.modules["akshare"] = original
-
-    assert list(out.columns) == mp.split_fields(mp.DEFAULT_INDEX_FIELDS), list(out.columns)
-    assert out["ts_code"].tolist() == ["801080.SI"] * 3
-    assert out["trade_date"].tolist() == ["20260803", "20260804", "20260805"]
-    assert out["close"].tolist() == [7637.58, 8075.25, 8532.27]
-    assert out["high"].tolist() == [7905.34, 8126.07, 8638.65]
-    # 亿股 → 手，亿元 → 千元
-    assert round(out["vol"].iloc[0]) == 124312201, out["vol"].iloc[0]
-    assert round(out["amount"].iloc[0]) == 553453026, out["amount"].iloc[0]
-    # 首行没有前收，change/pct_chg 只能是 NaN，不许用 0 顶上
-    assert pd.isna(out["pre_close"].iloc[0]) and pd.isna(out["pct_chg"].iloc[0])
-    assert out["pre_close"].iloc[1] == 7637.58
-    assert round(out["pct_chg"].iloc[1], 4) == round((8075.25 / 7637.58 - 1) * 100, 4)
-
-
-def test_akshare_sw_fallback_survives_an_empty_response() -> None:
-    import market_panel as mp
-
-    original = sys.modules.get("akshare")
-    sys.modules["akshare"] = types.SimpleNamespace(index_hist_sw=lambda symbol, period: pd.DataFrame())
-    try:
-        out = mp.fetch_sw_daily_akshare("801080.SI")
-    finally:
-        if original is None:
-            sys.modules.pop("akshare", None)
-        else:
-            sys.modules["akshare"] = original
-    assert out.empty
-    assert list(out.columns) == mp.split_fields(mp.DEFAULT_INDEX_FIELDS)
-
-
 def main() -> int:
     tests = [obj for name, obj in sorted(globals().items()) if name.startswith("test_") and callable(obj)]
     failures = []

@@ -46,7 +46,6 @@ _FORBIDDEN_ADVICE_PATTERNS = {
 }
 _NUMERIC_EVIDENCE_KEYS = {
     "amount_concentration",
-    "market_state",
     "market_trend",
     "money_effect_samples",
     "volume_decline_samples",
@@ -290,11 +289,6 @@ def _degradation_supported(
     *,
     rated_themes: int,
 ) -> Tuple[bool, str]:
-    if key == "market_state":
-        block = _dig(evidence, "market_state")
-        available = bool(block.get("available")) if isinstance(block, Mapping) else False
-        reason = str((block or {}).get("reason") or "") if isinstance(block, Mapping) else ""
-        return (not available and (not reason or reason in body), f"available={available}, reason={reason or 'missing'}")
     if key == "market_style":
         block = _dig(evidence, "market_trend", "market_style")
         available = bool(block.get("available")) if isinstance(block, Mapping) else False
@@ -334,13 +328,13 @@ def _validate_highlights(
     markdown_text: str,
     problems: List[str],
 ) -> Dict[str, bool]:
-    # output_discipline.md 点名的定性高亮。「盘面定性」自 d63d4a2 起并进 1.1，
-    # 所以它的高亮落在 market_state 上，标签写「市场状态与盘面定性」。
+    # output_discipline.md 点名的定性高亮。模块 1 的定性段自 2026-08 起就是
+    # 1.1 末尾的「趋势判断」——原先承担这个角色的「市场状态与盘面定性」随 1.1
+    # 一起移除了，所以高亮改落在 sentiment_trend 上。
     rules = {
-        "market_state": r"市场状态与盘面定性|市场状态定位",
+        "sentiment_trend": r"趋势判断",
         "index_trend": r"指数趋势判断",
         "market_style": r"市场风格判断",
-        "m2_concentration": r"拥挤度判断",
         "m3_leaders": r"主线\s*vs\s*资金轮动结论",
         "m4_decline_details": r"风险传导提示",
     }
@@ -352,7 +346,7 @@ def _validate_highlights(
         if not present:
             problems.append(f"[{key}] required highlighted judgment paragraph is missing")
     m5_match = re.search(
-        r"(?ms)^#\s+5\.\s*特征分组分析\s*$.*?^==.*?一句话判断.*?==\s*$",
+        r"(?ms)^#\s+4\.\s*特征分组分析\s*$.*?^==.*?一句话判断.*?==\s*$",
         markdown_text,
     )
     detail["m5_verdict"] = bool(m5_match)

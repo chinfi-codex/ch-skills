@@ -75,7 +75,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--context-out", default=None, help="Legacy compact report_context JSON path; written only when set.")
     parser.add_argument("--module-context-dir", default=None, help="Directory for module-level subagent JSON files.")
     parser.add_argument("--no-module-context", action="store_true", help="Skip module-level subagent JSON files.")
-    parser.add_argument("--no-market-state", action="store_true", help="Skip the market_state card (index position/breadth/SW industries/margin/liquidity).")
     parser.add_argument("--no-extreme-state", action="store_true", help="Skip the extreme_state card (bottom washout score / top crowding score).")
     parser.add_argument("--extreme-backfill", type=int, default=0, help="Backfill N trading days of extreme-state metrics before scoring (first run: 300).")
     parser.add_argument("--stderr-out", default=None, help="Stderr log output path.")
@@ -173,16 +172,6 @@ def build_trend_state_card(resolved_date: str) -> Dict[str, Any]:
         return {"available": False, "reason": f"trend_state_card failed: {exc}"}
 
 
-def build_market_state_card(resolved_date: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
-    """市场状态定位卡（宽基位置/宽度/申万结构/融资趋势/流动性），失败不阻断研报。"""
-    try:
-        import market_state_card
-
-        return market_state_card.build_block(resolved_date, evidence=evidence)
-    except Exception as exc:
-        return {"available": False, "reason": f"market_state_card failed: {exc}"}
-
-
 def build_extreme_state_card(resolved_date: str, backfill: int = 0) -> Dict[str, Any]:
     """极值状态卡（底部出清分 + 顶部拥挤分），失败不阻断研报。"""
     try:
@@ -197,7 +186,6 @@ def write_module_contexts(
     evidence: dict,
     module_dir: Path,
     trend_card: Optional[Dict[str, Any]] = None,
-    market_state: Optional[Dict[str, Any]] = None,
     extreme_state: Optional[Dict[str, Any]] = None,
 ) -> None:
     module_dir.mkdir(parents=True, exist_ok=True)
@@ -205,8 +193,6 @@ def write_module_contexts(
         if name == "module1_market_trend":
             if trend_card is not None:
                 payload["trend_state_card"] = trend_card
-            if market_state is not None:
-                payload["market_state"] = market_state
             if extreme_state is not None:
                 payload["extreme_state"] = extreme_state
         (module_dir / f"{name}.json").write_text(
@@ -297,12 +283,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         stderr_path.write_text(stderr_buffer.getvalue(), encoding="utf-8")
 
     resolved_date = evidence.get("metadata", {}).get("resolved_trade_date") or market_panel.normalize_date(args.asof)
-    # 市场状态定位卡先进完整 evidence，再随模块级 JSON 注入 module1；
-    # 申万指数经 sw_daily 首次回填后走 stock_index_daily 缓存，增量很便宜
-    market_state: Optional[Dict[str, Any]] = None
-    if not args.no_market_state:
-        market_state = build_market_state_card(resolved_date, evidence)
-        evidence["market_state"] = market_state
     # 极值轴与趋势轴正交：前者抓两端拐点（快变量），后者描述所处阶段（慢变量）
     extreme_state: Optional[Dict[str, Any]] = None
     if not args.no_extreme_state:
@@ -346,12 +326,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     module_context_dir = None
     if not args.no_module_context:
         module_context_dir = Path(args.module_context_dir) if args.module_context_dir else reports_dir / f"module_context_{resolved_date}"
-        write_module_contexts(evidence, module_context_dir, trend_card, market_state, extreme_state)
+        write_module_contexts(evidence, module_context_dir, trend_card, extreme_state)
 
     print(json.dumps({
         "resolved_trade_date": resolved_date,
         "trend_state": (trend_card or {}).get("state") if (trend_card or {}).get("available") else (trend_card or {}).get("reason"),
-        "market_state": ("available" if (market_state or {}).get("available") else (market_state or {}).get("reason")),
         "extreme_state": (
             f"出清 {(extreme_state or {}).get('washout', {}).get('score')}/6"
             f"｜顶部 {(extreme_state or {}).get('top', {}).get('score')}/5"

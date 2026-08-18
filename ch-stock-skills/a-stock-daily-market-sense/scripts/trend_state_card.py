@@ -200,7 +200,7 @@ def fetch_margin_balance(conn, start: date, end: date) -> Dict[date, float]:
 
     stock_margin 是按真实交易日存的分交易所明细，比 market_history 那一列干净：
     后者的滞后口径历史上并不稳定。分交易所分批发布的日期（交易所数少于窗口众数）
-    汇总口径不全，按 market_state_card 的同一条规则剔除。
+    汇总口径不全，直接剔除。
     """
     with conn.cursor() as cur:
         cur.execute(

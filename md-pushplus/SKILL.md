@@ -24,7 +24,7 @@ description: >-
 ## 默认行为（不要问，直接这么做）
 
 1. **推送格式默认 HTML**：PushPlus 的 `template` 固定 `html`，正文一律先渲染成 HTML 再发，不发裸 Markdown、不发纯文本。
-2. **渲染默认用共享主题模板**：走 `shared/html_report` 的主题（默认 `default` 主题，即 AlphaVault 站点风格），跟 a-stock-* / usmarket / ch-news-reporter 出的网页版报告同一套观感与排版引擎。**除非用户点名要别的主题或要极简体积，否则不要切换。**
+2. **渲染默认用共享主题模板**：走 `shared/html_report` 的 Markdown 引擎与主题 CSS（默认 `default` 主题，即 AlphaVault 站点风格），跟 a-stock-* / usmarket / ch-news-reporter 出的网页版报告同一套观感。**除非用户点名要别的主题或要极简体积，否则不要切换。**
 
 用户没提要求时，这两条就是默认值，`python scripts/md_to_pushplus.py 报告.md` 一条命令即可，无需额外参数。
 
@@ -38,7 +38,7 @@ PushPlus 的 token 从环境变量 `PUSHPLUS_TOKEN` 读取（在 [pushplus.plus]
 2. **想好标题**：标题是用户在微信/邮件里第一眼看到的东西。
    - 默认会取 Markdown 里的第一个 `# 一级标题`；没有就用文件名。
    - 如果默认标题不够清楚（比如就是个日期），**主动替用户拟一个有信息量的标题**（如「6/24 宏观日报：美债走高、黄金回落」），用 `--title` 传入。这是模型该做的判断，别留给脚本。
-3. **先 dry-run 自检**（推荐）：加 `--dry-run --save-html /tmp/preview.html` 先渲染不发送，确认 HTML 字符数没超 PushPlus 上限（约 4 万字符），必要时可打开预览。主题 CSS 本身约占 1.3 万字符，长报告更容易顶到上限——超了看下面「常见失败」。
+3. **先 dry-run 自检**（推荐）：加 `--dry-run --save-html /tmp/preview.html` 先渲染不发送，脚本会打印推送包大小并拆成 `css + body` 两块。主题 CSS 摇树后约 5–6 千字符，典型日报整包 8–17K，离 PushPlus 约 4 万字符的上限还很宽；顶到上限看下面「常见失败」。预览文件按手机视口打开看最准——推送主要在微信里读。
 4. **发送**：去掉 `--dry-run` 正式推送。脚本返回 PushPlus 的 JSON，`code==200` 即成功。
 5. **如实回报**：把发送结果（成功 / 失败原因）告诉用户，并说明用的是哪套渲染（主题名或 inline 降级）。失败时按「常见失败」排查，别假装成功。
 
@@ -69,23 +69,32 @@ python scripts/md_to_pushplus.py 报告.md --channel mail
 
 ## 渲染说明
 
-**默认路径（`--renderer theme`）**：调用仓库共享的 `shared/html_report`——同一套 Markdown 引擎（标题、嵌套列表、引用、表格、代码块、行内样式、`==高亮==`）、同一套主题 CSS，产出自包含单页 HTML 整体作为 PushPlus 的 `content` 发出。好处是主题只维护一份：改 `shared/html_report/themes/*.css`，推送和各 skill 的网页版一起变。
+**默认路径（`--renderer theme`）**：用 `shared/html_report` 的 Markdown 引擎和主题 CSS，但**推出去的是一个自包含的 HTML 片段**，不是整页文档——一个带作用域的 `<div id="pp">`，里面是内联的主题 CSS 加报告正文。
 
-几个已知取舍，心里有数即可：
+为什么是片段不是整页，三条都是在真实推送页面（pushplus.plus/shortMessage/…）上实测出来的：
 
-- **体积**：主题 CSS 约 1.3 万字符会计入 PushPlus 约 4 万字符的 content 上限。脚本推送前会自动剥掉 CSS 注释与缩进（只删空白，不动选择器与声明），但正文余量仍然只有约 2.5 万字符。
-- **装饰 JS 可能不跑**：页面自带的轻量装饰脚本（表格数字红绿染色、h2 轮色、隐藏独立 `---`）在 PushPlus 以 innerHTML 注入正文时不会执行——排版、表格、卡片、配色全都正常，只是少了这几处点缀。这是渲染侧无法左右的，不必为此改报告。
-- **外链字体已关**：推送包不引 Google Fonts，落回系统字体，保证离线与弱网下也能正常显示。
+- **PushPlus 把 content 以 innerHTML 注入自己的详情页，页面里的 `<script>` 一律不执行**。所以 shared 那套装饰脚本（表格数字红绿、h2 轮色、隐藏独立 `---`）全都失效，正文里会裸露 `---`。现在这些装饰改在 Python 侧构建期做完，静态写进 HTML，不再依赖 JS。
+- **整页的主题 CSS 会漫出去改掉 PushPlus 自己的页面**：`*`、`html`、`body` 那几条规则实测把宿主的字体、底色、间距一起换了。现在所有选择器都加了 `#pp` 前缀，`:root` / `html` / `body` 收敛到容器本身，宿主一个属性都不受影响。
+- **`<!doctype>` / `<head>` / `<title>` / `<meta>` 会被当正文解析成垃圾节点**，而 `.page` 的 `calc(100vw - 40px)` 算的是视口宽不是容器宽，在窄容器里会溢出。片段没有这些标签，宽度一律按 100% 走。
 
-**降级路径（`--renderer inline`）**：脚本内置的纯标准库渲染，样式全部内联到元素 `style=""` 上，体积只有几 KB。什么时候用它——用户点名要、报告长到主题版超限、或目标是对 `<style>` 支持差的老邮件客户端（如 Outlook 桌面版，不认 CSS 变量）。共享包导入不到时脚本也会自动落到这条路，并在 stderr 说明原因；这种情况要如实告诉用户，别当成主题版推送成功。
+另外两处是专门为手机读做的（推送基本都在微信里看）：
+
+- 主题给桌面报告的表格设了 `min-width:520px` + 单元格 `nowrap`，结果 375px 的手机上**连两三列的小表都被迫横滑**。窄屏下这两条被放开，同时给单元格加 `word-break:keep-all`——只放开 `nowrap` 的话中文短词会被逐字拆成一列一个字（实测同一张表从 468px 高涨到 891px）。现在窄表能收进屏幕，宽表保持一行一条、由 `.table-wrap` 横滑兜底。
+- CSS 按片段里实际出现的 class 摇树——图表、时间轴、hero 卡、折叠更新那些规则在纯 Markdown 推送里用不到，直接不进包。主题 CSS 从约 1.3 万字符降到 5–6 千。
+
+`--save-html` 存的预览文件比推送包多一层 `doctype + viewport` 外壳，正文与样式逐字节相同，就是为了能在本地按手机视口看到微信里的样子。
+
+**降级路径（`--renderer inline`）**：脚本内置的纯标准库渲染，样式全部内联到元素 `style=""` 上。什么时候用它——用户点名要、或目标是对 `<style>` 支持差的老邮件客户端（如 Outlook 桌面版，不认 CSS 变量）。注意它**不是"更省字符"的选项**：inline 给每个元素都挂 style，正文越长越亏，实测 md 超过约 10KB 后整包就比主题版更大了。共享包导入不到时脚本也会自动落到这条路，并在 stderr 说明原因；这种情况要如实告诉用户，别当成主题版推送成功。
 
 输入若是 Obsidian / Jekyll 笔记，开头的 YAML frontmatter（`--- ... ---` 元数据块）会被自动剥离，不会渲染进正文；若正文没有 `# 一级标题`，会用 frontmatter 里的 `title:` 兜底作推送标题。
+
+改动这条渲染路径后跑一遍 `scripts/test_push_render.py`（静态装饰、CSS 作用域化、摇树、片段装配的断言都在里面）。
 
 ## 常见失败
 
 - `no token`：没设 `PUSHPLUS_TOKEN` 也没传 `--token` → 向用户要 token。
 - PushPlus 返回 `code != 200`：常见是 token 失效、当天免费额度用尽、或 `content` 超长。把 `msg` 原文转告用户。
-- 内容超长（约 4 万字符）：脚本会先 WARNING。按这个顺序处理——先试 `--renderer inline`（省掉约 1.3 万字符的主题 CSS），仍超就把长报告拆成几条分别推，或先精简正文。
+- 内容超长（约 4 万字符）：脚本会先 WARNING。**别指望换 `--renderer inline` 能救**——主题版的 CSS 只占 5–6 千字符，长报告的体积几乎全在正文，inline 反而更大。正路是把长报告拆成几条分别推，或先精简正文。
 - `shared/html_report unavailable`：共享包没同步进来（`scripts/_shared/html_report` 缺失，且不在仓库开发目录下）。跑一次 `python scripts/skill_sync.py` 补齐；在此之前脚本会用 inline 兜底，推送不会中断。
 
 ## 边界

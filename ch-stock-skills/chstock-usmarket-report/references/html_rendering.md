@@ -37,12 +37,14 @@ description: 仅供 chstock-usmarket-report skill 内部按需读取。说明美
 - 数据全取自 evidence 的 `group_indices`（确定性派生，模型不参与）。
 - 此图**取代**了旧版「观察池 vs QQQ（当日超额）」条形图。
 
-## 个股 K 线图
+## 大盘 K 线图
 
-若 evidence 可读，可在正文相关位置插入：
+「大盘」小节标题下接一行两列的 120 日 K 线（OHLC + MA20/MA60 + 成交金额柱）：
 
-- 指数/个股 120 日 K 线图（OHLC + 成交金额柱）。
-- 数据只取自 evidence 中已有的价格与成交序列。
+- 左 QQQ、右 SOXX，两张同窗同口径，用来对照纳指整体与半导体这条先行链的位置差。
+- 卡片标题是 `代码 · 简称`，副标题给区间、交易日数与当日涨跌幅；悬停看单日 OHLC / 涨跌 / 成交额。
+- 只有一条指数有 K 线数据时（例如旧的 evidence 只存了 QQQ），自动退回单张宽图，不留半幅空位。
+- 数据全取自 evidence `indices[].kline_records`；SOXX 只入图，不参与 vs-QQQ、分组指数基准等相对强弱计算。
 
 ## 渲染命令
 

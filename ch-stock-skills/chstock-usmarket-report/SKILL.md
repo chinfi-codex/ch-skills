@@ -133,7 +133,7 @@ python scripts/web_search.py "Credo CRDO catalyst 2026-06-18" --topic news --day
 ### evidence JSON 主要字段
 
 - `type=us_market_watchlist_evidence`、`date`、`generated_at`、`thresholds`
-- `indices`：仅 QQQ
+- `indices`：QQQ + SOXX（各带 120 日 `kline_records`，供 HTML 大盘小节的一行两列 K 线图）。名单写死在 `generate_report.py` 的 `KLINE_INDICES`，不受飞书同步影响；vs-QQQ、分组指数基准等相对强弱口径仍只认 QQQ，SOXX 只是参照图
 - `groups`：每组成员快照 + summary
 - `group_indices`：各非空分组等权合成 ETF 指数序列，rebase 到 100，与 QQQ 同窗
 - `abnormal_moves.rises/.drops`：观察池内 ±7% 票

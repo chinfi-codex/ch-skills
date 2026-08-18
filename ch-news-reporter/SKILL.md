@@ -1,6 +1,6 @@
 ---
 name: ch-news-reporter
-description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、Polymarket、RSS 等多信源采集财经、AI、宏观或全球地缘风险新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、地缘日报（覆盖中东、俄乌、台海、朝鲜半岛、红海/航运、能源通道、制裁、联盟与大国博弈，含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。也用于用户在 config/custom_topics.yaml 注册的自定义关注主题日报：当用户要求跟踪特定公司/产品/产业事项（如英伟达 Rubin 出货、Kimi 算力部署、华为升腾出货）、生成每天的自定义主题日报（全部关注事项合并为一份）、新增/暂停/归档关注主题、或对关注主题做多通道（新闻库/实时搜索/本地 Vault 笔记/结构化数据）证据汇总时，走自定义主题流程。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“生成今天地缘日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“分析红海/霍尔木兹/俄乌/台海/制裁对油价、航运和风险资产的影响”“帮我每天跟踪 XX 的进展并出日报”“把 XX 加为关注主题”“今天 XX 主题有什么增量”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述固定日报与已注册关注主题日报，不用于未注册主题的临时/零碎新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
+description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、Polymarket、RSS 等多信源采集财经、AI、宏观或全球地缘风险新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、地缘日报（覆盖中东、俄乌、台海、朝鲜半岛、红海/航运、能源通道、制裁、联盟与大国博弈，含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。也用于用户在 config/custom_topics.yaml 注册的自定义关注主题日报：当用户要求跟踪特定公司/产品/产业事项（如英伟达 Rubin 出货、Kimi 算力部署、华为升腾出货、商业航天与卫星产业进展）、生成每天的自定义主题日报（全部关注事项合并为一份）、新增/暂停/归档关注主题、或对关注主题做多通道（新闻库/实时搜索/本地 Vault 笔记/结构化数据）证据汇总时，走自定义主题流程。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“生成今天地缘日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“分析红海/霍尔木兹/俄乌/台海/制裁对油价、航运和风险资产的影响”“帮我每天跟踪 XX 的进展并出日报”“把 XX 加为关注主题”“今天 XX 主题有什么增量”“今天商业航天/火箭发射/卫星星座有什么进展”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述固定日报与已注册关注主题日报，不用于未注册主题的临时/零碎新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
 ---
 
 # CH News Reporter
@@ -73,7 +73,7 @@ DB-first 的取数/回写脚本(`collect_news.py` / `prepare_report_data.py` / `
 python scripts/_shared/skill_runtime/runner.py --skill-root . run news.collect -- --date today --only-missing
 ```
 
-`--only-missing` 会先查库里目标日期各源的行数,只对行数低于阈值的源发起采集,已有的源连网络请求都不发。阈值按源取 `config/sources.yaml` 的 `collect_min_rows`(金十 300 / rss 30 / github_trending 20 / product_hunt 10 / hacker_news 20 / polymarket 10,约为各源典型日产量),`--min-rows N` 可全源统一覆盖;配置缺失时回退默认 1。今天首跑时库空→全采;重跑或补历史日→读库不重采,保证同一报告日的证据可复现(这也是 watchboard 跨天结算能成立的前提)。需要强制重抓时用 `--replace-date`(优先级高于 `--only-missing`)。
+`--only-missing` 会先查库里目标日期各源的行数,只对行数低于阈值的源发起采集,已有的源连网络请求都不发。阈值按源取 `config/sources.yaml` 的 `collect_min_rows`(金十 300 / rss 45 / github_trending 20 / product_hunt 10 / hacker_news 20 / polymarket 10,约为各源典型日产量),`--min-rows N` 可全源统一覆盖;配置缺失时回退默认 1。今天首跑时库空→全采;重跑或补历史日→读库不重采,保证同一报告日的证据可复现(这也是 watchboard 跨天结算能成立的前提)。需要强制重抓时用 `--replace-date`(优先级高于 `--only-missing`)。
 
 常用参数：
 
@@ -117,7 +117,7 @@ evidence packet 现在还带两块新内容(DB-first 与活动状态):
 - `coverage`：本 profile 各期望源在库里当天的行数、缺失源、profile 相关 feed 失败，以及最终 packet 的分源选择摘要。某源缺数或具体 feed 失败时,报告里相应判断要降级标注；不能用 RSS 总行数掩盖关键官方源抓取失败。
 - `prior_state`：`state_enabled` 的 profile(三个日报都已开启)会带上**最近一期 watchboard**(date < 今天)。markdown 输出里是 `## Prior Watchboard` 段,列出今天必须逐条结算的 open 跟踪项;冷启动(无上一期)时按各 profile methodology 的种子/默认构造第一份。机制见 `references/reports/watchboard.md`。
 
-`prepare_report_data.py` 会按 profile 的 `rss_categories` 过滤 RSS，避免地缘 RSS 污染 AI 日报。`macro_daily` 会先从当天金十和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
+`prepare_report_data.py` 会按 profile 的 `rss_categories` 过滤 RSS，避免地缘 RSS 污染 AI 日报。RSS 池现有四类 category：`ai`(25 个源)、`geopolitics`(8)、`finance`(2)、`space`(10，服务自定义主题 `commercial_space`，见下文第 8 节)；固定三日报都声明了 `rss_categories`，所以新增的商业航天源不会漏进它们，自定义主题走关键词检索、不看 category。`macro_daily` 会先从当天金十和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
 
 - **基础行情**（金十/Stooq/AV）：Brent、WTI、黄金、天然气、USDCNH、纳指期货等。
 - **位置富数据**（Yahoo）：美国 10Y / 5Y 国债收益率、DXY、VIX、BTC，以及核心估值锚——纳斯达克综合（^IXIC）与上证指数（000001.SS）。每个标的额外计算 52 周高低、距 52 周高 %、YTD、20/60 日均线、`pct_vs_ma20`，作为"市场相对位置"判断依据。
@@ -304,9 +304,17 @@ python scripts/_shared/skill_runtime/runner.py --skill-root . run report.render-
 
 ### 8. 自定义主题日报（custom topics）
 
-固定三日报之外，用户可以在 `config/custom_topics.yaml` 注册自己的窄关注事项（5-10 个，如英伟达 Rubin 出货、Kimi 算力部署、华为升腾出货）。「自定义主题」在 News Reporter 里是**一个**与固定三日报平级的主题：所有 active 关注事项每天合并产出**一份**日报 `reports/custom_daily_<date>.md`，事项作为报告内板块，不按事项各出一份。单个事项当天有重大进展时，可应用户要求额外出一份该事项的单主题深挖报告。设计全文见 `docs/custom-topics-design.md`。
+固定三日报之外，用户可以在 `config/custom_topics.yaml` 注册自己的关注事项（5-10 个，如英伟达 Rubin 出货、Kimi 算力部署、华为升腾出货、商业航天产业跟踪）。「自定义主题」在 News Reporter 里是**一个**与固定三日报平级的主题：所有 active 关注事项每天合并产出**一份**日报 `reports/custom_daily_<date>.md`，事项作为报告内板块，不按事项各出一份。单个事项当天有重大进展时，可应用户要求额外出一份该事项的单主题深挖报告。设计全文见 `docs/custom-topics-design.md`。
 
 **onboarding（新增主题）**：用户给出关注点 → Agent 按 `config/custom_topics.yaml` 的 schema 起草主题配置（slug、focus、keywords、web_search queries、通道挂钩）→ 用户确认后落盘 → 首次跑检索建立冷启动 watchboard。slug 禁止与固定 profile 冲突（加载时校验、冲突即报错）；`status: active / paused / archived` 管生命周期，`open_budget: 0` 或 `state_enabled: false` 关闭跨天状态。
+
+**当前已注册事项**：`nvidia_rubin`、`kimi_compute`、`huawei_ascend`、`ai_model_frontier`、`commercial_space`。
+
+`commercial_space`（商业航天产业跟踪）比其他事项面宽，配置上有三处不一样，改它之前先看懂：
+
+- 库内证据靠 `config/sources.yaml` 里 `category: space` 的 10 个源打底（SpaceNews / Payload / TechCrunch Space / Ars Technica Space / NASASpaceflight / Spaceflight Now / NASA Breaking News / SpacePolicyOnline / European Spaceflight / Space.com）。国内公司与院所没有可抓的 RSS，只能靠金十电报、Tavily 中文 query 和 Vault 笔记补，写报告时国内线的覆盖要按这个前提打折。
+- `web_search` 给到 4 条 query（其他事项 3 条），第一条是中文国内线——retriever 按列表顺序取前 N 条，预算紧张时先保国内。
+- 关键词避开了 `space`、`constellation`、`ESA` 这类会误伤 workspace、Constellation Energy、lifesaving 的宽词；`SpaceX` 与 xAI 合并上市（SPCX.O）之后同名新闻大半是 Grok 与 AI 编程，靠 `exclude_keywords` 挡掉一部分，剩下的由模型按 focus 里的口径判断。
 
 **每日流程（全部关注事项 → 一份合并日报）**：
 

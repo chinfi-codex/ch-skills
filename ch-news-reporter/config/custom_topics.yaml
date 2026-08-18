@@ -22,6 +22,8 @@
 #   pg_data: {stock_tickers: [...]}   alpha_data 结构化表白名单查询,仅 PostgreSQL 可用;
 #                                     可选挂钩: stock_tickers→stock_daily / index_codes→stock_index_daily /
 #                                     theme_ids→theme_daily_state / tracking_tickers→stock_tracking_history
+#                                     键值只接受 ASCII(^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$),
+#                                     中文 theme_id(如 TH-军工低空)挂不上,会被当非法键值跳过
 #   web_search:                       实时 Tavily 检索,结果落库 items(source_type='web_search')
 #     queries                         每主题定制 query;onboarding 时模型起草、用户确认,滚动维护
 #     max_queries_per_day             每主题每日 query 上限;onboarding 期 2-3,稳定后可升 4
@@ -159,3 +161,107 @@ topics:
           - "wiki/02-概念词条/"
     state_enabled: true
     open_budget: 5
+
+  commercial_space:
+    title: 商业航天产业跟踪
+    status: active
+    frequency: daily
+    focus: |
+      跟踪全球商业航天产业的实际进度,不写发射流水账——每条事件都要接回下面四条主线之一,
+      并说清它改变了谁的相对位置:
+
+      1) 发射与运力:入轨成功/失败、年度发射节奏、可重复使用的复用次数与周转天数、
+         单公斤入轨成本、发射工位与发射场产能、新型号首飞与定型进度。
+      2) 卫星与载荷:星座在轨数量与组网进度、卫星批产线产能与交付节奏、载荷能力代际
+         (相控阵、激光星间链路、直连手机、遥感分辨率与重访)、频轨资源期限压力。
+      3) 地外探索与空间站:探月/火星/小行星任务节点、载人登月计划进度、ISS 退役时间表与
+         商业空间站(Axiom / Vast / Starlab 等)接棒进度、天宫在轨运行与国际合作。
+      4) 资本与订单:一级市场融资轮次与估值、并购与 IPO、政府与军方合同(NASA、太空军、
+         欧空局、国内政府采购)的金额与周期、上市公司相关业务的收入兑现。
+
+      重点主体分两条线跟。国外:NASA、SpaceX(Starship / Falcon / Starlink)、Blue Origin、
+      Rocket Lab、ULA、Arianespace 与 ESA、Amazon Kuiper、AST SpaceMobile、Planet、
+      Intuitive Machines、Firefly、Stoke、Relativity、Sierra Space、Axiom、Vast,以及
+      ISRO / JAXA / Roscosmos 等国家机构。国内:航天科技集团与航天科工(含运载火箭技术研究院、
+      空间技术研究院、上海航天技术研究院、航天推进技术研究院等院所)、中科院微小卫星创新研究院、
+      中国星网与垣信(千帆星座),以及蓝箭航天、天兵科技、星际荣耀、星河动力、中科宇航、
+      东方空间、深蓝航天、银河航天、长光卫星、微纳星空、国星宇航等民营公司。
+
+      一个易错点:SpaceX 已与 xAI 合并并上市(SPCX.O),同名新闻里有大量 Grok、AI 编程、
+      持仓披露的内容,关键词层面挡不干净——只有涉及航天业务(发射、星链、星舰、订单、产能)
+      的才算本主题增量,AI 侧进展归 ai_model_frontier;13F/估值类消息只在能推断 SpaceX
+      航天业务估值与融资能力时才写。
+
+      判断纪律:官方口径或多源一致的才算确认事实;单源的试飞、订单、融资传闻降级为线索,
+      标"未经证实"。国内一级市场信息多为转述,估值与金额要标可信度。中美两条产业线分开记,
+      不要用一边的节奏去推断另一边。
+
+      边界:低空经济、eVTOL、民航客机、纯天文科普不进本主题,除非与航天主体直接相关
+      (可重复使用飞行器、空天飞机、卫星应用落地场景)。
+    keywords: [
+      # --- 国外主体与型号 ---
+      SpaceX, Starship, '"Falcon 9"', '"Falcon Heavy"', Starlink, NASA, Artemis,
+      '"Blue Origin"', '"New Glenn"', '"Rocket Lab"', Neutron, '"United Launch Alliance"',
+      '"Vulcan Centaur"', '"Vulcan rocket"', Arianespace, '"Ariane 6"',
+      '"European Space Agency"', Roscosmos, ISRO, JAXA, Kuiper,
+      '"AST SpaceMobile"', '"Planet Labs"', '"Intuitive Machines"', '"Firefly Aerospace"',
+      '"Stoke Space"',
+      '"Relativity Space"', '"Sierra Space"', '"Axiom Space"', '"Space Force"', Starshield,
+      # --- 国外通用词(刻意避开 space / constellation 这类会误伤 workspace、
+      #     Constellation Energy 的宽词) ---
+      satellite, spacecraft, spaceflight, spaceport, '"launch vehicle"', '"orbital launch"',
+      '"space station"', '"deep space"', cislunar, smallsat, '"space startup"',
+      # --- 国内主体、型号与任务 ---
+      航天, 商业航天, 运载火箭, 可重复使用, 一箭多星, 发射场, 卫星互联网, 卫星制造,
+      卫星载荷, 遥感卫星, 星座组网, 低轨, 在轨, 入轨, 星链, 千帆星座, 中国星网, 北斗,
+      空间站, 天宫, 神舟, 天舟, 嫦娥, 探月, 载人登月, 天问, 火星探测, 深空探测,
+      长征, 朱雀, 天龙二号, 天龙三号, 引力一号, 力箭, 谷神星, 快舟, 捷龙,
+      蓝箭航天, 天兵科技, 星际荣耀, 星河动力, 中科宇航, 东方空间, 深蓝航天, 银河航天,
+      长光卫星, 微纳星空, 国星宇航, 垣信, 航天科技集团, 航天科工
+    ]
+    # 两类噪音:消费向天文/占星(主要来自 Space.com);以及 SpaceX 与 xAI 合并后
+    # (上市代码 SPCX.O)"SpaceX"/"SpaceXAI" 同名新闻里大量 Grok、AI 编程的内容
+    exclude_keywords: [流星雨, 星座运势, 占星, horoscope, stargazing, '"telescope deal"', Grok, Cursor]
+    time_window_days: 2
+    channels:
+      # 面比其他主题宽(发射/卫星/深空/资本四条线 × 中美两地),条数上限相应放宽
+      news_db:
+        max_items: 120
+      pg_data:
+        # A 股商业航天链的价格锚:火箭总体与上游锻件、星上电子与载荷芯片、卫星总体、
+        # 卫星应用与终端。stock_daily 只有 A 股,RKLB / ASTS 等美股取不到,海外标的
+        # 靠 web_search;theme_daily_state 的中文 theme_id 挂不上(键值须 ASCII)。
+        stock_tickers:
+          - 003009.SZ   # 中天火箭
+          - 605123.SH   # 派克新材(火箭发动机锻件)
+          - 600879.SH   # 航天电子
+          - 600118.SH   # 中国卫星
+          - 300762.SZ   # 上海瀚讯(卫星通信)
+          - 001270.SZ   # 铖昌科技(相控阵 T/R 芯片)
+          - 688270.SH   # 臻镭科技(星载射频)
+          - 688568.SH   # 中科星图
+          - 688066.SH   # 航天宏图
+          - 002465.SZ   # 海格通信(北斗终端)
+        # 没挂 index_codes:最贴近的申万国防军工(801740.SI)在库里落后好几个交易日,
+        # 挂上只会天天产出"无数据行"警告,反而稀释了 coverage 警告的信号价值。
+      web_search:
+        # 顺序即优先级:预算只够前 N 条时 retriever 取列表前 N 条。国内线最缺 RSS 覆盖,
+        # 排第一;国外产业主干已有 10 个 space RSS 打底,实时检索主要补资本与政策。
+        queries:
+          - "商业航天 民营火箭 卫星互联网 发射 中标 融资 进展"
+          - "commercial space launch satellite company contract award"
+          - "space startup funding round investment valuation satellite"
+          - "NASA Artemis lunar mission commercial space station ISS transition"
+        max_queries_per_day: 4
+      alpha_vault:
+        enabled: true
+        paths:
+          - "wiki/03-产业链图谱/"              # 含航天低空.md
+          # 10-产业跟踪 下 80% 是 ai_daily / semicon_ai_track,它们只靠 SpaceX 一词命中,
+          # 会把按 mtime 排序的 20 篇笔记额度挤满;这里只 glob 产业链日报
+          - "wiki/10-产业跟踪/*产业链日报.md"
+          - "wiki/05-行业研判/"
+          - "wiki/01-个股词条/"
+    state_enabled: true
+    # 四条主线各留 1-2 条 open 跟踪项
+    open_budget: 6

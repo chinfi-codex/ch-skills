@@ -310,11 +310,13 @@ python scripts/_shared/skill_runtime/runner.py --skill-root . run report.render-
 
 **当前已注册事项**：`nvidia_rubin`、`kimi_compute`、`huawei_ascend`、`ai_model_frontier`、`commercial_space`。
 
-`commercial_space`（商业航天产业跟踪）比其他事项面宽，配置上有三处不一样，改它之前先看懂：
+`commercial_space`（商业航天产业跟踪）比其他事项面宽、且有专属读者，配置上有四处不一样，改它之前先看懂：
 
 - 库内证据靠 `config/sources.yaml` 里 `category: space` 的 10 个源打底（SpaceNews / Payload / TechCrunch Space / Ars Technica Space / NASASpaceflight / Spaceflight Now / NASA Breaking News / SpacePolicyOnline / European Spaceflight / Space.com）。国内公司与院所没有可抓的 RSS，只能靠金十电报、Tavily 中文 query 和 Vault 笔记补，写报告时国内线的覆盖要按这个前提打折。
 - `web_search` 给到 4 条 query（其他事项 3 条），第一条是中文国内线——retriever 按列表顺序取前 N 条，预算紧张时先保国内。
 - 关键词避开了 `space`、`constellation`、`ESA` 这类会误伤 workspace、Constellation Energy、lifesaving 的宽词；`SpaceX` 与 xAI 合并上市（SPCX.O）之后同名新闻大半是 Grok 与 AI 编程，靠 `exclude_keywords` 挡掉一部分，剩下的由模型按 focus 里的口径判断。
+- 关键词里另有《中国商业航天融资全景图》口径的 29 家国内民营/混合所有制公司（按赛道分组排列，改动时对着原图核），外加它们的英文写法与型号英文名——英文源报道中国公司时只用英文名和型号名，中文源命中不到（实测 NASASpaceflight 单日 `LandSpace` 命中 18 次、`Zhuque` 15 次）。这批词在现有语料上不新增召回也不新增噪音，价值在于 `matched_keywords` 能点名到具体公司。两个坑写在配置注释里：`iSpace` 会命中 Omnispace 所以只用 `"i-Space"`；星际荣耀全名带“航天科技集团”，会连带命中 CASC。
+- **输出有专属规范**：这个板块面向 CEO（体制内 + 技术背景）与董事长（投融资背景）两位读者，写法与结构见 `references/reports/custom_topic/commercial_space_output.md`——今日要点分两组写、工程事实必须落到资本含义、估值必须标口径（一级与 IPO 隐含不可比）。其余关注事项不受这份规范约束。
 
 **每日流程（全部关注事项 → 一份合并日报）**：
 
@@ -327,7 +329,7 @@ python scripts/prepare_report_data.py --topic <slug> --date today --format markd
 - 证据来自四个通道（脚本只取数/去重/落库/打包）：`news_db`（库内新闻关键词+时间窗）、`pg_data`（alpha_data 结构化表白名单查询，仅 PG）、`web_search`（Tavily 实时检索，结果落库 `items`，需 `TAVILY_API_KEY`，无 key 或网络失败时优雅降级并记 coverage；历史日期回放仅读取已落库 Web 证据，禁止调用以当前时刻为锚的实时检索）、`alpha_vault`（本地 Obsidian Vault 只读检索，只接受 `vault_root` 内相对路径或 glob；不存在或越界路径跳过并记警告）。新通道 = 在 `scripts/retrievers/` 加一个原子脚本 + 配置项。
 - `--topic all` 遍历所有 `active` 且 `frequency: daily` 的主题；`weekly` 主题不进每日批量，`paused` 主题只能显式点名手动跑，`archived` 不再检索。
 - web 检索预算：每主题 `max_queries_per_day` + 全局 `global_max_queries_per_day`，当日已执行 query 以库内收据计量，同日重跑不重复扣预算；落库行按 `retention_days` 自动清理（也可 `python scripts/topic_retrieve.py --groom`）。
-- 分析时读 `references/reports/custom_topic/methodology.md`（通用底线：证据分层 / 边际判定 / 传闻降级 / 无增量不硬凑）+ 各事项 `focus` + 各事项证据包与 `Prior Watchboard`，按 `references/reports/custom_topic/template.md` 写**一份合并日报**：每个关注事项一个板块（边际变化 / 新证据 / 判断更新 / 跟踪项一句话结算），当天无增量的事项一句话带过，不硬凑篇幅。
+- 分析时读 `references/reports/custom_topic/methodology.md`（通用底线：证据分层 / 边际判定 / 传闻降级 / 无增量不硬凑）+ 各事项 `focus` + 各事项证据包与 `Prior Watchboard`，按 `references/reports/custom_topic/template.md`（`commercial_space` 板块另按 `commercial_space_output.md`）写**一份合并日报**：每个关注事项一个板块（边际变化 / 新证据 / 判断更新 / 跟踪项一句话结算），当天无增量的事项一句话带过，不硬凑篇幅。
 - 回写仍按事项逐个进行：`save_report_state.py --profile custom_<slug> --date <报告日>`，watchboard 通用骨架（regime/tracking_items/next_nodes/falsifiers）照常校验，frame 自由结构。跨天状态按事项各自滚动，合并日报只是展示层。
 
 ## 数据表说明

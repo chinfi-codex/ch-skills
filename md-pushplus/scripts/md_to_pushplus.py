@@ -32,7 +32,9 @@ from pathlib import Path
 from typing import List, Optional
 
 PUSHPLUS_ENDPOINT = "https://www.pushplus.plus/send"
-# PushPlus 对 content 长度有上限（约 4 万字符），超出会被服务端拒绝。
+# PushPlus 对 content 长度有上限（约 4 万），超出会被服务端拒绝。文档没写清是字符
+# 还是字节，而一个中文字符在 UTF-8 里占 3 字节——按字节判定是保守的那一侧，宁可
+# 早一点警告，也别让一份看着"离上限很宽"的中文日报被服务端静默拒收。
 CONTENT_LIMIT = 40000
 
 # 共享渲染框架：装包后用 scripts/_shared，开发时回落仓库根的 shared/。
@@ -41,7 +43,9 @@ _BUNDLED_SHARED = SCRIPT_ROOT / "_shared"
 _DEV_SHARED = SCRIPT_ROOT.parents[1] / "shared"
 sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
 
-sys.path.insert(0, str(SCRIPT_ROOT))
+# 追加而不是插到最前：本目录里放一个与标准库同名的文件（本文件正好 import 了
+# html / json）就会静默劫持标准库导入。直接执行脚本时 sys.path[0] 本就是这里。
+sys.path.append(str(SCRIPT_ROOT))
 
 try:  # 共享包缺失不该让推送整个失败——降级到内联渲染即可。
     from html_report import list_themes  # noqa: E402
@@ -51,8 +55,22 @@ try:  # 共享包缺失不该让推送整个失败——降级到内联渲染即
     SHARED_IMPORT_ERROR: Optional[str] = None
 except Exception as exc:  # noqa: BLE001 — 任何导入期异常都只降级，不中断
     render_push_fragment = None  # type: ignore[assignment]
+    fragment_stats = None  # type: ignore[assignment]
     SHARED_THEMES = ["default", "claude", "print"]
     SHARED_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+
+    def wrap_preview(fragment: str, title: str) -> str:  # type: ignore[misc]
+        """共享包缺失时的最小预览外壳。
+
+        降级路径本就是给"共享包没同步过来"的机器用的，那台机器上也最难复现问题，
+        所以三个符号都要有定义——预览文件缺 charset 会让整篇中文变乱码。
+        """
+        return (
+            '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f"<title>{html.escape(title)}</title></head>"
+            f'<body style="margin:0;background:#fff">{fragment}</body></html>'
+        )
 
 DEFAULT_THEME = "default"
 
@@ -335,12 +353,13 @@ def main() -> int:
     if renderer == "theme":
         content = render_push_fragment(body, theme=args.theme)
         stats = fragment_stats(content)
-        style_note = f"theme:{args.theme} (css {stats['css']} + body {stats['body']})"
+        style_note = (f"theme:{args.theme} (css {stats['css']} + body {stats['body']}"
+                      f" + 外壳 {stats['shell']})")
         preview = wrap_preview(content, title)
     else:
         content = wrap_html_inline(render_markdown_inline(body))
         style_note = "inline"
-        preview = content
+        preview = wrap_preview(content, title)
 
     if args.save_html:
         # 预览文件比推送包多一层 doctype/viewport 外壳，正文与样式逐字节相同，
@@ -349,12 +368,15 @@ def main() -> int:
         print(f"Saved preview HTML → {args.save_html} "
               f"(push payload {len(content)} chars, {style_note})")
 
-    if len(content) > CONTENT_LIMIT:
-        print(f"WARNING: content is {len(content)} chars, over PushPlus limit ~{CONTENT_LIMIT}. "
-              "PushPlus may reject it. Consider splitting the report.", file=sys.stderr)
+    content_bytes = len(content.encode("utf-8"))
+    if content_bytes > CONTENT_LIMIT:
+        print(f"WARNING: content is {content_bytes} UTF-8 bytes ({len(content)} chars), over "
+              f"PushPlus limit ~{CONTENT_LIMIT}. PushPlus may reject it. "
+              "Consider splitting the report.", file=sys.stderr)
 
     if args.dry_run:
-        print(f"[dry-run] title={title!r}, renderer={style_note}, content={len(content)} chars, not sent.")
+        print(f"[dry-run] title={title!r}, renderer={style_note}, "
+              f"content={len(content)} chars / {content_bytes} UTF-8 bytes, not sent.")
         return 0
 
     if not args.token:
@@ -370,7 +392,7 @@ def main() -> int:
 
     print(json.dumps(result, ensure_ascii=False))
     if result.get("code") == 200:
-        print(f"OK: pushed '{title}' ({style_note}, {len(content)} chars).")
+        print(f"OK: pushed '{title}' ({style_note}, {content_bytes} UTF-8 bytes).")
         return 0
     print(f"FAILED: PushPlus returned code={result.get('code')} msg={result.get('msg')}", file=sys.stderr)
     return 1

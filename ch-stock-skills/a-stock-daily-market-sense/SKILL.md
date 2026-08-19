@@ -33,7 +33,7 @@ description: 基于 Tushare Pro A 股日线与 Baostock 风格指数生成盘后
 2. **分模块撰写**：按最小上下文边界加载各模块 JSON + 方法论 + 模板。模块编号沿用历史值、章节按 1-4 重排（模块 3 → 第 2 章赚钱效应，模块 4 → 第 3 章，模块 5 → 第 4 章）。模块 3 赚钱效应采用两阶段契约：首轮只输出临时主题映射与 `stars: null`；统计脚本完成后由模型按证据锁定星级，只有存在 ★★★ 主线时才触发 2.2 催化与细分线路推演。详见 `references/methodology/module3_money_effect.md` 与 `references/execution_flow.md`。
 3. **聚合成稿**：读取模块 1、3、4、5 输出与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和语气校准。
 4. **门禁晋级**：模型只把草稿写入 `reports/.staging/`；用 `report.finalize-markdown` 校验结构、数值证据与禁用语后原子晋级。HTML 只能由 `report.render-html` 基于已有成功收据的 Markdown 生成。
-5. **生命周期落库与清理**：报告通过门禁后，把主线判定沉淀进 PG 生命周期台账；只有最终收据与审计均通过才清理临时 evidence。详见 `references/theme_lifecycle.md` 与 `references/execution_flow.md`。
+5. **生命周期落库与清理**：报告通过门禁后，把主线判定沉淀进 PG 生命周期台账——这是 HTML 渲染的**前置条件**，台账缺当日记录时 `report.render-html` 直接失败（泳道图会照画，但最后一列是空的）；只有最终收据与审计均通过才清理临时 evidence。详见 `references/theme_lifecycle.md` 与 `references/execution_flow.md`。
 
 ## 数据获取
 

@@ -51,6 +51,38 @@ _NUMERIC_EVIDENCE_KEYS = {
     "volume_decline_samples",
     "feature_group_analysis_samples",
 }
+# 数值出处不止 evidence 一处：主题级统计由 theme_group_stats.py 单独算进
+# module_context_<日期>/，M3/M4 交叉检查也一样。它们同样是脚本产物，却曾因为
+# 不在取数集里而被判成「编造」——2026-08-19 的 27.45%、5.43% 就是这么被从
+# 表格里赶进正文的。取数集按文件名前缀扩容，未知文件不自动纳入。
+_AUX_PROVENANCE_GLOBS = ("module3_theme_stats.json", "module3_theme_map.json", "assembled_checks.json")
+# 模型自建分组的派生聚合列：3.1 的风险类型是模型当场分的组，模板要求填组内
+# 中位数，而偶数样本的中位数按定义要取中间两值的平均——这个数 evidence 里本来
+# 就不会有。硬判会逼出「3.85 / 4.25」这种并列写法，所以只在这一节降为软告警。
+_DERIVED_AGGREGATE_SECTIONS = ("m4_risk_types",)
+# 数字限流针对的是判断段里的读数密度，不是模板强制的结构块。以下几类整段跳过：
+# frontmatter、正文前的元信息、1.1 那张必须逐项照抄的状态卡、以及判据/口径声明。
+_DEFINITION_PREFIXES = (
+    "判据", "判定规则", "数据源", "数据基础", "分层口径", "口径", "字段口径",
+    "时间口径", "来源", "注", "说明", "预筛", "前高折扣",
+)
+_CARD_BULLET_RE = re.compile(r"^[-*]\s*\*\*[^*]+\*\*\s*[：:]")
+_BULLET_RE = re.compile(r"^[-*+]\s+|^\d+[.、)]\s+")
+_THRESHOLD_RE = re.compile(r"[<>≤≥]")
+# 窗口标签与时间戳不是读数：「5 日均」「20 日线」「120 日高点」「09:31」
+# 「2026-08-19」都只是坐标，计进限流会让每段都超标。
+_DATE_TOKEN_RE = re.compile(r"\d{4}-\d{2}-\d{2}|(?<!\d)\d{1,2}-\d{2}(?!\d)")
+_CLOCK_TOKEN_RE = re.compile(r"(?<!\d)\d{1,2}:\d{2}")
+_WINDOW_TOKEN_RE = re.compile(
+    r"(?<![\d.])\d+(?:\.\d+)?\s*(?:个交易日|个月|个季度|日线|日均|日|天|周|月|年|季度)"
+)
+# 指数名里的数字也不是读数：科创50、沪深300、中证1000、国证2000、300成长。
+# 判据是「紧贴中文、没有空格、后面不接单位」——「跌停 137 家」有空格，不受影响。
+_UNIT_CHARS = "%亿万倍家只个日月年天周次条股元笔pctbp"
+_NAME_NUMBER_RE = re.compile(
+    rf"(?<=[\u4e00-\u9fff])\d+(?:\.\d+)?(?![.\d])(?![{_UNIT_CHARS}])"
+    rf"|(?<![\d.%])\d+(?=[\u4e00-\u9fff])"
+)
 
 
 @dataclass(frozen=True)
@@ -65,8 +97,14 @@ def validate_dms_content(
     markdown_text: str,
     evidence: Mapping[str, Any],
     contract: SectionContract,
+    aux_payloads: Sequence[Tuple[str, Any]] | None = None,
 ) -> Dict[str, Any]:
-    """Validate DMS Markdown and return the content-contract audit payload."""
+    """Validate DMS Markdown and return the content-contract audit payload.
+
+    ``aux_payloads`` are ``(label, payload)`` pairs of *other* deterministic
+    script outputs whose numbers are just as legitimate as evidence's — see
+    ``_AUX_PROVENANCE_GLOBS``.  Passing none keeps the old evidence-only scope.
+    """
     # Reuse the same renderer and resolver as the eventual HTML build.  This
     # makes heading existence/order/level failures part of one hard verdict.
     contract.stamp(render_markdown(markdown_text))
@@ -114,8 +152,13 @@ def validate_dms_content(
     if forbidden:
         problems.append(f"forbidden trading-advice terms present: {forbidden}")
 
-    table_numeric = _validate_table_numbers(markdown_text, evidence, problems, warnings)
-    paragraph_detail = _paragraph_warnings(markdown_text, evidence, table_numeric["tokens"])
+    provenance = _NumberProvenance(evidence, aux_payloads)
+    derived_only = _derived_only_tokens(markdown_text, sections)
+    table_numeric = _validate_table_numbers(
+        markdown_text, evidence, problems, warnings,
+        provenance=provenance, derived_only_tokens=derived_only,
+    )
+    paragraph_detail = _paragraph_warnings(markdown_text, provenance, table_numeric["tokens"])
     warnings.extend(paragraph_detail["warnings"])
 
     audit = {
@@ -391,6 +434,83 @@ def _evidence_number_forms(payload: Any) -> set[str]:
     return forms
 
 
+class _NumberProvenance:
+    """Every number a deterministic script produced for this report date.
+
+    Evidence is the backbone; aux payloads (theme stats, cross checks) carry the
+    rest.  Membership is by canonical form, so 5.43 and 5.430% are one value.
+    """
+
+    def __init__(
+        self,
+        evidence: Mapping[str, Any],
+        aux_payloads: Sequence[Tuple[str, Any]] | None = None,
+    ) -> None:
+        self.forms = _evidence_number_forms(evidence)
+        self.sources: List[str] = ["evidence"]
+        for label, payload in aux_payloads or ():
+            forms = _evidence_number_forms(payload)
+            if not forms:
+                continue
+            self.forms |= forms
+            self.sources.append(label)
+
+    def __contains__(self, token: str) -> bool:
+        return _canonical_number(token) in self.forms
+
+
+def discover_aux_payloads(evidence_path: Path) -> List[Tuple[str, Any]]:
+    """Sibling module-context files that also hold script-computed numbers.
+
+    Layout is fixed by ``run_daily_panel.py``: ``reports/evidence_YYYYMMDD_utf8.json``
+    next to ``reports/module_context_YYYYMMDD/``.  Missing or unreadable files are
+    skipped — this widens provenance, it must never become a new way to fail.
+    """
+    match = re.search(r"(\d{8})", evidence_path.name)
+    if not match:
+        return []
+    context_dir = evidence_path.parent / f"module_context_{match.group(1)}"
+    payloads: List[Tuple[str, Any]] = []
+    for filename in _AUX_PROVENANCE_GLOBS:
+        candidate = context_dir / filename
+        if not candidate.is_file():
+            continue
+        try:
+            payloads.append((filename, json.loads(candidate.read_text(encoding="utf-8"))))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return payloads
+
+
+def _table_tokens(markdown_text: str) -> set[str]:
+    tokens: set[str] = set()
+    for cells in _table_rows(markdown_text):
+        for cell in cells[1:]:  # first column is a label, stock name or ordinal
+            if _THRESHOLD_RE.search(cell) or re.search(r"[~～]", cell):
+                continue  # methodology/reference thresholds are not daily evidence
+            tokens.update(_NUMBER_RE.findall(cell))
+    return tokens
+
+
+def _derived_only_tokens(
+    markdown_text: str,
+    sections: Mapping[str, "MarkdownSection"],
+) -> set[str]:
+    """Tokens that live *only* in a model-built aggregate table (3.1 today).
+
+    A value repeated outside that section is a claim like any other and stays
+    hard-judged; the carve-out covers just the medians the model had to compute.
+    """
+    derived: set[str] = set()
+    for key in _DERIVED_AGGREGATE_SECTIONS:
+        section = sections.get(key)
+        if section is None:
+            continue
+        elsewhere = _table_tokens(markdown_text.replace(section.body, "", 1))
+        derived |= _table_tokens(section.body) - elsewhere
+    return derived
+
+
 def _table_rows(markdown_text: str) -> List[List[str]]:
     rows: List[List[str]] = []
     in_table = False
@@ -415,15 +535,10 @@ def _validate_table_numbers(
     evidence: Mapping[str, Any],
     problems: List[str],
     warnings: List[Dict[str, Any]],
+    provenance: "_NumberProvenance | None" = None,
+    derived_only_tokens: Iterable[str] = (),
 ) -> Dict[str, Any]:
-    rows = _table_rows(markdown_text)
-    tokens: List[str] = []
-    for cells in rows:
-        for cell in cells[1:]:  # first column is a label, stock name or ordinal
-            if re.search(r"[<>≤≥~～]", cell):
-                continue  # methodology/reference thresholds are not daily evidence
-            tokens.extend(_NUMBER_RE.findall(cell))
-    unique_tokens = sorted(set(tokens))
+    unique_tokens = sorted(_table_tokens(markdown_text))
     complete = _NUMERIC_EVIDENCE_KEYS.issubset(evidence.keys())
     if not complete:
         missing = sorted(_NUMERIC_EVIDENCE_KEYS - set(evidence.keys()))
@@ -438,8 +553,19 @@ def _validate_table_numbers(
             "tokens": unique_tokens,
         }
 
-    evidence_forms = _evidence_number_forms(evidence)
-    unmatched = [token for token in unique_tokens if _canonical_number(token) not in evidence_forms]
+    if provenance is None:
+        provenance = _NumberProvenance(evidence)
+    derived_set = set(derived_only_tokens)
+    absent = [token for token in unique_tokens if token not in provenance]
+    derived = [token for token in absent if token in derived_set]
+    unmatched = [token for token in absent if token not in derived_set]
+    if derived:
+        warnings.append({
+            "rule": "derived_group_aggregate",
+            "sections": list(_DERIVED_AGGREGATE_SECTIONS),
+            "values": derived,
+            "message": "模型自建分组的派生聚合值，evidence 里没有原值，按软告警记录",
+        })
     if unmatched:
         problems.append(
             "table numeric cells contain values absent from evidence: "
@@ -450,27 +576,82 @@ def _validate_table_numbers(
         "status": "error" if unmatched else "ok",
         "checked": len(unique_tokens),
         "unmatched": unmatched,
+        "derived": derived,
+        "sources": provenance.sources,
         "tokens": unique_tokens,
     }
 
 
-def _paragraph_warnings(
-    markdown_text: str,
-    evidence: Mapping[str, Any],
-    table_tokens: Sequence[str],
-) -> Dict[str, Any]:
-    table_token_set = {_canonical_number(token) for token in table_tokens}
-    evidence_forms = _evidence_number_forms(evidence)
-    prose_lines = [
+def _strip_structural_blocks(markdown_text: str) -> str:
+    """Drop frontmatter, tables, headings and fenced code before segmenting."""
+    text = re.sub(r"\A---\n.*?\n---\n", "", markdown_text, count=1, flags=re.DOTALL)
+    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    lines = [
         line
-        for line in markdown_text.splitlines()
+        for line in text.splitlines()
         if not line.lstrip().startswith(("|", "#"))
         and not _TABLE_SEPARATOR_RE.match(line)
     ]
-    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", "\n".join(prose_lines)) if part.strip()]
+    return "\n".join(lines)
+
+
+def _paragraph_kind(paragraph: str) -> str:
+    """Classify a paragraph so the numeric-limit rule only judges prose.
+
+    The limit exists to stop judgment paragraphs from turning into number
+    soup.  Template-mandated structure is not prose: the 1.1 state card must
+    copy every reading verbatim, and 判据 / 数据源 / 口径 blocks restate fixed
+    thresholds.  Counting those guaranteed a daily wall of warnings — and a
+    gate that cries wolf every day gets routed around within a week.
+    """
+    lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+    if not lines:
+        return "empty"
+    # 页眉元信息：日期、数据来源、生成时间、免责声明——每行都是「短标签：值」。
+    if len(lines) >= 2 and all(re.match(r"^[^：:\s]{2,10}[：:]", line) for line in lines):
+        return "metadata"
+    bullets = [line for line in lines if _BULLET_RE.match(line)]
+    if bullets and len(bullets) == len(lines):
+        card = [line for line in bullets if _CARD_BULLET_RE.match(line)]
+        if len(card) * 2 >= len(bullets):
+            return "reading_card"
+    plain = re.sub(r"^[\s=*`>-]+", "", lines[0])
+    if plain.startswith(_DEFINITION_PREFIXES) and re.match(
+        r"^[^\s]{1,6}\s*[：:=＝]", plain
+    ):
+        return "definition"
+    if len(_THRESHOLD_RE.findall(paragraph)) >= 2:
+        return "definition"
+    return "prose"
+
+
+def _reading_tokens(paragraph: str) -> List[str]:
+    """Numbers that carry a reading — window labels and timestamps stripped."""
+    text = _DATE_TOKEN_RE.sub(" ", paragraph)
+    text = _CLOCK_TOKEN_RE.sub(" ", text)
+    text = _NAME_NUMBER_RE.sub(" ", text)
+    text = _WINDOW_TOKEN_RE.sub(" ", text)
+    return _NUMBER_RE.findall(text)
+
+
+def _paragraph_warnings(
+    markdown_text: str,
+    provenance: "_NumberProvenance",
+    table_tokens: Sequence[str],
+) -> Dict[str, Any]:
+    table_token_set = {_canonical_number(token) for token in table_tokens}
+    prose_text = _strip_structural_blocks(markdown_text)
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", prose_text) if part.strip()]
     warnings: List[Dict[str, Any]] = []
     unknown: List[Dict[str, Any]] = []
+    skipped: Dict[str, int] = {}
+    checked = 0
     for index, paragraph in enumerate(paragraphs, start=1):
+        kind = _paragraph_kind(paragraph)
+        if kind != "prose":
+            skipped[kind] = skipped.get(kind, 0) + 1
+            continue
+        checked += 1
         plain = re.sub(r"^[\s=*`>-]+", "", paragraph)
         if re.match(r"\d{2,}", plain):
             warnings.append({
@@ -478,7 +659,7 @@ def _paragraph_warnings(
                 "paragraph": index,
                 "text": plain[:100],
             })
-        numbers = _NUMBER_RE.findall(paragraph)
+        numbers = _reading_tokens(paragraph)
         if len(numbers) > 3:
             warnings.append({
                 "rule": "paragraph_numeric_limit",
@@ -488,7 +669,7 @@ def _paragraph_warnings(
             })
         absent = sorted({
             token for token in numbers
-            if _canonical_number(token) not in evidence_forms
+            if token not in provenance
             and _canonical_number(token) not in table_token_set
         })
         if absent:
@@ -502,8 +683,10 @@ def _paragraph_warnings(
     return {
         "warnings": warnings,
         "detail": {
-            "paragraphs_checked": len(paragraphs),
+            "paragraphs_checked": checked,
+            "paragraphs_skipped": skipped,
             "unknown_numeric_paragraphs": len(unknown),
+            "provenance_sources": provenance.sources,
         },
     }
 
@@ -513,15 +696,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate a staged DMS Markdown report.")
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--evidence", required=True, type=Path)
+    parser.add_argument(
+        "--aux",
+        type=Path,
+        action="append",
+        default=[],
+        help="额外的脚本产物 JSON，其中的数字与 evidence 同等可信；"
+             "默认已自动纳入同日 module_context_YYYYMMDD/ 下的主题统计与交叉检查。",
+    )
     args = parser.parse_args(argv)
     try:
         evidence = json.loads(args.evidence.read_text(encoding="utf-8"))
+        aux_payloads = discover_aux_payloads(args.evidence)
+        for path in args.aux:
+            aux_payloads.append((path.name, json.loads(path.read_text(encoding="utf-8"))))
         # The renderer owns the one canonical SectionContract.  Importing it
         # here prevents a second declaration from drifting independently.
         from render_report_html import DMS_CONTRACT
 
         audit = validate_dms_content(
-            args.input.read_text(encoding="utf-8"), evidence, DMS_CONTRACT
+            args.input.read_text(encoding="utf-8"), evidence, DMS_CONTRACT, aux_payloads
         )
     except Exception as exc:  # noqa: BLE001 - deterministic validator boundary
         print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False))

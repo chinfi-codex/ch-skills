@@ -22,7 +22,7 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 
 6. **主线生命周期落库**：报告定稿后，把当日 2.1 主线判定沉淀进 PG 生命周期台账。先运行 `python3 scripts/theme_lifecycle.py context --asof YYYYMMDD` 取注册表、各主线近期状态与 watchlist；模型完成别名归一（当日临时主题名 → canonical theme_id）和生命周期状态判定（低位启动/在场候选/主线确认/高位分歧/退潮/修复/再聚焦/沉寂），写出 `reports/lifecycle_YYYYMMDD.json` 后运行 `python3 scripts/theme_lifecycle.py record --input reports/lifecycle_YYYYMMDD.json` 落库。脚本只做确定性校验（枚举、状态机转移合法性、theme_id 存在性），判断留给模型；输入格式、状态机与判定基准见 `references/theme_lifecycle.md`。
 
-7. **按需生成 HTML**：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文。
+7. **按需生成 HTML**：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。第 6 步没做完就渲染会直接失败——泳道图的数据来自台账，缺当日记录只会画出一条空列而不是报错，所以这道校验放在渲染期硬判（历史回补用 `--no-lifecycle` 显式跳过）。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文。
 
 8. **清理临时产物**：最终报告生成并核对后，运行 `python3 scripts/run_daily_panel.py --cleanup --asof YYYYMMDD` 删除 `reports/module_context_YYYYMMDD/`、`evidence_YYYYMMDD_utf8.json`、`kline_YYYYMMDD.json`、`assembled_checks.json` 及 `lifecycle_YYYYMMDD.json` 等临时文件，只保留 `reports/report_YYYYMMDD.md`、按需生成的 `reports/report_YYYYMMDD.html`，以及长期维护的 `references/market_data.csv` / `references/market_data.json`。
 

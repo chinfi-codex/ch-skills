@@ -64,7 +64,11 @@ def clean_markdown_text(text: str) -> str:
     cleaned = re.sub(r"^#{1,6}\s+", "", cleaned)
     cleaned = re.sub(r"^>\s*", "", cleaned)
     cleaned = re.sub(r"^[-*]\s+", "", cleaned)
+    # Ordered markers mirror markdown_engine._list_item: the engine renders them as
+    # <ol><li>, so the digits live in CSS counters and never reach the visible text.
+    cleaned = re.sub(r"^\d{1,3}[.)]\s+", "", cleaned)
     cleaned = re.sub(r"==([^=\n]+)==", r"\1", cleaned)  # inline highlight → <mark> (before strip, so paired == survive)
+    cleaned = re.sub(r"~~([^~\n]+)~~", r"\1", cleaned)  # strikethrough → <del>, markers do not reach visible text
     cleaned = cleaned.strip("= ")
     cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
     cleaned = cleaned.replace("**", "").replace("*", "").replace("`", "")

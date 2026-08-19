@@ -39,6 +39,7 @@ from html_report import (  # noqa: E402
     SectionSpec,
     render_report,
 )
+from html_report.contract import ContractError  # noqa: E402
 from dms_output_contract import validate_dms_content  # noqa: E402
 
 
@@ -82,7 +83,7 @@ DMS_CONTRACT = SectionContract(
         SectionSpec("m4_risk_types", [r"^风险类型归纳$"], level=3,
                     source="references/template/section4.md:5"),
         SectionSpec("m4_decline_details", [r"^高强度爆量下跌(?:个股)?明细$"], level=3,
-                    source="references/template/section4.md:11"),
+                    source="references/template/section4.md:13"),
         SectionSpec("m5_capacity_up", [r"^容量上涨明细$"], level=3,
                     degraded_patterns=[r"暂无命中"],
                     source="references/template/section5.md:5"),
@@ -1668,9 +1669,11 @@ def add_arguments(parser) -> None:
 def load_lifecycle_payload(input_path: Path, days: int) -> Optional[Dict[str, Any]]:
     """Trailing lifecycle window for the report date, or None.
 
-    The block is optional display-layer data: any failure (no date in the
-    filename, DB unreachable, empty ledger) skips it without failing the
-    render.
+    Availability is optional display-layer data: no date in the filename, DB
+    unreachable or an empty ledger all skip the block without failing the
+    render.  *Currency* is not optional — a ledger that has the window but
+    nothing for the report date would draw a band with a blank last column,
+    so that case is a hard failure pointing at the skipped record step.
     """
     m = re.search(r"(\d{4})-?(\d{2})-?(\d{2})", input_path.name)
     if not m:
@@ -1686,6 +1689,17 @@ def load_lifecycle_payload(input_path: Path, days: int) -> Optional[Dict[str, An
         return None
     if not payload.get("themes"):
         return None
+    from theme_lifecycle import lifecycle_currency_gap
+
+    gap = lifecycle_currency_gap(payload, asof)
+    if gap:
+        raise ContractError(
+            f"主线生命周期台账没有当期数据：{gap}。\n"
+            "  泳道图会照画，但最后一列是空的——先补执行流第 6 步（写 "
+            f"reports/lifecycle_{asof.replace('-', '')}.json 后 "
+            "`python3 scripts/theme_lifecycle.py record --input <该文件>`），再重跑渲染。\n"
+            "  历史回补等确实不需要台账的场景，用 --no-lifecycle 明确跳过。"
+        )
     return payload
 
 

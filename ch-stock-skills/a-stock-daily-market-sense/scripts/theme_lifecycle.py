@@ -26,7 +26,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 _BUNDLED_SHARED = SCRIPT_DIR / "_shared"
@@ -472,6 +472,28 @@ def build_window_payload(conn: Any, asof: str, days: int) -> dict:
         "market_days": market_days,
         "themes": themes,
     }
+
+
+def lifecycle_currency_gap(payload: Mapping[str, Any], asof: str) -> Optional[str]:
+    """Why the lifecycle window carries nothing for ``asof``, or None if it does.
+
+    The swimlane is drawn from the ledger, not from the report, so a skipped
+    ``record`` step ships a band whose header says 截至本期 <当日> while the
+    last column is blank for every lane — 2026-08-19 went out that way, and it
+    was the one day whose 退潮 transitions mattered most.  Nothing in the render
+    or browser gate could see it: the chart drew, it just drew a hole.
+
+    A 全面退潮 day legitimately has no theme rows; it is recorded in
+    ``theme_market_day`` instead, and that counts as covered.
+    """
+    window_asof = payload.get("asof")
+    if window_asof != asof:
+        return f"生命周期窗口最后一个交易日是 {window_asof}，与报告日 {asof} 对不上"
+    if any(asof in (theme.get("cells") or {}) for theme in payload.get("themes") or []):
+        return None
+    if (payload.get("market_days") or {}).get(asof):
+        return None
+    return f"theme_daily_state / theme_market_day 里没有 {asof} 的任何记录"
 
 
 def cmd_window(args: argparse.Namespace) -> int:

@@ -271,6 +271,129 @@ class DmsContentContractTest(unittest.TestCase):
         self.assertEqual(result["unmatched"], ["99.99"])
         self.assertTrue(problems)
 
+    def test_script_computed_theme_stats_count_as_provenance(self) -> None:
+        """theme_group_stats.py output is a script product, not an invention.
+
+        On 2026-08-19 the gate rejected 27.45% and 5.43% — both straight out of
+        module3_theme_stats.json — and the report shipped with them pushed out
+        of the mainline table into prose.
+        """
+        from dms_output_contract import _NumberProvenance, _validate_table_numbers
+
+        evidence = {key: {} for key in (
+            "amount_concentration", "market_trend",
+            "money_effect_samples", "volume_decline_samples",
+            "feature_group_analysis_samples",
+        )}
+        evidence["amount_concentration"] = {"value": 12.34}
+        table = "| 主题 | 池内占比 | 5 日超额中位 |\n|---|---:|---:|\n| 粮食种业链 | 5.43% | 27.45% |\n"
+
+        problems, warnings = [], []
+        evidence_only = _validate_table_numbers(table, evidence, problems, warnings)
+        self.assertEqual(evidence_only["unmatched"], ["27.45%", "5.43%"])
+
+        stats = {"themes": [{"share_of_money_pool_pct": 5.43, "median_rel_ret_5d": 27.45}]}
+        provenance = _NumberProvenance(evidence, [("module3_theme_stats.json", stats)])
+        problems, warnings = [], []
+        widened = _validate_table_numbers(
+            table, evidence, problems, warnings, provenance=provenance
+        )
+        self.assertEqual(widened["status"], "ok")
+        self.assertFalse(problems)
+        self.assertIn("module3_theme_stats.json", widened["sources"])
+
+    # 3.1 的分组是模型当场分的，组内中位数不可能出现在 evidence 里；偶数样本
+    # 更要取中间两值的平均。夹具 evidence 是合成的（表格校验对它整项跳过），
+    # 所以这两条直接打在校验器上，用完整的最小 evidence。
+    COMPLETE_EVIDENCE = {
+        "amount_concentration": {"value": 12.34},
+        "market_trend": {},
+        "money_effect_samples": {},
+        "volume_decline_samples": {"pct_chg": -7.58},
+        "feature_group_analysis_samples": {},
+    }
+    RISK_TABLE = (
+        "| 风险类型 | 入选数 | 跌幅中位 | 距120日高点中位 |\n"
+        "|---|---:|---:|---:|\n"
+        "| 高位抱团瓦解 | 6 | -7.58% | -18.50% |\n"
+    )
+
+    def _risk_sections(self, body: str):
+        from dms_output_contract import MarkdownSection
+
+        return {
+            "m4_risk_types": MarkdownSection(
+                level=2, title="3.1 风险类型归纳", stripped="风险类型归纳", body=body
+            )
+        }
+
+    def test_derived_group_median_is_a_warning_not_a_failure(self) -> None:
+        from dms_output_contract import _derived_only_tokens, _validate_table_numbers
+
+        markdown = f"## 3.1 风险类型归纳\n\n{self.RISK_TABLE}"
+        derived = _derived_only_tokens(markdown, self._risk_sections(self.RISK_TABLE))
+        problems, warnings = [], []
+        result = _validate_table_numbers(
+            markdown, self.COMPLETE_EVIDENCE, problems, warnings,
+            derived_only_tokens=derived,
+        )
+        self.assertEqual(result["status"], "ok")
+        self.assertFalse(problems)
+        # 组内中位数与模型自己数出来的入选数都算派生量。
+        self.assertIn("-18.50%", result["derived"])
+        self.assertEqual({w["rule"] for w in warnings}, {"derived_group_aggregate"})
+
+    def test_same_orphan_number_outside_31_still_fails(self) -> None:
+        """The carve-out is for 3.1's aggregate columns, not a general amnesty."""
+        from dms_output_contract import _derived_only_tokens, _validate_table_numbers
+
+        detail_table = (
+            "| 排名 | 股票 | 距120日高点 |\n"
+            "|---:|---|---:|\n"
+            "| 1 | 哈森股份 | -18.50% |\n"
+        )
+        markdown = (
+            f"## 3.1 风险类型归纳\n\n{self.RISK_TABLE}\n"
+            f"## 3.2 高强度爆量下跌个股明细\n\n{detail_table}"
+        )
+        derived = _derived_only_tokens(markdown, self._risk_sections(self.RISK_TABLE))
+        self.assertNotIn("-18.50%", derived)  # 3.2 也写了它，就不再是 3.1 的派生量
+        problems, warnings = [], []
+        result = _validate_table_numbers(
+            markdown, self.COMPLETE_EVIDENCE, problems, warnings,
+            derived_only_tokens=derived,
+        )
+        self.assertEqual(result["unmatched"], ["-18.50%"])
+        self.assertTrue(problems)
+
+    def test_numeric_limit_skips_template_mandated_blocks(self) -> None:
+        """Frontmatter, the 1.1 reading card and 判据 blocks are structure, not prose.
+
+        Counting them meant ~25 warnings a day on a compliant report, which is
+        how a soft gate turns into wallpaper.
+        """
+        from dms_output_contract import _paragraph_kind, _reading_tokens
+
+        card = (
+            "- **趋势状态**：谨慎（第 1 日）\n"
+            "- **极值轴**：出清 2/6 ｜ 顶部 0/5\n"
+            "- **当日阈值**：大涨线 上涨占比 >79.5% ｜ 恐慌线 跌停占比 ≥3.5%"
+        )
+        self.assertEqual(_paragraph_kind(card), "reading_card")
+        self.assertEqual(
+            _paragraph_kind("判据：当天总市值 > 70 亿、成交额 > 5 亿、涨幅 > 8%。"),
+            "definition",
+        )
+        self.assertEqual(
+            _paragraph_kind("日期：2026-08-19\n数据来源：Tushare daily\n生成时间：18:09"),
+            "metadata",
+        )
+        judgment = "指数趋势判断：三者共振下杀。上证 -2.4%、创业板 -6.26%、科创50 -6.89%，跌停 137 家。"
+        self.assertEqual(_paragraph_kind(judgment), "prose")
+        # 窗口标签与时间戳不算读数：只有四个真读数留下。
+        self.assertEqual(len(_reading_tokens(judgment)), 4)
+        self.assertEqual(_reading_tokens("5 日均 2.42 万亿，近 20 日线上方"), ["2.42"])
+
     def test_real_20260807_regression_is_rejected(self) -> None:
         from dms_output_contract import validate_dms_content
         from html_report.contract import ContractError
@@ -285,6 +408,45 @@ class DmsContentContractTest(unittest.TestCase):
         # 8-07 topped out at ★★, so a missing 2.2 is compliant — the gate must not
         # blame it for that on top of the sections it really did drop.
         self.assertNotIn("m3_catalyst", message)
+
+
+class LifecycleCurrencyTest(unittest.TestCase):
+    """The swimlane is drawn from the ledger, so a skipped record step ships a hole."""
+
+    WINDOW = {
+        "asof": "2026-08-19",
+        "dates": ["2026-08-18", "2026-08-19"],
+        "market_days": {},
+        "themes": [{"theme_id": "TH-半导体链", "cells": {"2026-08-18": {"state": "在场候选"}}}],
+    }
+
+    def test_missing_report_day_is_reported(self) -> None:
+        from theme_lifecycle import lifecycle_currency_gap
+
+        gap = lifecycle_currency_gap(self.WINDOW, "2026-08-19")
+        self.assertIsNotNone(gap)
+        self.assertIn("2026-08-19", gap)
+
+    def test_recorded_report_day_passes(self) -> None:
+        from theme_lifecycle import lifecycle_currency_gap
+
+        window = dict(self.WINDOW, themes=[
+            {"theme_id": "TH-半导体链", "cells": {"2026-08-19": {"state": "退潮"}}}
+        ])
+        self.assertIsNone(lifecycle_currency_gap(window, "2026-08-19"))
+
+    def test_full_washout_day_needs_no_theme_rows(self) -> None:
+        """全面退潮日按契约没有主线记录，只在 theme_market_day 里留一行。"""
+        from theme_lifecycle import lifecycle_currency_gap
+
+        window = dict(self.WINDOW, market_days={"2026-08-19": "全面退潮"})
+        self.assertIsNone(lifecycle_currency_gap(window, "2026-08-19"))
+
+    def test_stale_window_is_reported(self) -> None:
+        from theme_lifecycle import lifecycle_currency_gap
+
+        gap = lifecycle_currency_gap(dict(self.WINDOW, asof="2026-08-18"), "2026-08-19")
+        self.assertIn("对不上", gap)
 
 
 class RenderGateTest(unittest.TestCase):

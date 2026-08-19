@@ -27,6 +27,7 @@ from .decorations import (
 )
 from .figures import StaticFigure, insert_figures
 from .markdown_engine import render_markdown
+from .static_decorations import colorize_cell, decorate_static
 from .text_validator import validate_text_preserved
 
 __all__ = [
@@ -51,5 +52,7 @@ __all__ = [
     "chartkit_js",
     "list_themes",
     "render_markdown",
+    "decorate_static",
+    "colorize_cell",
     "validate_text_preserved",
 ]

@@ -346,9 +346,11 @@ function drawFinancialTrends() {
   const grid = document.createElement("div");
   grid.className = "chart-grid";
   const configs = [
+    // 不设 div：fmtYi 自己做 /1e8，轴标签走 cfg.fmt(hi/lo)，再叠一层 div 会把 5.09亿 打成
+    // 0.00亿（tooltip 用未除的 raw，所以此前只有轴标签是错的）。等比缩放不影响图形。
     { title: "营收 / 归母净利 (亿元)", type: "bars", fmt: fmtYi, fields: [
-      { key: "revenue", label: "营收", color: "var(--blue)", div: 1e8 },
-      { key: "n_income", label: "归母净利", color: "var(--orange)", div: 1e8 } ]},
+      { key: "revenue", label: "营收", color: "var(--blue)" },
+      { key: "n_income", label: "归母净利", color: "var(--orange)" } ]},
     { title: "同比增速 (%)", type: "line", fmt: v => fmtNum(v) + "%", fields: [
       { key: "tr_yoy", label: "营收YoY", color: "var(--blue)" },
       { key: "netprofit_yoy", label: "归母YoY", color: "var(--orange)" } ]},

@@ -62,6 +62,7 @@ def inline_markdown(text: str) -> str:
 
     escaped = re.sub(r"`([^`]+)`", keep_code, escaped)
     escaped = re.sub(r"==([^=\n]+)==", r"<mark>\1</mark>", escaped)
+    escaped = re.sub(r"~~([^~\n]+)~~", r"<del>\1</del>", escaped)
     escaped = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", escaped)
     escaped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", escaped)
     escaped = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', escaped)

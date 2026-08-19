@@ -44,6 +44,19 @@ def test_signed_cells_get_sign_classes():
     assert "<td>2410</td>" in out  # 无符号数字不染色
 
 
+def test_dates_ranges_and_spreads_are_not_painted_as_moves():
+    out = pr.decorate_static(
+        "<table><tr><td>2026-08-18</td><td>1-2 家</td><td>10Y-2Y</td></tr></table>"
+    )
+    assert "num-neg" not in out
+    assert "<td>2026-08-18</td>" in out
+
+
+def test_sign_after_punctuation_still_colorized():
+    out = pr.decorate_static("<table><tr><td>环比 +6.1%</td></tr></table>")
+    assert '<span class="num-pos">+6.1%</span>' in out
+
+
 def test_star_cells_render_filled_and_dim():
     out = pr.decorate_static("<table><tr><td>★★☆</td></tr></table>")
     assert out.count('<span class="stars">★</span>') == 2
@@ -55,29 +68,34 @@ def test_cells_with_child_elements_are_skipped():
     assert pr.decorate_static(html) == html
 
 
+def test_root_id_is_distinctive_enough_for_a_third_party_page():
+    # 两个字符的 id 太容易和宿主页面撞车，撞上就会把清零规则泼到对方元素上
+    assert len(pr.ROOT_ID) >= 4
+
+
 # --- CSS 作用域化 --------------------------------------------------------- #
 def test_root_and_body_collapse_onto_the_container():
     css = ":root{--a:1}\nbody{color:red}\nhtml{background:#fff}"
     out = pr.scope_and_shake(css, "<p>x</p>")
-    assert out.count("#pp{") == 3
+    assert out.count(f"{pr.ROOT}{{") == 3
     assert "body{" not in out and "html{" not in out
 
 
 def test_universal_selector_also_covers_the_container():
     out = pr.scope_and_shake("*{margin:0}", "<p>x</p>")
-    assert out == "#pp,#pp *{margin:0}"
+    assert out == f"{pr.ROOT},{pr.ROOT} *{{margin:0}}"
 
 
 def test_plain_selectors_get_prefixed():
     out = pr.scope_and_shake("td, th{padding:8px}", "<p>x</p>")
-    assert out == "#pp td,#pp th{padding:8px}"
+    assert out == f"{pr.ROOT} td,{pr.ROOT} th{{padding:8px}}"
 
 
 def test_unused_class_rules_are_shaken_out():
     body = '<div class="table-wrap"><table></table></div>'
     css = ".table-wrap{overflow:auto}\n.kline-chart{height:300px}"
     out = pr.scope_and_shake(css, body)
-    assert "#pp .table-wrap{overflow:auto}" == out
+    assert f"{pr.ROOT} .table-wrap{{overflow:auto}}" == out
     assert "kline" not in out
 
 
@@ -86,13 +104,19 @@ def test_descendant_selector_needs_every_class_present():
     css = ".report .hero{font-size:20px}\n.report p{margin:0}"
     out = pr.scope_and_shake(css, body)
     assert "hero" not in out
-    assert "#pp .report p{margin:0}" in out
+    assert f"{pr.ROOT} .report p{{margin:0}}" in out
+
+
+def test_negation_pseudo_class_does_not_shake_the_rule_out():
+    body = '<section class="report"><h2>x</h2></section>'
+    out = pr.scope_and_shake(".report h2:not(.plain){color:red}", body)
+    assert "color:red" in out
 
 
 def test_media_queries_are_recursed_and_keyframes_kept_verbatim():
     css = "@media (max-width:520px){.report{padding:4px}.gone{color:red}}\n@keyframes spin{from{opacity:0}}"
     out = pr.scope_and_shake(css, '<section class="report"></section>')
-    assert "@media (max-width:520px){#pp .report{padding:4px}}" in out
+    assert f"@media (max-width:520px){{{pr.ROOT} .report{{padding:4px}}}}" in out
     assert "@keyframes spin{from{opacity:0}}" in out
 
 
@@ -105,7 +129,7 @@ def test_empty_media_block_is_dropped_entirely():
 def test_fragment_is_a_scoped_div_without_document_chrome():
     frag = pr.render_push_fragment("# 标题\n\n正文一句话。\n", theme="default")
     assert frag.startswith("<style>")
-    assert '<div id="pp">' in frag
+    assert f'<div id="{pr.ROOT_ID}">' in frag
     for banned in ("<!doctype", "<html", "<head", "<script", "<title>"):
         assert banned not in frag.lower()
 
@@ -122,7 +146,45 @@ def test_every_theme_renders():
 
     for theme in list_themes():
         frag = pr.render_push_fragment("# T\n\n| a | b |\n|---|---|\n| +1% | ★★☆ |\n", theme=theme)
-        assert '<div id="pp">' in frag
+        assert f'<div id="{pr.ROOT_ID}">' in frag
+
+
+def _stderr_of(fn) -> str:
+    import io
+    import sys as _sys
+
+    buf, saved = io.StringIO(), _sys.stderr
+    _sys.stderr = buf
+    try:
+        fn()
+    finally:
+        _sys.stderr = saved
+    return buf.getvalue()
+
+
+def test_engine_dropping_text_is_warned_about():
+    dropped = _stderr_of(lambda: pr.render_push_fragment("# 标题\n\n正文。\n"))
+    assert "WARNING" not in dropped  # 正常报告不该有噪音
+    try:
+        pr.validate_text_preserved("这句话不在里面", "<p>别的</p>")
+    except RuntimeError:
+        return  # 校验器确实会在丢字时抛，render_push_fragment 把它转成 WARNING
+    raise AssertionError("validate_text_preserved 没有对丢失的正文报错")
+
+
+def test_star_ratings_do_not_trigger_a_false_warning():
+    # 装饰把 ★★☆ 染成三个 ★ span，若校验放在装饰之后，每份带星级的报告都会误报
+    noise = _stderr_of(
+        lambda: pr.render_push_fragment("# T\n\n| 主线 | 评级 |\n|---|---|\n| A | ★★☆ |\n")
+    )
+    assert noise == ""
+
+
+def test_fragment_stats_parts_add_up_to_total():
+    frag = pr.render_push_fragment("# 标题\n\n正文一句话。\n", theme="default")
+    stats = pr.fragment_stats(frag)
+    assert stats["css"] + stats["body"] + stats["shell"] == stats["total"]
+    assert stats["body"] < stats["total"] - stats["css"]  # 外壳不再算进正文
 
 
 def test_preview_wrapper_embeds_the_exact_fragment():

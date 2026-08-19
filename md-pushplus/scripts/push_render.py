@@ -19,84 +19,24 @@
 from __future__ import annotations
 
 import re
+import sys
 from importlib import resources
 from typing import Dict, List, Optional, Set, Tuple
 
-from html_report import list_themes, render_markdown
+from html_report import (
+    decorate_static,
+    list_themes,
+    render_markdown,
+    validate_text_preserved,
+)
 
-# 片段根节点 id。短是有意的：CSS 作用域化要给每条选择器加前缀，一个字符都要省，
-# content 有约 4 万字符上限。
-ROOT_ID = "pp"
+# 片段根节点 id。要注入的是第三方页面，所以带一个不太可能撞车的后缀：宿主自己
+# 有个 id="pp" 的容器时，我们的 ``#pp,#pp *`` 清零规则就会泼到对方元素上，正是
+# 这套片段方案要根除的污染。多出的四个字符对 4 万字符上限可以忽略。
+ROOT_ID = "pp-doc"
 ROOT = f"#{ROOT_ID}"
-
-
-# --------------------------------------------------------------------------- #
-# 静态装饰：把 shared 的装饰 JS 在推送场景下做成构建期变换
-#
-# 规则与 shared/html_report/builder.py 的 _BASE_UI_JS 对齐（独立 ``---`` 段、
-# h2 轮色下标、表格数字与星级染色）。那边改了规则，这里要跟着改——之所以复制
-# 而不是复用，是因为推送渠道根本不执行 JS，同一套规则必须有一个构建期投影。
-# --------------------------------------------------------------------------- #
-_DASH_PARA_RE = re.compile(r"<p>\s*-{3,}\s*</p>")
-_H2_RE = re.compile(r"<h2([^>]*)>")
-_TD_RE = re.compile(r"<td([^>]*)>([^<]*)</td>")
-_STARS_RE = re.compile(r"^[★☆]+$")
-_SIGNED_CELL_RE = re.compile(r"^([+\-])(\d[\d,]*\.?\d*)\s*(%|pct|x|倍|亿|万亿|分位)?$")
-_SIGNED_INLINE_RE = re.compile(r"([+\-])(\d+(?:[.,]\d+)?)(%|pct|倍|x)?")
-
-
-def _decorate_headings(body_html: str) -> str:
-    counter = [0]
-
-    def repl(match: "re.Match[str]") -> str:
-        idx = counter[0] % 6
-        counter[0] += 1
-        return f'<h2 data-idx="{idx}"{match.group(1)}>'
-
-    return _H2_RE.sub(repl, body_html)
-
-
-def _colorize_cell(text: str) -> Optional[str]:
-    trimmed = text.strip()
-    if not trimmed:
-        return None
-    if _STARS_RE.match(trimmed):
-        filled = trimmed.count("★")
-        total = max(filled, 3)
-        return "".join(
-            f'<span class="stars">★</span>' if i < filled else f'<span class="stars dim">★</span>'
-            for i in range(total)
-        )
-    signed = _SIGNED_CELL_RE.match(trimmed)
-    if signed:
-        cls = "num-pos" if signed.group(1) == "+" else "num-neg"
-        return f'<span class="{cls}">{trimmed}</span>'
-    if re.search(r"[+\-]\d", trimmed):
-        return _SIGNED_INLINE_RE.sub(
-            lambda m: f'<span class="{"num-pos" if m.group(1) == "+" else "num-neg"}">'
-                      f'{m.group(1)}{m.group(2)}{m.group(3) or ""}</span>',
-            text,
-        )
-    return None
-
-
-def _decorate_cells(body_html: str) -> str:
-    def repl(match: "re.Match[str]") -> str:
-        attrs, text = match.group(1), match.group(2)
-        colored = _colorize_cell(text)
-        return f"<td{attrs}>{colored if colored is not None else text}</td>"
-
-    # 正则只匹配不含子元素的 <td>（内容里没有 '<'），与装饰 JS 跳过
-    # ``td.children.length > 0`` 的判断等价。
-    return _TD_RE.sub(repl, body_html)
-
-
-def decorate_static(body_html: str) -> str:
-    """把装饰 JS 的效果直接写进 HTML。"""
-    out = _DASH_PARA_RE.sub('<hr class="md-rule">', body_html)
-    out = _decorate_headings(out)
-    out = _decorate_cells(out)
-    return out
+_BODY_OPEN = '<section class="section report" id="report-body">'
+_BODY_CLOSE = "</section>"
 
 
 # --------------------------------------------------------------------------- #
@@ -104,6 +44,10 @@ def decorate_static(body_html: str) -> str:
 # --------------------------------------------------------------------------- #
 _COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _CLASS_RE = re.compile(r"\.(-?[A-Za-z_][A-Za-z0-9_-]*)")
+# ``:not(.x)`` / ``:is(…)`` 里的 class 是否定或备选条件，不能当作"这条规则要求
+# 片段里有 .x"——否则 ``.report h2:not(.plain)`` 会因为片段里没有 .plain 被整条
+# 摇掉，而它本该对所有不带 .plain 的 h2 生效。
+_PSEUDO_ARGS_RE = re.compile(r":(?:not|is|where|has)\([^)]*\)", re.I)
 _ID_RE = re.compile(r"#(-?[A-Za-z_][A-Za-z0-9_-]*)")
 _VERBATIM_AT_RE = re.compile(r"^@(-\w+-)?(keyframes|font-face|page|counter-style|property)\b", re.I)
 _NESTED_AT_RE = re.compile(r"^@(media|supports|container|layer)\b", re.I)
@@ -173,10 +117,12 @@ def _selector_is_used(selector: str, used_classes: Set[str], used_ids: Set[str])
     """选择器涉及的 class / id 是否都在片段里出现过。
 
     只按标签或伪类写的规则（``td, th``、``:root``）一律保留——判断不了就不删。
-    descendant 选择器要求每一段都命中，所以是 AND 不是 OR。
+    descendant 选择器要求每一段都命中，所以是 AND 不是 OR；``:not()`` 这类函数
+    伪类的参数先剥掉，它们描述的是"不要匹配什么"，不是本规则的前提。
     """
-    classes = set(_CLASS_RE.findall(selector))
-    ids = {i for i in _ID_RE.findall(selector) if i != ROOT_ID}
+    plain = _PSEUDO_ARGS_RE.sub("", selector)
+    classes = set(_CLASS_RE.findall(plain))
+    ids = {i for i in _ID_RE.findall(plain) if i != ROOT_ID}
     if not classes and not ids:
         return True
     return classes <= used_classes and ids <= used_ids
@@ -240,11 +186,13 @@ def slim_css(css: str) -> str:
     return "\n".join(line for line in (ln.strip() for ln in stripped.splitlines()) if line)
 
 
-# 推送专用覆盖：宿主容器宽度未知，一切按 100% 走；另外补两个主题里没有的类
-# （静态化后的 ``---`` 分隔线、宽表横滑提示）。手写前缀，不进摇树。
+# 推送专用覆盖：宿主容器宽度未知,一切按容器走;另外补一个主题里没有的类
+# （静态化后的 ``---`` 分隔线）。手写前缀,不进摇树。
 PUSH_OVERRIDE_CSS = f"""
 {ROOT}{{max-width:100%;padding:10px 0 14px;-webkit-text-size-adjust:100%;text-size-adjust:100%}}
-{ROOT} .report{{max-width:100%;margin:0}}
+/* 主题的列宽上限挂在 .page 上,而片段没有 .page（摇树时已被丢掉）。这里把上限
+   补回来:宿主容器有多宽正文就有多宽的话,宽屏邮件里一行会拉到上千像素。 */
+{ROOT} .report{{max-width:min(100%,860px);margin:0 auto}}
 {ROOT} hr.md-rule{{border:0;border-top:1px solid var(--line-2,#e8eaed);margin:24px 0}}
 @media (max-width:520px){{
 {ROOT} .report{{padding:16px 14px;border-radius:10px}}
@@ -253,22 +201,36 @@ PUSH_OVERRIDE_CSS = f"""
    兜底。keep-all 是必须的——只放开 nowrap 的话，中文短词会被逐字拆成一列一个字
    （实测一行 55px 的表被撑到 136px 高），keep-all 让词保持完整，宁可横滑。 */
 {ROOT} .report table{{min-width:0;font-size:13px}}
-{ROOT} .report th,{ROOT} .report td{{white-space:normal;word-break:keep-all}}
-{ROOT} .report th,{ROOT} .report td{{padding:7px 9px}}
+{ROOT} .report th,{ROOT} .report td{{white-space:normal;word-break:keep-all;padding:7px 9px}}
 }}
 """
 
 
-def render_push_fragment(markdown_body: str, *, theme: str = "default") -> str:
-    """Markdown → 可直接作为 PushPlus content 的自包含片段。"""
-    body_html = decorate_static(render_markdown(markdown_body))
+def render_push_fragment(markdown_body: str, *, theme: str = "default",
+                         validate: bool = True) -> str:
+    """Markdown → 可直接作为 PushPlus content 的自包含片段。
+
+    默认跑一遍文本保全校验:引擎吞掉正文时（嵌套表格、未闭合的 callout 块之类）
+    要有人看见,否则一份缺了半章的日报会静默推出去,而字符数看着完全正常。与
+    shared 的 CLI 同策略——只警告不阻断,内容与排版解耦。
+    """
+    raw_html = render_markdown(markdown_body)
+    if validate:
+        # 校验放在装饰之前：星级 ``★★☆`` 会被染色成三个 ★ span，装饰后的 HTML 拿去
+        # 比对必然报"少了 ★★☆"。要抓的是引擎吞正文，不是我们自己的染色。
+        try:
+            validate_text_preserved(markdown_body, raw_html)
+        except RuntimeError as exc:
+            print(f"WARNING: text preservation check failed: {exc}", file=sys.stderr)
+    body_html = decorate_static(raw_html)
     css = slim_css(scope_and_shake(load_theme_css(theme), body_html)) + slim_css(PUSH_OVERRIDE_CSS)
-    return (
+    fragment = (
         f"<style>{css}</style>"
-        f'<div id="{ROOT_ID}"><section class="section report" id="report-body">'
+        f'<div id="{ROOT_ID}">{_BODY_OPEN}'
         f"{body_html}"
-        "</section></div>"
+        f"{_BODY_CLOSE}</div>"
     )
+    return fragment
 
 
 def wrap_preview(fragment: str, title: str) -> str:
@@ -289,6 +251,14 @@ def wrap_preview(fragment: str, title: str) -> str:
 
 
 def fragment_stats(fragment: str) -> Dict[str, int]:
-    match = re.search(r"<style>(.*?)</style>", fragment, re.DOTALL)
-    css_chars = len(match.group(1)) if match else 0
-    return {"total": len(fragment), "css": css_chars, "body": len(fragment) - css_chars}
+    """拆出 css / 正文 / 外壳三块字符数,三者与 total 严格相加。
+
+    正文要准:接近 4 万上限时,判断该砍正文还是砍 CSS 全看这两个数。
+    """
+    style = re.search(r"<style>(.*?)</style>", fragment, re.DOTALL)
+    css_chars = len(style.group(1)) if style else 0
+    body = re.search(re.escape(_BODY_OPEN) + "(.*)" + re.escape(_BODY_CLOSE), fragment, re.DOTALL)
+    body_chars = len(body.group(1)) if body else 0
+    total = len(fragment)
+    return {"total": total, "css": css_chars, "body": body_chars,
+            "shell": total - css_chars - body_chars}

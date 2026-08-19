@@ -38,7 +38,7 @@ PushPlus 的 token 从环境变量 `PUSHPLUS_TOKEN` 读取（在 [pushplus.plus]
 2. **想好标题**：标题是用户在微信/邮件里第一眼看到的东西。
    - 默认会取 Markdown 里的第一个 `# 一级标题`；没有就用文件名。
    - 如果默认标题不够清楚（比如就是个日期），**主动替用户拟一个有信息量的标题**（如「6/24 宏观日报：美债走高、黄金回落」），用 `--title` 传入。这是模型该做的判断，别留给脚本。
-3. **先 dry-run 自检**（推荐）：加 `--dry-run --save-html /tmp/preview.html` 先渲染不发送，脚本会打印推送包大小并拆成 `css + body` 两块。主题 CSS 摇树后约 5–6 千字符，典型日报整包 8–17K，离 PushPlus 约 4 万字符的上限还很宽；顶到上限看下面「常见失败」。预览文件按手机视口打开看最准——推送主要在微信里读。
+3. **先 dry-run 自检**（推荐）：加 `--dry-run --save-html /tmp/preview.html` 先渲染不发送，脚本会打印推送包的字符数与 UTF-8 字节数，并把体积拆成 `css + body + 外壳` 三块。**看字节数那个**：PushPlus 文档没写清 4 万的上限是字符还是字节，而一个中文字符占 3 字节，所以脚本按字节这一侧保守判定——一份 1.4 万字符的中文日报就已经接近上限了。顶到上限看下面「常见失败」。预览文件按手机视口打开看最准——推送主要在微信里读。
 4. **发送**：去掉 `--dry-run` 正式推送。脚本返回 PushPlus 的 JSON，`code==200` 即成功。
 5. **如实回报**：把发送结果（成功 / 失败原因）告诉用户，并说明用的是哪套渲染（主题名或 inline 降级）。失败时按「常见失败」排查，别假装成功。
 
@@ -73,7 +73,7 @@ python scripts/md_to_pushplus.py 报告.md --channel mail
 
 为什么是片段不是整页，三条都是在真实推送页面（pushplus.plus/shortMessage/…）上实测出来的：
 
-- **PushPlus 把 content 以 innerHTML 注入自己的详情页，页面里的 `<script>` 一律不执行**。所以 shared 那套装饰脚本（表格数字红绿、h2 轮色、隐藏独立 `---`）全都失效，正文里会裸露 `---`。现在这些装饰改在 Python 侧构建期做完，静态写进 HTML，不再依赖 JS。
+- **PushPlus 把 content 以 innerHTML 注入自己的详情页，页面里的 `<script>` 一律不执行**。所以 shared 那套装饰脚本（表格数字红绿、h2 轮色、隐藏独立 `---`）全都失效，正文里会裸露 `---`。现在这些装饰走 `shared/html_report/static_decorations.py` 的构建期投影，静态写进 HTML，不再依赖 JS——规则和浏览器版同源，别在本 skill 里另抄一份。
 - **整页的主题 CSS 会漫出去改掉 PushPlus 自己的页面**：`*`、`html`、`body` 那几条规则实测把宿主的字体、底色、间距一起换了。现在所有选择器都加了 `#pp` 前缀，`:root` / `html` / `body` 收敛到容器本身，宿主一个属性都不受影响。
 - **`<!doctype>` / `<head>` / `<title>` / `<meta>` 会被当正文解析成垃圾节点**，而 `.page` 的 `calc(100vw - 40px)` 算的是视口宽不是容器宽，在窄容器里会溢出。片段没有这些标签，宽度一律按 100% 走。
 
@@ -94,7 +94,7 @@ python scripts/md_to_pushplus.py 报告.md --channel mail
 
 - `no token`：没设 `PUSHPLUS_TOKEN` 也没传 `--token` → 向用户要 token。
 - PushPlus 返回 `code != 200`：常见是 token 失效、当天免费额度用尽、或 `content` 超长。把 `msg` 原文转告用户。
-- 内容超长（约 4 万字符）：脚本会先 WARNING。**别指望换 `--renderer inline` 能救**——主题版的 CSS 只占 5–6 千字符，长报告的体积几乎全在正文，inline 反而更大。正路是把长报告拆成几条分别推，或先精简正文。
+- 内容超长（约 4 万，按 UTF-8 字节算）：脚本会先 WARNING。**别指望换 `--renderer inline` 能救**——主题版的 CSS 只占 5–6 千字符，长报告的体积几乎全在正文，inline 反而更大。正路是把长报告拆成几条分别推，或先精简正文。
 - `shared/html_report unavailable`：共享包没同步进来（`scripts/_shared/html_report` 缺失，且不在仓库开发目录下）。跑一次 `python scripts/skill_sync.py` 补齐；在此之前脚本会用 inline 兜底，推送不会中断。
 
 ## 边界

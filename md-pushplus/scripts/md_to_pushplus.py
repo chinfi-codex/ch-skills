@@ -28,7 +28,6 @@ import re
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -42,13 +41,16 @@ _BUNDLED_SHARED = SCRIPT_ROOT / "_shared"
 _DEV_SHARED = SCRIPT_ROOT.parents[1] / "shared"
 sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
 
+sys.path.insert(0, str(SCRIPT_ROOT))
+
 try:  # 共享包缺失不该让推送整个失败——降级到内联渲染即可。
-    from html_report import HtmlReportBuilder, list_themes  # noqa: E402
+    from html_report import list_themes  # noqa: E402
+    from push_render import fragment_stats, render_push_fragment, wrap_preview  # noqa: E402
 
     SHARED_THEMES = list_themes()
     SHARED_IMPORT_ERROR: Optional[str] = None
 except Exception as exc:  # noqa: BLE001 — 任何导入期异常都只降级，不中断
-    HtmlReportBuilder = None  # type: ignore[assignment]
+    render_push_fragment = None  # type: ignore[assignment]
     SHARED_THEMES = ["default", "claude", "print"]
     SHARED_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
 
@@ -248,50 +250,6 @@ def wrap_html_inline(body: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# 默认渲染：shared/html_report 主题模板
-# --------------------------------------------------------------------------- #
-_STYLE_BLOCK_RE = re.compile(r"(<style>)(.*?)(</style>)", re.DOTALL)
-
-
-def slim_css(page_html: str) -> str:
-    """把 <style> 块里的注释和缩进去掉。
-
-    主题 CSS 有一万多字符的注释与缩进，而 PushPlus 的 content 有约 4 万字符上限；
-    推送包里没人读这些注释，省下的额度留给正文。只删注释与行首尾空白、不合并行，
-    选择器和声明本身一个字节不动。
-    """
-
-    def repl(m: "re.Match[str]") -> str:
-        css = re.sub(r"/\*.*?\*/", "", m.group(2), flags=re.DOTALL)
-        kept = [ln.strip() for ln in css.splitlines()]
-        return m.group(1) + "\n".join(ln for ln in kept if ln) + m.group(3)
-
-    return _STYLE_BLOCK_RE.sub(repl, page_html)
-
-
-def render_with_theme(body_md: str, title: str, theme: str, *, meta_text: str) -> str:
-    """用共享主题模板渲染成自包含单页 HTML。
-
-    校验失败只警告不阻断（与 shared/html_report 的 CLI 同策略）：内容与排版解耦，
-    文本保全对不上不该拦住一次推送。
-    """
-    assert HtmlReportBuilder is not None  # 调用方已确认共享包可用
-    builder = HtmlReportBuilder(
-        title=title,
-        theme=theme,
-        meta_text=meta_text,
-        # 推送包要自包含：外链 Google Fonts 在微信/邮件里既加载不稳也没被主题字体族用到。
-        font_links=False,
-    )
-    try:
-        page = builder.render(body_md, validate=True)
-    except RuntimeError as exc:
-        print(f"WARNING: text preservation check failed: {exc}", file=sys.stderr)
-        page = builder.render(body_md, validate=False)
-    return slim_css(page)
-
-
-# --------------------------------------------------------------------------- #
 # PushPlus 发送
 # --------------------------------------------------------------------------- #
 def send_pushplus(token: str, title: str, content: str, *,
@@ -369,24 +327,27 @@ def main() -> int:
     title = args.title or derive_title(body, meta, md_path.stem)
 
     renderer = args.renderer
-    if renderer == "theme" and HtmlReportBuilder is None:
+    if renderer == "theme" and render_push_fragment is None:
         print(f"WARNING: shared/html_report unavailable ({SHARED_IMPORT_ERROR}); "
               "falling back to --renderer inline.", file=sys.stderr)
         renderer = "inline"
 
     if renderer == "theme":
-        content = render_with_theme(
-            body, title, args.theme,
-            meta_text=datetime.now().strftime("%Y-%m-%d %H:%M"),
-        )
-        style_note = f"theme:{args.theme}"
+        content = render_push_fragment(body, theme=args.theme)
+        stats = fragment_stats(content)
+        style_note = f"theme:{args.theme} (css {stats['css']} + body {stats['body']})"
+        preview = wrap_preview(content, title)
     else:
         content = wrap_html_inline(render_markdown_inline(body))
         style_note = "inline"
+        preview = content
 
     if args.save_html:
-        Path(args.save_html).write_text(content, encoding="utf-8")
-        print(f"Saved HTML → {args.save_html} ({len(content)} chars, {style_note})")
+        # 预览文件比推送包多一层 doctype/viewport 外壳，正文与样式逐字节相同，
+        # 这样本地按手机视口打开看到的就是微信里的样子。
+        Path(args.save_html).write_text(preview, encoding="utf-8")
+        print(f"Saved preview HTML → {args.save_html} "
+              f"(push payload {len(content)} chars, {style_note})")
 
     if len(content) > CONTENT_LIMIT:
         print(f"WARNING: content is {len(content)} chars, over PushPlus limit ~{CONTENT_LIMIT}. "

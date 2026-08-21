@@ -103,9 +103,9 @@
 - 跟踪项(#T-xxx)的开项与结算
 - 单独成节的 24-72h 观察点
 
-**但它们照常产出,只是不给这两位看**:`save_report_state.py --profile custom_commercial_space`
-仍按原样回写 watchboard(regime / tracking_items / next_nodes / falsifiers),跨天状态不受影响;
-合并日报 `custom_daily_<date>.md` 作为运营侧产物,也照旧保留它的全局覆盖说明。
+**但它们照常产出,只是不展示**:`save_report_state.py --profile custom_commercial_space`
+仍按原样回写 watchboard(regime / tracking_items / next_nodes / falsifiers),跨天状态不受影响。
+这条现在是全 skill 通例——合并日报 `custom_daily_<date>.md` 同样不写覆盖说明与跟踪项结算。
 
 一个例外情况:**数据缺口如果让某条判断站不住,不要靠底部的覆盖说明去交代**,直接在那条
 判断旁边写明依据不足到什么程度。比如"国内这条线今天只有金十一条转述,拿不到公司确认"。

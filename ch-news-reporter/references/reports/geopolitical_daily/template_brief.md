@@ -1,7 +1,7 @@
 # 简版 · 地缘日报模板（正文 <=600 字）
 
 > 何时用：用户要“简版 / 精简 / 速览 / 短版 / 600 字以内”的地缘日报。
-> watchboard 照常：简版只改展示密度，不改分析动作。仍要读 Prior Watchboard，内部逐条结算上一期 open 项，出报告后保存今天 watchboard。
+> watchboard 照常：简版只改展示密度，不改分析动作。仍要读 Prior Watchboard，内部逐条结算上一期 open 项，出报告后保存今天 watchboard；正文不写跟踪项状态。
 > 文件名：`reports/geopolitical_daily_<date>_brief.md`。
 
 ---
@@ -26,8 +26,6 @@
 - 概率：W1 X% / W2 X% / W3 X% / W4 X% / De X%（有变动标 +/-X%）
 - 下一节点：[名称]（YYYY-MM-DD，影响 W1/W2/W3/W4/De）
 - 最该盯的：[1-2 条最高优先级观察项]
-
-> 跟踪项：本期 [N 项顺延 / 结算 X 项 / 新开 Y 项]，明细见 watchboard。
 
 ---
 *基于公开新闻与市场价格生成，不构成投资建议。*

@@ -61,12 +61,12 @@
             "key": "tracking",
             "level": 2,
             "patterns": [
-              "^待跟踪 & 本期变更$"
+              "^待跟踪$"
             ]
           }
         ]
       },
-      "contract_version": "news/ai-daily/1.0.0",
+      "contract_version": "news/ai-daily/1.1.0",
       "features": [
         "evidence-backed",
         "preserve-source-text",
@@ -159,7 +159,7 @@
                 "key": "tracking",
                 "level": 3,
                 "patterns": [
-                  "^待跟踪 & 本期变更$"
+                  "^待跟踪$"
                 ]
               }
             ]
@@ -201,7 +201,7 @@
         },
         {
           "config": {
-            "expect_contract": "news/ai-daily/1.0.0",
+            "expect_contract": "news/ai-daily/1.1.0",
             "script": "scripts/_shared/html_report/render_check.py"
           },
           "id": "browser-attestation",
@@ -267,12 +267,12 @@
             "key": "tracking",
             "level": 2,
             "patterns": [
-              "^待跟踪 & 本期变更$"
+              "^待跟踪$"
             ]
           }
         ]
       },
-      "contract_version": "news/ai-daily/1.0.0",
+      "contract_version": "news/ai-daily/1.1.0",
       "features": [
         "evidence-backed"
       ],
@@ -358,7 +358,7 @@
                 "key": "tracking",
                 "level": 2,
                 "patterns": [
-                  "^待跟踪 & 本期变更$"
+                  "^待跟踪$"
                 ]
               }
             ]
@@ -424,17 +424,10 @@
             "patterns": [
               "^24-72h 观察点$"
             ]
-          },
-          {
-            "key": "coverage",
-            "level": 2,
-            "patterns": [
-              "^覆盖说明$"
-            ]
           }
         ]
       },
-      "contract_version": "news/custom-daily/1.0.0",
+      "contract_version": "news/custom-daily/1.1.0",
       "features": [
         "evidence-backed",
         "preserve-source-text",
@@ -492,13 +485,6 @@
                 "patterns": [
                   "^24-72h 观察点$"
                 ]
-              },
-              {
-                "key": "coverage",
-                "level": 3,
-                "patterns": [
-                  "^覆盖说明$"
-                ]
               }
             ]
           },
@@ -539,7 +525,7 @@
         },
         {
           "config": {
-            "expect_contract": "news/custom-daily/1.0.0",
+            "expect_contract": "news/custom-daily/1.1.0",
             "script": "scripts/_shared/html_report/render_check.py"
           },
           "id": "browser-attestation",
@@ -570,17 +556,10 @@
             "patterns": [
               "^24-72h 观察点$"
             ]
-          },
-          {
-            "key": "coverage",
-            "level": 2,
-            "patterns": [
-              "^覆盖说明$"
-            ]
           }
         ]
       },
-      "contract_version": "news/custom-daily/1.0.0",
+      "contract_version": "news/custom-daily/1.1.0",
       "features": [
         "evidence-backed"
       ],
@@ -630,13 +609,6 @@
                 "level": 2,
                 "patterns": [
                   "^24-72h 观察点$"
-                ]
-              },
-              {
-                "key": "coverage",
-                "level": 2,
-                "patterns": [
-                  "^覆盖说明$"
                 ]
               }
             ]
@@ -692,11 +664,10 @@
           "今日边际变化",
           "主战线与并行战线",
           "能源/航运/市场",
-          "推演",
-          "跟踪项"
+          "推演"
         ]
       },
-      "contract_version": "news/geopolitical-brief/1.0.0",
+      "contract_version": "news/geopolitical-brief/1.1.0",
       "features": [
         "evidence-backed",
         "preserve-source-text",
@@ -757,8 +728,7 @@
               "今日边际变化",
               "主战线与并行战线",
               "能源/航运/市场",
-              "推演",
-              "跟踪项"
+              "推演"
             ]
           },
           "id": "regex-policy",
@@ -786,7 +756,7 @@
         },
         {
           "config": {
-            "expect_contract": "news/geopolitical-brief/1.0.0",
+            "expect_contract": "news/geopolitical-brief/1.1.0",
             "script": "scripts/_shared/html_report/render_check.py"
           },
           "id": "browser-attestation",
@@ -807,11 +777,10 @@
           "今日边际变化",
           "主战线与并行战线",
           "能源/航运/市场",
-          "推演",
-          "跟踪项"
+          "推演"
         ]
       },
-      "contract_version": "news/geopolitical-brief/1.0.0",
+      "contract_version": "news/geopolitical-brief/1.1.0",
       "features": [
         "evidence-backed"
       ],
@@ -865,8 +834,7 @@
               "今日边际变化",
               "主战线与并行战线",
               "能源/航运/市场",
-              "推演",
-              "跟踪项"
+              "推演"
             ]
           },
           "id": "regex-policy",
@@ -946,17 +914,10 @@
             "patterns": [
               "^升级阶梯与核阈值$"
             ]
-          },
-          {
-            "key": "changes",
-            "level": 2,
-            "patterns": [
-              "^本期变更（框架 × 跟踪合并）$"
-            ]
           }
         ]
       },
-      "contract_version": "news/geopolitical-daily/1.0.0",
+      "contract_version": "news/geopolitical-daily/1.1.0",
       "features": [
         "evidence-backed",
         "preserve-source-text",
@@ -1042,13 +1003,6 @@
                 "patterns": [
                   "^升级阶梯与核阈值$"
                 ]
-              },
-              {
-                "key": "changes",
-                "level": 3,
-                "patterns": [
-                  "^本期变更（框架 × 跟踪合并）$"
-                ]
               }
             ]
           },
@@ -1089,7 +1043,7 @@
         },
         {
           "config": {
-            "expect_contract": "news/geopolitical-daily/1.0.0",
+            "expect_contract": "news/geopolitical-daily/1.1.0",
             "script": "scripts/_shared/html_report/render_check.py"
           },
           "id": "browser-attestation",
@@ -1148,17 +1102,10 @@
             "patterns": [
               "^升级阶梯与核阈值$"
             ]
-          },
-          {
-            "key": "changes",
-            "level": 2,
-            "patterns": [
-              "^本期变更（框架 × 跟踪合并）$"
-            ]
           }
         ]
       },
-      "contract_version": "news/geopolitical-daily/1.0.0",
+      "contract_version": "news/geopolitical-daily/1.1.0",
       "features": [
         "evidence-backed"
       ],
@@ -1237,13 +1184,6 @@
                 "patterns": [
                   "^升级阶梯与核阈值$"
                 ]
-              },
-              {
-                "key": "changes",
-                "level": 2,
-                "patterns": [
-                  "^本期变更（框架 × 跟踪合并）$"
-                ]
               }
             ]
           },
@@ -1298,11 +1238,10 @@
           "关键读数",
           "今日关键边际信号",
           "月度数据",
-          "反向风险",
-          "跟踪项"
+          "反向风险"
         ]
       },
-      "contract_version": "news/macro-brief/1.0.0",
+      "contract_version": "news/macro-brief/1.1.0",
       "features": [
         "evidence-backed",
         "preserve-source-text",
@@ -1363,8 +1302,7 @@
               "关键读数",
               "今日关键边际信号",
               "月度数据",
-              "反向风险",
-              "跟踪项"
+              "反向风险"
             ]
           },
           "id": "regex-policy",
@@ -1392,7 +1330,7 @@
         },
         {
           "config": {
-            "expect_contract": "news/macro-brief/1.0.0",
+            "expect_contract": "news/macro-brief/1.1.0",
             "script": "scripts/_shared/html_report/render_check.py"
           },
           "id": "browser-attestation",
@@ -1413,11 +1351,10 @@
           "关键读数",
           "今日关键边际信号",
           "月度数据",
-          "反向风险",
-          "跟踪项"
+          "反向风险"
         ]
       },
-      "contract_version": "news/macro-brief/1.0.0",
+      "contract_version": "news/macro-brief/1.1.0",
       "features": [
         "evidence-backed"
       ],
@@ -1471,8 +1408,7 @@
               "关键读数",
               "今日关键边际信号",
               "月度数据",
-              "反向风险",
-              "跟踪项"
+              "反向风险"
             ]
           },
           "id": "regex-policy",
@@ -1580,17 +1516,10 @@
             "patterns": [
               "^后续观察（24-72h）$"
             ]
-          },
-          {
-            "key": "changes",
-            "level": 2,
-            "patterns": [
-              "^🔄 本期变更（框架 × 跟踪合并）$"
-            ]
           }
         ]
       },
-      "contract_version": "news/macro-daily/1.0.0",
+      "contract_version": "news/macro-daily/1.1.0",
       "features": [
         "evidence-backed",
         "preserve-source-text",
@@ -1704,13 +1633,6 @@
                 "patterns": [
                   "^后续观察（24-72h）$"
                 ]
-              },
-              {
-                "key": "changes",
-                "level": 3,
-                "patterns": [
-                  "^🔄 本期变更（框架 × 跟踪合并）$"
-                ]
               }
             ]
           },
@@ -1751,7 +1673,7 @@
         },
         {
           "config": {
-            "expect_contract": "news/macro-daily/1.0.0",
+            "expect_contract": "news/macro-daily/1.1.0",
             "script": "scripts/_shared/html_report/render_check.py"
           },
           "id": "browser-attestation",
@@ -1838,17 +1760,10 @@
             "patterns": [
               "^后续观察（24-72h）$"
             ]
-          },
-          {
-            "key": "changes",
-            "level": 2,
-            "patterns": [
-              "^🔄 本期变更（框架 × 跟踪合并）$"
-            ]
           }
         ]
       },
-      "contract_version": "news/macro-daily/1.0.0",
+      "contract_version": "news/macro-daily/1.1.0",
       "features": [
         "evidence-backed"
       ],
@@ -1955,13 +1870,6 @@
                 "patterns": [
                   "^后续观察（24-72h）$"
                 ]
-              },
-              {
-                "key": "changes",
-                "level": 2,
-                "patterns": [
-                  "^🔄 本期变更（框架 × 跟踪合并）$"
-                ]
               }
             ]
           },
@@ -2003,5 +1911,5 @@
   },
   "schema_version": 1,
   "skill": "ch-news-reporter",
-  "source_sha256": "ccec1de48e47d0e656a5d1f96c2dbe7b11751a863f4b610bc6cf6b5efed95fd6"
+  "source_sha256": "1fdd9bf835ff96c5adeb9c81507a09b9d504645fe07b6149f35851286b73583c"
 }

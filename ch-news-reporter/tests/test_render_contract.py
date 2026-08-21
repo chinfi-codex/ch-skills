@@ -33,11 +33,12 @@ class NewsRenderContractTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             html = output.read_text(encoding="utf-8")
             self.assertIn('data-sec="hero"', html)
-            self.assertIn('data-sec="changes"', html)
+            # 台账段(本期变更)已不在契约里:即便老报告正文里还留着这个标题,也不再被签到。
+            self.assertNotIn('data-sec="changes"', html)
             marker = '<script id="render-manifest" type="application/json">'
             payload = html.split(marker, 1)[1].split("</script>", 1)[0]
             manifest = json.loads(payload)
-            self.assertEqual(manifest["contract_version"], "news/macro-daily/1.0.0")
+            self.assertEqual(manifest["contract_version"], "news/macro-daily/1.1.0")
             self.assertEqual(manifest["sections"][0], "hero")
 
 

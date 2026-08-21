@@ -175,7 +175,7 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 - `references/reports/geopolitical_daily/methodology.md`（方法论常量：边际判定 / 证据处理 / 可信度 / 降级策略）
 - `references/reports/geopolitical_daily/cross_asset_impact_framework.md`
 
-根据问题选择财经、AI、产品观察、开源生态或地缘风险框架。`state_enabled` 的 profile **先读各自 `framework.md`（当前分析框架，唯一可信源）** 与 `watchboard.md`（活动状态机制），再读 `methodology.md`（方法论常量），并逐条结算 packet 里 `prior_state` 的 open 跟踪项。`geopolitical_daily` 当前使用 v2 战时路径（W1/W2/W3/W4/De）；主战线、并行战线、关键通道、升级阶梯、传导渠道和信号清单都在 `framework.md` 定义、在 watchboard 里每日滚动，**没有独立 frame 相位文件**。按 `framework.md` 的 path 判定逻辑用近 7-14 天证据现判，再按需要加载跨资产传导框架。框架本身的换代（regime 质变时改 `framework.md`）是慢思考层 + 人在环的动作，不在日报流程里。
+根据问题选择财经、AI、产品观察、开源生态或地缘风险框架。`state_enabled` 的 profile **先读各自 `framework.md`（当前分析框架，唯一可信源）** 与 `watchboard.md`（活动状态机制），再读 `methodology.md`（方法论常量），并逐条结算 packet 里 `prior_state` 的 open 跟踪项——**结算是必做动作，但它只落在 watchboard 里，不在报告正文里露面**（见第 5 步「过程声明不进正文」）。`geopolitical_daily` 当前使用 v2 战时路径（W1/W2/W3/W4/De）；主战线、并行战线、关键通道、升级阶梯、传导渠道和信号清单都在 `framework.md` 定义、在 watchboard 里每日滚动，**没有独立 frame 相位文件**。按 `framework.md` 的 path 判定逻辑用近 7-14 天证据现判，再按需要加载跨资产传导框架。框架本身的换代（regime 质变时改 `framework.md`）是慢思考层 + 人在环的动作，不在日报流程里。
 
 `macro_daily` 必须优先读取 `references/reports/macro_daily/framework.md`（当前框架）与 `methodology.md`（方法论常量），并以 `macro_data_events` 判断当天是否有中国 CPI/PPI/社融/PMI 月度数据更新；没有事件时不引用旧月度数据做“今日更新”。
 
@@ -208,6 +208,11 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 
 报告不应只罗列新闻，要把证据转化为观点：发生了什么、为何重要、影响哪些资产/产业/公司类型、后续观察什么。
 
+**过程声明不进正文**（所有 profile 通用）：报告只写读者要的判断和证据，不写自己是怎么跑出来的。「本期变更（框架 × 跟踪合并）」「跟踪项结算」「覆盖说明 / 数据源说明 / 通道状态 / 检索预算用量」这类台账与数据维度声明，一律**不设章节、不逐条罗列**。它们照常执行——第 4 步逐条结算 open 项、第 6 步回写 watchboard、脚本的 silent-drop 与到期校验一条不放松——只是痕迹留在 watchboard JSON 里，读者看不到。两种例外，都写进正文相应位置而不是单开一段：
+
+- **结算结果本身就是今天的判断变化**（某跟踪项被证实或被证伪、框架因此移动）：当作观点写进「一句话结论」或它所属的正文板块，说清什么变了、为什么，不带 T 编号流水。
+- **数据异常动摇了判断**（某源缺数、某通道降级、关键品种取不到）：就地写在被影响的那条判断旁边，说明缺的是什么、判断因此降到什么强度。没有异常就什么都不写。
+
 成稿后选择对应 output ID（`ai-daily-markdown`、`macro-daily-markdown`、`macro-brief-markdown`、`geopolitical-daily-markdown`、`geopolitical-brief-markdown`、`custom-daily-markdown`）执行晋级：
 
 ```bash
@@ -228,7 +233,7 @@ python scripts/_shared/skill_runtime/runner.py --skill-root . run report.finaliz
 7. 反向场景与风险（流动性方向 vs 市场位置是否矛盾、何种证据会推翻判断）
 8. 后续观察（24-72h 关键数据/会议/价格位）
 
-`geopolitical_daily` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含 v2 战争轨迹（W1/W2/W3/W4/De）、主战线、并行战线、关键通道状态、升级阶梯与核阈值、今日边际变化、**框架演进与跟踪项结算（逐条结算上一期 open 项）**、能源/航运/市场重定价、下一关键节点、路径概率今日变动和 24-72h 观察清单。
+`geopolitical_daily` 报告必须把新闻证据写成 `时间 - 新闻 [来源]`，并包含 v2 战争轨迹（W1/W2/W3/W4/De）、主战线、并行战线、关键通道状态、升级阶梯与核阈值、今日边际变化、能源/航运/市场重定价、下一关键节点、路径概率今日变动和 24-72h 观察清单。
 
 ### 5b. 简版输出（≤600 字，可选）
 
@@ -237,7 +242,7 @@ python scripts/_shared/skill_runtime/runner.py --skill-root . run report.finaliz
 - `references/reports/geopolitical_daily/template_brief.md`
 - `references/reports/macro_daily/template_brief.md`
 
-简版只换展示密度，不换分析动作：采集、证据包、读 framework / methodology、读 `Prior Watchboard` 并逐条结算 open 项、第 6 步回写今天的 watchboard——全部照常跑。简版省掉的是正文的逐条铺开（不按国家板块罗列每条快讯、不画流动性总图与位置大表、不渲染完整「本期变更」段），但一句话结论 / 路径判定、今日边际变化、月度数据无更新明示、反向风险、不给交易建议这些方法论底线必须保留；正文压到 600 字内，跟踪项结算用一句话带过、明细留在 watchboard。文件名用 `reports/<profile>_<date>_brief.md`，与完整版并存不冲突，需要网页版时照常用 `render_report_html.py`（按前缀识别 profile）。
+简版只换展示密度，不换分析动作：采集、证据包、读 framework / methodology、读 `Prior Watchboard` 并逐条结算 open 项、第 6 步回写今天的 watchboard——全部照常跑。简版省掉的是正文的逐条铺开（不按国家板块罗列每条快讯、不画流动性总图与位置大表），但一句话结论 / 路径判定、今日边际变化、月度数据无更新明示、反向风险、不给交易建议这些方法论底线必须保留；正文压到 600 字内；跟踪项与覆盖状态同样不进正文（同第 5 步「过程声明不进正文」）。文件名用 `reports/<profile>_<date>_brief.md`，与完整版并存不冲突，需要网页版时照常用 `render_report_html.py`（按前缀识别 profile）。
 
 ### 6. 回写活动状态（watchboard）
 
@@ -296,7 +301,7 @@ python scripts/_shared/skill_runtime/runner.py --skill-root . run report.render-
 ```
 
 - **双轴定位图**挂在「一句话结论」段末：纵轴能力成熟度 × 横轴渗透度，坐标 = 档位 + 档内完成度（`graduation` / `five_asks`），矢量按 `links` 站到它服务的形态那一列、没挂钩的落进"未挂钩"带，`axis_objects` 里当天的对象高亮叠在上面。
-- **档位迁移带**挂在「本期变更」之前：近 16 天每条矢量 / 形态的档位轨迹（`--history-days` 可调），标出进档、退档，以及**没结算就从 frame 里消失**的项——那正是「本期变更」该交代的东西。
+- **档位迁移带**挂在「待跟踪」之前：近 16 天每条矢量 / 形态的档位轨迹（`--history-days` 可调），标出进档、退档，以及**没结算就从 frame 里消失**的项——最后这类是台账异常，图注会点出来，看到就回去把 watchboard 补干净，不要在正文里另写交代段。
 - 两张图都是**构建时生成的静态 SVG**，不靠运行时 JS，所以 pushplus 推到微信、导出 PDF、邮件里照样看得见（这也是它们不走 `ChartHook` 的原因）。
 - 缺字段只退化不报错：没有 watchboard 就两张都不画；取不到 `report_state` 历史就只留定位图；没有 `graduation` 的矢量画在格子正中。
 
@@ -316,7 +321,7 @@ python scripts/_shared/skill_runtime/runner.py --skill-root . run report.render-
 - `web_search` 给到 4 条 query（其他事项 3 条），第一条是中文国内线——retriever 按列表顺序取前 N 条，预算紧张时先保国内。
 - 关键词避开了 `space`、`constellation`、`ESA` 这类会误伤 workspace、Constellation Energy、lifesaving 的宽词；`SpaceX` 与 xAI 合并上市（SPCX.O）之后同名新闻大半是 Grok 与 AI 编程，靠 `exclude_keywords` 挡掉一部分，剩下的由模型按 focus 里的口径判断。
 - 关键词里另有《中国商业航天融资全景图》口径的 29 家国内民营/混合所有制公司（按赛道分组排列，改动时对着原图核），外加它们的英文写法与型号英文名——英文源报道中国公司时只用英文名和型号名，中文源命中不到（实测 NASASpaceflight 单日 `LandSpace` 命中 18 次、`Zhuque` 15 次）。这批词在现有语料上不新增召回也不新增噪音，价值在于 `matched_keywords` 能点名到具体公司。两个坑写在配置注释里：`iSpace` 会命中 Omnispace 所以只用 `"i-Space"`；星际荣耀全名带“航天科技集团”，会连带命中 CASC。
-- **输出有专属规范**：这个板块的成品是给 CEO（体制内 + 技术背景）与董事长（投融资背景）看的**汇报简报**，写法与结构见 `references/reports/custom_topic/commercial_space_output.md`。三条要点：简报不按人分栏、不设“给 CEO / 给董事长”小标题，一条信息写一次、工程含义与资本含义在同一段说完；不留歧义，“可能 / 或将 / 有望 / 据悉 / 近日”这类模糊词一律不用，原文含糊处要标出来而不是跟着含糊；结构是结论 → 国内 → 海外，国内按四条主线分节（发射与运力 / 卫星与载荷 / 订单披露 / 产业融资，顺序固定，融资与 IPO 变化表附在末尾），海外不分主线、全部合并成一节且篇幅不超过国内的三分之一；国内同行的具体动作（协议签订、活动组织、火箭进场与转运、出厂评审、试车、发射与回收、工位产线投产、人事股权变动）门槛更低，单条信息量不大也要写，数据源说明、覆盖说明、跟踪项结算、观察点都不进简报（照常回写 watchboard，合并日报作为运营侧产物仍保留全局覆盖说明）。估值必须标口径——一级与 IPO 隐含不可比。其余关注事项不受这份规范约束。
+- **输出有专属规范**：这个板块的成品是给 CEO（体制内 + 技术背景）与董事长（投融资背景）看的**汇报简报**，写法与结构见 `references/reports/custom_topic/commercial_space_output.md`。三条要点：简报不按人分栏、不设“给 CEO / 给董事长”小标题，一条信息写一次、工程含义与资本含义在同一段说完；不留歧义，“可能 / 或将 / 有望 / 据悉 / 近日”这类模糊词一律不用，原文含糊处要标出来而不是跟着含糊；结构是结论 → 国内 → 海外，国内按四条主线分节（发射与运力 / 卫星与载荷 / 订单披露 / 产业融资，顺序固定，融资与 IPO 变化表附在末尾），海外不分主线、全部合并成一节且篇幅不超过国内的三分之一；国内同行的具体动作（协议签订、活动组织、火箭进场与转运、出厂评审、试车、发射与回收、工位产线投产、人事股权变动）门槛更低，单条信息量不大也要写，数据源说明、覆盖说明、跟踪项结算、观察点都不进简报（照常回写 watchboard，只是不展示——这条现在是全 skill 通例，见第 5 步「过程声明不进正文」）。估值必须标口径——一级与 IPO 隐含不可比。其余关注事项不受这份规范约束。
 
 **每日流程（全部关注事项 → 一份合并日报）**：
 
@@ -329,7 +334,7 @@ python scripts/prepare_report_data.py --topic <slug> --date today --format markd
 - 证据来自四个通道（脚本只取数/去重/落库/打包）：`news_db`（库内新闻关键词+时间窗）、`pg_data`（alpha_data 结构化表白名单查询，仅 PG）、`web_search`（Tavily 实时检索，结果落库 `items`，需 `TAVILY_API_KEY`，无 key 或网络失败时优雅降级并记 coverage；历史日期回放仅读取已落库 Web 证据，禁止调用以当前时刻为锚的实时检索）、`alpha_vault`（本地 Obsidian Vault 只读检索，只接受 `vault_root` 内相对路径或 glob；不存在或越界路径跳过并记警告）。新通道 = 在 `scripts/retrievers/` 加一个原子脚本 + 配置项。
 - `--topic all` 遍历所有 `active` 且 `frequency: daily` 的主题；`weekly` 主题不进每日批量，`paused` 主题只能显式点名手动跑，`archived` 不再检索。
 - web 检索预算：每主题 `max_queries_per_day` + 全局 `global_max_queries_per_day`，当日已执行 query 以库内收据计量，同日重跑不重复扣预算；落库行按 `retention_days` 自动清理（也可 `python scripts/topic_retrieve.py --groom`）。
-- 分析时读 `references/reports/custom_topic/methodology.md`（通用底线：证据分层 / 边际判定 / 传闻降级 / 无增量不硬凑）+ 各事项 `focus` + 各事项证据包与 `Prior Watchboard`，按 `references/reports/custom_topic/template.md`（`commercial_space` 板块另按 `commercial_space_output.md`）写**一份合并日报**：每个关注事项一个板块（边际变化 / 新证据 / 判断更新 / 跟踪项一句话结算），当天无增量的事项一句话带过，不硬凑篇幅。
+- 分析时读 `references/reports/custom_topic/methodology.md`（通用底线：证据分层 / 边际判定 / 传闻降级 / 无增量不硬凑）+ 各事项 `focus` + 各事项证据包与 `Prior Watchboard`，按 `references/reports/custom_topic/template.md`（`commercial_space` 板块另按 `commercial_space_output.md`）写**一份合并日报**：每个关注事项一个板块（边际变化 / 新证据 / 判断更新），当天无增量的事项一句话带过，不硬凑篇幅；跟踪项结算与覆盖状态照常做、照常回写 watchboard，但不进正文。
 - 回写仍按事项逐个进行：`save_report_state.py --profile custom_<slug> --date <报告日>`，watchboard 通用骨架（regime/tracking_items/next_nodes/falsifiers）照常校验，frame 自由结构。跨天状态按事项各自滚动，合并日报只是展示层。
 
 ## 数据表说明
@@ -416,7 +421,7 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 - 横轴 · 渗透率：有没有新形态 / 新入口让更多人真用上（载体 / 用户段 / 自主度 / 真实使用信号 + 萌芽 / 早期采用 / 主流化档位）；没有就直说"今日无新渗透信号"。
 - 证据随正文走：不再单列「原始证据附录」。每个对象只在它唯一展开的位置——今日重点、纵轴、横轴或资本与政策——附上来源、热度 / 体量和可点击的原文链接；不要为了补附录再重复一次。
 - 横向对照与降噪仍作为 Agent 的后台分析步骤：用来校验供需、开源 vs 公司、中美错位，以及识别只有注意力热度的对象；不再单独展示成读者可见章节。最关键的关系级判断可收进「一句话结论」，被降级但仍值得登记的对象在对应正文板块留一句即可；与框架无关的低价值背景项只在后台保留。
-- 待跟踪 & 本期变更：未来 24-72h 三栏观察（待印证矢量 / 待观察渗透 / 待发布动作）+ 本期 watchboard 变更（只用 T 编号引用）。
+- 待跟踪：未来 24-72h 三栏观察（待印证矢量 / 待观察渗透 / 待发布动作）。watchboard 的结算与变更照常回写，但不在正文里展示。
 
 ### 每日宏观日报
 
@@ -487,7 +492,6 @@ python scripts/macro_monitor.py market
 - 当前 v2 路径判定（W1 封锁执行与代理战 / W2 美伊直接军事对抗 / W3 多战线扩大战 / W4 核阈值与系统性战争 / De 去升级与停火重建）。
 - 主战线、并行战线、关键通道状态与升级阶梯趋势。
 - 今日边际变化（1-3 条；按 methodology"边际变化判定"三条线筛选）。
-- 框架演进与跟踪项结算：逐条结算上一期 open 跟踪项，写清新开 / 关闭与框架微调。
 - 中东、俄乌、台海、朝鲜半岛、制裁/联盟等区域主线中真正有边际变化的部分。
 - 能源、航运、制裁、避险资产与风险资产的传导评估。
 - 路径概率今日变动、下一关键节点倒计时、24-72h 观察清单。

@@ -69,13 +69,5 @@
 **24-72h 观察清单**（3-5 条，按优先级）：
 - [最高优先级观察事项，说明触发后推向哪个 path、战线或阶梯]
 
-## 本期变更（框架 × 跟踪合并）
-
-> 对照 evidence packet 的 `Prior Watchboard`。上一期每个 open 母题和子项都必须结算；子项继续留在原母题 `sub_items`，确需晋升时写正确的 `promoted_from` 与非空 `promote_reason`。
-
-- **框架**：path、概率、primary_theater、war_theaters、chokepoint_status、rung 或 signal_watchlist 有变化才写；未变化写“path / 概率 / 战线 / rung 沿用，N 项顺延”。
-- **跟踪项结算**：`#T-xxx -> 确认 / 证伪 / 顺延 / 过期`，说明推动了哪个 path、战线、通道或传导渠道；纯顺延按母题聚合。
-- **新开 / 晋升**：`#T-xxx [新观察项] -- 因为 [...]`；子项晋升顶层标明原母题和理由。
-
 ---
 *基于公开新闻、RSS 与市场价格生成，不构成投资建议。*

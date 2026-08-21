@@ -10,7 +10,7 @@ Two figures, both rendered at build time (no runtime JS — see
   because the first line of that section is exactly the claim this chart backs
   ("地图今天动没动").
 - **档位迁移带**: the stage trajectory of every vector and form across the
-  window. Anchored to 「本期变更」, because that section *is* the diff between
+  window. Anchored to 「待跟踪」, because that section *is* the projection of
   this issue's watchboard and the previous ones.
 
 Coordinates are ``档位整数 + 档内完成度小数``. Both halves come from the
@@ -700,12 +700,12 @@ def build_figures(watchboard: dict, history: Sequence[Tuple[str, dict]] = ()) ->
         band_cap = (f"每格一天，颜色是当天的档位。{window} 天里合计 {promotions} 次档位变化"
                     + ("；" if dropped else "。"))
         if dropped:
-            band_cap += f"<b>另有 {dropped} 项没结算就从 frame 里消失了</b>，需要在本期变更里交代去向。"
+            band_cap += f"<b>另有 {dropped} 项没结算就从 frame 里消失了</b>，回去把 watchboard 补干净。"
         figures.append(StaticFigure(
             html=svg + BAND_LEGEND,
-            anchor=("本期变更", "待跟踪"),
+            anchor=("待跟踪",),
             placement="before",
-            match="last",  # 「待跟踪 & 本期变更」也含"本期变更"，要挂到里层那个小标题
+            match="last",  # 「待跟踪」小节标题
             title=f"{window} 天档位迁移带",
             subtitle=f"{history[0][0]} ~ {history[-1][0]} · 按 canonical id 对齐，全部取自 report_state",
             caption=band_cap,

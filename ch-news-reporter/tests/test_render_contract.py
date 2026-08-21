@@ -20,7 +20,8 @@ class NewsRenderContractTest(unittest.TestCase):
                     sys.executable,
                     "scripts/render_report_html.py",
                     "--input",
-                    "reports/macro_daily_2026-06-13.md",
+                    # 自带 fixture：不依赖 reports/（gitignore 的产物目录，会被清理）
+                    "tests/fixtures/macro_daily_2026-06-13.md",
                     "--output",
                     str(output),
                     "--strict",

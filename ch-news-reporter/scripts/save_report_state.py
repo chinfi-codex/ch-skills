@@ -707,6 +707,45 @@ def validate(
                     "（写明 path/概率/权重为何这么挪）"
                 )
 
+        # canonical id 连续性守卫（硬拦截）。frame 里的矢量/形态靠稳定 id 跨天结算，
+        # 但 schema 只校验字段是非空 list、不查条目，所以一条矢量可以凭空消失而无人
+        # 察觉——治理层的挑战会继续对着一条已不存在的矢量报档位（ai_daily 2026-08-15：
+        # v-rsi / v-chinastack / v-multiagent 三条同时消失 7 天，当天 frame_change 却
+        # 写着「十条纵轴矢量全部沿用」，而 AC-004 仍在为 v-rsi 报「维持实验档」）。
+        # 退役是正当操作，但必须留痕：在 frame_change 里点名该 id，或给 retired_to
+        # 说明并入了哪条。
+        for _field, _label in (
+            ("agent_eng_vectors", "矢量"),
+            ("product_forms", "形态"),
+        ):
+            _prior_list = prior_frame.get(_field)
+            _cur_list = cur_frame.get(_field)
+            if not isinstance(_prior_list, list) or not isinstance(_cur_list, list):
+                continue
+            _cur_ids = {
+                str(x["id"]) for x in _cur_list if isinstance(x, dict) and x.get("id")
+            }
+            _retired = {
+                str(x.get("retired_to") or "") for x in _cur_list if isinstance(x, dict)
+            }
+            _fc_text = json.dumps(payload.get("frame_change"), ensure_ascii=False, default=str)
+            _vanished = [
+                str(x["id"])
+                for x in _prior_list
+                if isinstance(x, dict)
+                and x.get("id")
+                and str(x["id"]) not in _cur_ids
+                and str(x["id"]) not in _retired
+                and str(x["id"]) not in _fc_text
+            ]
+            if _vanished:
+                errors.append(
+                    f"{_label} canonical id 凭空消失：{'、'.join(sorted(_vanished))} "
+                    f"上一期在 {_field} 里、今天不在了，且 frame_change 未提及。"
+                    "id 是跨天结算的锚，消失即断线——要么今天继续带上它，要么在 "
+                    "frame_change 里点名说明退役/并入（或给该条写 retired_to: <并入的 id>）。"
+                )
+
     # challenge_responses：framework_state 的未决框架挑战必须被本期 watchboard 逐条
     # 回应（accepted/rejected/pending），与 tracking_item 的 silent-drop guard 同构。
     # 格式校验与"有无未决挑战"无关，始终对存在的 challenge_responses 跑一遍。

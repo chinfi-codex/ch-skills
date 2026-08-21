@@ -66,7 +66,11 @@ _DEFINITION_PREFIXES = (
     "判据", "判定规则", "数据源", "数据基础", "分层口径", "口径", "字段口径",
     "时间口径", "来源", "注", "说明", "预筛", "前高折扣",
 )
-_CARD_BULLET_RE = re.compile(r"^[-*]\s*\*\*[^*]+\*\*\s*[：:]")
+_CARD_BULLET_RE = re.compile(r"^[-*]\s*\*\*([^*]+)\*\*\s*[：:]")
+_STATE_CARD_LABELS = {
+    "趋势状态", "极值轴", "计数器", "当日阈值", "相位证据", "升档说明",
+    "近 5 日轨迹", "解除进度",
+}
 _BULLET_RE = re.compile(r"^[-*+]\s+|^\d+[.、)]\s+")
 _THRESHOLD_RE = re.compile(r"[<>≤≥]")
 # 窗口标签与时间戳不是读数：「5 日均」「20 日线」「120 日高点」「09:31」
@@ -81,7 +85,7 @@ _WINDOW_TOKEN_RE = re.compile(
 _UNIT_CHARS = "%亿万倍家只个日月年天周次条股元笔pctbp"
 _NAME_NUMBER_RE = re.compile(
     rf"(?<=[\u4e00-\u9fff])\d+(?:\.\d+)?(?![.\d])(?![{_UNIT_CHARS}])"
-    rf"|(?<![\d.%])\d+(?=[\u4e00-\u9fff])"
+    rf"|(?<![\d.%])\d+(?![{_UNIT_CHARS}])(?=[\u4e00-\u9fff])"
 )
 
 
@@ -506,8 +510,14 @@ def _derived_only_tokens(
         section = sections.get(key)
         if section is None:
             continue
-        elsewhere = _table_tokens(markdown_text.replace(section.body, "", 1))
-        derived |= _table_tokens(section.body) - elsewhere
+        elsewhere = {
+            _canonical_number(token)
+            for token in _table_tokens(markdown_text.replace(section.body, "", 1))
+        }
+        derived |= {
+            token for token in _table_tokens(section.body)
+            if _canonical_number(token) not in elsewhere
+        }
     return derived
 
 
@@ -612,8 +622,13 @@ def _paragraph_kind(paragraph: str) -> str:
         return "metadata"
     bullets = [line for line in lines if _BULLET_RE.match(line)]
     if bullets and len(bullets) == len(lines):
-        card = [line for line in bullets if _CARD_BULLET_RE.match(line)]
-        if len(card) * 2 >= len(bullets):
+        card_labels = [
+            match.group(1).strip()
+            for line in bullets
+            if (match := _CARD_BULLET_RE.match(line))
+            and match.group(1).strip() in _STATE_CARD_LABELS
+        ]
+        if len(card_labels) * 2 >= len(bullets):
             return "reading_card"
     plain = re.sub(r"^[\s=*`>-]+", "", lines[0])
     if plain.startswith(_DEFINITION_PREFIXES) and re.match(

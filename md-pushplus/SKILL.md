@@ -69,12 +69,12 @@ python scripts/md_to_pushplus.py 报告.md --channel mail
 
 ## 渲染说明
 
-**默认路径（`--renderer theme`）**：用 `shared/html_report` 的 Markdown 引擎和主题 CSS，但**推出去的是一个自包含的 HTML 片段**，不是整页文档——一个带作用域的 `<div id="pp">`，里面是内联的主题 CSS 加报告正文。
+**默认路径（`--renderer theme`）**：用 `shared/html_report` 的 Markdown 引擎和主题 CSS，但**推出去的是一个自包含的 HTML 片段**，不是整页文档——一个带作用域的 `<div id="pp-doc">`，里面是内联的主题 CSS 加报告正文。
 
 为什么是片段不是整页，三条都是在真实推送页面（pushplus.plus/shortMessage/…）上实测出来的：
 
 - **PushPlus 把 content 以 innerHTML 注入自己的详情页，页面里的 `<script>` 一律不执行**。所以 shared 那套装饰脚本（表格数字红绿、h2 轮色、隐藏独立 `---`）全都失效，正文里会裸露 `---`。现在这些装饰走 `shared/html_report/static_decorations.py` 的构建期投影，静态写进 HTML，不再依赖 JS——规则和浏览器版同源，别在本 skill 里另抄一份。
-- **整页的主题 CSS 会漫出去改掉 PushPlus 自己的页面**：`*`、`html`、`body` 那几条规则实测把宿主的字体、底色、间距一起换了。现在所有选择器都加了 `#pp` 前缀，`:root` / `html` / `body` 收敛到容器本身，宿主一个属性都不受影响。
+- **整页的主题 CSS 会漫出去改掉 PushPlus 自己的页面**：`*`、`html`、`body` 那几条规则实测把宿主的字体、底色、间距一起换了。现在所有选择器都加了 `#pp-doc` 前缀，`:root` / `html` / `body` 收敛到容器本身，宿主一个属性都不受影响。
 - **`<!doctype>` / `<head>` / `<title>` / `<meta>` 会被当正文解析成垃圾节点**，而 `.page` 的 `calc(100vw - 40px)` 算的是视口宽不是容器宽，在窄容器里会溢出。片段没有这些标签，宽度一律按 100% 走。
 
 另外两处是专门为手机读做的（推送基本都在微信里看）：

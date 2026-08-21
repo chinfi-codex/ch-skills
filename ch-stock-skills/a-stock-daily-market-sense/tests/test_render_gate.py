@@ -366,6 +366,29 @@ class DmsContentContractTest(unittest.TestCase):
         self.assertEqual(result["unmatched"], ["-18.50%"])
         self.assertTrue(problems)
 
+    def test_same_orphan_number_with_different_format_outside_31_still_fails(self) -> None:
+        """Formatting differences must not turn a repeated claim into a derived-only value."""
+        from dms_output_contract import _derived_only_tokens, _validate_table_numbers
+
+        detail_table = (
+            "| 排名 | 股票 | 距120日高点 |\n"
+            "|---:|---|---:|\n"
+            "| 1 | 哈森股份 | -18.5% |\n"
+        )
+        markdown = (
+            f"## 3.1 风险类型归纳\n\n{self.RISK_TABLE}\n"
+            f"## 3.2 高强度爆量下跌个股明细\n\n{detail_table}"
+        )
+        derived = _derived_only_tokens(markdown, self._risk_sections(self.RISK_TABLE))
+        self.assertNotIn("-18.50%", derived)
+        problems, warnings = [], []
+        result = _validate_table_numbers(
+            markdown, self.COMPLETE_EVIDENCE, problems, warnings,
+            derived_only_tokens=derived,
+        )
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(problems)
+
     def test_numeric_limit_skips_template_mandated_blocks(self) -> None:
         """Frontmatter, the 1.1 reading card and 判据 blocks are structure, not prose.
 
@@ -393,6 +416,20 @@ class DmsContentContractTest(unittest.TestCase):
         # 窗口标签与时间戳不算读数：只有四个真读数留下。
         self.assertEqual(len(_reading_tokens(judgment)), 4)
         self.assertEqual(_reading_tokens("5 日均 2.42 万亿，近 20 日线上方"), ["2.42"])
+
+    def test_no_space_units_remain_numeric_readings(self) -> None:
+        from dms_output_contract import _reading_tokens
+
+        self.assertEqual(
+            _reading_tokens("跌停137家，成交额5亿元，科创50跌2.1%。"),
+            ["137", "5", "2.1%"],
+        )
+
+    def test_bold_label_list_is_not_automatically_a_reading_card(self) -> None:
+        from dms_output_contract import _paragraph_kind
+
+        prose_list = "- **指数判断**：下跌 2.1%\n- **风险提示**：跌停 137 家"
+        self.assertEqual(_paragraph_kind(prose_list), "prose")
 
     def test_real_20260807_regression_is_rejected(self) -> None:
         from dms_output_contract import validate_dms_content

@@ -77,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-module-context", action="store_true", help="Skip module-level subagent JSON files.")
     parser.add_argument("--no-extreme-state", action="store_true", help="Skip the extreme_state card (bottom washout score / top crowding score).")
     parser.add_argument("--extreme-backfill", type=int, default=0, help="Backfill N trading days of extreme-state metrics before scoring (first run: 300).")
+    parser.add_argument("--no-forward-odds", action="store_true", help="Skip the forward_odds card (emotion pulse + conditional forward distributions).")
+    parser.add_argument("--forward-odds-full", action="store_true", help="Include the event list and leave-one-year-out detail in forward_odds.")
     parser.add_argument("--stderr-out", default=None, help="Stderr log output path.")
     parser.add_argument("--money-context-limit", type=int, default=80, help="Money-effect rows in context.")
     parser.add_argument("--decline-context-limit", type=int, default=20, help="Volume-decline rows in context.")
@@ -182,11 +184,22 @@ def build_extreme_state_card(resolved_date: str, backfill: int = 0) -> Dict[str,
         return {"available": False, "reason": f"extreme_state_card failed: {exc}"}
 
 
+def build_forward_odds_card(resolved_date: str, full: bool = False) -> Dict[str, Any]:
+    """前瞻概率轴（情绪脉冲 + 条件分布），失败不阻断研报。"""
+    try:
+        import forward_odds
+
+        return forward_odds.build_block(resolved_date, full=full)
+    except Exception as exc:
+        return {"available": False, "reason": f"forward_odds failed: {exc}"}
+
+
 def write_module_contexts(
     evidence: dict,
     module_dir: Path,
     trend_card: Optional[Dict[str, Any]] = None,
     extreme_state: Optional[Dict[str, Any]] = None,
+    forward_odds_card: Optional[Dict[str, Any]] = None,
 ) -> None:
     module_dir.mkdir(parents=True, exist_ok=True)
     for name, payload in market_panel.build_module_contexts(evidence).items():
@@ -195,10 +208,24 @@ def write_module_contexts(
                 payload["trend_state_card"] = trend_card
             if extreme_state is not None:
                 payload["extreme_state"] = extreme_state
+            if forward_odds_card is not None:
+                payload["forward_odds"] = forward_odds_card
         (module_dir / f"{name}.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+
+def _forward_odds_summary(card: Optional[Dict[str, Any]]) -> Optional[str]:
+    """一行摘要：脉冲门槛是否命中 + 命中信号里有几个过了发布门槛。"""
+    card = card or {}
+    if not card.get("available"):
+        return card.get("reason")
+    pulse = card.get("pulse") or {}
+    gate = "命中" if pulse.get("gate") else f"未命中（{pulse.get('legs_hit')}/4 腿）"
+    hits = [s for s in card.get("signals", []) if s.get("hit_today")]
+    ok = sum(1 for s in hits if s.get("publishable"))
+    return f"情绪脉冲 {gate}｜当日命中信号 {len(hits)} 个，其中 {ok} 个过发布门槛"
 
 
 def cleanup_intermediates(reports_dir: Path, date: str) -> Dict[str, Any]:
@@ -288,12 +315,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.no_extreme_state:
         extreme_state = build_extreme_state_card(resolved_date, args.extreme_backfill)
         evidence["extreme_state"] = extreme_state
-    # 趋势卡也进 evidence：HTML 的 20 日档位图要从 evidence 读轨迹，而模块级 JSON
+    # 趋势卡也进 evidence：HTML 的 30 日轨迹图要从 evidence 读轨迹，而模块级 JSON
     # 只给模型看、渲染器不读它
     trend_card: Optional[Dict[str, Any]] = None
     if not args.no_module_context:
         trend_card = build_trend_state_card(resolved_date)
         evidence["trend_state_card"] = trend_card
+    # 前瞻轴与另外两根正交：趋势轴说所处阶段、极值轴抓两端拐点，这根只回答
+    # 「历史上出现同类读数之后发生了什么」，输出条件分布而非结论
+    forward_odds_card: Optional[Dict[str, Any]] = None
+    if not args.no_forward_odds:
+        forward_odds_card = build_forward_odds_card(resolved_date, args.forward_odds_full)
+        evidence["forward_odds"] = forward_odds_card
     market_chart_path = refresh_and_verify_market_chart_data(resolved_date)
     evidence_path = Path(args.evidence_out) if args.evidence_out else reports_dir / f"evidence_{resolved_date}_utf8.json"
     if args.stderr_out is None:
@@ -326,7 +359,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     module_context_dir = None
     if not args.no_module_context:
         module_context_dir = Path(args.module_context_dir) if args.module_context_dir else reports_dir / f"module_context_{resolved_date}"
-        write_module_contexts(evidence, module_context_dir, trend_card, extreme_state)
+        write_module_contexts(evidence, module_context_dir, trend_card, extreme_state, forward_odds_card)
 
     print(json.dumps({
         "resolved_trade_date": resolved_date,
@@ -336,6 +369,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"｜顶部 {(extreme_state or {}).get('top', {}).get('score')}/5"
             if (extreme_state or {}).get("available") else (extreme_state or {}).get("reason")
         ),
+        "forward_odds": _forward_odds_summary(forward_odds_card),
         "evidence": str(evidence_path),
         "stock_klines": str(kline_path) if kline_payload is not None else None,
         "report_context": str(context_path) if context_path else None,

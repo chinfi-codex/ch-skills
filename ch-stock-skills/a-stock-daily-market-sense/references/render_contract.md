@@ -27,7 +27,7 @@ description: 仅供 a-stock-daily-market-sense 内部按需读取。说明日报
 
 改 `references/template/section*.md` 的章节结构时，**同步升 `DMS_CONTRACT` 的版本号**，否则契约会悄悄和模板失配。
 
-`dms/1.4.0` 同时检查 Markdown 内容，规则一律从 `references/template/section*.md` 投影而来——每个契约条目都带 `source=<模板文件>:<行号>`，改模板就要同步改契约，不允许契约自己猜。
+`dms/1.5.0` 同时检查 Markdown 内容，规则一律从 `references/template/section*.md` 投影而来——每个契约条目都带 `source=<模板文件>:<行号>`，改模板就要同步改契约，不允许契约自己猜。
 
 - **15 个章节，顺序与层级固定**。其中 14 个必填，**只有 2.2 允许整节缺席**：模板规定没有 ★★★ 主线时连标题带兜底句一起不输出，所以它的在场与否是双向硬判定——2.1 有 ★★★ 却没有 2.2 会红，没有 ★★★ 却留着 2.2 也会红。在场时，2.2 里 `### 主线名称（★★★）` 的个数必须等于 2.1 表里的 ★★★ 行数。
 - **降级要有据**。模板为某节写明的降级句（如「暂无命中」「风格证据不足，不强行定性」）命中后记进审计的 `detail.content_contract.degraded`，但只有 evidence 确实是 `available=false` 或候选为空才放行；evidence 里明明有候选却写「暂无命中」＝谎报缺数据，直接红。
@@ -65,7 +65,7 @@ description: 仅供 a-stock-daily-market-sense 内部按需读取。说明日报
 python3 scripts/_shared/html_report/render_check.py --target <本地 HTML> --stage local --out <本地审计文件>
 # 从本地审计文件取 build_id，Site 与线上门禁都必须传 --expect-build
 python3 scripts/_shared/html_report/render_check.py --target <目标> --stage <site|online> \
-  --expect-contract dms/1.4.0 --expect-build <本地审计文件中的 build_id> --out <审计文件>
+  --expect-contract dms/1.5.0 --expect-build <本地审计文件中的 build_id> --out <审计文件>
 ```
 
 三段各查各的问题：

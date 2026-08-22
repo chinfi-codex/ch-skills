@@ -62,14 +62,28 @@ _DEV_SHARED = _SCRIPT_DIR.parents[2] / "shared" / "data"
 sys.path.insert(0, str(_BUNDLED_SHARED if _BUNDLED_SHARED.exists() else _DEV_SHARED))
 from db_core import BACKEND, Backend, get_connection  # noqa: E402
 
-BENCHMARK = "000985.CSI"          # 中证全指：与涨跌家数、宽度同尺
-BENCHMARK_FALLBACK = "000001.SH"  # 中证全指没落库时退回上证综指
+# 基准候选链：中证全指与涨跌家数、宽度同尺，是首选；它掉线时先退中证1000
+# （仍是宽基、比上证更贴近全市场），最后才退上证综指。每个候选都要过新鲜度检查。
+BENCHMARK_CHAIN = (
+    ("000985.CSI",), ("000852.SH", "sh.000852"), ("000001.SH",),
+)
+BENCHMARK_LABELS = {
+    "000985.CSI": "中证全指",
+    "000852.SH": "中证1000",
+    "sh.000852": "中证1000",
+    "000001.SH": "上证综指",
+}
+# 基准指数最新数据日距 asof 超过这么多个交易日就算过期。
+# 为什么必须有这条：`stock_index_daily` 里 000985.CSI 曾静默停更 10 个交易日，而
+# index_metrics 只取「<= asof 的最后一行」，于是拿 8/7 的收盘价算 8/19 的 250 日
+# 回撤和 20 日新高，fallback 一次都没触发。静默吃旧数据比直接报缺失危险得多。
+INDEX_STALE_MAX_DAYS = 2
 HIGH_WINDOW = 250
 NEW_LOW_WINDOW = 60
 ROLL_WINDOW = 500                 # 滚动分位窗口（交易日）
 ROLL_MIN = 250                    # 不足此长度就退回固定水平
 ZONE_LOOKBACK = 10                # 出清区的回看窗口
-HISTORY_DAYS = 20                 # 输出的分数轨迹长度（HTML 时间轴按这个宽度画）
+HISTORY_DAYS = 30                 # 输出的分数轨迹长度（HTML 时间轴按这个宽度画）
 DIVERGENCE_STICKY = 15            # 宽度背离的粘性天数
 BREADTH_DROP_PCT = 5.0            # 宽度背离的判定落差（百分点）
 
@@ -103,6 +117,7 @@ CREATE TABLE IF NOT EXISTS dms_extreme_daily (
     index_high20        BOOLEAN,
     amt_ratio_5_20      DOUBLE PRECISION,
     universe            INTEGER,
+    index_source        TEXT,
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """
@@ -112,6 +127,10 @@ METRIC_COLUMNS = [
     "limit_down_share", "limit_up_share", "margin_bp", "rzye_yi", "rzye_chg20",
     "index_close", "index_dd250", "index_high20", "amt_ratio_5_20", "universe",
 ]
+# 基准来源随行落库：候选链会在主基准过期时换腿，而 index_dd250 的滚动分位一旦
+# 跨基准混算就废了（中证全指与中证1000 的回撤尺度并不相同）。w5 的阈值因此只用
+# 与当日同源的历史行；同源样本不够时按既有逻辑退回固定水平。
+SOURCE_COLUMN = "index_source"
 
 
 # ---------------------------------------------------------------------------
@@ -261,29 +280,75 @@ def margin_metrics(conn, asof: date) -> Dict[str, Any]:
     return out
 
 
+def _trading_days_between(conn, start: date, end: date) -> int:
+    """(start, end] 之间的交易日数，用 market_history 的日历口径。"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM market_history WHERE date > %s AND date <= %s",
+            (start, end),
+        )
+        row = cur.fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
 def index_metrics(conn, asof: date) -> Dict[str, Any]:
-    """基准指数：收盘、距 250 日高点回撤、是否创 20 日新高。"""
-    for code in (BENCHMARK, BENCHMARK_FALLBACK):
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT trade_date, close FROM stock_index_daily "
-                "WHERE ts_code = %s AND trade_date <= %s ORDER BY trade_date DESC LIMIT %s",
-                (code, asof, HIGH_WINDOW),
-            )
-            rows = list(reversed(cur.fetchall()))
-        if len(rows) < 21:
+    """基准指数：收盘、距 250 日高点回撤、是否创 20 日新高。
+
+    按 BENCHMARK_CHAIN 逐个试，**每个候选都要先过新鲜度检查**：最新数据日距 asof
+    超过 INDEX_STALE_MAX_DAYS 个交易日的一律跳过，让 fallback 真正生效。跳过的候选
+    连同它的滞后天数记在 `skipped` 里——过期本身是要披露的事实，不能悄悄换一条腿。
+    """
+    skipped: List[Dict[str, Any]] = []
+    for codes in BENCHMARK_CHAIN:
+        rows: List[Any] = []
+        for code in codes:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT trade_date, close FROM stock_index_daily "
+                    "WHERE ts_code = %s AND trade_date <= %s AND close IS NOT NULL "
+                    "ORDER BY trade_date DESC LIMIT %s",
+                    (code, asof, HIGH_WINDOW),
+                )
+                rows.extend(cur.fetchall())
+        if not rows:
+            skipped.append({"ts_code": "+".join(codes), "reason": "无落库数据"})
             continue
-        closes = [float(r[1]) for r in rows]
+        # 同一交易日多个来源时保留第一个（候选链内靠前的代码优先）
+        merged: Dict[date, float] = {}
+        for d, close in rows:
+            merged.setdefault(d, float(close))
+        series = sorted(merged.items())[-HIGH_WINDOW:]
+        if len(series) < 21:
+            skipped.append({"ts_code": "+".join(codes), "reason": f"历史不足（{len(series)} 天）"})
+            continue
+        last_date = series[-1][0]
+        lag = _trading_days_between(conn, last_date, asof)
+        if lag > INDEX_STALE_MAX_DAYS:
+            skipped.append({"ts_code": "+".join(codes), "reason": "数据过期",
+                            "data_date": last_date, "lag_trading_days": lag})
+            continue
+        closes = [c for _, c in series]
         last = closes[-1]
         high250 = max(closes)
         return {
-            "available": True, "ts_code": code, "trade_date": rows[-1][0],
+            "available": True,
+            "ts_code": "+".join(codes),
+            "index_source": "+".join(codes),
+            "index_label": BENCHMARK_LABELS.get(codes[0], codes[0]),
+            "trade_date": last_date,
+            "index_data_date": last_date,
+            "index_lag_trading_days": lag,
+            "index_stale": False,
             "index_close": round(last, 2),
             "index_dd250": round((last / high250 - 1) * 100, 2) if high250 else None,
             "index_high20": bool(last >= max(closes[-20:])),
-            "window_days": len(rows),
+            "window_days": len(series),
+            "skipped": skipped,
         }
-    return {"available": False, "reason": "no benchmark index history in stock_index_daily"}
+    return {"available": False,
+            "reason": "所有基准指数候选都不可用或已过期",
+            "index_stale": True,
+            "skipped": skipped}
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +360,7 @@ def ensure_table(conn) -> None:
 
 
 def upsert_metrics(conn, trade_date: date, metrics: Dict[str, Any]) -> None:
-    cols = [c for c in METRIC_COLUMNS if c in metrics]
+    cols = [c for c in METRIC_COLUMNS + [SOURCE_COLUMN] if c in metrics]
     if not cols:
         return
     assignments = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols)
@@ -312,12 +377,12 @@ def upsert_metrics(conn, trade_date: date, metrics: Dict[str, Any]) -> None:
 def load_history(conn, asof: date) -> pd.DataFrame:
     with conn.cursor() as cur:
         cur.execute(
-            f"SELECT trade_date, {', '.join(METRIC_COLUMNS)} FROM dms_extreme_daily "
-            "WHERE trade_date <= %s ORDER BY trade_date DESC LIMIT %s",
+            f"SELECT trade_date, {', '.join(METRIC_COLUMNS)}, {SOURCE_COLUMN} "
+            "FROM dms_extreme_daily WHERE trade_date <= %s ORDER BY trade_date DESC LIMIT %s",
             (asof, ROLL_WINDOW),
         )
         rows = cur.fetchall()
-    df = pd.DataFrame(list(reversed(rows)), columns=["trade_date"] + METRIC_COLUMNS)
+    df = pd.DataFrame(list(reversed(rows)), columns=["trade_date"] + METRIC_COLUMNS + [SOURCE_COLUMN])
     for col in METRIC_COLUMNS:
         if col != "index_high20":
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -371,12 +436,17 @@ def breadth_divergence(history: pd.DataFrame) -> Dict[str, Any]:
 
 
 def score(history: pd.DataFrame, today: Dict[str, Any]) -> Dict[str, Any]:
+    # w5 的分位只在与当日同源的历史行上算，避免换腿后把两把尺子混在一起
+    same_source = history
+    src_today = today.get(SOURCE_COLUMN)
+    if src_today and SOURCE_COLUMN in history.columns:
+        same_source = history[history[SOURCE_COLUMN] == src_today]
     thr = {
         "w1": quantile_or_fallback(history, "breadth_ma20", 0.05, "w1_breadth_ma20", "le"),
         "w2": quantile_or_fallback(history, "limit_down_share", 0.97, "w2_limit_down_share", "ge"),
         "w3": quantile_or_fallback(history, "new_low_share", 0.95, "w3_new_low_share", "ge"),
         "w4": quantile_or_fallback(history, "margin_bp", 0.05, "w4_margin_bp", "le"),
-        "w5": quantile_or_fallback(history, "index_dd250", 0.10, "w5_index_dd250", "le"),
+        "w5": quantile_or_fallback(same_source, "index_dd250", 0.10, "w5_index_dd250", "le"),
         "w6": quantile_or_fallback(history, "median_dd250", 0.10, "w6_median_dd250", "le"),
         "p3": quantile_or_fallback(history, "rzye_chg20", 0.90, "p3_rzye_chg20", "ge"),
         "p5": quantile_or_fallback(history, "breadth_ma20", 0.95, "p5_breadth_ma20", "ge"),
@@ -471,6 +541,8 @@ def compute_day(conn, asof: date) -> Dict[str, Any]:
                     metrics[key] = block[key]
     if agg.get("available"):
         metrics["universe"] = agg.get("universe")
+    if idx.get("available"):
+        metrics[SOURCE_COLUMN] = idx.get("index_source")
     return {"available": bool(metrics), "trade_date": window[-1], "metrics": metrics,
             "sub_blocks": {"stock_aggregates": agg, "market_row": mkt,
                            "margin": mgn, "index": idx}}
@@ -543,12 +615,33 @@ def build_block(asof: Optional[str] = None, backfill: int = 0) -> Dict[str, Any]
         "asof": str(asof_date),
         "data_through": str(today["trade_date"]),
         "is_current": today["trade_date"] == asof_date,
-        "benchmark": (today["sub_blocks"]["index"] or {}).get("ts_code"),
+        "benchmark": _benchmark_note(today["sub_blocks"].get("index") or {}),
         "readings": today["metrics"],
         "history_days": int(len(history)),
         **result,
         "sub_blocks": today["sub_blocks"],
     })
+
+
+def _benchmark_note(idx: Dict[str, Any]) -> Dict[str, Any]:
+    """基准指数的身份与数据日必须一起出卡，和融资腿的 margin_data_date 对称。
+
+    只写代码不写数据日，读者无法判断「这个回撤读数描述的是哪一天」——000985.CSI
+    静默停更 10 个交易日那次就是这么漏过去的。
+    """
+    if not idx.get("available"):
+        return {"available": False, "reason": idx.get("reason", "基准指数不可用"),
+                "skipped": idx.get("skipped", [])}
+    return {
+        "available": True,
+        "ts_code": idx.get("index_source") or idx.get("ts_code"),
+        "label": idx.get("index_label"),
+        "index_data_date": str(idx["index_data_date"]) if idx.get("index_data_date") else None,
+        "lag_trading_days": idx.get("index_lag_trading_days"),
+        "stale": bool(idx.get("index_stale")),
+        "max_lag_trading_days": INDEX_STALE_MAX_DAYS,
+        "skipped": idx.get("skipped", []),
+    }
 
 
 def recent_scores(history: pd.DataFrame, days: int) -> List[Dict[str, Any]]:
@@ -560,6 +653,8 @@ def recent_scores(history: pd.DataFrame, days: int) -> List[Dict[str, Any]]:
     for _, row in history.tail(days).iterrows():
         day_metrics = {c: (float(row[c]) if pd.notna(row[c]) else None)
                        for c in METRIC_COLUMNS if c != "index_high20"}
+        if SOURCE_COLUMN in history.columns:
+            day_metrics[SOURCE_COLUMN] = row[SOURCE_COLUMN]
         past = history[history["trade_date"] <= row["trade_date"]]
         s = score(past, day_metrics)
         out.append({

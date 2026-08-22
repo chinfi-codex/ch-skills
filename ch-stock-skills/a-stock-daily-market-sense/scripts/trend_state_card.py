@@ -118,7 +118,7 @@ ICE_EXIT_LIMIT_DOWN_SHARE = 0.018  # 冰点解除线（入 3.5% / 出 1.8%，迟
 BASELINE_CAL_DAYS = 1100       # 滚动分位的取数窗口（≈3 年自然日）
 BASELINE_WINDOW = 500          # 滚动分位窗口（交易日）
 BASELINE_MIN_PERIODS = 250     # 不足此长度就退回固定水平
-HISTORY_DAYS = 20              # 输出的档位轨迹长度（HTML 时间轴按这个宽度画）
+HISTORY_DAYS = 30              # 输出的档位轨迹长度（HTML 时间轴按这个宽度画）
 
 # 家数口径兜底：market_history 缺 flat 列（算不出全市场家数）时退回旧的绝对家数。
 # 只是防御，不是主口径——正常路径上 total 一定有值。
@@ -735,7 +735,7 @@ def build_block(asof: Optional[str] = None) -> Dict[str, Any]:
         } if ref.phase else None,
         "state_note": ref.state_note or None,
         "exit_progress": ref.exit_progress or ("不适用（未处退潮态）" if ref.state in ("进攻", "标准", "谨慎") else ""),
-        # 20 天而非 10 天：HTML 状态卡的档位时间轴按 HISTORY_DAYS 画，正文只引用
+        # 30 天而非 10 天：HTML 状态卡的档位时间轴按 HISTORY_DAYS 画，正文只引用
         # 最近 5 天的轨迹，多出来的那段是给图看的
         "history": [
             {

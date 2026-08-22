@@ -44,6 +44,14 @@ _FORBIDDEN_ADVICE_PATTERNS = {
         re.MULTILINE,
     ),
 }
+# 前瞻轴输出的是条件分布，不是预测。这几种写法把「历史上 N 次同类日之后……」
+# 压缩成了一句去掉样本与基准的断言，正是 forward_odds.md 明令禁止的。
+_FORBIDDEN_FORECAST_PATTERNS = {
+    "bare_probability_claim": re.compile(
+        r"(?:大概率|多半|基本上?)(?:会|将|要)?(?:上涨|反弹|回升|走强|下跌|回落|走弱)"
+    ),
+    "imminent_move_claim": re.compile(r"(?:反弹|下跌|回调|拐点|见底|见顶)(?:在即|已至|确认了?)"),
+}
 _NUMERIC_EVIDENCE_KEYS = {
     "amount_concentration",
     "market_trend",
@@ -156,6 +164,19 @@ def validate_dms_content(
     if forbidden:
         problems.append(f"forbidden trading-advice terms present: {forbidden}")
 
+    forbidden_forecast = [
+        name
+        for name, pattern in _FORBIDDEN_FORECAST_PATTERNS.items()
+        if pattern.search(markdown_text)
+    ]
+    if forbidden_forecast:
+        problems.append(
+            "forward-odds must stay a conditional distribution, not a forecast; "
+            f"offending phrasing: {forbidden_forecast}"
+        )
+
+    forward_detail = _validate_forward_axis(sections, evidence, problems)
+
     provenance = _NumberProvenance(evidence, aux_payloads)
     derived_only = _derived_only_tokens(markdown_text, sections)
     table_numeric = _validate_table_numbers(
@@ -182,9 +203,11 @@ def validate_dms_content(
                 "section_present": "m3_catalyst" in sections,
             },
             "highlights": highlight_detail,
+            "forward_axis": forward_detail,
             "table_numbers": {key: value for key, value in table_numeric.items() if key != "tokens"},
             "paragraph_discipline": paragraph_detail["detail"],
             "forbidden_terms": forbidden,
+            "forbidden_forecast_terms": forbidden_forecast,
         },
     }
     if problems:
@@ -368,6 +391,63 @@ def _degradation_supported(
         count = len(hits) if isinstance(hits, list) else 0
         return count == 0, f"overlap_hits={count}"
     return False, "no evidence rule registered"
+
+
+def _validate_forward_axis(
+    sections: Mapping[str, MarkdownSection],
+    evidence: Mapping[str, Any],
+    problems: List[str],
+) -> Dict[str, Any]:
+    """前瞻轴的三条硬纪律，机器化在这里（规则见 forward_odds.md）。
+
+    为什么要机器拦：这三条全是「读数在、但作者顺手写强了」的失败模式，靠
+    review 抓不稳。凡治理层依赖的，机器层就得有校验。
+    """
+    card = evidence.get("forward_odds") or {}
+    pulse = card.get("pulse") or {}
+    body = sections["sentiment_trend"].body if "sentiment_trend" in sections else ""
+    detail: Dict[str, Any] = {
+        "card_available": bool(card.get("available")),
+        "pulse_available": bool(pulse.get("available")),
+        "gate": pulse.get("gate"),
+    }
+    if not card.get("available") or not pulse.get("available"):
+        detail["checked"] = False
+        return detail
+    detail["checked"] = True
+
+    # R1 读数在就必须出现在 1.1，不能整行吞掉
+    detail["axis_line_present"] = "情绪脉冲" in body
+    if not detail["axis_line_present"]:
+        problems.append(
+            "[sentiment_trend] forward axis reading is available but the 情绪脉冲 line is missing"
+        )
+
+    signal = next(
+        (s for s in card.get("signals", []) if s.get("key") == "pulse_gate"), {}
+    )
+    gate_hit = bool(pulse.get("gate"))
+    publishable = bool(signal.get("publishable"))
+
+    # R2 没命中就不许出现「情绪脉冲触发」这个判断词
+    claimed = "情绪脉冲触发" in body
+    detail["claimed_trigger"] = claimed
+    if claimed and not (gate_hit and publishable):
+        problems.append(
+            "[sentiment_trend] 「情绪脉冲触发」claimed but "
+            f"gate={gate_hit} / publishable={publishable}"
+        )
+
+    # R3 命中且可发布时，条件分布必须带样本量——概率不带 n 就是断言不是证据
+    if gate_hit and publishable:
+        events = (signal.get("sample") or {}).get("events")
+        detail["required_sample_size"] = events
+        detail["sample_size_cited"] = bool(events and re.search(rf"\b{events}\b", body))
+        if not detail["sample_size_cited"]:
+            problems.append(
+                f"[sentiment_trend] forward-odds cited without its sample size (n={events})"
+            )
+    return detail
 
 
 def _validate_highlights(

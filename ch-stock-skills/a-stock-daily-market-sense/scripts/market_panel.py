@@ -5000,7 +5000,7 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
         "meta": {
             "metadata": metadata,
             "subagent_contract": {
-                "module1_market_trend": ["module1_market_trend.json", "references/methodology/module1_trend.md", "references/methodology/extreme_state_framework.md", "references/template/section1.md", "盘面趋势"],
+                "module1_market_trend": ["module1_market_trend.json", "references/methodology/module1_trend.md", "references/methodology/extreme_state_framework.md", "references/methodology/forward_odds.md", "references/template/section1.md", "盘面趋势"],
                 "module3_money_effect": ["module3_money_effect.json", "references/methodology/module3_money_effect.md", "module3_theme_map.json", "首轮只做临时主题与成员映射，stars 写 null，不写最终正文"],
                 "module3_money_effect_second_stage": [["module3_theme_map.json", "module3_theme_stats.json", "module3_enrichment_pack.json"], "references/methodology/catalyst_subline_mining.md", "references/template/section3.md", "统计后由模型锁星；星级锁定后补催化与细分线路，再写最终模块 3"],
                 "module4_decline": ["module4_decline.json", "references/methodology/module4_decline.md", "references/template/section4.md", "爆量下跌风险"],

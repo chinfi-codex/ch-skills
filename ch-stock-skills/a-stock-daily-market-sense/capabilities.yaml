@@ -38,6 +38,13 @@ capabilities:
     judgment: forbidden
     effects: [db:alpha_data.dms_extreme_daily, stdout:json]
 
+  daily.compute-forward-odds:
+    kind: command
+    entry: scripts/forward_odds.py
+    terminal: false
+    judgment: forbidden
+    effects: [db:alpha_data.dms_forward_odds_stats, stdout:json]
+
   daily.compute-trend-state:
     kind: command
     entry: scripts/trend_state_card.py

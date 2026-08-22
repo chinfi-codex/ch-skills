@@ -29,7 +29,7 @@ description: 基于 Tushare Pro A 股日线与 Baostock 风格指数生成盘后
 
 ## 工作流程
 
-1. **生成证据包**：解析日期后运行 `scripts/run_daily_panel.py`，产出完整 evidence、模块级 JSON 与 K 线展示数据；模块 1 同时带两张机判卡——趋势状态卡（`trend_state_card`）与极值状态（`extreme_state`，底部出清分 / 顶部拥挤分）。详见 `references/execution_flow.md`。
+1. **生成证据包**：解析日期后运行 `scripts/run_daily_panel.py`，产出完整 evidence、模块级 JSON 与 K 线展示数据；模块 1 同时带三张机判卡——趋势状态卡（`trend_state_card`，所处阶段）、极值状态（`extreme_state`，底部出清分 / 顶部拥挤分）与前瞻轴（`forward_odds`，情绪脉冲 + 同类日之后的条件分布）。详见 `references/execution_flow.md`。
 2. **分模块撰写**：按最小上下文边界加载各模块 JSON + 方法论 + 模板。模块编号沿用历史值、章节按 1-4 重排（模块 3 → 第 2 章赚钱效应，模块 4 → 第 3 章，模块 5 → 第 4 章）。模块 3 赚钱效应采用两阶段契约：首轮只输出临时主题映射与 `stars: null`；统计脚本完成后由模型按证据锁定星级，只有存在 ★★★ 主线时才触发 2.2 催化与细分线路推演。详见 `references/methodology/module3_money_effect.md` 与 `references/execution_flow.md`。
 3. **聚合成稿**：读取模块 1、3、4、5 输出与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和语气校准。
 4. **门禁晋级**：模型只把草稿写入 `reports/.staging/`；用 `report.finalize-markdown` 校验结构、数值证据与禁用语后原子晋级。HTML 只能由 `report.render-html` 基于已有成功收据的 Markdown 生成。
@@ -74,6 +74,13 @@ python3 scripts/extreme_state_card.py --asof 20260429 --backfill 300
 
 没补历史也能出卡，只是阈值会退回固定水平，`percentile_source` 会写明。
 
+前瞻轴不需要预热——它直接读 `market_history` 的 6 年市场宽度和拼接后的中证1000 序列，滚动分位攒满 250 天即生效：
+
+```bash
+python3 scripts/forward_odds.py --asof 20260429          # 随卡输出，未命中的信号只留存根
+python3 scripts/forward_odds.py --asof 20260429 --full   # 附事件清单与逐年留一，调参时用
+```
+
 模块 3 首轮完成后，运行统计脚本：
 
 ```bash
@@ -104,8 +111,8 @@ python3 scripts/_shared/skill_runtime/runner.py --skill-root . run report.render
 python3 scripts/_shared/html_report/render_check.py --target reports/report_20260429.html --stage local --out reports/report_20260429.render-check-local.json
 # 从上一步审计 JSON 读取 build_id；site/online 必须与本地产物完全一致
 BUILD_ID=$(python3 -c 'import json; print(json.load(open("reports/report_20260429.render-check-local.json"))["build_id"])')
-python3 scripts/_shared/html_report/render_check.py --target <Site 路径>/report_20260429.html --stage site --expect-contract dms/1.4.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-site.json
-python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stage online --expect-contract dms/1.4.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-online.json
+python3 scripts/_shared/html_report/render_check.py --target <Site 路径>/report_20260429.html --stage site --expect-contract dms/1.5.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-site.json
+python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stage online --expect-contract dms/1.5.0 --expect-build "$BUILD_ID" --out reports/report_20260429.render-check-online.json
 ```
 
 退出码：`0` 通过、`1` 失败（**不得部署、不得 cleanup，留着审计文件排查**）、`2` 只跑了 `--static-only` 冒烟不算门禁。Site/online 审计留在 `reports/` 下，不进发布包。
@@ -118,7 +125,7 @@ python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stag
 
 完整研报按四个章节输出：1 盘面趋势、2 赚钱效应与上涨主线、3 亏钱效应（爆量下跌）、4 特征分组分析。每个判断段先给自然语言结论，再选择少量关键证据支撑；表格承载细项数据，段落解释这些数据意味着进攻、分歧、退潮、修复、拥挤还是扩散。
 
-1.1 情绪趋势按 `references/template/section1.md` 保持趋势状态卡结构：卡面读数逐项照抄 `trend_state_card` 与 `extreme_state`，极值轴与趋势轴不一致时并列写；小节末尾的 `==趋势判断==` 是模块 1 唯一下方向性结论的位置。
+1.1 情绪趋势按 `references/template/section1.md` 保持趋势状态卡结构：卡面读数逐项照抄 `trend_state_card`、`extreme_state` 与 `forward_odds`，三根轴不一致时并列写；小节末尾的 `==趋势判断==` 是模块 1 唯一下方向性结论的位置。
 
 所有强弱判断都要能回到成交额、放量倍数、涨跌幅、相对收益或回撤证据，但不要把所有可用指标塞进同一段。模块 3 的主题分组只作为内部推理步骤，不输出单独的主题分组陈列表，赚钱效应总览后直接进入主线判定；2.1 主线表的拥挤度列读 `amount_concentration` 的全市场成交额榜定档，成交额集中度本身不再单独成章。
 
@@ -127,6 +134,8 @@ python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stag
 每个一级大章节（1-4）里已有的总结/定性段落使用 Markdown 高亮样式 `==...==` 包裹。不要为了高亮额外新增“本节总结”段落。
 
 禁止输出买卖建议。可以写“风险传导”“持续性待验证”“主线确认度”，不要写“买入/卖出/止损/目标价”。
+
+**前瞻轴给的是条件分布，不是预测。** `forward_odds` 回答的是"历史上出现同类读数之后发生了什么"——引用时必须带样本量与全样本基准对照（"历史上 14 次同类日之后，+3 日 84.6% 收涨、均值 +3.40%，全样本基准 52.5% / +0.06%"），不得压缩成"大概率会涨""反弹在即"这类去掉了样本与基准的断言（契约会硬拦）。`pulse` 是四腿合取门槛不是分数，不得据腿数定性；只能引用 `gate_detail.subsample_consistent.horizons` 里列出的视窗。**顶部侧一律只输出回撤风险分布、不输出方向**，也不进 `==趋势判断==`——实证里多数顶部条件之后的前瞻收益仍为正，唯一站得住的只有"尾部变肥"。详见 `references/methodology/forward_odds.md`。
 
 **退潮 / 深度退潮 / 冰点是风险状态描述，不等于看空。** 5 年回放（`evals/trend_state_review_2026-08.md`）里，冰点日之后 20 个交易日平均上涨 8.92%、81.8% 的时候在涨，深度退潮 +1.54%，都高于全样本的 +0.44%——档位越差前瞻收益反而越好。写模块 1 时不得把"退潮"翻译成"看空"，也不得暗示应当离场或减仓。同理，趋势轴与极值轴不一致时（退潮档里出现出清极值是 A 股最常见的底部形态）照实并列写，不许为了口径一致改写任一边的读数。
 

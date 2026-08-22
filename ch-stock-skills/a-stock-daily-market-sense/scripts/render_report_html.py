@@ -56,7 +56,7 @@ from dms_output_contract import validate_dms_content  # noqa: E402
 # Bump the version whenever references/template/section*.md changes structure.
 # --------------------------------------------------------------------------- #
 DMS_CONTRACT = SectionContract(
-    version="dms/1.4.0",
+    version="dms/1.5.0",
     sections=[
         SectionSpec("hero_verdict", [r"^一句话盘面判断$"], level=3,
                     source="references/report_template.md:1"),
@@ -285,14 +285,17 @@ def extract_stock_kline_payload(raw: dict, source_path: Optional[Path], missing:
 
 
 def extract_state_timeline_payload(evidence: dict) -> Optional[Dict[str, Any]]:
-    """状态卡的 20 日档位轨迹：趋势档 + 极值分，按交易日对齐。
+    """状态卡的 30 日轨迹：趋势档 + 极值分 + 情绪脉冲，按交易日对齐画在一张图上。
 
-    两根轴分别来自 `trend_state_card.history` 与 `extreme_state.recent`，都由脚本
-    按日算好；渲染层只负责画，不重算任何读数。任一轴缺失就只画另一轴，两轴都缺
-    才返回 None（此时不注册图表，门禁按 no_payload 记）。
+    三根轴分别来自 `trend_state_card.history`、`extreme_state.recent` 与
+    `forward_odds.pulse_history`，都由脚本按日算好；渲染层只负责画，不重算任何
+    读数。把三根轴叠在同一条日期轴上，是因为它们经常互相矛盾——退潮档里出现出清
+    极值、或者「谨慎」档上蹦出一个脉冲门槛日，恰恰是最该被一眼看见的形态。
+    任一轴缺失就少画一行，全缺才返回 None（此时不注册图表，门禁按 no_payload 记）。
     """
     trend = evidence.get("trend_state_card") or {}
     extreme = evidence.get("extreme_state") or {}
+    forward = evidence.get("forward_odds") or {}
     states = [
         {"date": str(row.get("date") or ""), "state": str(row.get("state") or ""),
          "phase": row.get("phase") or "", "groups": row.get("groups") or []}
@@ -304,14 +307,22 @@ def extract_state_timeline_payload(evidence: dict) -> Optional[Dict[str, Any]]:
         for row in (extreme.get("recent") or [])
         if isinstance(row, dict) and row.get("date")
     ] if extreme.get("available") else []
-    if not states and not scores:
+    pulse = [
+        {"date": str(row.get("date") or ""), "legs": row.get("legs"), "gate": bool(row.get("gate"))}
+        for row in (forward.get("pulse_history") or [])
+        if isinstance(row, dict) and row.get("date")
+    ] if forward.get("available") else []
+    if not states and not scores and not pulse:
         return None
     return {
         "states": states,
         "scores": scores,
+        "pulse": pulse,
         "washout_max": (extreme.get("washout") or {}).get("max_score", 6),
         "top_max": (extreme.get("top") or {}).get("max_score", 5),
-        "data_through": trend.get("data_through") or extreme.get("data_through"),
+        "pulse_max": forward.get("max_legs", 4),
+        "data_through": (trend.get("data_through") or extreme.get("data_through")
+                         or forward.get("data_through")),
     }
 
 
@@ -471,14 +482,16 @@ TREND_STATE_CARD_JS = r"""(function () {
 
 
 # --------------------------------------------------------------------------- #
-# 20 日档位时间轴：趋势档色带 + 极值分柱，全部按交易日对齐。
+# 30 日轨迹时间轴：趋势档色带 + 极值分柱 + 情绪脉冲，全部按交易日对齐。
 # 读数来自脚本，这里只负责画。
 # --------------------------------------------------------------------------- #
 STATE_TIMELINE_JS = r"""
 const states = __payload.states || [];
 const scores = __payload.scores || [];
+const pulse = __payload.pulse || [];
 const washMax = __payload.washout_max || 6;
 const topMax = __payload.top_max || 5;
+const pulseMax = __payload.pulse_max || 4;
 const SEC = window.__sec;
 const REPORT = window.__render;
 const hook = "state-timeline";
@@ -488,7 +501,7 @@ if (!anchor) {
   REPORT.fail("hook:" + hook, "no trend-state-card or [sentiment_trend] heading to anchor to");
   return;
 }
-if (!states.length && !scores.length) {
+if (!states.length && !scores.length && !pulse.length) {
   REPORT.attest(hook, { rendered: 0, matched: 0, expected: 1, unmatched: [{ name: "state-timeline", reason: "no_payload" }] });
   return;
 }
@@ -501,18 +514,23 @@ const STATE_ORDER = ["进攻", "标准", "谨慎", "退潮", "深度退潮", "�
 
 /* 两轴的日期取并集后排序：极值卡与趋势卡的可用窗口不一定一样长 */
 const dates = Array.from(new Set([].concat(
-  states.map(s => s.date), scores.map(s => s.date)
+  states.map(s => s.date), scores.map(s => s.date), pulse.map(s => s.date)
 ))).filter(Boolean).sort();
 const stateBy = Object.fromEntries(states.map(s => [s.date, s]));
 const scoreBy = Object.fromEntries(scores.map(s => [s.date, s]));
+const pulseBy = Object.fromEntries(pulse.map(s => [s.date, s]));
+/* 门槛日：脉冲轴唯一有判据意义的东西，画成贯穿全图的竖线，
+   好让「这天趋势档是什么、出清分几分」一眼可对照 */
+const gateDates = new Set(pulse.filter(p => p.gate).map(p => p.date));
 
 const n = dates.length;
-const padL = 52, padR = 6, padT = 16, padB = 24;
+const padL = 52, padR = 18, padT = 16, padB = 24;
 const cellW = Math.max(18, Math.min(38, Math.floor((700 - padL - padR) / Math.max(n, 1))));
 const W = padL + padR + cellW * n;
 const ribbonH = 26, gap = 10, barH = 26;
 const rows = [{ key: "ribbon", h: ribbonH }];
 if (scores.length) rows.push({ key: "washout", h: barH }, { key: "top", h: barH });
+if (pulse.length) rows.push({ key: "pulse", h: barH });
 const H = padT + padB + rows.reduce((a, r) => a + r.h, 0) + gap * (rows.length - 1);
 
 const NS = "http://www.w3.org/2000/svg";
@@ -520,8 +538,9 @@ const svg = document.createElementNS(NS, "svg");
 svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
 svg.setAttribute("width", String(W));
 svg.setAttribute("height", String(H));
+svg.style.minWidth = Math.min(W, 640) + "px";
 svg.setAttribute("role", "img");
-svg.setAttribute("aria-label", "近 20 个交易日的趋势档位与极值分轨迹");
+svg.setAttribute("aria-label", "近 30 个交易日的趋势档位、极值分与情绪脉冲轨迹");
 
 function label(x, y, text, opts) {
   const t = document.createElementNS(NS, "text");
@@ -535,6 +554,23 @@ function label(x, y, text, opts) {
   t.textContent = text;
   return t;
 }
+
+// —— 脉冲门槛日的贯穿竖线：先画，让它落在所有色带与柱子之下
+gateDates.forEach(d => {
+  const k = dates.indexOf(d);
+  if (k < 0) return;
+  const band = document.createElementNS(NS, "rect");
+  band.setAttribute("x", String(padL + k * cellW));
+  band.setAttribute("y", String(padT - 4));
+  band.setAttribute("width", String(cellW));
+  band.setAttribute("height", String(H - padT - padB + 8));
+  band.setAttribute("fill", "#7b2fbe");
+  band.setAttribute("fill-opacity", "0.12");
+  const t = document.createElementNS(NS, "title");
+  t.textContent = d + "　情绪脉冲四腿全中";
+  band.appendChild(t);
+  svg.appendChild(band);
+});
 
 let y = padT;
 // —— 档位色带：同一档位连续的几天并成一段，段上写档位名
@@ -610,10 +646,41 @@ if (scores.length) {
   bars("top", topMax, "#b9770e", "顶部分", 2);
 }
 
+// —— 情绪脉冲：腿数是描述、门槛才是判据，所以未满 4 腿一律画成同一种浅色，
+//    只有四腿全中才实心加标记。绝不按腿数做渐变——那会把合取门槛读成连续强度。
+if (pulse.length) {
+  svg.appendChild(label(4, y + barH / 2 + 4, "情绪脉冲", { size: "11", opacity: "0.85" }));
+  dates.forEach((d, k) => {
+    const p = pulseBy[d];
+    if (!p || p.legs === null || p.legs === undefined) return;
+    const full = !!p.gate;
+    const h = (p.legs / pulseMax) * barH;
+    const rect = document.createElementNS(NS, "rect");
+    rect.setAttribute("x", String(padL + k * cellW + 2));
+    rect.setAttribute("y", String(y + barH - h));
+    rect.setAttribute("width", String(Math.max(cellW - 4, 2)));
+    rect.setAttribute("height", String(Math.max(h, p.legs > 0 ? 2 : 1)));
+    rect.setAttribute("rx", "1.5");
+    rect.setAttribute("fill", "#7b2fbe");
+    rect.setAttribute("fill-opacity", full ? "0.9" : "0.28");
+    const title = document.createElementNS(NS, "title");
+    title.textContent = d + "　情绪脉冲 " + p.legs + "/" + pulseMax + (full ? "（四腿全中）" : "（未全中）");
+    rect.appendChild(title);
+    svg.appendChild(rect);
+    if (full) {
+      svg.appendChild(label(padL + k * cellW + cellW / 2, y + barH - h - 3, "▲",
+        { anchor: "middle", size: "9", fill: "#7b2fbe", opacity: "1", weight: "600" }));
+    }
+  });
+  y += barH + gap;
+}
+
 // —— 日期轴：密的时候隔几个标一个，末日必标
 const step = cellW >= 34 ? 2 : (cellW >= 24 ? 3 : 4);
 dates.forEach((d, k) => {
-  if (k % step !== 0 && k !== n - 1) return;
+  // 末日必标；步进标签若紧挨末日就跳过，否则两个日期会叠在一起
+  const isLast = k === n - 1;
+  if (!isLast && (k % step !== 0 || n - 1 - k < 2)) return;
   const md = d.length >= 10 ? d.slice(5) : d;
   svg.appendChild(label(padL + k * cellW + cellW / 2, H - 6, md, { anchor: "middle", size: "9", opacity: "0.6" }));
 });
@@ -622,7 +689,8 @@ const wrap = document.createElement("div");
 wrap.className = "state-timeline";
 const cap = document.createElement("div");
 cap.style.cssText = "font-size:12px;opacity:.7;margin-bottom:4px;";
-cap.textContent = "近 " + n + " 个交易日档位轨迹" + (__payload.data_through ? "（数据截至 " + __payload.data_through + "）" : "");
+cap.textContent = "近 " + n + " 个交易日轨迹：趋势档 · 极值分 · 情绪脉冲"
+  + (__payload.data_through ? "（数据截至 " + __payload.data_through + "）" : "");
 wrap.appendChild(cap);
 wrap.appendChild(svg);
 const legend = document.createElement("div");
@@ -639,6 +707,14 @@ if (scores.length) {
   const note = document.createElement("span");
   note.textContent = "虚线 = 2 分线（出清区 / 顶部风险的起判点）";
   legend.appendChild(note);
+}
+if (pulse.length) {
+  const span = document.createElement("span");
+  const dot = document.createElement("i");
+  dot.style.background = "#7b2fbe";
+  span.appendChild(dot);
+  span.appendChild(document.createTextNode("▲ 情绪脉冲四腿全中（紫色竖带标出当日）"));
+  legend.appendChild(span);
 }
 wrap.appendChild(legend);
 anchor.appendChild(wrap);

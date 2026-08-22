@@ -109,7 +109,7 @@ class SectionContractTest(unittest.TestCase):
         self.assertEqual(sorted(resolved), sorted(self.contract.required_keys))
 
     def test_phase0_contract_shape_is_complete(self) -> None:
-        self.assertEqual(self.contract.version, "dms/1.4.0")
+        self.assertEqual(self.contract.version, "dms/1.5.0")
         self.assertEqual(self.contract.order, "strict")
         self.assertEqual(len(self.contract.sections), 15)
         # 2.2 is the only section the template lets vanish (no ★★★ → no section).

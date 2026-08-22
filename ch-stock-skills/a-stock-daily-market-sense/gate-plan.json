@@ -3,7 +3,7 @@
     "dms-html": {
       "contract": {
         "browser": {
-          "expect_contract": "dms/1.4.0",
+          "expect_contract": "dms/1.5.0",
           "script": "scripts/_shared/html_report/render_check.py"
         },
         "forbidden_patterns": [
@@ -122,7 +122,7 @@
           }
         ]
       },
-      "contract_version": "dms/1.4.0",
+      "contract_version": "dms/1.5.0",
       "features": [
         "evidence-backed",
         "preserve-source-text",
@@ -312,7 +312,7 @@
         },
         {
           "config": {
-            "expect_contract": "dms/1.4.0",
+            "expect_contract": "dms/1.5.0",
             "script": "scripts/_shared/html_report/render_check.py"
           },
           "id": "browser-attestation",
@@ -438,7 +438,7 @@
           }
         ]
       },
-      "contract_version": "dms/1.4.0",
+      "contract_version": "dms/1.5.0",
       "features": [
         "evidence-backed"
       ],
@@ -629,5 +629,5 @@
   },
   "schema_version": 1,
   "skill": "a-stock-daily-market-sense",
-  "source_sha256": "e1de910990213e8900cec0c9a11d0b3054ebd37e11365c8007739a42ba659eec"
+  "source_sha256": "1b61e1021a5b7403130b420b73c5fd2bb06544cbec8bd9ea7c04d646fe9f9be1"
 }

@@ -121,6 +121,9 @@ CREATE TABLE IF NOT EXISTS dms_extreme_daily (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """
+TABLE_MIGRATIONS = (
+    "ALTER TABLE dms_extreme_daily ADD COLUMN IF NOT EXISTS index_source TEXT",
+)
 
 METRIC_COLUMNS = [
     "breadth_ma20", "breadth_ma60", "new_low_share", "median_dd250",
@@ -357,6 +360,10 @@ def index_metrics(conn, asof: date) -> Dict[str, Any]:
 def ensure_table(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(TABLE_DDL)
+        # CREATE TABLE IF NOT EXISTS 不会给已存在的生产表补列。迁移保持幂等，
+        # 让旧库在第一次运行新版卡片时就能安全升级。
+        for migration in TABLE_MIGRATIONS:
+            cur.execute(migration)
 
 
 def upsert_metrics(conn, trade_date: date, metrics: Dict[str, Any]) -> None:

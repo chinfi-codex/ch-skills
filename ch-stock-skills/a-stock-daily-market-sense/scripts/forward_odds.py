@@ -236,10 +236,16 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     # 路径分布：未来 N 日的最高 / 最低收盘（相对信号日收盘）
     for n in (PATH_WINDOW, 5, 10):
         stack = pd.concat([df["bench"].shift(-k) for k in range(1, n + 1)], axis=1)
-        df[f"max{n}"] = stack.max(axis=1) / df["bench"] - 1
-        df[f"min{n}"] = stack.min(axis=1) / df["bench"] - 1
+        # 必须走完整个观察窗才是一条有效路径；默认 skipna 会把尾部仅有 1~2 天的
+        # 残缺窗口也算进去，导致每日运行时基准与条件分布被未成熟样本污染。
+        df[f"max{n}"] = stack.max(axis=1, skipna=False) / df["bench"] - 1
+        df[f"min{n}"] = stack.min(axis=1, skipna=False) / df["bench"] - 1
     # 前瞻广度：次日上涨家数是否多于下跌家数
-    df["next_breadth_up"] = (df["rise"].shift(-1) > df["fall"].shift(-1)).astype(float)
+    next_rise = df["rise"].shift(-1)
+    next_fall = df["fall"].shift(-1)
+    df["next_breadth_up"] = (
+        (next_rise > next_fall).where(next_rise.notna() & next_fall.notna()).astype(float)
+    )
     return df
 
 
@@ -632,8 +638,7 @@ def build_block(asof: Optional[str] = None, full: bool = False) -> Dict[str, Any
             raw = load_market_frame(conn)
             if raw.empty:
                 return {"available": False, "reason": "market_history / 基准指数无可用数据"}
-            df = add_features(raw)
-            stats = _compute(df, asof_date, full)
+            stats = _compute(raw, asof_date, full)
             _persist(conn, stats)
             stats.pop("_persist_signals", None)
     except Exception as exc:  # noqa: BLE001  研报不因这张卡失败而中断
@@ -641,12 +646,21 @@ def build_block(asof: Optional[str] = None, full: bool = False) -> Dict[str, Any
     return stats
 
 
-def _compute(df: pd.DataFrame, asof_date: date, full: bool) -> Dict[str, Any]:
+def _features_through_asof(df: pd.DataFrame, asof_date: date) -> pd.DataFrame:
+    """截断到 asof 后再生成前瞻标签，历史回放不得读取未来已落库行情。"""
     asof_ts = pd.Timestamp(asof_date)
-    upto = df[df["date"] <= asof_ts]
+    upto = df[df["date"] <= asof_ts].copy().reset_index(drop=True)
     if upto.empty:
+        return upto
+    return add_features(upto)
+
+
+def _compute(df: pd.DataFrame, asof_date: date, full: bool) -> Dict[str, Any]:
+    df = _features_through_asof(df, asof_date)
+    if df.empty:
         return {"available": False, "reason": f"基准序列在 {asof_date} 之前没有数据"}
-    row_idx = int(upto.index[-1])
+    asof_ts = pd.Timestamp(asof_date)
+    row_idx = int(df.index[-1])
     data_through = df.at[row_idx, "date"].date()
 
     # 统计只用 asof 之前的日子；前瞻收益天然只在窗口走完的日子上有值。

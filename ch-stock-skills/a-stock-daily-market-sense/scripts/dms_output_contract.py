@@ -442,7 +442,17 @@ def _validate_forward_axis(
     if gate_hit and publishable:
         events = (signal.get("sample") or {}).get("events")
         detail["required_sample_size"] = events
-        detail["sample_size_cited"] = bool(events and re.search(rf"\b{events}\b", body))
+        # `\b14\b` 在「历史上14次」里匹配不到：中文与数字都属于 Unicode word
+        # character；同时，正文里一个无关的独立 14 也不该冒充样本量。只接受明确的
+        # n=、样本量或「历史上 N 次同类日/样本/事件」三种引用形态。
+        sample_patterns = (
+            rf"(?<![A-Za-z0-9_])n\s*[=:：]\s*{events}(?!\d)",
+            rf"样本(?:量)?\s*(?:为|[=:：])?\s*{events}(?!\d)",
+            rf"历史上\s*{events}\s*次(?:同类日|样本|事件)",
+        )
+        detail["sample_size_cited"] = bool(
+            events and any(re.search(pattern, body, re.IGNORECASE) for pattern in sample_patterns)
+        )
         if not detail["sample_size_cited"]:
             problems.append(
                 f"[sentiment_trend] forward-odds cited without its sample size (n={events})"

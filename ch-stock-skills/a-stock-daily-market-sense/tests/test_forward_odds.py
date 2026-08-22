@@ -88,6 +88,25 @@ class PulseGateTest(unittest.TestCase):
         self.assertTrue(df["lu_ld_ratio"].notna().all(), "跌停为 0 不得产生 NaN 比值")
         self.assertTrue(bool(df.at[700, "pulse_ready"]))
 
+    def test_historical_asof_discards_future_rows_before_labeling(self):
+        raw = _frame(310)
+        asof = raw.at[300, "date"].date()
+        df = fo._features_through_asof(raw, asof)
+        self.assertEqual(df.at[len(df) - 1, "date"].date(), asof)
+        self.assertTrue(pd.isna(df.at[len(df) - 1, "fwd1"]))
+        self.assertTrue(pd.isna(df.at[len(df) - 1, "fwd5"]))
+        self.assertTrue(pd.isna(df.at[len(df) - 1, "max3"]))
+
+    def test_incomplete_forward_windows_remain_missing(self):
+        df = fo.add_features(_frame(310))
+        last = len(df) - 1
+        for i in range(last - fo.PATH_WINDOW + 1, last + 1):
+            self.assertTrue(pd.isna(df.at[i, f"max{fo.PATH_WINDOW}"]))
+            self.assertTrue(pd.isna(df.at[i, f"min{fo.PATH_WINDOW}"]))
+        self.assertTrue(pd.notna(df.at[last - fo.PATH_WINDOW, f"max{fo.PATH_WINDOW}"]))
+        self.assertTrue(pd.isna(df.at[last, "next_breadth_up"]),
+                        "没有次日行情时不得把广度伪造成 0")
+
 
 class DedupTest(unittest.TestCase):
     def test_cluster_collapses_to_first_day(self):
@@ -227,6 +246,20 @@ class ForwardAxisContractTest(unittest.TestCase):
         self.assertEqual(problems, [])
         self.assertTrue(detail["sample_size_cited"])
 
+    def test_compact_chinese_sample_size_passes(self):
+        problems: list = []
+        body = "情绪脉冲四腿全中；历史上14次同类日之后，+3 日有 84.6% 收涨。"
+        detail = doc._validate_forward_axis(_sections(body), _evidence(True, True, 14), problems)
+        self.assertEqual(problems, [])
+        self.assertTrue(detail["sample_size_cited"])
+
+    def test_unrelated_standalone_number_is_not_a_sample_size(self):
+        problems: list = []
+        body = "情绪脉冲四腿全中；当日另有 14 家跌停，+3 日历史上涨率为 84.6%。"
+        detail = doc._validate_forward_axis(_sections(body), _evidence(True, True, 14), problems)
+        self.assertFalse(detail["sample_size_cited"])
+        self.assertTrue(any("sample size" in p for p in problems))
+
     def test_card_absent_skips_check(self):
         problems: list = []
         detail = doc._validate_forward_axis(_sections("今日缩量下跌。"), {}, problems)
@@ -311,6 +344,37 @@ class StateTimelinePayloadTest(unittest.TestCase):
         ev["forward_odds"]["available"] = False
         p = rr.extract_state_timeline_payload(ev)
         self.assertEqual(p["pulse"], [])
+
+    def test_non_gate_pulse_height_is_not_scaled_by_leg_count(self):
+        self.assertNotIn("p.legs / pulseMax", rr.STATE_TIMELINE_JS)
+        self.assertIn("const h = full ? barH", rr.STATE_TIMELINE_JS)
+
+
+class ExtremeStateSchemaTest(unittest.TestCase):
+    def test_existing_table_gets_index_source_migration(self):
+        import extreme_state_card as esc
+
+        statements = []
+
+        class Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, sql, *_args):
+                statements.append(sql)
+
+        class Connection:
+            @staticmethod
+            def cursor():
+                return Cursor()
+
+        esc.ensure_table(Connection())
+        self.assertTrue(any(
+            "ADD COLUMN IF NOT EXISTS index_source" in sql for sql in statements
+        ))
 
 
 class HistoryWindowTest(unittest.TestCase):

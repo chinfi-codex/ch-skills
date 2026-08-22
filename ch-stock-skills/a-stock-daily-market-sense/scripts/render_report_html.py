@@ -654,7 +654,9 @@ if (pulse.length) {
     const p = pulseBy[d];
     if (!p || p.legs === null || p.legs === undefined) return;
     const full = !!p.gate;
-    const h = (p.legs / pulseMax) * barH;
+    // 非门槛日全部用同高浅条，腿数只留在 tooltip；只有四腿全中占满整行。
+    // 这样 1/4、2/4、3/4 不会被视觉误读成连续增强的分数。
+    const h = full ? barH : Math.max(4, Math.round(barH * 0.22));
     const rect = document.createElementNS(NS, "rect");
     rect.setAttribute("x", String(padL + k * cellW + 2));
     rect.setAttribute("y", String(y + barH - h));

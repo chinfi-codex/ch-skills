@@ -77,6 +77,35 @@ def main() -> int:
                               for m, b in (evidence.get("models") or {}).items()}
         snapshot["alerts"] = {m: [a["id"] for a in b.get("alerts") or []]
                               for m, b in (evidence.get("models") or {}).items()}
+        token = evidence.get("token_market") or {}
+        snapshot["token_market"] = {
+            "usable": token.get("usable", False),
+            "reason": token.get("reason"),
+            "anchor_date": token.get("anchor_date"),
+            "alignment_lag_days": token.get("alignment_lag_days"),
+            "series_days": token.get("series_days"),
+            "paid_tokens": (((token.get("volume") or {}).get("paid") or {})
+                            .get("latest") or {}).get("value"),
+            "nominal_spend_usd": (((token.get("spend") or {})
+                                   .get("nominal_usd_per_day") or {})
+                                  .get("latest") or {}).get("value"),
+            "blended_usd_per_mtok": (((token.get("price") or {}).get("blended") or {})
+                                     .get("latest") or {}).get("value"),
+            "concentration_warning": ((token.get("concentration") or {})
+                                      .get("concentration_warning")),
+        }
+        history = token.get("history") or {}
+        snapshot["token_history"] = {
+            "usable": history.get("usable", False),
+            "reason": history.get("reason"),
+            "weeks": history.get("weeks"),
+            "first_week": history.get("first_week"),
+            "last_week": history.get("last_week"),
+            "volume_index_latest": ((history.get("volume_index") or {})
+                                    .get("series") or [{}])[-1].get("value"),
+            "structure_effect_latest": ((history.get("structure_effect_index") or {})
+                                        .get("series") or [{}])[-1].get("value"),
+        }
 
     out = SKILL_ROOT / "evidence" / "latest_snapshot.json"
     out.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")

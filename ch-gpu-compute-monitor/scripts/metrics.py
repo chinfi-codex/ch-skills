@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -96,6 +97,14 @@ class Evidence:
                        if _f(r.get("price_usd_gpu_hour")) is not None]
         self.supply = db_adapter.read_supply(self.start, asof)
         self.runs = db_adapter.read_runs(self.start, asof)
+        self.basket_cfg = yaml.safe_load(
+            (CONFIG_DIR / "token_basket.yaml").read_text(encoding="utf-8")) or {}
+        # token 观测可能整体缺席（老库、或者只跑了 GPU 侧的源），
+        # 缺就是缺，token_market 会如实报 usable=false，不影响 GPU 侧任何指标。
+        try:
+            self.tokens = db_adapter.read_tokens(self.start, asof)
+        except Exception:
+            self.tokens = []
 
     # ---------- 序列构造 ----------
     def price_series(self, model: str, source: str, price_type: str,
@@ -825,6 +834,7 @@ class Evidence:
                 "age_days": age,
                 "price_rows": row.get("price_rows"),
                 "supply_rows": row.get("supply_rows"),
+                "token_rows": row.get("token_rows"),
                 "latency_ms": row.get("latency_ms"),
                 "error": row.get("error"),
                 # 超过 1 天没有新观测就不能再当成"最新"用
@@ -885,6 +895,638 @@ class Evidence:
             out[model] = block
         return out
 
+    # ---------- 推理 token 量价（需求端）----------
+    #
+    # 与价格侧刻意隔开：单位是 USD/Mtok 与 tokens/day，跟 USD/GPU·hour 不同量纲，
+    # 也不进供需评分——token 是需求侧的上游证据，不是算力松紧的同一根轴。
+    def _token_days(self) -> Dict[str, List[Dict[str, Any]]]:
+        days: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for row in self.tokens:
+            if (row.get("quality_flag") or "ok") != "ok":
+                continue
+            days[_d(row["obs_date"])].append(row)
+        return dict(days)
+
+    def token_daily(self) -> Dict[str, Dict[str, Any]]:
+        """每天一份 token 聚合。全部从观测重算，不落表——口径改了直接重跑。
+
+        三条量刻意分开：付费、free 变体、零价的 standard（stealth 模型）。
+        实测 2026-08-24 零价占 40.1%，其中 free 变体只有 7.8%，主体是榜首那个
+        匿名 stealth 模型（一家 32.3%）。合并成一条"总量"，它进出榜单就会让
+        序列直接跳一大截。
+        """
+        out: Dict[str, Dict[str, Any]] = {}
+        for day, rows in self._token_days().items():
+            total = paid = free_variant = zero_std = unmatched = 0
+            prompt = completion = requests = 0
+            prompt_spend = completion_spend = 0.0
+            per_key: Dict[str, int] = defaultdict(int)
+            families: Dict[str, Dict[str, float]] = {}
+            band_num = band_den = 0.0
+            band_lo = band_hi = 0.0
+            for row in rows:
+                pt = int(row.get("prompt_tokens") or 0)
+                ct = int(row.get("completion_tokens") or 0)
+                volume = pt + ct
+                total += volume
+                per_key[f"{row['model_slug']}:{row['variant']}"] += volume
+                if row.get("price_match") == "unmatched":
+                    unmatched += volume
+                    continue
+                if not row.get("is_priced"):
+                    if (row.get("variant") or "") == "free":
+                        free_variant += volume
+                    else:
+                        zero_std += volume
+                    continue
+                paid += volume
+                prompt += pt
+                completion += ct
+                requests += int(row.get("requests") or 0)
+                pp = _f(row.get("price_prompt_usd_per_mtok")) or 0.0
+                pc = _f(row.get("price_completion_usd_per_mtok")) or 0.0
+                prompt_spend += pt * pp / 1e6
+                completion_spend += ct * pc / 1e6
+                key = f"{row['model_family']}|{row['variant']}"
+                fam = families.setdefault(key, {"prompt": 0.0, "completion": 0.0,
+                                                "prompt_cost": 0.0, "completion_cost": 0.0})
+                fam["prompt"] += pt
+                fam["completion"] += ct
+                fam["prompt_cost"] += pt * pp
+                fam["completion_cost"] += ct * pc
+                # 逐 provider 价差带只在少数模型上有，按 spend 加权汇总成一个倍数
+                median = _f(row.get("provider_price_median_usd_per_mtok"))
+                lo = _f(row.get("provider_price_min_usd_per_mtok"))
+                hi = _f(row.get("provider_price_max_usd_per_mtok"))
+                if median and pp:
+                    weight = pt * pp / 1e6
+                    band_den += weight
+                    band_num += weight * median / pp
+                    band_lo += weight * (lo / pp if lo else 1.0)
+                    band_hi += weight * (hi / pp if hi else 1.0)
+            spend = prompt_spend + completion_spend
+            fam_prices: Dict[str, Dict[str, Optional[float]]] = {}
+            for key, fam in families.items():
+                fam_prices[key] = {
+                    "paid_tokens": fam["prompt"] + fam["completion"],
+                    "prompt_tokens": fam["prompt"],
+                    "completion_tokens": fam["completion"],
+                    # 家族内部按当期各版本的 token 加权 —— 版本升级带来的降价
+                    # 就该体现成这个家族自己变便宜了（技术通缩），不是结构迁移。
+                    "price_prompt": (fam["prompt_cost"] / fam["prompt"]
+                                     if fam["prompt"] else None),
+                    "price_completion": (fam["completion_cost"] / fam["completion"]
+                                         if fam["completion"] else None),
+                }
+            top_key, top_volume = (max(per_key.items(), key=lambda kv: kv[1])
+                                   if per_key else (None, 0))
+            out[day] = {
+                "total_tokens": total,
+                "paid_tokens": paid,
+                "free_variant_tokens": free_variant,
+                "zero_priced_standard_tokens": zero_std,
+                "unmatched_tokens": unmatched,
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "requests": requests,
+                "spend_usd": spend,
+                "prompt_spend_usd": prompt_spend,
+                "completion_spend_usd": completion_spend,
+                "blended_usd_per_mtok": (spend / paid * 1e6) if paid else None,
+                "tokens_per_request": (paid / requests) if requests else None,
+                "unmatched_share": (unmatched / total) if total else None,
+                "top_model": top_key,
+                "top_model_share": (top_volume / total) if total else None,
+                "family_prices": fam_prices,
+                "row_count": len(rows),
+                "provider_band": ({"median_ratio": band_num / band_den,
+                                   "min_ratio": band_lo / band_den,
+                                   "max_ratio": band_hi / band_den,
+                                   "covered_spend_share": (band_den / prompt_spend
+                                                           if prompt_spend else None)}
+                                  if band_den else None),
+            }
+        return out
+
+    def token_basket(self, daily: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        """从基期那天的观测确定性地推出篮子。不手工维护成员名单，不落盘。"""
+        cfg = (self.basket_cfg.get("basket") or {})
+        days = sorted(d for d, v in daily.items() if v["paid_tokens"] > 0)
+        if not days:
+            return {"usable": False, "reason": "没有任何付费 token 观测"}
+        wanted = cfg.get("base_date")
+        base_date = None
+        if wanted:
+            later = [d for d in days if d >= str(wanted)]
+            base_date = later[0] if later else None
+            if base_date is None:
+                return {"usable": False,
+                        "reason": f"配置的基期 {wanted} 之后没有任何观测"}
+        else:
+            base_date = days[0]
+        base = daily[base_date]
+        ranked = sorted(base["family_prices"].items(),
+                        key=lambda kv: -(kv[1]["paid_tokens"] or 0))
+        coverage_target = float(cfg.get("min_coverage_share", 0.9))
+        max_members = int(cfg.get("max_members", 60))
+        total_paid = float(base["paid_tokens"]) or 0.0
+        members: Dict[str, Dict[str, Any]] = {}
+        cumulative = 0.0
+        for key, stats in ranked:
+            if len(members) >= max_members:
+                break
+            unit = _unit_price(stats, stats)
+            if unit is None or unit <= 0:
+                continue
+            members[key] = {
+                "weight": (stats["paid_tokens"] / total_paid) if total_paid else 0.0,
+                "base_unit_price_usd_per_mtok": unit,
+                "base_prompt_share": (stats["prompt_tokens"] / stats["paid_tokens"]
+                                      if stats["paid_tokens"] else None),
+            }
+            cumulative += members[key]["weight"]
+            if cumulative >= coverage_target:
+                break
+        if not members:
+            return {"usable": False, "reason": "基期当天没有可定价的家族"}
+        weight_sum = sum(m["weight"] for m in members.values()) or 1.0
+        for m in members.values():
+            m["weight"] = m["weight"] / weight_sum
+        return {
+            "usable": True,
+            "base_date": base_date,
+            "member_count": len(members),
+            "base_coverage_share": round(cumulative, 4),
+            "grain": cfg.get("member_grain", "family_variant"),
+            "intra_family_weighting": cfg.get("intra_family_weighting",
+                                              "base_period_io_mix"),
+            "chain_links": cfg.get("chain_links") or [],
+            "members": members,
+            "fingerprint": _basket_fingerprint(base_date, members),
+        }
+
+    def token_laspeyres(self, daily: Dict[str, Dict[str, Any]],
+                        basket: Dict[str, Any]) -> Dict[str, Any]:
+        """锁基期权重的固定篮子价格指数：只让单价动，权重与输入输出结构不动。
+
+        它和当期权重的 blended 之差，就是「往便宜模型迁移」贡献了多少——
+        本方案唯一的原创信息，也是唯一能把"token 价格跌了 20%"拆开的东西。
+        """
+        if not basket.get("usable"):
+            return {"usable": False, "reason": basket.get("reason", "篮子不可用"),
+                    "points": {}}
+        members = basket["members"]
+        min_weight = float((self.basket_cfg.get("basket") or {})
+                           .get("min_in_basket_weight", 0.85))
+        points: Dict[str, float] = {}
+        coverage: Dict[str, float] = {}
+        for day, block in daily.items():
+            prices = block["family_prices"]
+            numerator = denominator = in_weight = 0.0
+            for key, member in members.items():
+                stats = prices.get(key)
+                if not stats:
+                    continue
+                unit = _unit_price(stats, {"prompt_tokens": member["base_prompt_share"],
+                                           "paid_tokens": 1.0})
+                if unit is None or unit <= 0:
+                    continue
+                numerator += member["weight"] * unit
+                denominator += member["weight"] * member["base_unit_price_usd_per_mtok"]
+                in_weight += member["weight"]
+            coverage[day] = round(in_weight, 4)
+            if denominator > 0 and in_weight >= min_weight:
+                points[day] = numerator / denominator * 100.0
+        return {"usable": bool(points), "points": points, "in_basket_weight": coverage,
+                "min_in_basket_weight": min_weight,
+                "reason": None if points else
+                          f"在场权重始终低于 {min_weight}，篮子塌了不出指数"}
+
+    def token_composition(self, anchor: str) -> Dict[str, Any]:
+        """日度总量拆成「前 N 个模型 + 其他」，给堆叠面积图用。
+
+        条带集合由**锚定日**的排名一次定死，然后每一天都按同一组条带拆。
+        不这么做的话，每天各自取前 7 名，条带的含义会天天变，叠出来的面积图
+        看着连续、其实是一堆不同的东西拼在一起。
+
+        量用总 token（含零价），因为问题问的是"调用量的构成"；但每条带子都标了
+        是否有价——榜首那条 32.3% 是匿名 stealth 模型在免费放量，把它当成收入看
+        会错得离谱。
+        """
+        cfg = (self.basket_cfg.get("composition") or {})
+        top_n = int(cfg.get("top_n", 7))
+        rank_by = str(cfg.get("rank_by", "tokens"))
+        split_variant = bool(cfg.get("split_variant", True))
+        days = self._token_days()
+        if not days or anchor not in days:
+            return {"usable": False, "reason": "没有可用的日度 token 观测"}
+
+        def key_of(row: Dict[str, Any]) -> str:
+            slug = row.get("model_slug") or "?"
+            return f"{slug}:{row.get('variant')}" if split_variant else slug
+
+        def tally(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+            out: Dict[str, Dict[str, Any]] = {}
+            for row in rows:
+                key = key_of(row)
+                slot = out.setdefault(key, {"tokens": 0, "requests": 0,
+                                            "spend": 0.0, "is_priced": False})
+                slot["tokens"] += ((row.get("prompt_tokens") or 0)
+                                   + (row.get("completion_tokens") or 0))
+                slot["requests"] += int(row.get("requests") or 0)
+                slot["spend"] += _f(row.get("spend_usd")) or 0.0
+                slot["is_priced"] = bool(slot["is_priced"] or row.get("is_priced"))
+            return out
+
+        anchor_tally = tally(days[anchor])
+        metric = "requests" if rank_by == "requests" else "tokens"
+        ranked = sorted(anchor_tally.items(), key=lambda kv: -kv[1][metric])
+        top_keys = [k for k, _ in ranked[:top_n]]
+        anchor_total = sum(v["tokens"] for v in anchor_tally.values())
+
+        series = []
+        for day in sorted(days):
+            day_tally = tally(days[day])
+            values = {k: day_tally.get(k, {}).get("tokens", 0) for k in top_keys}
+            total = sum(v["tokens"] for v in day_tally.values())
+            values["__other__"] = total - sum(values.values())
+            series.append({"date": day, "total": total, "values": values})
+
+        bands = []
+        for key in top_keys:
+            stats = anchor_tally[key]
+            bands.append({
+                "key": key,
+                "label": key.rsplit(":", 1)[0] if split_variant else key,
+                "variant": key.rsplit(":", 1)[-1] if split_variant else None,
+                "tokens": stats["tokens"],
+                "share": (round(stats["tokens"] / anchor_total, 4)
+                          if anchor_total else None),
+                "requests": stats["requests"],
+                "tokens_per_request": (round(stats["tokens"] / stats["requests"], 1)
+                                       if stats["requests"] else None),
+                "spend_usd": round(stats["spend"], 2),
+                "is_priced": stats["is_priced"],
+            })
+        other_tokens = anchor_total - sum(b["tokens"] for b in bands)
+        other_requests = (sum(v["requests"] for v in anchor_tally.values())
+                          - sum(b["requests"] for b in bands))
+        bands.append({
+            "key": "__other__", "label": "其他",
+            "variant": None,
+            "tokens": other_tokens,
+            "share": round(other_tokens / anchor_total, 4) if anchor_total else None,
+            "requests": other_requests,
+            "tokens_per_request": (round(other_tokens / other_requests, 1)
+                                   if other_requests else None),
+            "spend_usd": round(sum(v["spend"] for v in anchor_tally.values())
+                               - sum(b["spend_usd"] for b in bands), 2),
+            "is_priced": None,
+            "model_count": len(anchor_tally) - len(top_keys),
+        })
+        return {
+            "usable": True,
+            "anchor_date": anchor,
+            "top_n": top_n,
+            "ranked_by": metric,
+            "split_variant": split_variant,
+            "total_tokens_anchor": anchor_total,
+            "model_count_anchor": len(anchor_tally),
+            "bands": bands,
+            "series": series,
+            "note": ("条带由锚定日的排名定死，之后每天按同一组条带拆——"
+                     "每天各取前 N 名会让条带含义天天变，叠出来的面积图是假的"),
+        }
+
+    def token_history(self, daily: Dict[str, Dict[str, Any]],
+                      anchor: str) -> Dict[str, Any]:
+        """厂商级周度历史：本 skill 唯一一条能回填到一年前的量序列。
+
+        三条纪律写进数据结构里，不靠读者自觉：
+          * `unit_basis` 标成未核实，因为它与日榜对不上（实测同日各厂商比值
+            1.42–1.75，非常数倍）。所以这里只出**份额、增速、指数**，不出绝对水平。
+          * 不与日度序列相减。桥接比值要等日度序列盖满一个已结算周才算得出来，
+            算不出来就明说算不出来。
+          * 「结构效应指数」用的是**今天的厂商均价 × 历史的厂商份额**，
+            测的只有购买结构迁移这一件事，不含任何真实降价。
+        """
+        try:
+            rows = db_adapter.read_token_history("2000-01-01", self.asof)
+        except Exception:
+            rows = []
+        if not rows:
+            return {"usable": False,
+                    "reason": "库里没有周度历史（跑 scripts/backfill.py 回填）"}
+
+        weeks: Dict[str, Dict[str, float]] = defaultdict(dict)
+        unit_bases = set()
+        for row in rows:
+            if (row.get("quality_flag") or "ok") != "ok" or not row.get("settled"):
+                continue
+            value = _f(row.get("tokens"))
+            if value is None:
+                continue
+            weeks[_d(row["week_start"])][row["author"]] = value
+            unit_bases.add(row.get("unit_basis"))
+        if not weeks:
+            return {"usable": False, "reason": "周度历史里没有已结算的行"}
+
+        ordered = sorted(weeks)
+        totals = {week: sum(values.values()) for week, values in weeks.items()}
+
+        # 今天的厂商均价（USD/Mtok），只用明码有价的行
+        latest_rows = [r for r in self.tokens if _d(r["obs_date"]) == anchor]
+        author_spend: Dict[str, float] = defaultdict(float)
+        author_tokens: Dict[str, float] = defaultdict(float)
+        for row in latest_rows:
+            if not row.get("is_priced"):
+                continue
+            slug = row.get("model_slug") or ""
+            author = slug.split("/")[0] if "/" in slug else "others"
+            spend = _f(row.get("spend_usd")) or 0.0
+            volume = (row.get("prompt_tokens") or 0) + (row.get("completion_tokens") or 0)
+            author_spend[author] += spend
+            author_tokens[author] += volume
+        author_price = {a: author_spend[a] / author_tokens[a] * 1e6
+                        for a in author_tokens if author_tokens[a] > 0}
+
+        # 结构效应：今天的价 × 历史的份额。只有这一个变量在动，所以它测的就是
+        # 「需求往贵的还是便宜的厂商挪」，与真实降价无关。
+        effect: Dict[str, float] = {}
+        priced_cover: Dict[str, float] = {}
+        for week in ordered:
+            values = weeks[week]
+            total = totals[week] or 0.0
+            covered = sum(v for a, v in values.items() if a in author_price)
+            priced_cover[week] = round(covered / total, 4) if total else 0.0
+            if not covered:
+                continue
+            # 在有价厂商内部归一化，避免"没价的厂商"份额变动被误读成结构效应
+            effect[week] = sum(values[a] / covered * author_price[a]
+                               for a in values if a in author_price)
+        min_cover = 0.70
+        usable_weeks = [w for w in ordered
+                        if w in effect and priced_cover[w] >= min_cover]
+        effect_index: Dict[str, float] = {}
+        if usable_weeks:
+            base_week = usable_weeks[0]
+            base_value = effect[base_week]
+            if base_value:
+                effect_index = {w: effect[w] / base_value * 100.0 for w in usable_weeks}
+
+        total_index = {}
+        if ordered and totals[ordered[0]]:
+            total_index = {w: totals[w] / totals[ordered[0]] * 100.0 for w in ordered}
+
+        def growth(weeks_back: int) -> Dict[str, Any]:
+            if len(ordered) <= weeks_back:
+                return {"pct": None,
+                        "reason": f"历史只有 {len(ordered)} 周，不足 {weeks_back} 周"}
+            new, old = totals[ordered[-1]], totals[ordered[-1 - weeks_back]]
+            return {"pct": round(pct_change(new, old), 4),
+                    "from_week": ordered[-1 - weeks_back], "to_week": ordered[-1]}
+
+        latest_week = ordered[-1]
+        shares = {a: round(v / totals[latest_week], 4)
+                  for a, v in sorted(weeks[latest_week].items(), key=lambda kv: -kv[1])
+                  } if totals[latest_week] else {}
+        first_shares = {a: round(v / totals[ordered[0]], 4)
+                        for a, v in weeks[ordered[0]].items()} if totals[ordered[0]] else {}
+
+        # 桥接比值：日度序列盖满某个已结算周之后才算得出来，算不出来就明说
+        daily_weeks: Dict[str, float] = defaultdict(float)
+        daily_days: Dict[str, set] = defaultdict(set)
+        for day, block in daily.items():
+            monday = (date.fromisoformat(day)
+                      - timedelta(days=date.fromisoformat(day).weekday())).isoformat()
+            daily_weeks[monday] += float(block["total_tokens"])
+            daily_days[monday].add(day)
+        bridge = {"usable": False,
+                  "reason": "日度序列还没盖满任何一个已结算周，桥接比值算不出来"}
+        for week in reversed(ordered):
+            if len(daily_days.get(week, ())) == 7 and totals[week]:
+                bridge = {
+                    "usable": True, "week": week,
+                    "history_over_daily": round(totals[week] / daily_weeks[week], 4),
+                    "note": ("两条序列在同一周上的比值。稳定下来之后才谈得上换算，"
+                             "在那之前它们只能各读各的"),
+                }
+                break
+
+        return {
+            "usable": True,
+            "grain": "author_weekly",
+            "unit_basis": sorted(u for u in unit_bases if u),
+            "source_dataset": "openrouter/market-share",
+            "first_week": ordered[0], "last_week": latest_week, "weeks": len(ordered),
+            "caveat": ("与日度模型级序列口径不同（实测同日各厂商比值 1.42–1.75，"
+                       "非常数倍），只能看份额与增速，不能读绝对水平；"
+                       "最新那个未结算的点在采集时就已丢弃"),
+            "volume_index": {
+                "base_week": ordered[0], "base": 100,
+                "series": [{"date": w, "value": round(v, 4)}
+                           for w, v in sorted(total_index.items())],
+                "growth_4w": growth(4), "growth_13w": growth(13),
+                "growth_52w": growth(52),
+            },
+            "author_shares": {
+                "latest_week": latest_week, "latest": shares,
+                "first_week": ordered[0], "first": first_shares,
+            },
+            "structure_effect_index": {
+                "usable": bool(effect_index),
+                "reason": (None if effect_index else
+                           "没有任何一周的有价厂商覆盖率达到门槛"),
+                "base_week": usable_weeks[0] if usable_weeks else None,
+                "base": 100,
+                "definition": ("今天的厂商均价 × 历史的厂商份额。只有份额在动，"
+                               "所以它测的就是购买结构迁移，不含任何真实降价"),
+                "blind_spot": "厂商级粒度：厂商内部的模型迁移看不见",
+                "min_priced_coverage": min_cover,
+                "priced_coverage_latest": priced_cover.get(latest_week),
+                "series": [{"date": w, "value": round(v, 4)}
+                           for w, v in sorted(effect_index.items())],
+            },
+            "unit_bridge": bridge,
+        }
+
+    def token_market(self, gpu_anchor: Optional[str]) -> Dict[str, Any]:
+        guards = (self.basket_cfg.get("guards") or {})
+        cache_cfg = (self.basket_cfg.get("cache_sensitivity") or {})
+        daily = self.token_daily()
+        if not daily:
+            return {"usable": False,
+                    "reason": "库里没有任何 token 观测（openrouter 源未采或采集失败）",
+                    "cost_floor": _not_enabled(), "margin_pool": _not_enabled()}
+        anchor = max(daily)
+        latest = daily[anchor]
+        basket = self.token_basket(daily)
+        laspeyres = self.token_laspeyres(daily, basket)
+
+        paid_series = {d: float(v["paid_tokens"]) for d, v in daily.items()
+                       if v["paid_tokens"]}
+        spend_series = {d: v["spend_usd"] for d, v in daily.items() if v["spend_usd"]}
+        blended_series = {d: v["blended_usd_per_mtok"] for d, v in daily.items()
+                          if v["blended_usd_per_mtok"]}
+        free_series = {d: float(v["free_variant_tokens"]) for d, v in daily.items()}
+        zero_series = {d: float(v["zero_priced_standard_tokens"])
+                       for d, v in daily.items()}
+        tpr_series = {d: v["tokens_per_request"] for d, v in daily.items()
+                      if v["tokens_per_request"]}
+
+        unmatched_share = latest["unmatched_share"]
+        max_unmatched = float(guards.get("max_unmatched_token_share", 0.03))
+        coverage_ok = unmatched_share is not None and unmatched_share <= max_unmatched
+        coverage_reason = (None if coverage_ok else
+                           f"未匹配 token 占比 {(unmatched_share or 0) * 100:.2f}%"
+                           f" 超过 {max_unmatched * 100:.0f}% 的守卫线，篮子残缺")
+
+        blended = self.changes(blended_series, anchor_date=anchor)
+        lasp = self.changes(laspeyres["points"], anchor_date=anchor)
+        volume = self.changes(paid_series, anchor_date=anchor)
+        spend = self.changes(spend_series, anchor_date=anchor)
+
+        mix: Dict[str, Any] = {}
+        decomposition: Dict[str, Any] = {}
+        for label, _days in CHANGE_WINDOWS:
+            g_blended = _usable_pct(blended.get("changes", {}).get(label))
+            g_lasp = _usable_pct(lasp.get("changes", {}).get(label))
+            g_volume = _usable_pct(volume.get("changes", {}).get(label))
+            g_spend = _usable_pct(spend.get("changes", {}).get(label))
+            if g_blended is None or g_lasp is None:
+                mix[label] = {"pct_points": None,
+                              "reason": "混合价或固定篮子指数有一头不可用"}
+            else:
+                mix[label] = {
+                    "pct_points": round(g_blended - g_lasp, 4),
+                    "blended_pct": g_blended,
+                    "laspeyres_pct": g_lasp,
+                    "meaning": ("负值 = 需求在往更便宜的模型迁移；"
+                                "正值 = 在往更贵的模型迁移"),
+                }
+            if None in (g_spend, g_volume, g_lasp):
+                decomposition[label] = {"usable": False,
+                                        "reason": "三项里有一项不可用，不做分解"}
+            else:
+                mix_part = g_spend - g_volume - g_lasp
+                decomposition[label] = {
+                    "usable": True,
+                    "spend_pct": g_spend,
+                    "volume_pct": g_volume,
+                    "true_price_pct": g_lasp,
+                    "mix_residual_pct": round(mix_part, 4),
+                    "note": "近似式 g_spend ≈ g_volume + g_真价格 + g_结构；残差即结构项",
+                }
+
+        hit_rates = cache_cfg.get("assumed_hit_rates") or []
+        ratio = float(cache_cfg.get("cache_read_price_ratio", 0.119))
+        nominal = latest["spend_usd"]
+        sensitivity = []
+        for rate in hit_rates:
+            rate = float(rate)
+            actual = (latest["prompt_spend_usd"] * (1 - rate)
+                      + latest["prompt_spend_usd"] * rate * ratio
+                      + latest["completion_spend_usd"])
+            sensitivity.append({
+                "assumed_cache_hit_rate": rate,
+                "implied_actual_spend_usd": round(actual, 2),
+                "nominal_overstatement_pct": (round((nominal / actual - 1) * 100, 2)
+                                              if actual else None),
+            })
+
+        concentration_line = float(guards.get("concentration_warn_share", 0.25))
+        top_share = latest["top_model_share"]
+        return {
+            "usable": True,
+            "anchor_date": anchor,
+            "anchor_lag_days": (date.fromisoformat(self.asof)
+                                - date.fromisoformat(anchor)).days,
+            "gpu_anchor_date": gpu_anchor,
+            "alignment_lag_days": ((date.fromisoformat(gpu_anchor)
+                                    - date.fromisoformat(anchor)).days
+                                   if gpu_anchor else None),
+            "series_start": min(daily),
+            "series_days": len(daily),
+            "coverage": {
+                "matched_token_share": (round(1 - unmatched_share, 4)
+                                        if unmatched_share is not None else None),
+                "unmatched_token_share": (round(unmatched_share, 4)
+                                          if unmatched_share is not None else None),
+                "guard_max_unmatched_share": max_unmatched,
+                "usable": coverage_ok,
+                "reason": coverage_reason,
+                "row_count": latest["row_count"],
+            },
+            "concentration": {
+                "top_model": latest["top_model"],
+                "top_model_share": (round(top_share, 4)
+                                    if top_share is not None else None),
+                "warn_line": concentration_line,
+                "concentration_warning": bool(top_share and top_share > concentration_line),
+                "meaning": ("单模型份额过高时，它进出榜单会让总量序列直接跳一大截，"
+                            "总量线只能当背景，不参与变化率结论"),
+            },
+            "volume": {
+                "paid": {**volume,
+                         "series": _series_list(paid_series, self.asof, self.window)},
+                "free_variant": {**self.changes(free_series, anchor_date=anchor),
+                                 "series": _series_list(free_series, self.asof,
+                                                        self.window)},
+                "zero_priced_standard": {
+                    **self.changes(zero_series, anchor_date=anchor),
+                    "series": _series_list(zero_series, self.asof, self.window),
+                    "note": "零价的 standard 变体，主体是匿名 stealth 模型在免费放量",
+                },
+                "total_tokens_latest": latest["total_tokens"],
+                "prompt_share": (round(latest["prompt_tokens"] / latest["paid_tokens"], 4)
+                                 if latest["paid_tokens"] else None),
+                "requests_latest": latest["requests"],
+                "tokens_per_request": {
+                    **self.changes(tpr_series, anchor_date=anchor),
+                    "note": ("reasoning / cached / tool_calls 三个字段源侧全为 0，"
+                             "token 通胀拆不了，这个比值是仅有的代理"),
+                },
+            },
+            "price": {
+                "blended": {**blended, "unit": "USD/Mtok",
+                            "usable": coverage_ok,
+                            "reason": coverage_reason,
+                            "series": _series_list(blended_series, self.asof,
+                                                   self.window),
+                            "note": "当期权重，会被购买结构迁移污染，单看没有意义"},
+                "laspeyres": {**lasp, "unit": "index, base=100",
+                              "usable_index": laspeyres["usable"],
+                              "reason": laspeyres.get("reason"),
+                              "in_basket_weight": laspeyres.get("in_basket_weight"),
+                              "series": _series_list(laspeyres["points"], self.asof,
+                                                     self.window),
+                              "note": "锁基期家族篮子权重与输入输出结构，只让单价动"},
+                "mix_shift": mix,
+                "basket": {k: v for k, v in basket.items() if k != "members"},
+                "basket_members_top": _top_members(basket),
+                "provider_band": latest["provider_band"],
+            },
+            "spend": {
+                "nominal_usd_per_day": {
+                    **spend,
+                    "series": _series_list(spend_series, self.asof, self.window),
+                    "usable": coverage_ok,
+                    "reason": coverage_reason,
+                    "definition": ("按挂牌价计的名义支出，不是实际账单："
+                                   "缓存命中只按约 12% 计费，而命中率不可观测"),
+                },
+                "prompt_spend_share": (round(latest["prompt_spend_usd"] / nominal, 4)
+                                       if nominal else None),
+                "cache_sensitivity": sensitivity,
+                "decomposition": decomposition,
+            },
+            "composition": self.token_composition(anchor),
+            "history": self.token_history(daily, anchor),
+            "cost_floor": _not_enabled(),
+            "margin_pool": _not_enabled(),
+            "sources": _token_source_view(self.tokens, anchor),
+        }
+
     def build(self) -> Dict[str, Any]:
         models = self.catalog.primary_models
         per_model: Dict[str, Any] = {}
@@ -943,14 +1585,21 @@ class Evidence:
                 "confirmation": self.confirmation(model),
             }
 
+        # GPU 侧的锚定日：三个主力 SKU 里最新的那个。token 侧要报出与它的差，
+        # 两端不同日却当成同一天读，是跨维度比较最容易犯的错。
+        gpu_anchor_dates = [c.get("anchor_date") for c in medians.values()
+                            if c.get("anchor_date")]
+        gpu_anchor = max(gpu_anchor_dates) if gpu_anchor_dates else None
+
         return {
-            "schema": "gpu-compute-monitor/evidence/1.0",
+            "schema": "gpu-compute-monitor/evidence/1.1",
             "asof": self.asof,
             "window_days": self.window,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "models": per_model,
             "reference_models": self.reference_models(),
             "generation_premium": self.generation_premium(medians),
+            "token_market": self.token_market(gpu_anchor),
             "source_health": self.freshness(),
             "config": {
                 "core_price_types": list(CORE_PRICE_TYPES),
@@ -958,6 +1607,9 @@ class Evidence:
                 "alert_mode": self.thresholds["alerts"]["mode"],
                 "alert_direction": self.thresholds["alerts"]["direction"],
                 "confirmation": self.thresholds["confirmation"],
+                "token_basket": {k: v for k, v in (self.basket_cfg.get("basket") or {}).items()
+                                 if k != "chain_links"},
+                "token_guards": self.basket_cfg.get("guards") or {},
             },
         }
 
@@ -992,6 +1644,83 @@ def _usable_pct(change: Optional[Dict[str, Any]]) -> Optional[float]:
     if not change or change.get("pct") is None or not change.get("usable"):
         return None
     return float(change["pct"])
+
+
+def _series_list(series: Dict[str, float], asof: str, window: int) -> List[Dict[str, Any]]:
+    start = (date.fromisoformat(asof) - timedelta(days=window)).isoformat()
+    return [{"date": k, "value": round(float(v), 6)}
+            for k, v in sorted(series.items()) if start <= k <= asof]
+
+
+def _unit_price(prices: Dict[str, Any], weights: Dict[str, Any]) -> Optional[float]:
+    """一个家族「一个 token」的单价，输入输出比例由 weights 决定。
+
+    基期算篮子时 weights 就是它自己（当期结构）；之后每天都拿基期的结构去乘
+    当期的单价——这样连"输入输出比例变了"这层 mix 也被锁住，剩下的变动
+    才是纯粹的挂牌价变动。
+    """
+    p_prompt = prices.get("price_prompt")
+    p_completion = prices.get("price_completion")
+    if p_prompt is None and p_completion is None:
+        return None
+    if p_prompt is None:
+        p_prompt = p_completion
+    if p_completion is None:
+        p_completion = p_prompt
+    total = weights.get("paid_tokens") or 0
+    raw_prompt = weights.get("prompt_tokens")
+    if not total or raw_prompt is None:
+        return None
+    share = float(raw_prompt) / float(total)
+    if share < 0 or share > 1:
+        return None
+    return share * float(p_prompt) + (1 - share) * float(p_completion)
+
+
+def _basket_fingerprint(base_date: str, members: Dict[str, Any]) -> str:
+    """篮子指纹。成员或基期变了，指纹就变，两段 Laspeyres 不许直接相减。"""
+    blob = json.dumps({"base": base_date, "members": sorted(members)},
+                      sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def _top_members(basket: Dict[str, Any], limit: int = 8) -> List[Dict[str, Any]]:
+    members = basket.get("members") or {}
+    ranked = sorted(members.items(), key=lambda kv: -(kv[1].get("weight") or 0))
+    return [{"member": k, "weight": round(v.get("weight") or 0, 4),
+             "base_unit_price_usd_per_mtok": round(
+                 v.get("base_unit_price_usd_per_mtok") or 0, 4)}
+            for k, v in ranked[:limit]]
+
+
+def _not_enabled() -> Dict[str, Any]:
+    """成本地板与毛利池的插槽：键位现在就定好，值恒为不可用。
+
+    留形不留值是刻意的——将来补上人工吞吐表时不用改 schema，
+    也不会有人误以为现在这两个数已经能读。
+    """
+    return {"usable": False, "reason": "未启用（P1）",
+            "note": "需要人工核对的 tokens/sec/GPU 吞吐表，本轮范围之外"}
+
+
+def _token_source_view(rows: List[Dict[str, Any]], anchor: str) -> Dict[str, Any]:
+    """按源分开的原始视图。将来接第二个源时，这里是它落脚的地方，
+    而主指数仍然只由能同时给量和价的那个源建。"""
+    out: Dict[str, Any] = {}
+    for row in rows:
+        if _d(row["obs_date"]) != anchor:
+            continue
+        block = out.setdefault(row["source"], {
+            "rows": 0, "coverage_scope": row.get("coverage_scope"),
+            "price_basis": row.get("price_basis"), "fingerprints": set(),
+        })
+        block["rows"] += 1
+        if row.get("query_fingerprint"):
+            block["fingerprints"].add(row["query_fingerprint"])
+    for block in out.values():
+        block["fingerprints"] = sorted(block["fingerprints"])
+        block["fingerprint_stable"] = len(block["fingerprints"]) <= 1
+    return out
 
 
 def main() -> int:

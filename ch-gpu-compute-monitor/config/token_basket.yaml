@@ -1,0 +1,65 @@
+# Token 价格指数的篮子定义 —— 决定「真降价」和「结构迁移」的分界线在哪。
+#
+# 为什么篮子成员是「模型家族」而不是 slug：实测 2026-08-24 当天有 4 个家族同时
+# 挂着多个日期版本，合计 16.3% 的 token，其中 deepseek/deepseek-v4-flash 一家
+# 13.8% 横跨 -20260423 与 -20260731 两个版本。按 slug 当成员，版本迭代会被整块
+# 记成「结构迁移」，mix_shift 系统性高估。按家族聚合之后：
+#   * 家族内的版本升级降价 → 进「真降价」（同一产品线自己变便宜，最有价值的技术通缩）
+#   * 跨家族迁移         → 进 mix_shift（从 Claude 迁到 DeepSeek 是购买结构变化）
+#
+# 篮子不落盘、不手工维护成员名单：每次从基期那天的观测确定性地重算，
+# 所以口径改了直接重跑就行，也不会出现配置与库里对不上的漂移。
+
+schema_version: 1
+
+basket:
+  # 基期日。留空 = 用库里最早那个有付费观测的日子（冷启动时就是首采日）。
+  # 定死一个日期之后，Laspeyres 的比较基准就固定了；想换基期请走 chain_links。
+  base_date: null
+
+  # 成员挑选：按基期当天付费 token 从大到小取，累计覆盖到 min_coverage_share
+  # 就停，且不超过 max_members。剩下的长尾不进篮子——它们的价格噪声大、
+  # 权重小，进来只会让指数抖。
+  min_coverage_share: 0.90
+  max_members: 60
+
+  # 篮子成员的粒度：family = 剥掉 -20YYMMDD 后缀的家族 × variant。
+  # 改这个值等于换了一套指数，历史不可比。
+  member_grain: family_variant
+
+  # 家族内部的单价怎么合成：按基期该家族的 prompt / completion token 结构加权，
+  # 之后固定不动。这样 Laspeyres 连「输入输出比例变了」这层 mix 也一起锁住，
+  # 剩下的变动才是纯粹的挂牌价变动。
+  intra_family_weighting: base_period_io_mix
+
+  # 篮子成员在当期缺席（模型下架）时，按仍在场的成员重新归一化权重。
+  # 在场权重低于这个比例就拒绝出 Laspeyres —— 篮子塌了一半再谈"真降价"没有意义。
+  min_in_basket_weight: 0.85
+
+  # 链式重挂断点：换基期或大规模成员变动时在这里记一笔，指标层不会跨断点相减。
+  # 每条：{date: YYYY-MM-DD, reason: 为什么重挂}
+  chain_links: []
+
+# 名义 spend 的缓存敏感性带。实测 input_cache_read / prompt 的价格比是 0.119，
+# 但 total_native_tokens_cached 全为 0，命中率不可观测，所以只能给假设区间。
+cache_sensitivity:
+  assumed_hit_rates: [0.2, 0.4, 0.6]
+  cache_read_price_ratio: 0.119   # 实测覆盖 100% 的 prompt spend
+
+# 覆盖率与集中度守卫
+guards:
+  max_unmatched_token_share: 0.03   # 超过就把 spend 标 usable=false
+  concentration_warn_share: 0.25    # 单模型份额超过就打 concentration_warning
+
+# 日度构成图：总量拆成前 N 个模型 + 其他。
+composition:
+  top_n: 7
+  # 排名依据：tokens（按 token 量）或 requests（按调用次数）。
+  # 默认 tokens——图上画的就是 token 量，用同一个口径排名才不会出现
+  # "排第一的模型在图里只有一条缝"这种自相矛盾的画面。
+  # 两个口径的差别是真实存在的：实测同一天 deepseek-v4-flash-0423 有 7300 万次调用
+  # 却只占 4.4% 的 token，而 stealth 用 7000 万次调用吃掉 32.3%。
+  rank_by: tokens
+  # 变体单独成条：:batch 是折扣档、:free 是零价档，跟标准档合并会让
+  # "这条带子代表多少钱"变得没法读。
+  split_variant: true

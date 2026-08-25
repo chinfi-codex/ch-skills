@@ -1,24 +1,28 @@
 ---
 name: ch-gpu-compute-monitor
-description: 当用户要跟踪 GPU 算力租赁的价格与可用供给、判断算力供需是紧还是松、看 B200/H200/H100 的租金走势与代际溢价、比较 Vast/Runpod/CoreWeave/Nebius 等平台的报价、观察 Ornn OCPI 成交价指数、判断 spot 折价与库存档位变化，或要生成 GPU 算力供需监控日报与 HTML Dashboard 时使用此 skill。适用提问包括“现在 H100 租金多少”“B200 价格在涨还是在跌”“GPU 算力紧不紧张”“算力价格拐点到了吗”“Vast 上 H200 报价分布怎么样”“Runpod 库存什么情况”“B200 相对 H200 的溢价在收窄吗”“spot 折价扩大了吗”“出一份今天的算力监控日报”“把算力监控导成网页”，以及配置每日定时采集、回填历史 90 天数据、补录 CoreWeave/Nebius 挂牌价、排查某个数据源为什么没采到数。脚本只做采集、标准化、确定性统计与渲染；“这是不是真拐点、要不要采信这个信号”由模型判断。不覆盖 GPU 芯片二级市场买卖价、云厂商股票分析、模型推理 token 价格；不给买卖建议、目标价或仓位。
+description: 当用户要跟踪 GPU 算力租赁的价格与可用供给、判断算力供需是紧还是松、看 B200/H200/H100 的租金走势与代际溢价、比较 Vast/Runpod/CoreWeave/Nebius 等平台的报价、观察 Ornn OCPI 成交价指数、判断 spot 折价与库存档位变化，或要生成 GPU 算力供需监控日报与 HTML Dashboard 时使用此 skill。适用提问包括“现在 H100 租金多少”“B200 价格在涨还是在跌”“GPU 算力紧不紧张”“算力价格拐点到了吗”“Vast 上 H200 报价分布怎么样”“Runpod 库存什么情况”“B200 相对 H200 的溢价在收窄吗”“spot 折价扩大了吗”“出一份今天的算力监控日报”“把算力监控导成网页”，也用于跟踪推理需求端的 token 量与价——看 AI token 用量在涨还是在跌、token 价格跌里有多少是真降价多少是往便宜模型迁移、重建 OpenRouter 全站名义 spend、看付费与免费 token 的结构、判断算力涨价是真需求拉动还是供给收缩。适用提问还包括“AI token 用量涨了多少”“token 价格跌 20% 是真降价吗”“推理需求还在扩张吗”“下游收入池撑不撑得住这么贵的算力”，以及配置每日定时采集、回填历史 90 天数据、补录 CoreWeave/Nebius 挂牌价、排查某个数据源为什么没采到数。脚本只做采集、标准化、确定性统计与渲染；“这是不是真拐点、要不要采信这个信号”由模型判断。不覆盖 GPU 芯片二级市场买卖价、云厂商股票分析、推理毛利率与单位 token 成本地板（需人工吞吐表，尚未启用）；不给买卖建议、目标价或仓位。
 ---
 
 # GPU 算力价格与供给监控
 
 ## 目标
 
-1. **做什么**：把「实际成交价、市场化报价、标准云报价、可用供给」四类证据放进同一个口径框架，
-   每日采集入库，产出证据包与日报，用来识别 GPU 算力从紧缺、平衡到宽松的边际拐点。
-   覆盖 B200 / H200 SXM / H100 SXM 三个 MVP SKU，趋势窗口固定 90 天。
-2. **不做什么**：不覆盖 GPU 芯片二级市场买卖价、云厂商股票、推理 token 价格；
-   不给买卖建议、目标价、仓位；不在脚本里下结论；不用前值冒充最新值。
+1. **做什么**：两端各一套证据。**成本端**把「实际成交价、市场化报价、标准云报价、
+   可用供给」四类放进同一个口径框架，识别 GPU 算力从紧缺、平衡到宽松的边际拐点，
+   覆盖 B200 / H200 SXM / H100 SXM 三个 MVP SKU；**需求端**把推理 token 的量与价
+   放进另一套口径，回答「算力这么贵，下游用量和付费跟不跟得上」。趋势窗口固定 90 天。
+2. **不做什么**：不覆盖 GPU 芯片二级市场买卖价、云厂商股票、推理毛利率与单位 token
+   成本地板（要人工吞吐表，尚未启用）；不给买卖建议、目标价、仓位；
+   不在脚本里下结论；不用前值冒充最新值。
 3. **给谁用**：需要判断算力成本与产能松紧的研究员、算力采购方、AI 基础设施投资人。
 
 ## 适用边界
 
 - **时区与结算**：所有日期按 UTC。Ornn 的日度指数是 T-1 结算，所以「今天」的跨平台中枢
   结构性地不含 Ornn——这不是故障，报告里要说明锚定的是哪一天。
-- **单位**：一律 USD / GPU·hour。整机报价除以 `node_gpu_count` 后入库，换算过程存在 `unit_basis` 里可审计。
+- **单位**：成本端一律 USD / GPU·hour（整机报价除以 `node_gpu_count` 后入库，换算过程
+  存在 `unit_basis` 里可审计）；需求端一律 USD / Mtok 与 tokens/day。
+  **两套单位不许出现在同一个减法里**——把它们接起来要等成本地板（P1，未启用）。
 - **SKU 粒度**：canonical id 到 SKU 级（`H100 SXM` 而不是 `H100`）。同日 Runpod 的
   SXM/NVL/PCIe 实测差 35%，合并会让「价格中枢」随混样比例漂移。
 - **历史不同龄**：Ornn 是唯一有历史接口的源，免费层直接给滚动 3 个月日度历史，
@@ -26,8 +30,17 @@ description: 当用户要跟踪 GPU 算力租赁的价格与可用供给、判�
   开始往后长，**补不回去**。**报告里必须讲清这个不对称。**
 - **脑 / 手边界**：脚本做采集、单位换算、分位数、变化率、折价、供给指数、评分算术、渲染。
   「这是不是真拐点、这个信号采不采信、缺的这块影响多大」全部由模型判断。
-- **冷启动**：供给序列不足 21 天时评分会拒绝出数（`usable=false`）。这是正确状态，
-  不要自己心算一个近似值填进去。
+- **token 历史是另一条序列**：日度模型级补不回去，但厂商级周度能回到 2025-09-01。
+  两者口径不同，只有后者能回答"过去一年买家结构怎么搬的"——结构效应指数首跑
+  100 → 44.8，光结构迁移一项就把均价拉低约 55%。**不要把它的百分比和日度
+  `mix_shift` 放进同一个句子里比大小。**
+- **token 侧的三条硬边界**：①OpenRouter 是 merchant API 层的偏斜样本，**不是全市场**
+  （first-party 订阅、超大厂内部推理、企业直签合同都在外面）；②spend 是**按挂牌价计的
+  名义支出**，不是实际账单——缓存命中只按约 12% 计费而命中率不可观测；
+  ③`reasoning` / `cached` / `tool_calls` 三个字段源侧全为 0，**token 通胀拆不了**。
+  这三句写报告时必须出现，完整口径见 `references/token_taxonomy.md`。
+- **冷启动**：供给序列不足 21 天时评分会拒绝出数（`usable=false`）；token 序列不足 7 天时
+  `mix_shift` 与三分解同样不出数。这是正确状态，不要自己心算一个近似值填进去。
 - **告警未校准**：阈值是起始配置，默认 `record_only` 只入库不推送。积累 2–3 个月历史后才谈校准。
 
 ## 领域方法论
@@ -63,6 +76,22 @@ description: 当用户要跟踪 GPU 算力租赁的价格与可用供给、判�
 **高端在涨，是某一代 GPU 结构性紧缺，还是整条算力曲线都在抬？** 如果连消费级的
 RTX 5090 都在同步上行，那更像整体需求在抬。
 
+### 需求端：量和价要一起看，价还要拆成两半
+
+token 侧不做 `V × P` 那种指数——按用量加权的平均单价 ≡ 总支出 ÷ 总 token 数，
+乘出来是恒等式，不可证伪。真正有信息量的是把价格拆开，**并行跑两个指数**：
+
+- **混合价**（当期权重）= 名义 spend ÷ 付费 token。它会被购买结构迁移污染，
+  **单看没有意义**——没有任何一家降价，它也能跌。
+- **固定篮子真价格**（锁基期权重的 Laspeyres）。篮子成员是「模型家族 × 变体」，
+  家族 = 剥掉日期后缀的 slug，所以家族内的版本升级降价算真降价，跨家族迁移不算。
+
+**两者之差就是 mix_shift**，即"往便宜模型迁移"贡献了多少百分点。这是本 skill
+唯一的原创信息：市场上争论 token 价格跌是不是 AI 见顶的人，没有一个把它拆开。
+
+量的主轴只用 **paid**：实测零价 token 占 40.1%，其中免费档只有 7.8%，主体是匿名
+stealth 模型在免费放量，它进出榜单就能让总量凭空跳一大截。
+
 ### 价格降了，先分辨成因
 
 价格跌 + offer 份额涨 + 可用 GPU 涨 = 供给释放，这是真宽松；
@@ -72,21 +101,29 @@ RTX 5090 都在同步上行，那更像整体需求在抬。
 
 ## 工作流程
 
-0. **首次部署先回填**：`python scripts/backfill.py`。把有历史接口的源（目前只有 Ornn）
-   的 90 天日度历史一次拉满，并逐条报出每个 (source, gpu, price_type) 实际覆盖到哪天、
-   多少个点、有没有缺口。日常不用重复跑。
+0. **首次部署先回填**：`python scripts/backfill.py`。两路历史一次拉满——Ornn 的 90 天
+   日度成交价，以及 OpenRouter 的**厂商级周度量**（51 个已结算周，回到 2025-09-01，
+   落进 `token_volume_history`）。逐条报出实际覆盖到哪天、多少个点、有没有缺口。
+   日常不用重复跑。**注意 token 的历史与日度序列不是一条线**：口径不同（实测同日
+   各厂商比值 1.42–1.75，非常数倍），只能看份额与增速，不能读绝对水平。
 1. **采集**：`python scripts/collect.py`。逐源独立，单源失败不阻断其它源，
    成败与耗时写进 `gpu_collect_runs`。入库前跑一遍跨日离群检测，命中的行
    标 `quality_flag=suspicious` 并在摘要里列出来（打标不丢弃）。
 2. **算指标**：`python scripts/metrics.py --output evidence/gpu-<date>.json`。
    产出确定性证据包——变化率、分位数、报价分散度、折价、供给指数与广度、
-   评分分项、确认型拐点、源健康度。触发的告警同时写进 `gpu_alerts`。
+   评分分项、确认型拐点、源健康度，以及需求端的 `token_market` 段
+   （量的三条线、双价格指数、mix_shift、名义 spend 与它的缓存敏感性带）。
+   触发的告警同时写进 `gpu_alerts`；**token 侧本轮不设告警**，序列没长出来之前
+   阈值无从谈起。
 3. **读证据**：先看 `source_health` 判断今天数据完不完整，再看每个型号的
    `cross_platform_median.anchor_date` / `anchor_basis` 确认锚在哪一天什么口径，
    然后逐条检查 `changes.*.usable`。**`usable=false` 的百分比不许进结论。**
 4. **判断**：按 `references/signal_reading.md` 的读法，分辨价格变动的成因，
-   决定评分和告警采不采信，给出整体结论与三个型号各自的状态。
+   决定评分和告警采不采信，给出整体结论与三个型号各自的状态。需求端按第七节那张
+   成因矩阵读：**GPU 涨价 + token 量涨 = 真需求拉动；GPU 涨价 + 量平 = 供给收缩**。
+   混合价单独下跌不算降价，必须和固定篮子一起看。
 5. **写报告**：按 `references/report_template.md` 写 Markdown 到 `reports/gpu-<date>.md`。
+   需求端单独一小节，frontmatter 里对应 `verdict.token` 与 `verdict.panels.tokens`。
    **frontmatter 的 `verdict` 块是仪表盘唯一认的判断契约**，必须填；正文写仪表盘表达不了的
    推理，不要重抄报价表和标准报价矩阵——那是仪表盘的活。
 6. **出仪表盘**：`python scripts/render_report_html.py --evidence evidence/gpu-<date>.json
@@ -104,13 +141,20 @@ RTX 5090 都在同步上行，那更像整体需求在抬。
 ```bash
 python scripts/collect.py                              # 采全部启用的源
 python scripts/collect.py --sources ornn,runpod        # 只采指定源
+python scripts/collect.py --sources openrouter         # 只采需求端的 token 量价
 python scripts/collect.py --date 2026-08-25            # 指定观测日
 python scripts/collect.py --history-days 120           # Ornn 回填窗口
 python scripts/collect.py --dry-run                    # 采但不写库
 ```
 
-输出一份 JSON 摘要：每个源的 status（`ok` / `empty` / `failed`）、行数、耗时、
-未映射的原始标识、降级说明。全部源都失败才返回非 0。
+输出一份 JSON 摘要：每个源的 status（`ok` / `empty` / `failed`）、行数（价格 / 供给 /
+token 三类分开计）、耗时、未映射的原始标识、降级说明。全部源都失败才返回非 0。
+
+`openrouter` 这一路两个接口一起取：rankings 拿模型 × 变体级的日度 token 量，
+`/api/v1/models` 拿挂牌价，按「剥掉日期后缀的 base + variant」join。**join 键少了
+variant 就会错得很离谱**——`:batch` / `:free` 条目与标准条目共用同一个
+`canonical_slug`（实测 69 处碰撞），标准流量会被按半价甚至零价计，spend 差 63%。
+另外给 spend 前 10 名额外拉一次 `/endpoints`，量化默认价与各 provider 的价差带。
 
 ### `scripts/backfill.py` —— 历史回填与覆盖体检
 
@@ -184,6 +228,8 @@ python scripts/daily_update.py --skip-collect
 | `gpu_supply_observations` | 供给观测：offer 数与份额、可用 GPU、库存档位、region 覆盖 |
 | `gpu_collect_runs` | 每源每次采集的成败、耗时、行数、未映射标识 |
 | `gpu_alerts` | 触发的告警，键 (obs_date, gpu_model, rule_id)，供跨日追溯 |
+| `token_model_observations` | 需求端量价，键 (obs_date, source, model_slug, variant)，带 `coverage_scope` / `price_basis` 两个判据字段 |
+| `token_volume_history` | 厂商级周度历史量，键 (week_start, source, author)，口径独立不与日度相减 |
 
 ### 配置
 
@@ -193,6 +239,7 @@ python scripts/daily_update.py --skip-collect
 | `config/sources.yaml` | 端点、认证、冻结的查询口径、质量过滤、样本量门槛 |
 | `config/thresholds.yaml` | 评分权重与压缩尺度、告警规则与阈值、确认型拐点门槛 |
 | `config/attested_prices.yaml` | 人工核对的 CoreWeave / Nebius / Crusoe 挂牌价 |
+| `config/token_basket.yaml` | token 价格指数的篮子（基期、成员粒度、在场权重下限）、缓存敏感性假设、覆盖率与集中度守卫、日度构成图的 top_n 与排名依据 |
 
 改 `sources.yaml` 里的 query 会改变 `query_fingerprint`，历史序列从此断成两段——
 指标层不会拿不同指纹的观测相减。改之前先在 `references/source_notes.md` 记一笔。
@@ -207,8 +254,9 @@ python scripts/daily_update.py --skip-collect
 每条用完整通顺的话写完，**不要退化成「字段A - 字段B - 字段C」式的横杠拼接**；
 结构化对照（平台 × GPU × 价格）才用表格。
 
-**数据呈现**：价格两位小数，单位 USD/GPU·hour；百分比一位小数带正负号；
-每个数字都要能在 evidence 里找到出处。
+**数据呈现**：GPU 价格两位小数、单位 USD/GPU·hour；token 价格三位小数、
+单位 USD/Mtok；token 量用 T / B 缩写；百分比一位小数带正负号；
+每个数字都要能在 evidence 里找到出处。**两套单位不许出现在同一个减法里。**
 
 **必须做到**：
 - 缺失就写「暂无数据 / 采集失败」，不用前值冒充最新值。
@@ -216,6 +264,8 @@ python scripts/daily_update.py --skip-collect
 - 状态用文字表达，不能只靠颜色。
 - 标出锚定日与它比日历日晚几天。
 - 说「可能是 X」时讲清凭什么，以及什么证据会推翻它。
+- 写到需求端就得把三句边界说出来：merchant API 层的偏斜样本而非全市场、
+  spend 是名义挂牌价口径而非实际账单、reasoning/cached 拿不到所以 token 通胀拆不了。
 
 ## 示例
 

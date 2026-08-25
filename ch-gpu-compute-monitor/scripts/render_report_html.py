@@ -51,7 +51,7 @@ SHORT = {"B200": "B200", "H200 SXM": "H200", "H100 SXM": "H100"}
 # 状态语义。颜色只是辅助，文字始终在场（PRD §10）。
 # 每块面板底部那行「异动说明」：说今天这块图里什么在动、值得看哪里。
 # 这是判断不是取数，所以由模型写在 verdict.panels 里，脚本只搬运 + 查字数。
-PANEL_KEYS = ("price", "supply", "quotes", "matrix")
+PANEL_KEYS = ("price", "supply", "quotes", "matrix", "tokens")
 PANEL_NOTE_MAX = 100
 
 TONES = {
@@ -78,7 +78,6 @@ body { font-size: 14.5px; line-height: 1.6; }
 .sec-head { display: flex; justify-content: space-between; align-items: baseline;
             gap: 12px; flex-wrap: wrap; }
 .sec-head strong { font-size: 14.5px; color: var(--ink-1); }
-.sec-note { font-size: 11.5px; color: var(--ink-4); margin-top: 3px; }
 .sec-hint { font-size: 11.5px; color: var(--ink-4); font-family: var(--font-mono); }
 /* 判断面板 */
 .verdict { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
@@ -287,8 +286,7 @@ def render_confirmation_strip(ev: Dict[str, Any]) -> str:
             f"中间不许有缺口")
     return f"""<section class="panel stack">
   <div class="sec-head">
-    <div><strong>拐点确认</strong><div class="sec-note">{esc(rule)}</div></div>
-    <div class="sec-hint">两个方向对称判定</div>
+    <div><strong>拐点确认</strong></div>
   </div>
   <div class="conf-grid">{''.join(cells)}</div>
 </section>"""
@@ -316,6 +314,10 @@ def line_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
     span = hi - lo
     lo -= span * 0.10
     hi += span * 0.10
+    # 全是非负值时下界不许跌破 0：量指数这类序列跨度大，10% 的留白会把坐标轴
+    # 拉出一个 -93 的刻度，读起来像是这个指数可以为负。
+    if min(values) >= 0:
+        lo = max(lo, 0.0)
 
     def x_of(day: str) -> float:
         i = days.index(day)
@@ -379,8 +381,7 @@ def render_price_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     if refs:
         bits = "　·　".join(
             f"{esc(m)} {pct(b.get('window_change_pct'))}" for m, b in refs.items())
-        body += (f'<div class="footnote">参照系 90D：{bits}'
-                 f'　—　用来分辨高端上涨是某一代稀缺，还是整条算力曲线在抬。</div>')
+        body += f'<div class="footnote">参照系 90D　{bits}</div>' 
 
     anchor = ""
     first = (ev.get("models") or {}).get(ORDER[0]) or {}
@@ -390,8 +391,7 @@ def render_price_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
         anchor = f"锚定 {cross['anchor_date']}" + (f"（比日历日晚 {lag} 天）" if lag else "")
     return f"""<section class="panel">
   <div class="sec-head">
-    <div><strong>市场成交价趋势</strong>
-      <div class="sec-note">Ornn OCPI 日度结算 · 最近 90 天 · USD / GPU·h</div></div>
+    <div><strong>市场成交价趋势</strong></div>
     <div class="sec-hint">{esc(anchor)}</div>
   </div>
   {body}
@@ -428,8 +428,7 @@ def render_supply_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
             bits.append(f"{SHORT.get(model, model)} 暂无数据")
         else:
             bits.append(f"{SHORT.get(model, model)} {br['with_stock']}/{br['reporting']} 家有货")
-    breadth_line = (f'<div class="footnote">供给广度：{esc("　·　".join(bits))}'
-                    f'　—　宽松要算数，得从单个平台扩散到全市场。</div>')
+    breadth_line = f'<div class="footnote">供给广度　{esc("　·　".join(bits))}</div>' 
     body = line_chart(series, unit_prefix="", colors=colors, digits=0)
     if all(len(s["points"]) < 2 for s in series):
         body = ('<div class="empty">暂无数据：供给序列还不足 2 个观测点。<br>'
@@ -437,9 +436,7 @@ def render_supply_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
                 '所以这条曲线只能从首次采集当天往后长，补不回去。</div>')
     return f"""<section class="panel">
   <div class="sec-head">
-    <div><strong>可用供给趋势</strong>
-      <div class="sec-note">Offer 份额 / 可用 GPU 数指数化 · 缺失分量不计入</div></div>
-    <div class="sec-hint">越高 = 越宽松</div>
+    <div><strong>可用供给趋势</strong></div>
   </div>
   {body}
   {breadth_line}
@@ -494,9 +491,7 @@ def render_market_quotes(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
              '<tr><td class="na" colspan="9">暂无数据：今日没有采到市场化报价</td></tr>')
     return f"""<section class="panel">
   <div class="sec-head">
-    <div><strong>市场报价</strong>
-      <div class="sec-note">Marketplace 当前 Offer 分布 · 纯 GPU 费口径</div></div>
-    <div class="sec-hint">样本 &lt; 8 不出分位数</div>
+    <div><strong>市场报价</strong></div>
   </div>
   <div class="scroll"><table>
     <thead><tr><th>来源</th><th>GPU</th><th>Min</th><th>P25</th><th>中位</th>
@@ -553,20 +548,367 @@ def render_standard_matrix(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
             f'暂无数据：标准报价层今天没有可用条目</td></tr>')
     stale = [h["source"] for h in (ev.get("source_health") or [])
              if h.get("mode") == "attested" and not h.get("fresh")]
-    note = "CoreWeave 报整机价已折算单卡 · 含配套资源，与纯 GPU 费不同口径"
-    if stale:
-        note += f" · {'、'.join(stale)} 已过期需重新核对"
+    # 口径说明去掉了，但「人工核对已过期」是状态警告不是说明，必须留在页面上
+    stale_hint = (f'<div class="sec-hint bad">{esc("、".join(stale))} 已过期需重新核对</div>'
+                  if stale else "")
     return f"""<section class="panel">
   <div class="sec-head">
-    <div><strong>标准报价矩阵</strong>
-      <div class="sec-note">{esc(note)}</div></div>
-    <div class="sec-hint">Spot 列附折价</div>
+    <div><strong>标准报价矩阵</strong></div>
+    {stale_hint}
   </div>
   <div class="scroll"><table>
     <thead><tr><th>Provider</th>{head}</tr></thead>
     <tbody>{body}</tbody>
   </table></div>
   {panel_note(notes, "matrix")}
+</section>"""
+
+
+def tokens_fmt(value: Optional[float], digits: int = 2) -> str:
+    """token 数按 T / B / M 显示。原始数字有 13 位，摆出来没人读得动。"""
+    if value is None:
+        return '<span class="na">暂无数据</span>'
+    value = float(value)
+    for scale, unit in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(value) >= scale:
+            return f"{value / scale:.{digits}f}{unit}"
+    return f"{value:.0f}"
+
+
+def usd_fmt(value: Optional[float]) -> str:
+    if value is None:
+        return '<span class="na">暂无数据</span>'
+    value = float(value)
+    if abs(value) >= 1e6:
+        return f"${value / 1e6:.2f}M"
+    if abs(value) >= 1e3:
+        return f"${value / 1e3:.1f}K"
+    return f"${value:.2f}"
+
+
+def _win(block: Dict[str, Any], label: str = "7d") -> str:
+    """一个变化率的展示：不可用就说清为什么，不给近似值。"""
+    entry = ((block or {}).get("changes") or {}).get(label) or {}
+    if entry.get("pct") is None or not entry.get("usable"):
+        reason = entry.get("reason") or "窗口起点无观测"
+        return f'<span class="na">{esc(label.upper())} 不可用（{esc(reason)}）</span>'
+    return f'{esc(label.upper())} {pct(entry.get("pct"))}'
+
+
+def _rebased(series: List[Dict[str, Any]], base_date: Optional[str]) -> List[Dict[str, Any]]:
+    """把一条水平序列换算成 base=100 的指数，好和固定篮子指数放进同一张图。"""
+    points = {p["date"]: p["value"] for p in series or []}
+    if not base_date or base_date not in points or not points[base_date]:
+        return []
+    base = points[base_date]
+    return [{"date": d, "value": v / base * 100.0} for d, v in sorted(points.items())]
+
+
+# 构成图的条带配色。前 7 条给模型，最后一条固定给「其他」——
+# 用最灰的那个色，免得长尾在视觉上比主力还抢眼。
+BAND_COLORS = ["var(--clay)", "var(--blue)", "var(--cyan)", "var(--violet)",
+               "var(--orange)", "var(--pos)", "var(--warn)"]
+OTHER_COLOR = "var(--ink-4)"
+
+
+def band_color(index: int, key: str) -> str:
+    if key == "__other__":
+        return OTHER_COLOR
+    return BAND_COLORS[index % len(BAND_COLORS)]
+
+
+def stacked_area(comp: Dict[str, Any]) -> str:
+    """堆叠面积图：每条带子是一个模型，叠起来的高度就是当日总量。"""
+    series = comp.get("series") or []
+    bands = comp.get("bands") or []
+    if len(series) < 2:
+        return ""
+    W, H = 1440, 340
+    L, R, T, B = 66, 24, 16, 30
+    days = [p["date"] for p in series]
+    top = max(p["total"] for p in series) or 1
+    hi = top * 1.08
+
+    def x_of(i: int) -> float:
+        return L + (0 if len(days) < 2 else i / (len(days) - 1) * (W - L - R))
+
+    def y_of(value: float) -> float:
+        return T + (1 - value / hi) * (H - T - B)
+
+    parts = []
+    for i in range(5):
+        y = T + i * (H - T - B) / 4
+        v = hi - i * hi / 4
+        parts.append(f'<line class="gridline" x1="{L}" y1="{y:.1f}" '
+                     f'x2="{W - R}" y2="{y:.1f}"/>')
+        parts.append(f'<text x="{L - 6}" y="{y + 3.5:.1f}" text-anchor="end">'
+                     f'{v / 1e12:.1f}T</text>')
+    ticks = 6 if len(days) >= 12 else min(3, len(days))
+    idxs = sorted({round(i * (len(days) - 1) / max(ticks - 1, 1))
+                   for i in range(ticks)})
+    for idx in idxs:
+        anchor = ("start" if idx == 0
+                  else "end" if idx == len(days) - 1 else "middle")
+        parts.append(f'<text x="{x_of(idx):.1f}" y="{H - 9}" '
+                     f'text-anchor="{anchor}">{esc(days[idx][5:])}</text>')
+
+    floor = [0.0] * len(series)
+    for bi, band in enumerate(bands):
+        key = band["key"]
+        tops = [floor[i] + (p["values"].get(key) or 0) for i, p in enumerate(series)]
+        upper = " ".join(("M" if i == 0 else "L") + f"{x_of(i):.1f} {y_of(v):.1f}"
+                         for i, v in enumerate(tops))
+        lower = " ".join(f"L{x_of(i):.1f} {y_of(v):.1f}"
+                         for i in range(len(series) - 1, -1, -1)
+                         for v in [floor[i]])
+        parts.append(f'<path d="{upper} {lower} Z" fill="{band_color(bi, key)}" '
+                     f'fill-opacity="0.85" stroke="none"/>')
+        floor = tops
+    return (f'<div class="scroll"><svg class="chart" viewBox="0 0 {W} {H}" '
+            f'role="img" aria-label="日度 token 构成堆叠面积图">{"".join(parts)}</svg></div>')
+
+
+def stacked_bar(comp: Dict[str, Any]) -> str:
+    """只有一天时的退路：横向 100% 堆叠条，照样把构成摆出来。
+
+    面积图需要至少两天才有"面积"。序列只有一天就画一条线是自欺欺人，
+    但构成本身当天就成立——所以换成条，而不是显示"暂无数据"。
+    """
+    series = comp.get("series") or []
+    bands = comp.get("bands") or []
+    if not series:
+        return ""
+    latest = series[-1]
+    total = latest["total"] or 1
+    W, H = 1440, 62
+    x = 0.0
+    parts = []
+    for bi, band in enumerate(bands):
+        value = latest["values"].get(band["key"]) or 0
+        width = value / total * W
+        if width <= 0:
+            continue
+        parts.append(f'<rect x="{x:.1f}" y="0" width="{width:.1f}" height="34" '
+                     f'fill="{band_color(bi, band["key"])}" fill-opacity="0.85"/>')
+        if width > 62:
+            parts.append(f'<text x="{x + width / 2:.1f}" y="52" text-anchor="middle">'
+                         f'{value / total * 100:.1f}%</text>')
+        x += width
+    return (f'<div class="scroll"><svg class="chart" viewBox="0 0 {W} {H}" '
+            f'style="min-width:520px" role="img" '
+            f'aria-label="当日 token 构成堆叠条">{"".join(parts)}</svg></div>')
+
+
+def composition_table(comp: Dict[str, Any]) -> str:
+    rows = []
+    for bi, band in enumerate(comp.get("bands") or []):
+        swatch = (f'<span style="display:inline-block;width:10px;height:10px;'
+                  f'border-radius:2px;background:{band_color(bi, band["key"])};'
+                  f'margin-right:7px"></span>')
+        variant = band.get("variant")
+        tag = (f' <span class="dim">:{esc(variant)}</span>'
+               if variant and variant != "standard" else "")
+        if band["key"] == "__other__":
+            name = f'其他 <span class="dim">（{band.get("model_count", 0)} 个模型）</span>'
+            priced = '<span class="na">混合</span>'
+        else:
+            name = esc(band["label"]) + tag
+            priced = ('有价' if band.get("is_priced")
+                      else '<span class="warnc">零价</span>')
+        rows.append(
+            f'<tr><td>{swatch}{name}</td>'
+            f'<td class="num">{(band.get("share") or 0) * 100:.1f}%</td>'
+            f'<td class="num">{tokens_fmt(band.get("tokens"))}</td>'
+            f'<td class="num">{(band.get("requests") or 0):,}</td>'
+            f'<td class="num">{tokens_fmt(band.get("tokens_per_request"), 1)}</td>'
+            f'<td class="num">{usd_fmt(band.get("spend_usd"))}</td>'
+            f'<td>{priced}</td></tr>')
+    return (f'<div class="scroll"><table><thead><tr><th>模型</th><th>份额</th>'
+            f'<th>token</th><th>调用次数</th><th>tok/次</th><th>名义 spend</th>'
+            f'<th>计价</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>')
+
+
+def render_composition(comp: Dict[str, Any]) -> str:
+    if not comp.get("usable"):
+        reason = comp.get("reason") or "证据包里没有构成数据"
+        return (f'<div class="empty">暂无数据：{esc(reason)}。</div>')
+    days = len(comp.get("series") or [])
+    chart = stacked_area(comp) if days >= 2 else stacked_bar(comp)
+    rank_label = "token 量" if comp.get("ranked_by") == "tokens" else "调用次数"
+    total = comp.get("total_tokens_anchor")
+    lead = (f'日度总量构成　按{rank_label}取前 {comp.get("top_n")} 名，其余归「其他」'
+            f'　·　全站 {tokens_fmt(total)} tokens　·　'
+            f'{comp.get("model_count_anchor")} 个模型 × 变体'
+            + ('' if days >= 2 else '　·　序列仅 1 天，暂以堆叠条呈现'))
+    tail = '<b>「零价」那几条不产生任何收入</b>，别把它们算进需求强度'
+    return (f'<div class="footnote">{lead}</div>{chart}'
+            f'{composition_table(comp)}<div class="footnote">{tail}</div>')
+
+
+def render_token_panel(ev: Dict[str, Any], notes: Dict[str, Any],
+                       verdict: Dict[str, Any]) -> str:
+    tok = ev.get("token_market") or {}
+    if not tok.get("usable"):
+        reason = tok.get("reason") or "证据包里没有 token_market 段"
+        return f"""<section class="panel">
+  <div class="sec-head">
+    <div><strong>推理需求：token 量与价</strong></div>
+  </div>
+  <div class="empty">暂无数据：{esc(reason)}。<br>不用前值冒充，也不画空图。</div>
+  {panel_note(notes, "tokens")}
+</section>"""
+
+    price = tok.get("price") or {}
+    volume = tok.get("volume") or {}
+    spend = tok.get("spend") or {}
+    cov = tok.get("coverage") or {}
+    conc = tok.get("concentration") or {}
+    basket = price.get("basket") or {}
+
+    mix7 = (price.get("mix_shift") or {}).get("7d") or {}
+    mix_value = (f'{mix7["pct_points"]:+.1f}pp' if mix7.get("pct_points") is not None
+                 else '<span class="na">不可用</span>')
+    mix_why = (mix7.get("meaning") if mix7.get("pct_points") is not None
+               else mix7.get("reason") or "序列不足")
+
+    cells = [
+        ("付费 token / 日", tokens_fmt((volume.get("paid") or {}).get("latest", {}).get("value")
+                                       if (volume.get("paid") or {}).get("latest") else None),
+         _win(volume.get("paid"))),
+        ("名义 spend / 日", usd_fmt(((spend.get("nominal_usd_per_day") or {}).get("latest") or {})
+                                    .get("value")),
+         _win(spend.get("nominal_usd_per_day"))),
+        ("混合价（当期权重）",
+         (f'${(price.get("blended") or {}).get("latest", {}).get("value", 0):.3f}/Mtok'
+          if (price.get("blended") or {}).get("latest") else '<span class="na">暂无</span>'),
+         _win(price.get("blended"))),
+        ("固定篮子真价格",
+         (f'{(price.get("laspeyres") or {}).get("latest", {}).get("value", 0):.1f}'
+          if (price.get("laspeyres") or {}).get("latest") else '<span class="na">暂无</span>'),
+         _win(price.get("laspeyres"))),
+        ("结构迁移贡献 7D", mix_value, esc(str(mix_why))),
+    ]
+    grid = "".join(
+        f'<div class="conf-cell"><div class="name">{esc(name)}</div>'
+        f'<div class="state">{value}</div><div class="why">{why}</div></div>'
+        for name, value, why in cells)
+
+    base_date = basket.get("base_date")
+    price_series = [
+        {"name": "混合价", "label": "混合价（当期权重）",
+         "points": _rebased((price.get("blended") or {}).get("series"), base_date)},
+        {"name": "固定篮子", "label": "固定篮子真价格",
+         "points": (price.get("laspeyres") or {}).get("series") or []},
+    ]
+    price_chart = line_chart(price_series, unit_prefix="",
+                             colors={"混合价": "var(--gpu-b200)",
+                                     "固定篮子": "var(--gpu-h100)"}, digits=1)
+    volume_chart = render_composition(tok.get("composition") or {})
+
+    rows = []
+    for key, label, note in (
+            ("paid", "付费 token", "进 spend 与混合价的那一条，主轴"),
+            ("free_variant", "free 变体", "明码零价的免费档"),
+            ("zero_priced_standard", "零价 standard", "主体是匿名 stealth 模型免费放量")):
+        block = volume.get(key) or {}
+        latest = (block.get("latest") or {}).get("value")
+        rows.append(
+            f'<tr><td>{esc(label)}</td><td class="num">{tokens_fmt(latest)}</td>'
+            f'<td class="num">{_win(block, "1d")}</td>'
+            f'<td class="num">{_win(block, "7d")}</td>'
+            f'<td class="num">{_win(block, "30d")}</td>'
+            f'<td class="dim">{esc(note)}</td></tr>')
+    table = (f'<div class="scroll"><table><thead><tr><th>量的分层</th><th>最新</th>'
+             f'<th>1D</th><th>7D</th><th>30D</th><th>说明</th></tr></thead>'
+             f'<tbody>{"".join(rows)}</tbody></table></div>')
+
+    hist = tok.get("history") or {}
+    history_html = ""
+    if hist.get("usable"):
+        vi = hist.get("volume_index") or {}
+        se = hist.get("structure_effect_index") or {}
+        vol_chart = line_chart(
+            [{"name": "量指数", "label": "厂商级周度量指数",
+              "points": vi.get("series") or []}],
+            unit_prefix="", colors={"量指数": "var(--gpu-h200)"}, digits=0)
+        se_chart = line_chart(
+            [{"name": "结构效应", "label": "结构效应指数",
+              "points": se.get("series") or []}],
+            unit_prefix="", colors={"结构效应": "var(--gpu-b200)"}, digits=1)
+        shares = hist.get("author_shares") or {}
+        def _top(block, n=4):
+            items = sorted((block or {}).items(), key=lambda kv: -kv[1])[:n]
+            return "、".join(f"{k} {v * 100:.1f}%" for k, v in items)
+        g4 = (vi.get("growth_4w") or {}).get("pct")
+        g13 = (vi.get("growth_13w") or {}).get("pct")
+        se_latest = (se.get("series") or [{}])[-1].get("value")
+        se_line = (f'结构效应指数 {se_latest:.1f}　·　<b>买家往便宜厂商迁移，'
+                   f'把均价拉低了 {100 - se_latest:.0f}%</b>'
+                   if se.get("usable") and se_latest else
+                   f'结构效应指数不可用：{esc(str(se.get("reason")))}')
+        history_html = f"""
+  <div class="sec-head" style="margin-top:18px">
+    <div><strong>一年结构史</strong></div>
+  </div>
+  <div class="footnote">量指数　近 4 周 {pct(g4)}　·　近 13 周 {pct(g13)}</div>
+  {vol_chart}
+  <div class="footnote">{se_line}</div>
+  {se_chart}
+  <div class="footnote">份额搬家　{esc(str(shares.get("first_week")))}：{esc(_top(shares.get("first")))}
+    　→　{esc(str(shares.get("latest_week")))}：{esc(_top(shares.get("latest")))}</div>"""
+
+    cache = spend.get("cache_sensitivity") or []
+    cache_bits = "、".join(
+        f'命中率 {int(c["assumed_cache_hit_rate"] * 100)}% → 高估 {c["nominal_overstatement_pct"]:.0f}%'
+        for c in cache if c.get("nominal_overstatement_pct") is not None)
+    band = price.get("provider_band") or {}
+    band_bit = (f'默认价 → 各 provider 中位 {band["median_ratio"]:.3f}x'
+                f'（最低 {band["min_ratio"]:.3f}x、最高 {band["max_ratio"]:.3f}x，'
+                f'覆盖 {band["covered_spend_share"] * 100:.0f}% 的 prompt 支出）'
+                if band.get("median_ratio") else "逐 provider 价差带暂无数据")
+
+    # 只留「发现」与「证据溯源」两类。口径说明（名义支出、样本偏斜、
+    # reasoning 拆不了、默认价的 provider 价差带）不在仪表盘上讲——
+    # 它们的归属是 references/token_taxonomy.md 与报告正文。
+    caveats = []
+    if conc.get("concentration_warning"):
+        caveats.append(
+            f'<b>集中度告警</b>　{esc(str(conc.get("top_model")))} 一家占当日 token '
+            f'{(conc.get("top_model_share") or 0) * 100:.1f}%，超过 '
+            f'{(conc.get("warn_line") or 0) * 100:.0f}% 的守卫线')
+    caveats.append(
+        f'覆盖率 {(cov.get("matched_token_share") or 0) * 100:.2f}%　·　'
+        f'篮子 {basket.get("member_count", "—")} 个家族　·　基期 {esc(str(base_date))}　·　'
+        f'指纹 {esc(str(basket.get("fingerprint", "—")))}')
+    footnotes = "".join(f'<div class="footnote">{c}</div>' for c in caveats)
+
+    entry = (verdict or {}).get("token") or {}
+    chip = ""
+    if entry.get("status"):
+        label, cls = TONES.get(str(entry.get("tone", "unknown")), TONES["unknown"])
+        chip = (f'<div class="conf-cell"><div class="name">模型判断</div>'
+                f'<div class="state {cls}">{esc(entry["status"])}</div>'
+                f'<div class="why">{esc(entry.get("note") or label)}</div></div>')
+
+    anchor = tok.get("anchor_date")
+    lag = tok.get("alignment_lag_days")
+    align = ("与 GPU 侧同日" if lag == 0 else
+             f"与 GPU 锚定日差 {lag} 天" if lag is not None else "GPU 锚定日缺失")
+    days = tok.get("series_days") or 0
+    start_hint = (f'　·　序列自 {esc(str(tok.get("series_start")))} 起累积，共 {days} 天'
+                  if days < 7 else "")
+    return f"""<section class="panel">
+  <div class="sec-head">
+    <div><strong>推理需求：token 量与价</strong></div>
+    <div class="sec-hint">锚定 {esc(str(anchor))}（{esc(align)}）{start_hint}</div>
+  </div>
+  <div class="conf-grid">{grid}{chip}</div>
+  {price_chart}
+  {volume_chart}
+  {table}
+  {history_html}
+  {footnotes}
+  {panel_note(notes, "tokens")}
 </section>"""
 
 
@@ -583,6 +925,9 @@ def render_sources(ev: Dict[str, Any]) -> str:
         if not row.get("fresh"):
             text += "（不新鲜）"
         meta = f"{row.get('price_rows') or 0}P / {row.get('supply_rows') or 0}S"
+        # 需求端的源一行价格都没有，只有 token 行；不显示出来会看着像空跑
+        if row.get("token_rows"):
+            meta += f" / {row['token_rows']}T"
         if row.get("age_days") is not None:
             meta += "　今日" if row["age_days"] == 0 else f"　{row['age_days']}d 前"
         cards.append(
@@ -594,8 +939,8 @@ def render_sources(ev: Dict[str, Any]) -> str:
     return f"""<section class="panel">
   <div class="sec-head">
     <div><strong>数据源与采集状态</strong>
-      <div class="sec-note">Cron → Raw → Normalize → Validate → Persist → Metrics</div></div>
-    <div class="sec-hint">P = 价格行 / S = 供给行</div>
+      </div>
+    <div class="sec-hint">P = 价格行 / S = 供给行 / T = token 行</div>
   </div>
   <div class="srcs">{body}</div>
 </section>"""
@@ -626,7 +971,7 @@ def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
     <div>
       <div class="eyebrow">全型号总览 · 最近 {esc(window)} 天 · 不设型号与时间切换</div>
       <h1>GPU Compute Price &amp; Supply Monitor</h1>
-      <div class="sub">成交价 × 市场报价 × 标准报价 × 可用供给 → 判断 GPU 算力供需边际变化</div>
+      <div class="sub">成交价 × 市场报价 × 标准报价 × 可用供给 × 推理 token 量价 → 算力供需与下游需求的边际变化</div>
     </div>
     <div class="stamp">观测日 {esc(asof)} · 数据源 {ok}/{len(health)} · UTC {esc(stamp)}</div>
   </header>
@@ -636,6 +981,7 @@ def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
   <div class="stack">{render_supply_panel(ev, notes)}</div>
   <div class="stack">{render_market_quotes(ev, notes)}</div>
   <div class="stack">{render_standard_matrix(ev, notes)}</div>
+  <div class="stack">{render_token_panel(ev, notes, verdict)}</div>
   {render_sources(ev)}
 </main>
 </body>

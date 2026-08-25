@@ -37,14 +37,16 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import db_adapter  # noqa: E402
-from collectors import ornn  # noqa: E402
+from collectors import openrouter, ornn  # noqa: E402
 from collectors.base import CollectorError, utc_now_iso  # noqa: E402
 from gpu_catalog import load_catalog  # noqa: E402
 
 CONFIG_DIR = SCRIPT_DIR.parent / "config"
 
 # 有历史接口的源在这里注册。没有的源不是"忘了实现"，是接口不存在。
-HISTORY_COLLECTORS = {"ornn": ornn.collect}
+# openrouter 是个混合体：日度模型级序列补不回去，但厂商级周度的 market-share
+# 有 52 周真历史，落进另一张表（口径不同，见 collectors/openrouter.collect_history）。
+HISTORY_COLLECTORS = {"ornn": ornn.collect, "openrouter": openrouter.collect_history}
 
 
 def _d(value: Any) -> str:
@@ -76,6 +78,28 @@ def coverage(start: str, end: str) -> Dict[str, Any]:
             "contiguous": missing == 0,
         })
     return {"window": {"start": start, "end": end}, "series": out}
+
+
+def token_history_coverage() -> Dict[str, Any]:
+    """厂商级周度历史的覆盖情况。单独报，不和日度价格序列混在一张表里。"""
+    rows = db_adapter.read_token_history("2000-01-01", date.today().isoformat())
+    if not rows:
+        return {"weeks": 0, "reason": "库里还没有周度历史（跑一次 backfill 再看）"}
+    weeks = sorted({_d(r["week_start"]) for r in rows})
+    expected = ((date.fromisoformat(weeks[-1])
+                 - date.fromisoformat(weeks[0])).days // 7) + 1
+    authors = sorted({r["author"] for r in rows})
+    return {
+        "first_week": weeks[0], "last_week": weeks[-1],
+        "weeks": len(weeks), "expected_weeks": expected,
+        "gap_weeks": expected - len(weeks),
+        "contiguous": expected == len(weeks),
+        "authors": authors,
+        "rows": len(rows),
+        "unit_basis": sorted({r.get("unit_basis") for r in rows}),
+        "note": ("厂商级周度，口径与日度模型级序列不同：只能看份额与增速，"
+                 "不能读绝对水平，也不能与日度序列相减"),
+    }
 
 
 def main() -> int:
@@ -122,11 +146,16 @@ def main() -> int:
                 continue
             started = time.time()
             try:
-                # 多要 5 天，抵消 T-1 结算和边界日的对齐损耗
-                result = fn(cfg, catalog, end, history_days=args.days + 5,
-                            defaults=defaults)
+                if name == "openrouter":
+                    # 它不吃 GPU 目录，也不按天回填：一次拿全 52 周厂商级历史
+                    result = fn(cfg, defaults=defaults)
+                else:
+                    # 多要 5 天，抵消 T-1 结算和边界日的对齐损耗
+                    result = fn(cfg, catalog, end, history_days=args.days + 5,
+                                defaults=defaults)
                 db_adapter.save_prices(result.prices)
                 db_adapter.save_supply(result.supply)
+                db_adapter.save_token_history(result.history)
                 latency = int((time.time() - started) * 1000)
                 db_adapter.save_run({
                     "run_id": run_id, "source": name, "obs_date": end,
@@ -139,7 +168,8 @@ def main() -> int:
                 })
                 summary["backfilled"][name] = {
                     "status": "ok", "price_rows": len(result.prices),
-                    "supply_rows": len(result.supply), "latency_ms": latency,
+                    "supply_rows": len(result.supply),
+                    "token_history_rows": len(result.history), "latency_ms": latency,
                     "notes": result.notes,
                 }
             except (CollectorError, Exception) as exc:  # noqa: BLE001
@@ -147,6 +177,7 @@ def main() -> int:
                     "status": "failed", "error": f"{type(exc).__name__}: {exc}"[:500]}
 
     summary["coverage"] = coverage(start, end)
+    summary["token_history_coverage"] = token_history_coverage()
     summary["finished_at"] = utc_now_iso()
 
     text = json.dumps(summary, ensure_ascii=False, indent=2, default=str)

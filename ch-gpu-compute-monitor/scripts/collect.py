@@ -33,7 +33,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import db_adapter  # noqa: E402
 import validate  # noqa: E402
-from collectors import attested, ornn, runpod, vast  # noqa: E402
+from collectors import attested, openrouter, ornn, runpod, vast  # noqa: E402
 from collectors.base import CollectResult, CollectorError, utc_now_iso  # noqa: E402
 from gpu_catalog import load_catalog  # noqa: E402
 
@@ -43,6 +43,7 @@ API_COLLECTORS = {
     "ornn": ornn.collect,
     "vast": vast.collect,
     "runpod": runpod.collect,
+    "openrouter": openrouter.collect,
 }
 
 
@@ -132,17 +133,20 @@ def main() -> int:
             if not args.dry_run:
                 db_adapter.save_prices(result.prices)
                 db_adapter.save_supply(result.supply)
+                db_adapter.save_tokens(result.tokens)
             # 采成功但一行都没拿到，和"采到了"不是一回事：健康度面板要能区分
-            status = "ok" if (result.prices or result.supply) else "empty"
+            status = "ok" if (result.prices or result.supply or result.tokens) else "empty"
             record.update({
                 "finished_at": utc_now_iso(), "status": status, "latency_ms": latency,
                 "price_rows": len(result.prices), "supply_rows": len(result.supply),
+                "token_rows": len(result.tokens),
                 "unmapped_ids": sorted(set(result.unmapped)) or None,
                 "error": None, "raw_path": result.raw_path,
             })
             summary["sources"][name] = {
                 "status": status, "price_rows": len(result.prices),
-                "supply_rows": len(result.supply), "latency_ms": latency,
+                "supply_rows": len(result.supply), "token_rows": len(result.tokens),
+                "latency_ms": latency,
                 "unmapped": sorted(set(result.unmapped)), "notes": result.notes,
                 "suspicious": suspicious, "raw_path": result.raw_path,
             }
@@ -150,7 +154,7 @@ def main() -> int:
             latency = int((time.time() - started) * 1000)
             record.update({
                 "finished_at": utc_now_iso(), "status": "failed", "latency_ms": latency,
-                "price_rows": 0, "supply_rows": 0, "unmapped_ids": None,
+                "price_rows": 0, "supply_rows": 0, "token_rows": 0, "unmapped_ids": None,
                 "error": f"{type(exc).__name__}: {exc}"[:1000], "raw_path": None,
             })
             summary["sources"][name] = {"status": "failed",

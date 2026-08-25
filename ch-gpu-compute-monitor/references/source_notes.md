@@ -37,6 +37,52 @@
 - PRD 点名的 `availableGpuCounts` 字段在当前 schema 里没查到；供给侧目前靠 `stockStatus` + `maxGpuCount`。要用它得先确认字段名还在不在。
 - 结构变了会怎样：`gpuTypes` 为空、或一个目标 SKU 都没匹配上，都直接抛错并提示去核对 `config/gpu_catalog.yaml` 的别名——**因为"匹配不上"和"市场上没有"看起来一模一样，必须靠报错区分。**
 
+## OpenRouter（P0，需求端量价）
+
+两个接口一起用，缺一路就出不了 spend：
+
+| 用途 | 端点 | 认证 | 实测（2026-08-25） |
+|---|---|---|---|
+| 量 | `/api/frontend/v1/rankings/models?view=day` | 匿名 | 530 行，模型 × 变体级 prompt/completion token 与请求数 |
+| 价 | `/api/v1/models` | 匿名 | 419 条，`pricing.{prompt,completion,input_cache_read}`，USD/token |
+| 价差带 | `/api/v1/models/{id}/endpoints` | 匿名 | 单模型最多 36 个 provider 报价 |
+
+**字段陷阱（踩过的，按严重程度排）：**
+
+1. **`:batch` / `:free` 变体与标准条目共用同一个 `canonical_slug`**，实测 69 处碰撞。
+   按 canonical_slug 建索引会让变体覆盖标准条目，标准流量被按半价甚至零价计——
+   整站 spend 从 $8.69M/日 掉到 $5.33M/日（差 63%），混合价从 $0.797 掉到 $0.529/Mtok。
+   **join 键必须是「剥掉 `-20YYMMDD` 的 base + variant」**，`variant_permaslug` 就是
+   `model_permaslug:variant`。
+2. **`total_native_tokens_reasoning` / `total_native_tokens_cached` / `total_tool_calls`
+   全部为 0**。字段在、值不给，别以为能拿它们拆 reasoning 通胀或缓存命中率。
+3. **零价的主体不是免费档**。`free` 变体只占当日 token 7.8%，而零价合计 40.1%——
+   差额几乎全来自榜首那个匿名 stealth 模型（`standard` 变体、pricing 明写 `"0"`、
+   一家 32.3%）。它进出榜单会让总量序列直接跳一大截。
+4. **日期范围参数全部被忽略**。`start_date` / `days` / `period` 传了不报错也不生效，
+   只有 `view=day|week|month` 有用。别以为能靠参数回填历史。
+5. **`view=day` 给的是已结算的 T-1**。相隔 20 分钟的两次快照逐行完全一致
+   （总量都是 18,352,911,061,978），说明那一天是冻结的、不是滚动 24 小时累加。
+   与 Ornn 的 T-1 UTC 结算天然同日。**日切是否严格卡在 UTC 午夜尚未验证**，
+   要跨日采集后回看，所以证据包里照样报 `alignment_lag_days`。
+6. **未匹配的 0.43% 主要是 embedding / rerank / STT / 图像视频模型**，
+   它们本来就不按 token 对价。记进 `unmapped` 供审计，不静默丢。
+
+**降级策略**：这是未文档化的前端接口，随时可能改版或封禁。解析不出预期结构一律抛
+`CollectorError`，绝不返回 0 或沿用前值。逐 provider 价差带是补强不是核心，
+取不到时降级成一条 note，不拖垮整次采集。
+
+**历史只有一路，而且是另一个口径**：`/api/frontend/v1/rankings/market-share`
+给厂商级周度序列，实测 52 个点回到 2025-09-01（丢掉未结算的最新点后 51 个）。
+它与日榜对不上（同日各厂商比值 1.42–1.75，非常数倍），落进 `token_volume_history`
+另一张表，只能看份额与增速。**最后一个点是活的**：两次取数间它从 2.78443e13
+降到 2.75664e13，会往下走说明是滑动窗口，采集时就丢。厂商级是硬上限——
+grouping / by / level / dimension / limit 五个参数试过，都不改变返回的键集合。
+
+**日度序列没有历史接口**：rankings 只回当下，序列从首采日往后长，补不回去。
+`view=month` 的滚动总量能给上线首日一个水平锚，但那是一个数不是一条线；
+能不能靠每日差分构造 30 日滚动序列，要拿两天以上真实数据验过才敢用。
+
 ## CoreWeave / Nebius / Crusoe（P1/P2，人工核对）
 
 只有营销 Pricing 页，没有稳定 API，**不做自动抓取**。理由：这类页面改版频繁，

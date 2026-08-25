@@ -332,7 +332,9 @@ class TestCollectDryRun:
 
         source_cfg = {"enabled": True}
         result = type("Result", (), {
-            "prices": [], "supply": [], "notes": [], "unmapped": [], "raw_path": None,
+            # 形状要跟 CollectResult 保持一致：v1.1 起多了 tokens（需求端量价）
+            "prices": [], "supply": [], "tokens": [], "notes": [],
+            "unmapped": [], "raw_path": None,
         })()
         original_sources = collect.load_sources
         original_catalog = collect.load_catalog

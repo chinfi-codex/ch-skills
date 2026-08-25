@@ -35,6 +35,8 @@ PRICE_TABLE = "gpu_price_observations"
 SUPPLY_TABLE = "gpu_supply_observations"
 RUN_TABLE = "gpu_collect_runs"
 ALERT_TABLE = "gpu_alerts"
+TOKEN_TABLE = "token_model_observations"
+TOKEN_HISTORY_TABLE = "token_volume_history"
 
 _IS_PG = BACKEND is Backend.POSTGRESQL
 _JSON_TYPE = "jsonb" if _IS_PG else "text"
@@ -93,6 +95,7 @@ SCHEMA = [
         latency_ms      integer,
         price_rows      integer,
         supply_rows     integer,
+        token_rows      integer,
         unmapped_ids    {_JSON_TYPE},
         error           text,
         raw_path        text,
@@ -116,7 +119,56 @@ SCHEMA = [
         PRIMARY KEY (obs_date, gpu_model, rule_id)
     )
     """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {TOKEN_TABLE} (
+        obs_date                        date    NOT NULL,
+        source                          text    NOT NULL,
+        model_family                    text    NOT NULL,
+        model_slug                      text    NOT NULL,
+        variant                         text    NOT NULL,
+        coverage_scope                  text    NOT NULL DEFAULT 'gateway',
+        price_basis                     text    NOT NULL DEFAULT 'list',
+        observed_at                     {_TS_TYPE},
+        prompt_tokens                   bigint,
+        completion_tokens               bigint,
+        requests                        bigint,
+        price_prompt_usd_per_mtok       numeric,
+        price_completion_usd_per_mtok   numeric,
+        price_cache_read_usd_per_mtok   numeric,
+        spend_usd                       numeric,
+        is_priced                       boolean,
+        price_match                     text,
+        provider_price_min_usd_per_mtok numeric,
+        provider_price_median_usd_per_mtok numeric,
+        provider_price_max_usd_per_mtok numeric,
+        provider_count                  integer,
+        query_fingerprint               text,
+        raw_ref                         text,
+        quality_flag                    text    NOT NULL DEFAULT 'ok',
+        PRIMARY KEY (obs_date, source, model_slug, variant)
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {TOKEN_HISTORY_TABLE} (
+        week_start      date    NOT NULL,
+        source          text    NOT NULL,
+        author          text    NOT NULL,
+        observed_at     {_TS_TYPE},
+        tokens          bigint,
+        unit_basis      text,
+        coverage_scope  text    NOT NULL DEFAULT 'gateway',
+        grain           text    NOT NULL DEFAULT 'author_weekly',
+        settled         boolean NOT NULL DEFAULT true,
+        query_fingerprint text,
+        raw_ref         text,
+        quality_flag    text    NOT NULL DEFAULT 'ok',
+        PRIMARY KEY (week_start, source, author)
+    )
+    """,
     f"CREATE INDEX IF NOT EXISTS idx_gpu_price_model_date ON {PRICE_TABLE} (gpu_model, obs_date)",
+    f"CREATE INDEX IF NOT EXISTS idx_token_hist_week ON {TOKEN_HISTORY_TABLE} (week_start)",
+    f"CREATE INDEX IF NOT EXISTS idx_token_obs_date ON {TOKEN_TABLE} (obs_date)",
+    f"CREATE INDEX IF NOT EXISTS idx_token_family_date ON {TOKEN_TABLE} (model_family, obs_date)",
     f"CREATE INDEX IF NOT EXISTS idx_gpu_supply_model_date ON {SUPPLY_TABLE} (gpu_model, obs_date)",
     f"CREATE INDEX IF NOT EXISTS idx_gpu_runs_date ON {RUN_TABLE} (obs_date)",
     f"CREATE INDEX IF NOT EXISTS idx_gpu_alerts_model_date ON {ALERT_TABLE} (gpu_model, obs_date)",
@@ -139,8 +191,8 @@ SUPPLY_KEY = ["obs_date", "source", "gpu_model", "market_segment"]
 
 RUN_COLUMNS = [
     "run_id", "source", "obs_date", "started_at", "finished_at", "status",
-    "attempts", "latency_ms", "price_rows", "supply_rows", "unmapped_ids",
-    "error", "raw_path",
+    "attempts", "latency_ms", "price_rows", "supply_rows", "token_rows",
+    "unmapped_ids", "error", "raw_path",
 ]
 RUN_KEY = ["run_id", "source"]
 
@@ -150,15 +202,62 @@ ALERT_COLUMNS = [
 ]
 ALERT_KEY = ["obs_date", "gpu_model", "rule_id"]
 
+TOKEN_COLUMNS = [
+    "obs_date", "source", "model_family", "model_slug", "variant",
+    "coverage_scope", "price_basis", "observed_at",
+    "prompt_tokens", "completion_tokens", "requests",
+    "price_prompt_usd_per_mtok", "price_completion_usd_per_mtok",
+    "price_cache_read_usd_per_mtok", "spend_usd", "is_priced", "price_match",
+    "provider_price_min_usd_per_mtok", "provider_price_median_usd_per_mtok",
+    "provider_price_max_usd_per_mtok", "provider_count",
+    "query_fingerprint", "raw_ref", "quality_flag",
+]
+# 主键不含 model_family：它是从 model_slug 剥日期后缀推出来的派生列，
+# 放进键里等于允许同一个 slug 在两个家族下各存一行。
+TOKEN_KEY = ["obs_date", "source", "model_slug", "variant"]
+
+TOKEN_HISTORY_COLUMNS = [
+    "week_start", "source", "author", "observed_at", "tokens", "unit_basis",
+    "coverage_scope", "grain", "settled", "query_fingerprint", "raw_ref",
+    "quality_flag",
+]
+TOKEN_HISTORY_KEY = ["week_start", "source", "author"]
+
 _JSON_COLUMNS = {"capacity_detail", "unmapped_ids"}
 
 
+# 后加的列。CREATE TABLE IF NOT EXISTS 对已经建好的表是空操作，所以
+# 升级到带 token 维度的版本时，老库里的 gpu_collect_runs 不会自己长出
+# token_rows —— 那样 upsert 会直接报 column 不存在。这里按后端各自的方式
+# 查一遍现有列，缺哪个补哪个。ADD COLUMN IF NOT EXISTS 只有 PG 支持，
+# SQLite 没有，所以不能靠它。
+ADDED_COLUMNS = {
+    RUN_TABLE: {"token_rows": "integer"},
+}
+
+
+def _existing_columns(cur, table: str) -> set:
+    if _IS_PG:
+        cur.execute(adapt_sql(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?"),
+            (table,))
+        return {r[0] if not isinstance(r, dict) else r["column_name"]
+                for r in cur.fetchall()}
+    cur.execute(f"PRAGMA table_info({table})")
+    return {r[1] if not isinstance(r, dict) else r["name"] for r in cur.fetchall()}
+
+
 def init_schema() -> None:
-    """建表。重复调用安全。"""
+    """建表 + 补列。重复调用安全。"""
     with get_connection() as conn:
         cur = conn.cursor()
         for stmt in SCHEMA:
             cur.execute(adapt_sql(stmt))
+        for table, columns in ADDED_COLUMNS.items():
+            present = _existing_columns(cur, table)
+            for name, ddl in columns.items():
+                if name not in present:
+                    cur.execute(adapt_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
         conn.commit()
 
 
@@ -193,6 +292,33 @@ def save_prices(rows: Iterable[Dict[str, Any]]) -> int:
 
 def save_supply(rows: Iterable[Dict[str, Any]]) -> int:
     return _upsert(SUPPLY_TABLE, SUPPLY_COLUMNS, SUPPLY_KEY, rows)
+
+
+def save_tokens(rows: Iterable[Dict[str, Any]]) -> int:
+    """推理 token 的量价观测。
+
+    幂等键 (obs_date, source, model_slug, variant)：variant 必须在键里——
+    :batch 是折扣档、:free 是零价档，合并进标准档会让同一批 token 按错价计。
+    """
+    return _upsert(TOKEN_TABLE, TOKEN_COLUMNS, TOKEN_KEY, rows)
+
+
+def save_token_history(rows: Iterable[Dict[str, Any]]) -> int:
+    """周度厂商级历史量。单独一张表是刻意的——它与日度模型级观测口径不同，
+    放同一张表迟早会有人把两者 union 起来当一条序列用。"""
+    return _upsert(TOKEN_HISTORY_TABLE, TOKEN_HISTORY_COLUMNS, TOKEN_HISTORY_KEY, rows)
+
+
+def read_token_history(start_week: str, end_week: str,
+                       sources: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    sql = (f"SELECT * FROM {TOKEN_HISTORY_TABLE} "
+           "WHERE week_start >= ? AND week_start <= ?")
+    params: List[Any] = [start_week, end_week]
+    if sources:
+        sql += " AND source IN (" + ", ".join(["?"] * len(sources)) + ")"
+        params.extend(sources)
+    sql += " ORDER BY week_start, source, author"
+    return _fetch(sql, tuple(params))
 
 
 def save_run(row: Dict[str, Any]) -> int:
@@ -299,6 +425,17 @@ def read_supply(start_date: str, end_date: str,
     return _fetch(sql, tuple(params))
 
 
+def read_tokens(start_date: str, end_date: str,
+                sources: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    sql = f"SELECT * FROM {TOKEN_TABLE} WHERE obs_date >= ? AND obs_date <= ?"
+    params: List[Any] = [start_date, end_date]
+    if sources:
+        sql += " AND source IN (" + ", ".join(["?"] * len(sources)) + ")"
+        params.extend(sources)
+    sql += " ORDER BY obs_date, source, model_slug, variant"
+    return _fetch(sql, tuple(params))
+
+
 def read_runs(start_date: str, end_date: str) -> List[Dict[str, Any]]:
     sql = (f"SELECT * FROM {RUN_TABLE} WHERE obs_date >= ? AND obs_date <= ? "
            "ORDER BY obs_date DESC, source")
@@ -321,5 +458,6 @@ def latest_run_per_source() -> List[Dict[str, Any]]:
 if __name__ == "__main__":
     init_schema()
     print(json.dumps({"ok": True, "backend": BACKEND.value,
-                      "tables": [PRICE_TABLE, SUPPLY_TABLE, RUN_TABLE, ALERT_TABLE]},
+                      "tables": [PRICE_TABLE, SUPPLY_TABLE, RUN_TABLE, ALERT_TABLE,
+                                 TOKEN_TABLE, TOKEN_HISTORY_TABLE]},
                      ensure_ascii=False))

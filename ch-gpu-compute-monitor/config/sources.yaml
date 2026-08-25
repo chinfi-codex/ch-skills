@@ -99,3 +99,38 @@ sources:
     has_history_api: false
     pricing_url: "https://www.crusoe.ai/cloud/pricing"
     max_age_days: 30
+
+  # ---- 需求端：推理 token 量价（不是 GPU 价格，单位也不同，见 references/token_taxonomy.md）----
+  openrouter:
+    enabled: true
+    priority: P0
+    role: token_market_gateway
+    base_url: "https://openrouter.ai"
+    auth: none                     # 量与价两路都匿名可用
+    endpoints:
+      rankings: "/api/frontend/v1/rankings/models"
+      models: "/api/v1/models"
+      endpoints_of: "/api/v1/models/{model}/endpoints"
+      market_share: "/api/frontend/v1/rankings/market-share"   # 唯一有真历史的一路
+    query:
+      view: day                    # day = 已结算的 T-1；week/month 是滚动窗口，不入日度序列
+      provider_probe_top_n: 10     # 只给 spend 前 N 名拉逐 provider 报价，量化默认价的偏差
+    # 这两个字段决定「能不能和别的源相减」，等同价格侧的 price_type + market_segment。
+    # 将来接 Artificial Analysis / Vercel 时，它们的取值不同，序列就必须分开。
+    coverage_scope: gateway        # gateway | production_app | hyperscaler | benchmark
+    price_basis: list              # list | realized | synthetic_blended
+    # 日度模型级序列没有历史接口：rankings 只回当下，补不回去，从首采日开始长。
+    # 但 market-share 那一路有真历史——厂商级、周度、52 个点回到 2025-09-01。
+    # 两者口径不同，回填进的是另一张表 token_volume_history，不是同一条序列。
+    has_history_api: true
+    history:
+      dataset: market_share
+      grain: author_weekly
+      # 最后一个点是活的：相隔几分钟两次取数它会往下走（滑动窗口），一律丢弃。
+      drop_live_tail: true
+      # 与日榜对不上，实测同日各厂商比值 1.42–1.75，非常数倍，成因未定。
+      unit_basis: provider_reported_unverified
+    notes: >-
+      未文档化的前端接口，随时可能改版。join 键必须是「剥掉 -20YYMMDD 的 base + variant」——
+      :batch / :free 变体与标准条目共用同一个 canonical_slug（实测 69 处），
+      按 canonical_slug 建索引会让标准流量被按半价甚至零价计，spend 差 63%。

@@ -30,6 +30,12 @@ class CollectResult:
     source: str
     prices: List[Dict[str, Any]] = field(default_factory=list)
     supply: List[Dict[str, Any]] = field(default_factory=list)
+    # 推理 token 的量价观测。刻意不塞进 prices：单位是 USD/Mtok 与 tokens/day，
+    # 跟 USD/GPU·hour 不是一个量纲，混进同一张表迟早会有人把它们相减。
+    tokens: List[Dict[str, Any]] = field(default_factory=list)
+    # 周度、厂商级的历史量。与 tokens 分开装：两者口径不同，实测同一天
+    # 各厂商比值 1.42–1.75 不是常数倍，拼进一条序列就是造假。
+    history: List[Dict[str, Any]] = field(default_factory=list)
     unmapped: List[str] = field(default_factory=list)
     raw_path: Optional[str] = None
     attempts: int = 0
@@ -157,6 +163,90 @@ def supply_row(*, obs_date: str, source: str, gpu_model: str,
         "source_total_offer_count": source_total_offer_count,
         "offer_share": None if offer_share is None else round(float(offer_share), 6),
         "capacity_detail": capacity_detail,
+        "query_fingerprint": query_fingerprint_,
+        "raw_ref": raw_ref,
+        "quality_flag": quality_flag,
+    }
+
+
+def token_row(*, obs_date: str, source: str, model_family: str, model_slug: str,
+              variant: str, coverage_scope: str = "gateway", price_basis: str = "list",
+              observed_at: Optional[str] = None,
+              prompt_tokens: Optional[int] = None,
+              completion_tokens: Optional[int] = None,
+              requests: Optional[int] = None,
+              price_prompt_usd_per_mtok: Optional[float] = None,
+              price_completion_usd_per_mtok: Optional[float] = None,
+              price_cache_read_usd_per_mtok: Optional[float] = None,
+              spend_usd: Optional[float] = None,
+              is_priced: Optional[bool] = None,
+              price_match: str = "unmatched",
+              provider_price_min_usd_per_mtok: Optional[float] = None,
+              provider_price_median_usd_per_mtok: Optional[float] = None,
+              provider_price_max_usd_per_mtok: Optional[float] = None,
+              provider_count: Optional[int] = None,
+              query_fingerprint_: Optional[str] = None, raw_ref: Optional[str] = None,
+              quality_flag: str = "ok") -> Dict[str, Any]:
+    """一行「模型 × 变体」的日度量价观测。
+
+    variant 是主键的一部分，不是装饰：:batch 是折扣档、:free 是零价档，
+    合并进标准档会让同一批 token 被按错误的价计。
+    """
+    def _r(value: Optional[float], digits: int = 8) -> Optional[float]:
+        return None if value is None else round(float(value), digits)
+
+    return {
+        "obs_date": obs_date,
+        "source": source,
+        "model_family": model_family,
+        "model_slug": model_slug,
+        "variant": variant,
+        "coverage_scope": coverage_scope,
+        "price_basis": price_basis,
+        "observed_at": observed_at or utc_now_iso(),
+        "prompt_tokens": None if prompt_tokens is None else int(prompt_tokens),
+        "completion_tokens": None if completion_tokens is None else int(completion_tokens),
+        "requests": None if requests is None else int(requests),
+        "price_prompt_usd_per_mtok": _r(price_prompt_usd_per_mtok, 6),
+        "price_completion_usd_per_mtok": _r(price_completion_usd_per_mtok, 6),
+        "price_cache_read_usd_per_mtok": _r(price_cache_read_usd_per_mtok, 6),
+        "spend_usd": _r(spend_usd, 6),
+        "is_priced": is_priced,
+        "price_match": price_match,
+        "provider_price_min_usd_per_mtok": _r(provider_price_min_usd_per_mtok, 6),
+        "provider_price_median_usd_per_mtok": _r(provider_price_median_usd_per_mtok, 6),
+        "provider_price_max_usd_per_mtok": _r(provider_price_max_usd_per_mtok, 6),
+        "provider_count": provider_count,
+        "query_fingerprint": query_fingerprint_,
+        "raw_ref": raw_ref,
+        "quality_flag": quality_flag,
+    }
+
+
+def token_history_row(*, week_start: str, source: str, author: str,
+                      tokens: Optional[int] = None,
+                      unit_basis: str = "provider_reported_unverified",
+                      coverage_scope: str = "gateway", grain: str = "author_weekly",
+                      settled: bool = True, observed_at: Optional[str] = None,
+                      query_fingerprint_: Optional[str] = None,
+                      raw_ref: Optional[str] = None,
+                      quality_flag: str = "ok") -> Dict[str, Any]:
+    """一行「厂商 × 周」的历史量观测。
+
+    `unit_basis` 默认标成未核实：这条序列的 token 计数与日榜对不上
+    （实测同日各厂商比值 1.42–1.75，不是常数倍），成因未定。
+    所以它只能用来看份额与增速，不能用来读绝对水平，更不能和日度序列相减。
+    """
+    return {
+        "week_start": week_start,
+        "source": source,
+        "author": author,
+        "observed_at": observed_at or utc_now_iso(),
+        "tokens": None if tokens is None else int(tokens),
+        "unit_basis": unit_basis,
+        "coverage_scope": coverage_scope,
+        "grain": grain,
+        "settled": settled,
         "query_fingerprint": query_fingerprint_,
         "raw_ref": raw_ref,
         "quality_flag": quality_flag,

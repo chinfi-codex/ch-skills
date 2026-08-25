@@ -324,6 +324,92 @@ class Evidence:
             "today_rows": detail,
         }
 
+    # ---------- 报价分散度 / 供给广度 ----------
+    def quote_dispersion(self, model: str) -> List[Dict[str, Any]]:
+        """P75 − P25，PRD §4.2 的 Quote Dispersion。
+
+        分散度是「报价竞争程度与市场分化」的直接读数：供给稀缺时个别机器能
+        要出高价，分布被拉开；供给端定价趋同则收窄。绝对值跨型号不可比
+        （B200 单价本来就高），所以同时给相对中位数的百分比。
+        """
+        out: List[Dict[str, Any]] = []
+        latest_by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for row in self.prices:
+            if row["gpu_model"] != model or row["quality_flag"] != "ok":
+                continue
+            if row["price_type"] not in ("offer_p25", "offer_p75", "offer_median"):
+                continue
+            key = (row["source"], row["market_segment"])
+            day = _d(row["obs_date"])
+            slot = latest_by_key.setdefault(key, {"date": day})
+            if day < slot["date"]:
+                continue
+            if day > slot["date"]:
+                slot.clear()
+                slot["date"] = day
+            slot[row["price_type"]] = _f(row["price_usd_gpu_hour"])
+            slot["sample_count"] = row.get("sample_count")
+
+        for (source, segment), slot in sorted(latest_by_key.items()):
+            p25, p75 = slot.get("offer_p25"), slot.get("offer_p75")
+            median = slot.get("offer_median")
+            if p25 is None or p75 is None:
+                out.append({"source": source, "segment": segment, "date": slot["date"],
+                            "spread": None,
+                            "reason": "样本不足，未产出 P25/P75"})
+                continue
+            out.append({
+                "source": source, "segment": segment, "date": slot["date"],
+                "p25": round(p25, 6), "p75": round(p75, 6),
+                "spread": round(p75 - p25, 6),
+                "spread_pct_of_median": (round((p75 - p25) / median * 100, 2)
+                                         if median else None),
+                "sample_count": slot.get("sample_count"),
+            })
+        return out
+
+    def supply_breadth(self, model: str) -> Dict[str, Any]:
+        """多平台「有货」占比，PRD §4.2 的 Supply Breadth。
+
+        单平台放量可能只是那家在促销；宽松要算数，得从一个平台扩散到全市场。
+        「有货」的判定按各源能给的信号：报了 offer 就算有货，报了库存档位就看
+        档位不是 None。判不出来的源不进分母——分母里塞一个没表态的源，
+        会把「没数据」读成「没货」。
+        """
+        latest_day = None
+        for row in self.supply:
+            if row["gpu_model"] != model:
+                continue
+            day = _d(row["obs_date"])
+            latest_day = day if latest_day is None or day > latest_day else latest_day
+        if latest_day is None:
+            return {"date": None, "with_stock": 0, "reporting": 0, "breadth": None,
+                    "reason": "当日没有任何供给观测"}
+
+        per_source: Dict[str, Optional[bool]] = {}
+        for row in self.supply:
+            if row["gpu_model"] != model or _d(row["obs_date"]) != latest_day:
+                continue
+            source = row["source"]
+            has_stock: Optional[bool] = None
+            if row.get("offer_count") is not None:
+                has_stock = int(row["offer_count"]) > 0
+            elif row.get("stock_status") is not None:
+                has_stock = str(row["stock_status"]) not in ("None", "none")
+            if has_stock is None:
+                continue
+            per_source[source] = bool(per_source.get(source)) or has_stock
+
+        reporting = len(per_source)
+        with_stock = sum(1 for v in per_source.values() if v)
+        return {
+            "date": latest_day,
+            "with_stock": with_stock,
+            "reporting": reporting,
+            "breadth": round(with_stock / reporting, 4) if reporting else None,
+            "sources": {k: bool(v) for k, v in sorted(per_source.items())},
+        }
+
     # ---------- 折价 ----------
     def discounts(self, model: str) -> List[Dict[str, Any]]:
         """折价必须同源同 segment 比。跨平台算 spot 折价是错的——
@@ -500,6 +586,7 @@ class Evidence:
                 continue
             fired.append({
                 "id": rule["id"], "label": rule["label"], "meaning": rule["meaning"],
+                "direction": rule.get("direction"),
                 "metric": rule["metric"], "observed": round(float(value), 4),
                 "threshold": rule["threshold"], "op": rule["op"],
                 "mode": cfg.get("mode", "record_only"),
@@ -507,6 +594,169 @@ class Evidence:
                         "触发只代表越过了这条线，不代表这是真信号。",
             })
         return fired
+
+    # ---------- 确认型拐点 ----------
+    def _daily_signal_tally(self, model: str) -> Dict[str, Dict[str, Any]]:
+        """逐日数一遍：有几类价格信号在下行、有几类供给信号在改善。
+
+        PRD §4.3 的「至少 3 类价格信号同时下行 + 至少 2 类供给信号改善」，
+        「类」指的是独立的观测序列，不是告警条数——同一个变化触发两条告警
+        只是同一个证据被数了两遍。所以这里按 (source, price_type) 逐条序列
+        算 7 日方向，一条序列一票。
+
+        不落新表：全部从已有观测重算。这样历史可回溯、口径改了能重跑，
+        也不会出现「表里的旧账和现在的算法对不上」。
+        """
+        noise = 1.0  # 7 日变化在 ±1% 以内当没动，避免噪音凑数
+
+        price_series: Dict[Tuple[str, str], Dict[str, float]] = {}
+        for row in self.prices:
+            if row["gpu_model"] != model or row["quality_flag"] != "ok":
+                continue
+            if row["price_type"] not in CORE_PRICE_TYPES:
+                continue
+            value = _f(row["price_usd_gpu_hour"])
+            if value is not None:
+                price_series.setdefault(
+                    (row["source"], row["price_type"]), {})[_d(row["obs_date"])] = value
+
+        supply_series: Dict[Tuple[str, str], Dict[str, float]] = {}
+        for row in self.supply:
+            if row["gpu_model"] != model:
+                continue
+            for field in ("offer_share", "available_gpu_count", "available_region_count"):
+                value = _f(row.get(field))
+                if value is not None:
+                    supply_series.setdefault(
+                        (row["source"], field), {})[_d(row["obs_date"])] = value
+            rank = stock_rank(row.get("stock_status"))
+            if rank is not None:
+                supply_series.setdefault(
+                    (row["source"], "stock_rank"), {})[_d(row["obs_date"])] = float(rank)
+
+        def direction_on(series: Dict[str, float], day: str) -> Optional[int]:
+            """该序列在 day 这天的 7 日方向：+1 上行 / -1 下行 / 0 基本没动。"""
+            if day not in series:
+                return None
+            target = (date.fromisoformat(day) - timedelta(days=7)).isoformat()
+            found = nearest_on_or_before(series, target)
+            if found is None:
+                return None
+            base_day, base_value = found
+            drift = (date.fromisoformat(target) - date.fromisoformat(base_day)).days
+            if drift > 2 or not base_value:
+                return None
+            change = (series[day] - base_value) / abs(base_value) * 100.0
+            return 0 if abs(change) < noise else (1 if change > 0 else -1)
+
+        days = sorted({d for s in list(price_series.values()) + list(supply_series.values())
+                       for d in s})
+        tally: Dict[str, Dict[str, Any]] = {}
+        for day in days:
+            price_dirs = [direction_on(s, day) for s in price_series.values()]
+            supply_dirs = [direction_on(s, day) for s in supply_series.values()]
+            price_dirs = [d for d in price_dirs if d is not None]
+            supply_dirs = [d for d in supply_dirs if d is not None]
+            tally[day] = {
+                "price_down": sum(1 for d in price_dirs if d < 0),
+                "price_up": sum(1 for d in price_dirs if d > 0),
+                "price_series_live": len(price_dirs),
+                # 供给「改善」= 可得性上升 = 偏松
+                "supply_up": sum(1 for d in supply_dirs if d > 0),
+                "supply_down": sum(1 for d in supply_dirs if d < 0),
+                "supply_series_live": len(supply_dirs),
+            }
+        return tally
+
+    def confirmation(self, model: str) -> Dict[str, Any]:
+        """确认型宽松 / 收紧（PRD §4.3 与 §8 最后一行）。
+
+        门槛：价格类 ≥N 个信号同向 + 供给类 ≥M 个信号同向，
+        且连续 ≥K 个「真实采到数的日子」，中间不允许缺口。
+
+        两个方向对称判定。达不到就明确说差在哪一步，不给模糊结论——
+        「还没确认」和「确认没有」是两回事。
+        """
+        cfg = self.thresholds["confirmation"]
+        need_price = int(cfg["min_price_signals"])
+        need_supply = int(cfg["min_supply_signals"])
+        need_days = int(cfg["min_consecutive_collection_days"])
+        allow_gap = int(cfg.get("allow_gap_days", 0))
+
+        tally = self._daily_signal_tally(model)
+        days = sorted(tally)
+        window_start = (date.fromisoformat(self.asof)
+                        - timedelta(days=self.window)).isoformat()
+        days = [d for d in days if window_start <= d <= self.asof]
+
+        def run_for(direction: str) -> Dict[str, Any]:
+            price_key = "price_down" if direction == "loosening" else "price_up"
+            supply_key = "supply_up" if direction == "loosening" else "supply_down"
+            streak, best, streak_start, best_span = 0, 0, None, None
+            prev_day: Optional[str] = None
+            for day in days:
+                row = tally[day]
+                meets = row[price_key] >= need_price and row[supply_key] >= need_supply
+                gap = ((date.fromisoformat(day) - date.fromisoformat(prev_day)).days - 1
+                       if prev_day else 0)
+                if meets and (prev_day is None or gap <= allow_gap):
+                    streak += 1
+                    streak_start = streak_start or day
+                elif meets:
+                    # 采集有缺口，按 allow_gap_days=0 的规矩重新起算
+                    streak, streak_start = 1, day
+                else:
+                    streak, streak_start = 0, None
+                if streak > best:
+                    best, best_span = streak, (streak_start, day)
+                prev_day = day
+            return {"streak_days": best, "span": best_span,
+                    "confirmed": best >= need_days}
+
+        loosening, tightening = run_for("loosening"), run_for("tightening")
+
+        # 参考日不取最后一天。Ornn 是 T-1 结算，「今天」那一行的价格序列必然
+        # 是空的，拿它报 blockers 会写成「在场价格序列 0 条」，读起来像全挂了。
+        # 取最近一个真的有序列在场的日子。
+        ref_day = next((d for d in reversed(days)
+                        if tally[d]["price_series_live"] or tally[d]["supply_series_live"]),
+                       None)
+        latest = tally.get(ref_day) if ref_day else None
+
+        blockers: List[str] = []
+        if latest is None:
+            blockers.append("窗口内没有任何序列能算出 7 日方向")
+        else:
+            if latest["price_series_live"] < need_price:
+                blockers.append(
+                    f"能算出 7 日方向的价格序列只有 {latest['price_series_live']} 条"
+                    f"（{ref_day}），凑不满 {need_price} 类同向信号的门槛")
+            if latest["supply_series_live"] < need_supply:
+                blockers.append(
+                    f"能算出 7 日方向的供给序列只有 {latest['supply_series_live']} 条"
+                    f"（{ref_day}），凑不满 {need_supply} 类同向信号的门槛")
+
+        verdict = "none"
+        if loosening["confirmed"]:
+            verdict = "loosening"
+        elif tightening["confirmed"]:
+            verdict = "tightening"
+
+        return {
+            "verdict": verdict,
+            "loosening": loosening,
+            "tightening": tightening,
+            "thresholds": {"min_price_signals": need_price,
+                           "min_supply_signals": need_supply,
+                           "min_consecutive_collection_days": need_days,
+                           "allow_gap_days": allow_gap},
+            "reference_date": ref_day,
+            "latest_tally": latest,
+            "collection_days_in_window": len(days),
+            "blockers": blockers,
+            "note": ("「还没确认」不等于「确认没有」。blockers 非空时说明"
+                     "连判定所需的信号条数都还凑不齐，此时任何方向都不该下定论。"),
+        }
 
     # ---------- 健康度 ----------
     def freshness(self) -> List[Dict[str, Any]]:
@@ -646,8 +896,11 @@ class Evidence:
                 "by_source": by_source,
                 "supply": supply,
                 "discounts": disc,
+                "quote_dispersion": self.quote_dispersion(model),
+                "supply_breadth": self.supply_breadth(model),
                 "score": self.score(model, cross, supply, disc),
                 "alerts": self.alerts(model, cross, supply, disc),
+                "confirmation": self.confirmation(model),
             }
 
         return {
@@ -669,6 +922,30 @@ class Evidence:
         }
 
 
+def persist_alerts(evidence: Dict[str, Any]) -> int:
+    """把当天触发的告警写进 gpu_alerts（PRD §6.1 步骤 8）。
+
+    先清掉当天的旧行再写：阈值调过之后，昨天触发、今天不该触发的那条
+    否则会永远留在库里，把后面的连续性判断带偏。
+    """
+    asof = evidence["asof"]
+    models = list((evidence.get("models") or {}).keys())
+    db_adapter.clear_alerts(asof, models)
+    rows = []
+    now = datetime.now(timezone.utc).isoformat()
+    for model, block in (evidence.get("models") or {}).items():
+        for alert in block.get("alerts") or []:
+            rows.append({
+                "obs_date": asof, "gpu_model": model, "rule_id": alert["id"],
+                "label": alert.get("label"), "direction": alert.get("direction"),
+                "metric": alert.get("metric"), "observed": alert.get("observed"),
+                "threshold": alert.get("threshold"), "op": alert.get("op"),
+                "meaning": alert.get("meaning"), "mode": alert.get("mode"),
+                "fired_at": now,
+            })
+    return db_adapter.save_alerts(rows)
+
+
 def _usable_pct(change: Optional[Dict[str, Any]]) -> Optional[float]:
     """只有基准点落在容差内的变化率才拿来用。"""
     if not change or change.get("pct") is None or not change.get("usable"):
@@ -681,16 +958,20 @@ def main() -> int:
     parser.add_argument("--date", default=date.today().isoformat())
     parser.add_argument("--window", type=int, default=90, help="趋势窗口天数，默认 90")
     parser.add_argument("--output", default=None)
+    parser.add_argument("--no-persist-alerts", action="store_true",
+                        help="只算不落库；默认会把触发的告警写进 gpu_alerts")
     args = parser.parse_args()
 
     evidence = Evidence(args.date, args.window).build()
+    persisted = None if args.no_persist_alerts else persist_alerts(evidence)
     text = json.dumps(evidence, ensure_ascii=False, indent=2, default=str)
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
         Path(args.output).write_text(text, encoding="utf-8")
         print(json.dumps({"ok": True, "output": args.output,
                           "models": list(evidence["models"]),
-                          "asof": evidence["asof"]}, ensure_ascii=False))
+                          "asof": evidence["asof"],
+                          "alerts_persisted": persisted}, ensure_ascii=False))
     else:
         print(text)
     return 0

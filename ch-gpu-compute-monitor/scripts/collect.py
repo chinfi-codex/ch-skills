@@ -22,7 +22,7 @@ import json
 import sys
 import time
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -32,6 +32,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import db_adapter  # noqa: E402
+import validate  # noqa: E402
 from collectors import attested, ornn, runpod, vast  # noqa: E402
 from collectors.base import CollectResult, CollectorError, utc_now_iso  # noqa: E402
 from gpu_catalog import load_catalog  # noqa: E402
@@ -47,6 +48,11 @@ API_COLLECTORS = {
 
 def load_sources() -> Dict[str, Any]:
     return yaml.safe_load((CONFIG_DIR / "sources.yaml").read_text(encoding="utf-8"))
+
+
+def load_validation_cfg() -> Dict[str, Any]:
+    raw = yaml.safe_load((CONFIG_DIR / "thresholds.yaml").read_text(encoding="utf-8"))
+    return (raw or {}).get("validation") or {}
 
 
 def run_one(name: str, cfg: Dict[str, Any], catalog, obs_date: str,
@@ -87,6 +93,17 @@ def main() -> int:
     if not args.dry_run:
         db_adapter.init_schema()
 
+    validation_cfg = load_validation_cfg()
+    # 比对基准一次性读出来：逐源各查一遍数据库没必要，而且基准应该是
+    # 「本次采集开始前」的历史，不该被同一批新数据影响。
+    history = None
+    if validation_cfg.get("enabled", True) and not args.dry_run:
+        # 多读一段：Ornn 每次带回 90 天历史，基准池要盖得住最早那一行
+        # 往前 lookback 天，否则回填的头几十天全都没有基准。
+        lookback = int(validation_cfg.get("lookback_days", 30)) + args.history_days
+        start = (date.fromisoformat(obs_date) - timedelta(days=lookback)).isoformat()
+        history = validate.trailing_history(start, obs_date)
+
     run_id = f"{obs_date}-{uuid.uuid4().hex[:8]}"
     summary: Dict[str, Any] = {"run_id": run_id, "obs_date": obs_date,
                                "started_at": utc_now_iso(), "sources": {}}
@@ -103,6 +120,13 @@ def main() -> int:
         }
         try:
             result = run_one(name, cfg, catalog, obs_date, defaults, args.history_days)
+            # Validate 在 Persist 之前（PRD §6.1 的步骤顺序）
+            suspicious = validate.flag_outliers(
+                result.prices, validation_cfg, history=history, obs_date=obs_date)
+            for hit in suspicious:
+                result.notes.append(
+                    f"离群标记 {hit['gpu_model']}/{hit['price_type']}: "
+                    f"{hit['value']} vs 基准 {hit['baseline_median']}（{hit['detail']}）")
             latency = int((time.time() - started) * 1000)
             if not args.dry_run:
                 db_adapter.save_prices(result.prices)
@@ -119,7 +143,7 @@ def main() -> int:
                 "status": status, "price_rows": len(result.prices),
                 "supply_rows": len(result.supply), "latency_ms": latency,
                 "unmapped": sorted(set(result.unmapped)), "notes": result.notes,
-                "raw_path": result.raw_path,
+                "suspicious": suspicious, "raw_path": result.raw_path,
             }
         except Exception as exc:  # 单源失败不阻断其它源
             latency = int((time.time() - started) * 1000)

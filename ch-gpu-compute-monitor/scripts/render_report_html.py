@@ -117,6 +117,13 @@ svg.chart text { fill: var(--ink-4); font-size: 10.5px; font-family: var(--font-
          border: 1px dashed var(--line-1); border-radius: 9px; margin-top: 11px;
          line-height: 1.7; }
 .footnote { font-size: 11.5px; color: var(--ink-4); margin-top: 9px; line-height: 1.6; }
+.conf-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+             gap: 9px; margin-top: 11px; }
+.conf-cell { border: 1px solid var(--line-1); border-radius: 9px; padding: 10px 12px;
+             background: var(--surface-2); }
+.conf-cell .name { font-size: 11.5px; color: var(--ink-4); letter-spacing: .03em; }
+.conf-cell .state { font-weight: 600; font-size: 13.5px; margin-top: 4px; }
+.conf-cell .why { font-size: 11.5px; color: var(--ink-3); margin-top: 6px; line-height: 1.5; }
 .panel-note { margin-top: 11px; padding: 9px 12px; border-left: 3px solid var(--clay);
               background: var(--clay-soft); border-radius: 0 7px 7px 0;
               font-size: 12.5px; line-height: 1.65; color: var(--ink-2); }
@@ -131,7 +138,7 @@ svg.chart text { fill: var(--ink-4); font-size: 10.5px; font-family: var(--font-
              font-family: var(--font-mono); }
 .ok { color: var(--pos); } .bad { color: var(--neg); } .warnc { color: var(--warn); }
 @media (max-width: 980px) {
-  .signals { grid-template-columns: 1fr; }
+  .signals, .conf-grid { grid-template-columns: 1fr; }
   .wrap { width: calc(100vw - 24px); }
 }
 """
@@ -239,6 +246,52 @@ def over_length_notes(notes: Dict[str, Any]) -> Dict[str, int]:
         if text and len(str(text).strip()) > PANEL_NOTE_MAX:
             out[key] = len(str(text).strip())
     return out
+
+
+def render_confirmation_strip(ev: Dict[str, Any]) -> str:
+    """确认型拐点的状态条（PRD §4.3 / §8）。
+
+    这是全项目的落脚点，所以单独占一条：三个型号各自的连续天数、门槛、
+    以及差在哪一步。「还没确认」和「确认没有」不是一回事，blockers 要露出来。
+    """
+    cells = []
+    thresholds = None
+    for model in ORDER:
+        conf = ((ev.get("models") or {}).get(model) or {}).get("confirmation") or {}
+        if not conf:
+            continue
+        thresholds = thresholds or conf.get("thresholds")
+        need = (conf.get("thresholds") or {}).get("min_consecutive_collection_days", 10)
+        loose = (conf.get("loosening") or {}).get("streak_days", 0)
+        tight = (conf.get("tightening") or {}).get("streak_days", 0)
+        verdict = conf.get("verdict", "none")
+        if verdict == "loosening":
+            state, cls = f"确认宽松（连续 {loose} 天）", "t-loose"
+        elif verdict == "tightening":
+            state, cls = f"确认收紧（连续 {tight} 天）", "t-tight"
+        elif conf.get("blockers"):
+            state, cls = "信号不足，未判定", "t-unknown"
+        else:
+            state, cls = f"未确认（最长 {max(loose, tight)}/{need} 天）", "t-watch"
+        detail = (conf.get("blockers") or [None])[0] or (
+            f"松 {loose} 天 · 紧 {tight} 天 · 门槛 {need} 天")
+        cells.append(f'<div class="conf-cell"><div class="name">{esc(SHORT.get(model, model))}</div>'
+                     f'<div class="state {cls}">{esc(state)}</div>'
+                     f'<div class="why">{esc(detail)}</div></div>')
+    if not cells:
+        return ""
+    t = thresholds or {}
+    rule = (f"价格类 ≥{t.get('min_price_signals', 3)} 个信号 + "
+            f"供给类 ≥{t.get('min_supply_signals', 2)} 个信号，"
+            f"连续 ≥{t.get('min_consecutive_collection_days', 10)} 个采集日，"
+            f"中间不许有缺口")
+    return f"""<section class="panel stack">
+  <div class="sec-head">
+    <div><strong>拐点确认</strong><div class="sec-note">{esc(rule)}</div></div>
+    <div class="sec-hint">两个方向对称判定</div>
+  </div>
+  <div class="conf-grid">{''.join(cells)}</div>
+</section>"""
 
 
 def line_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
@@ -368,6 +421,15 @@ def render_supply_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
         series.append({"name": model, "label": block.get("label", model),
                        "points": [{"date": d, "value": round(sum(v) / len(v), 2)}
                                   for d, v in sorted(merged.items())]})
+    bits = []
+    for model in ORDER:
+        br = ((ev.get("models") or {}).get(model) or {}).get("supply_breadth") or {}
+        if br.get("breadth") is None:
+            bits.append(f"{SHORT.get(model, model)} 暂无数据")
+        else:
+            bits.append(f"{SHORT.get(model, model)} {br['with_stock']}/{br['reporting']} 家有货")
+    breadth_line = (f'<div class="footnote">供给广度：{esc("　·　".join(bits))}'
+                    f'　—　宽松要算数，得从单个平台扩散到全市场。</div>')
     body = line_chart(series, unit_prefix="", colors=colors, digits=0)
     if all(len(s["points"]) < 2 for s in series):
         body = ('<div class="empty">暂无数据：供给序列还不足 2 个观测点。<br>'
@@ -380,6 +442,7 @@ def render_supply_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     <div class="sec-hint">越高 = 越宽松</div>
   </div>
   {body}
+  {breadth_line}
   {panel_note(notes, "supply")}
 </section>"""
 
@@ -401,13 +464,18 @@ def render_market_quotes(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
         thin = val("offer_median") is None and val("offer_min") is not None
         gpus = (supply.get("available_gpu_count") or {}).get("latest") or {}
         if vast:
+            disp = next((d for d in (block.get("quote_dispersion") or [])
+                         if d.get("source") == "vast" and d.get("spread") is not None), None)
+            disp_cell = (f'<td class="num">{money(disp["spread"])}'
+                         f'<span class="dim"> {disp["spread_pct_of_median"]:.0f}%</span></td>'
+                         if disp else '<td class="na">—</td>')
             quant = ('<td class="na" colspan="3">样本不足</td>' if thin else
                      f'<td class="num">{money(val("offer_p25"))}</td>'
                      f'<td class="num">{money(val("offer_median"))}</td>'
                      f'<td class="num">{money(val("offer_p75"))}</td>')
             rows.append(
                 f'<tr><td>Vast.ai</td><td>{esc(SHORT.get(model, model))}</td>'
-                f'<td class="num">{money(val("offer_min"))}</td>{quant}'
+                f'<td class="num">{money(val("offer_min"))}</td>{quant}{disp_cell}'
                 f'<td class="num">{esc(sample or "—")}</td>'
                 f'<td class="dim">{esc(int(gpus["value"]) if gpus.get("value") is not None else "—")} 张</td></tr>')
 
@@ -419,11 +487,11 @@ def render_market_quotes(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
                 f'<tr><td>Runpod</td><td>{esc(SHORT.get(model, model))}</td>'
                 f'<td class="num">{money(low.get("value"))}</td>'
                 f'<td class="na" colspan="3">不提供分位数</td>'
-                f'<td class="na">—</td>'
+                f'<td class="na">—</td><td class="na">—</td>'
                 f'<td class="dim">库存 {esc(stock or "暂无数据")}</td></tr>')
 
     table = ("".join(rows) or
-             '<tr><td class="na" colspan="8">暂无数据：今日没有采到市场化报价</td></tr>')
+             '<tr><td class="na" colspan="9">暂无数据：今日没有采到市场化报价</td></tr>')
     return f"""<section class="panel">
   <div class="sec-head">
     <div><strong>市场报价</strong>
@@ -432,7 +500,7 @@ def render_market_quotes(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
   </div>
   <div class="scroll"><table>
     <thead><tr><th>来源</th><th>GPU</th><th>Min</th><th>P25</th><th>中位</th>
-      <th>P75</th><th>样本</th><th>供给</th></tr></thead>
+      <th>P75</th><th>分散度</th><th>样本</th><th>供给</th></tr></thead>
     <tbody>{table}</tbody>
   </table></div>
   {panel_note(notes, "quotes")}
@@ -563,6 +631,7 @@ def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
     <div class="stamp">观测日 {esc(asof)} · 数据源 {ok}/{len(health)} · UTC {esc(stamp)}</div>
   </header>
   {render_verdict(verdict, models)}
+  {render_confirmation_strip(ev)}
   <div class="stack">{render_price_panel(ev, notes)}</div>
   <div class="stack">{render_supply_panel(ev, notes)}</div>
   <div class="stack">{render_market_quotes(ev, notes)}</div>

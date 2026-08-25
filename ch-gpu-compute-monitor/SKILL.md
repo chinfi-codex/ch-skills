@@ -76,9 +76,11 @@ RTX 5090 都在同步上行，那更像整体需求在抬。
    的 90 天日度历史一次拉满，并逐条报出每个 (source, gpu, price_type) 实际覆盖到哪天、
    多少个点、有没有缺口。日常不用重复跑。
 1. **采集**：`python scripts/collect.py`。逐源独立，单源失败不阻断其它源，
-   成败与耗时写进 `gpu_collect_runs`。
+   成败与耗时写进 `gpu_collect_runs`。入库前跑一遍跨日离群检测，命中的行
+   标 `quality_flag=suspicious` 并在摘要里列出来（打标不丢弃）。
 2. **算指标**：`python scripts/metrics.py --output evidence/gpu-<date>.json`。
-   产出确定性证据包——变化率、分位数、折价、供给指数、评分分项、源健康度。
+   产出确定性证据包——变化率、分位数、报价分散度、折价、供给指数与广度、
+   评分分项、确认型拐点、源健康度。触发的告警同时写进 `gpu_alerts`。
 3. **读证据**：先看 `source_health` 判断今天数据完不完整，再看每个型号的
    `cross_platform_median.anchor_date` / `anchor_basis` 确认锚在哪一天什么口径，
    然后逐条检查 `changes.*.usable`。**`usable=false` 的百分比不许进结论。**
@@ -127,7 +129,19 @@ python scripts/backfill.py --report-only      # 不取数，只看库里现在�
 ```bash
 python scripts/metrics.py --output evidence/gpu-2026-08-25.json
 python scripts/metrics.py --date 2026-08-25 --window 90
+python scripts/metrics.py --no-persist-alerts        # 只算不写 gpu_alerts
 ```
+
+默认会把当天触发的告警落进 `gpu_alerts`（先清当天旧行再写，避免调完阈值后
+旧告警赖着不走）。确认型拐点不落新表，每次从观测重算，所以口径改了能直接重跑。
+
+### `scripts/validate.py` —— 跨日离群检测（被 collect.py 调用）
+
+采集器里的守卫拦的是「这条数据本身不对」；这里拦的是「数据长得正常、只是跟
+自己的历史对不上」。命中打 `quality_flag=suspicious`，指标层排除出核心中枢，
+但行留在库里可追溯。偏离倍数贴近 2/4/8/16 时单独点名为单位换算错——那是
+整机价忘了除以卡数、或者多除了一遍的签名。阈值在 `config/thresholds.yaml`
+的 `validation` 块，冷启动期（历史点不足）一律不标。
 
 ### `scripts/render_report_html.py` —— 单页 Dashboard
 
@@ -161,6 +175,15 @@ python scripts/daily_update.py --skip-collect
 全部匿名可用，一把 key 都不用配就能跑通；`ORNN_API_KEY`（解锁 3 个月以外的历史与
 更多 SKU）/ `VAST_API_KEY` / `RUNPOD_API_KEY` 都是可选项，设了限频更宽松。
 各源的实测契约、字段陷阱与降级策略见 `references/source_notes.md`。
+
+### 数据表
+
+| 表 | 装什么 |
+|---|---|
+| `gpu_price_observations` | 标准化后的价格观测，幂等键含 obs_date/source/gpu/price_type/segment/region |
+| `gpu_supply_observations` | 供给观测：offer 数与份额、可用 GPU、库存档位、region 覆盖 |
+| `gpu_collect_runs` | 每源每次采集的成败、耗时、行数、未映射标识 |
+| `gpu_alerts` | 触发的告警，键 (obs_date, gpu_model, rule_id)，供跨日追溯 |
 
 ### 配置
 

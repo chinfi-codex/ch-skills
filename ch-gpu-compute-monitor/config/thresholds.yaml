@@ -30,23 +30,40 @@ scoring:
   # 源集合变了还照常比分数，会把"数据源上下线"读成"市场变了"。
   flag_on_source_set_change: true
 
+# 跨日离群检测（PRD §6.1 步骤 4 的「异常值 / 单位错误」那一半）。
+# 命中只打 quality_flag=suspicious，行仍然留在库里可追溯；指标层会把它排除出
+# 跨平台中枢与评分。真实市场也会跳，所以阈值宽松、且冷启动期一律不标。
+validation:
+  enabled: true
+  lookback_days: 30
+  min_history_points: 5      # 历史点不足就不判，宁可漏也不冤枉真实行情
+  # 相对「自己日期之前 30 天」中位数的偏离超过这个数才标。
+  # 100% 不是拍的：实测 2026-07 B200 两周内从 4.46 涨到 7.28（+63%），
+  # 60% 的阈值会把这段真实上涨里的两天判成可疑，进而把它们排除出中枢与
+  # 90 日高点，反过来污染回撤指标。积累 2–3 个月后按各 SKU 真实波动率重标。
+  max_jump_pct: 100
+  unit_error_tolerance: 0.12 # 偏离倍数贴近 2/4/8/16 时单独点名为单位换算错
+
 alerts:
   mode: record_only             # record_only | notify。校准前只入库不推送。
   direction: both               # both | loosening_only。PRD 原稿只有宽松侧，这里补齐收紧侧。
   rules:
     - id: fast_price_drop
+      direction: loosening
       label: 快速降价
       metric: cross_platform_median_7d_pct
       op: "<="
       threshold: -10
       meaning: 短期价格压力
     - id: fast_price_spike
+      direction: tightening
       label: 快速涨价
       metric: cross_platform_median_7d_pct
       op: ">="
       threshold: 10
       meaning: 短期抢产能
     - id: trend_price_drop
+      direction: loosening
       label: 趋势降价
       metric: cross_platform_median_30d_pct
       op: "<="
@@ -54,6 +71,7 @@ alerts:
       min_sources_same_direction: 3
       meaning: 结构性价格下移
     - id: trend_price_rise
+      direction: tightening
       label: 趋势涨价
       metric: cross_platform_median_30d_pct
       op: ">="
@@ -61,18 +79,21 @@ alerts:
       min_sources_same_direction: 3
       meaning: 结构性价格上移
     - id: supply_expansion
+      direction: loosening
       label: 供给扩张
       metric: offer_share_7d_pct       # 用份额而非绝对 offer 数，剔平台自身规模效应
       op: ">="
       threshold: 50
       meaning: 可用供给快速释放
     - id: supply_contraction
+      direction: tightening
       label: 供给收缩
       metric: offer_share_7d_pct
       op: "<="
       threshold: -35
       meaning: 可用供给快速抽紧
     - id: stock_easing
+      direction: loosening
       label: 库存宽松
       metric: stock_status_rank_change_days
       op: ">="
@@ -80,6 +101,7 @@ alerts:
       target_status: High
       meaning: 库存压力下降
     - id: discount_widening
+      direction: loosening
       label: 折价扩大
       metric: spot_discount_vs_30d_avg_pct_points
       op: ">="

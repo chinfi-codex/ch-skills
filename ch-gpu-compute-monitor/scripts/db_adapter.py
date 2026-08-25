@@ -34,6 +34,7 @@ from db_core import (  # noqa: E402
 PRICE_TABLE = "gpu_price_observations"
 SUPPLY_TABLE = "gpu_supply_observations"
 RUN_TABLE = "gpu_collect_runs"
+ALERT_TABLE = "gpu_alerts"
 
 _IS_PG = BACKEND is Backend.POSTGRESQL
 _JSON_TYPE = "jsonb" if _IS_PG else "text"
@@ -98,9 +99,27 @@ SCHEMA = [
         PRIMARY KEY (run_id, source)
     )
     """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {ALERT_TABLE} (
+        obs_date        date    NOT NULL,
+        gpu_model       text    NOT NULL,
+        rule_id         text    NOT NULL,
+        label           text,
+        direction       text,
+        metric          text,
+        observed        numeric,
+        threshold       numeric,
+        op              text,
+        meaning         text,
+        mode            text,
+        fired_at        {_TS_TYPE},
+        PRIMARY KEY (obs_date, gpu_model, rule_id)
+    )
+    """,
     f"CREATE INDEX IF NOT EXISTS idx_gpu_price_model_date ON {PRICE_TABLE} (gpu_model, obs_date)",
     f"CREATE INDEX IF NOT EXISTS idx_gpu_supply_model_date ON {SUPPLY_TABLE} (gpu_model, obs_date)",
     f"CREATE INDEX IF NOT EXISTS idx_gpu_runs_date ON {RUN_TABLE} (obs_date)",
+    f"CREATE INDEX IF NOT EXISTS idx_gpu_alerts_model_date ON {ALERT_TABLE} (gpu_model, obs_date)",
 ]
 
 PRICE_COLUMNS = [
@@ -124,6 +143,12 @@ RUN_COLUMNS = [
     "error", "raw_path",
 ]
 RUN_KEY = ["run_id", "source"]
+
+ALERT_COLUMNS = [
+    "obs_date", "gpu_model", "rule_id", "label", "direction", "metric",
+    "observed", "threshold", "op", "meaning", "mode", "fired_at",
+]
+ALERT_KEY = ["obs_date", "gpu_model", "rule_id"]
 
 _JSON_COLUMNS = {"capacity_detail", "unmapped_ids"}
 
@@ -172,6 +197,42 @@ def save_supply(rows: Iterable[Dict[str, Any]]) -> int:
 
 def save_run(row: Dict[str, Any]) -> int:
     return _upsert(RUN_TABLE, RUN_COLUMNS, RUN_KEY, [row])
+
+
+def save_alerts(rows: Iterable[Dict[str, Any]]) -> int:
+    """告警落库（PRD §6.1 步骤 8）。
+
+    幂等键是 (obs_date, gpu_model, rule_id)：同一天重跑覆盖，不追加。
+    没有这张表，「确认型拐点」那条要求「连续 ≥10 个采集日」的规则就没有
+    跨日依据——告警只活在当天的 evidence 里，重算一次就没了。
+    """
+    return _upsert(ALERT_TABLE, ALERT_COLUMNS, ALERT_KEY, rows)
+
+
+def clear_alerts(obs_date: str, gpu_models: Optional[List[str]] = None) -> int:
+    """清掉某天的旧告警，再写新的——否则规则改阈值后，昨天触发过、
+    今天不该触发的那条会永远留在库里。"""
+    sql = f"DELETE FROM {ALERT_TABLE} WHERE obs_date = ?"
+    params: List[Any] = [obs_date]
+    if gpu_models:
+        sql += " AND gpu_model IN (" + ", ".join(["?"] * len(gpu_models)) + ")"
+        params.extend(gpu_models)
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(adapt_sql(sql), tuple(params))
+        conn.commit()
+        return cur.rowcount
+
+
+def read_alerts(start_date: str, end_date: str,
+                gpu_models: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    sql = f"SELECT * FROM {ALERT_TABLE} WHERE obs_date >= ? AND obs_date <= ?"
+    params: List[Any] = [start_date, end_date]
+    if gpu_models:
+        sql += " AND gpu_model IN (" + ", ".join(["?"] * len(gpu_models)) + ")"
+        params.extend(gpu_models)
+    sql += " ORDER BY obs_date, gpu_model, rule_id"
+    return _fetch(sql, tuple(params))
 
 
 def _fetch(sql: str, params: tuple) -> List[Dict[str, Any]]:
@@ -235,4 +296,5 @@ def latest_run_per_source() -> List[Dict[str, Any]]:
 if __name__ == "__main__":
     init_schema()
     print(json.dumps({"ok": True, "backend": BACKEND.value,
-                      "tables": [PRICE_TABLE, SUPPLY_TABLE, RUN_TABLE]}, ensure_ascii=False))
+                      "tables": [PRICE_TABLE, SUPPLY_TABLE, RUN_TABLE, ALERT_TABLE]},
+                     ensure_ascii=False))

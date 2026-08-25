@@ -95,6 +95,54 @@ class TestCatalog:
             "H100 SXM", "H200", "B200"]
 
 
+class TestAttestedPrices:
+    """人工核对的挂牌价：单位换算是抄错概率最高的地方，钉死它。"""
+
+    def _entries(self):
+        import yaml
+        path = SKILL_ROOT / "config" / "attested_prices.yaml"
+        return yaml.safe_load(path.read_text(encoding="utf-8")).get("entries") or []
+
+    def test_every_entry_carries_provenance(self):
+        """没有 as_of 与 source_url 的条目不算核对过，只算听说。"""
+        for e in self._entries():
+            assert e.get("as_of"), f"{e.get('source')}/{e.get('gpu_model')} 缺 as_of"
+            assert e.get("source_url"), f"{e.get('source')}/{e.get('gpu_model')} 缺 source_url"
+            assert e.get("node_gpu_count"), f"{e.get('source')}/{e.get('gpu_model')} 缺 node_gpu_count"
+
+    def test_coreweave_is_node_priced_nebius_is_gpu_priced(self):
+        """CoreWeave 报 8 卡整机价，Nebius 报单卡价。搞反就差 8 倍。"""
+        by_source = {}
+        for e in self._entries():
+            by_source.setdefault(e["source"], set()).add(int(e["node_gpu_count"]))
+        assert by_source.get("coreweave") == {8}
+        assert by_source.get("nebius") == {1}
+
+    def test_spot_is_always_below_on_demand(self):
+        """spot/preemptible 高于按需价，只可能是抄串了行。"""
+        on_demand, cheap = {}, {}
+        for e in self._entries():
+            key = (e["source"], e["gpu_model"])
+            unit = float(e["price_usd"]) / int(e["node_gpu_count"])
+            if e["price_type"] == "on_demand":
+                on_demand[key] = unit
+            elif e["price_type"] in ("spot", "preemptible"):
+                cheap[key] = unit
+        assert cheap, "一条折价条目都没有，核对多半漏了 spot 列"
+        for key, value in cheap.items():
+            assert key in on_demand, f"{key} 有折价价但没有按需价，折价算不出来"
+            assert value < on_demand[key], f"{key} 折价 {value} 不低于按需价 {on_demand[key]}"
+
+    def test_every_gpu_model_resolves_through_the_catalog(self):
+        """写进 yaml 的必须是平台原始标识，且能在 catalog 里查到。"""
+        catalog = load_catalog()
+        for e in self._entries():
+            resolved = catalog.resolve(e["source"], e["gpu_model"])
+            assert resolved is not None, (
+                f"{e['source']} 的 {e['gpu_model']} 没登记在 config/gpu_catalog.yaml")
+            assert resolved in catalog.all_models
+
+
 class TestStockRank:
     def test_ordering(self):
         assert stock_rank("None") < stock_rank("Low") < stock_rank("Medium") < stock_rank("High")

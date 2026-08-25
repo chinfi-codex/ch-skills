@@ -1,28 +1,181 @@
 # 人工核对的公开挂牌价（CoreWeave / Nebius / Crusoe 等只有 Pricing 网页、没有稳定 API 的源）。
 #
 # 为什么不写爬虫：这类营销页改版频繁，选择器一失效，解析器最容易做的事就是
-# 悄悄返回 0 或上一个数——那比没有数据更危险。这里改成"人核对 + 留证据"：
+# 悄悄返回 0 或上一个数——那比没有数据更危险。这里改成「人核对 + 留证据」：
 # 每条必须带 as_of 与 source_url，超过 sources.yaml 里该源的 max_age_days
-# 就自动降级成 stale，不进"最新价"、不进跨平台中位数、不参与评分。
+# 就自动降级成 stale，不进「最新价」、不进跨平台中位数、不参与评分。
 #
 # 更新方法：打开 source_url，抄下 on-demand 与 spot/preemptible 的公开价，
 # 把 as_of 改成你核对的那天。整机报价务必填 node_gpu_count，脚本会换算成
 # USD/GPU·hour 并把换算过程写进 unit_basis，保证可审计。
+#
+# ---------------------------------------------------------------------------
+# 2026-08-25 核对记录
+#
+# 两家的计价单位不一样，抄的时候最容易在这里出错：
+#   * CoreWeave 报的是整机价。表头明写 "GPU Count"，HGX 节点是 8 卡，
+#     $49.24/小时是整台 HGX H100 的价，单卡要除以 8 → $6.155。
+#   * Nebius 报的直接是单卡价。表头明写 "On-demand, GPU-hour"，
+#     旁边的 16 / 200 是每卡配的 vCPU 与内存，不是 GPU 数。所以 node_gpu_count = 1。
+#
+# 两家的价都含配套资源（vCPU、系统内存、本地 NVMe、网络），
+# 所以 price_scope 一律 bundled，跟 Vast 的纯 GPU 费（gpu_only）不同口径。
+# 写报告做横向对比时必须说明这层差异，见 references/pricing_taxonomy.md §三.7。
+#
+# 没抄的几项，以及为什么：
+#   * CoreWeave 的 HGX B300 与 GB200/GB300 NVL72 —— on-demand 写的是
+#     "Contact sales"，没有公开价可抄。
+#   * CoreWeave 的 "NVIDIA A100"（8 卡 80GB，$21.60/小时）—— 页面 tech specs
+#     里 A100 有 NVLINK 和 PCIe 两个变体，定价表这一行没写是哪个。
+#     按「认不出就不猜」的规矩不抄，等页面写清楚或另找依据再补。
+#   * Nebius 的 RTX PRO 6000 与 L40S —— 不在 SKU 目录里。
+#   * CoreWeave 欧洲区 —— on-demand 与北美完全相同，spot 略有差异
+#     （H100 $19.51 / H200 $20.64 / B200 $34.87 对北美的 $19.71 / $20.93 / $34.11）。
+#     这里只录北美，避免同一天同一 price_type 出现两个地区值互相覆盖。
+# ---------------------------------------------------------------------------
 
 schema_version: 1
 
-entries: []
+entries:
+  # ---- CoreWeave（北美区，8 卡 HGX 整机报价，需除以 node_gpu_count）----
+  - source: coreweave
+    gpu_model: "NVIDIA HGX H100"
+    price_type: on_demand
+    price_usd: 49.24
+    node_gpu_count: 8
+    price_scope: gpu_plus_storage
+    region: north-america
+    as_of: "2026-08-25"
+    source_url: "https://coreweave.com/pricing"
+    note: "HGX H100 8x80GB，含 128 vCPU / 2048GB RAM / 61.44TB 本地 NVMe；单卡 $6.155"
+  - source: coreweave
+    gpu_model: "NVIDIA HGX H100"
+    price_type: spot
+    price_usd: 19.71
+    node_gpu_count: 8
+    price_scope: gpu_plus_storage
+    region: north-america
+    as_of: "2026-08-25"
+    source_url: "https://coreweave.com/pricing"
+    note: "同规格 Spot；单卡 $2.464"
 
-# 样例（照抄格式，删掉这段注释里的内容自己填）：
-#
-# entries:
-#   - source: coreweave
-#     gpu_model: "H100 SXM"
-#     price_type: on_demand
-#     price_usd: 49.24            # 该实例整机每小时价
-#     node_gpu_count: 8           # 整机 GPU 数；1 表示报价本身就是单卡价
-#     price_scope: gpu_plus_storage
-#     region: global
-#     as_of: "2026-08-25"
-#     source_url: "https://coreweave.com/pricing"
-#     note: "HGX H100 8x, on-demand, 不含出站流量"
+  - source: coreweave
+    gpu_model: "NVIDIA HGX H200"
+    price_type: on_demand
+    price_usd: 50.44
+    node_gpu_count: 8
+    price_scope: gpu_plus_storage
+    region: north-america
+    as_of: "2026-08-25"
+    source_url: "https://coreweave.com/pricing"
+    note: "HGX H200 8x141GB；单卡 $6.305"
+  - source: coreweave
+    gpu_model: "NVIDIA HGX H200"
+    price_type: spot
+    price_usd: 20.93
+    node_gpu_count: 8
+    price_scope: gpu_plus_storage
+    region: north-america
+    as_of: "2026-08-25"
+    source_url: "https://coreweave.com/pricing"
+    note: "同规格 Spot；单卡 $2.616"
+
+  - source: coreweave
+    gpu_model: "NVIDIA HGX B200"
+    price_type: on_demand
+    price_usd: 68.80
+    node_gpu_count: 8
+    price_scope: gpu_plus_storage
+    region: north-america
+    as_of: "2026-08-25"
+    source_url: "https://coreweave.com/pricing"
+    note: "HGX B200 8x180GB；单卡 $8.60"
+  - source: coreweave
+    gpu_model: "NVIDIA HGX B200"
+    price_type: spot
+    price_usd: 34.11
+    node_gpu_count: 8
+    price_scope: gpu_plus_storage
+    region: north-america
+    as_of: "2026-08-25"
+    source_url: "https://coreweave.com/pricing"
+    note: "同规格 Spot；单卡 $4.264"
+
+  # ---- Nebius（报价本身就是单卡价，node_gpu_count = 1）----
+  - source: nebius
+    gpu_model: "NVIDIA HGX H100"
+    price_type: on_demand
+    price_usd: 3.85
+    node_gpu_count: 1
+    price_scope: gpu_plus_storage
+    region: global
+    as_of: "2026-08-25"
+    source_url: "https://nebius.com/prices"
+    note: "表头 On-demand, GPU-hour；每卡配 16 vCPU / 200GB RAM"
+  - source: nebius
+    gpu_model: "NVIDIA HGX H100"
+    price_type: preemptible
+    price_usd: 2.15
+    node_gpu_count: 1
+    price_scope: gpu_plus_storage
+    region: global
+    as_of: "2026-08-25"
+    source_url: "https://nebius.com/prices"
+
+  - source: nebius
+    gpu_model: "NVIDIA HGX H200"
+    price_type: on_demand
+    price_usd: 4.50
+    node_gpu_count: 1
+    price_scope: gpu_plus_storage
+    region: global
+    as_of: "2026-08-25"
+    source_url: "https://nebius.com/prices"
+  - source: nebius
+    gpu_model: "NVIDIA HGX H200"
+    price_type: preemptible
+    price_usd: 2.45
+    node_gpu_count: 1
+    price_scope: gpu_plus_storage
+    region: global
+    as_of: "2026-08-25"
+    source_url: "https://nebius.com/prices"
+
+  - source: nebius
+    gpu_model: "NVIDIA HGX B200"
+    price_type: on_demand
+    price_usd: 7.15
+    node_gpu_count: 1
+    price_scope: gpu_plus_storage
+    region: global
+    as_of: "2026-08-25"
+    source_url: "https://nebius.com/prices"
+  - source: nebius
+    gpu_model: "NVIDIA HGX B200"
+    price_type: preemptible
+    price_usd: 3.95
+    node_gpu_count: 1
+    price_scope: gpu_plus_storage
+    region: global
+    as_of: "2026-08-25"
+    source_url: "https://nebius.com/prices"
+
+  # B300 是 watchlist SKU，不进首页三型号同屏，但价格照录
+  - source: nebius
+    gpu_model: "NVIDIA HGX B300"
+    price_type: on_demand
+    price_usd: 7.85
+    node_gpu_count: 1
+    price_scope: gpu_plus_storage
+    region: global
+    as_of: "2026-08-25"
+    source_url: "https://nebius.com/prices"
+  - source: nebius
+    gpu_model: "NVIDIA HGX B300"
+    price_type: preemptible
+    price_usd: 4.30
+    node_gpu_count: 1
+    price_scope: gpu_plus_storage
+    region: global
+    as_of: "2026-08-25"
+    source_url: "https://nebius.com/prices"

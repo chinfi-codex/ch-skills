@@ -90,7 +90,9 @@ RTX 5090 都在同步上行，那更像整体需求在抬。
    --evidence evidence/gpu-<date>.json`。
 
 补录 CoreWeave / Nebius 挂牌价时，编辑 `config/attested_prices.yaml`（每条必须带 `as_of` 与
-`source_url`），再重跑 collect 与 metrics。
+`source_url`），再重跑 collect 与 metrics。**动手前先读 `references/source_notes.md` 的
+「2026-08-25 核对到的东西」**——CoreWeave 报整机价要除以 8、Nebius 报的本来就是单卡价，
+这是抄错概率最高的地方。条目超过 30 天自动降级 `stale`，退出核心指标。
 
 ## 数据获取（脚本抓手）
 
@@ -134,6 +136,8 @@ python scripts/render_report_html.py --input reports/gpu-2026-08-25.md \
 ```
 
 按 PRD §5 的硬约束渲染：三型号同屏、无 GPU selector、无时间范围切换、窗口固定 90 天。
+**主题固定用 `claude`**（暖色编辑风纸面），曲线配色随之走暖色三元组；
+`--theme print` 之类可以显式覆盖，但默认不要改。
 
 ### `scripts/daily_update.py` —— 给 cron 用的流水线
 
@@ -194,8 +198,10 @@ python scripts/daily_update.py --skip-collect
 > 价格侧可以讲：锚定 2026-08-24（Ornn T-1 结算，比日历日晚 1 天），
 > H100 SXM 7D +9.5%、B200 7D +6.2%、H200 SXM 7D −13.4%，
 > 三个型号里只有 H200 触发了快速降价告警，且模式是 `record_only`。
-> 明确写出「标准报价层目前只有 Runpod 一路（CoreWeave / Nebius 尚未人工核对），
-> 这一层的结论强度有限」。
+> 标准报价层有三家（Runpod 直采，CoreWeave / Nebius 人工核对于 2026-08-25），
+> 折价维度因此有数：CoreWeave 的 spot 折价 H100 −60.0% / H200 −58.5% / B200 −50.4%，
+> B200 折价最小说明闲置最少，跟 Runpod 那边 B200 库存 Low 互相印证——
+> **这是当天唯一一个有交叉验证的判断，可以写实**。
 
 **边界示例**：用户问「H100 现在多少钱」这类单点查询，直接跑 collect + metrics 后
 报锚定日的跨平台中枢和各源报价即可，不用写完整日报。

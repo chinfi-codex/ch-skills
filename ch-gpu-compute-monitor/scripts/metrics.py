@@ -99,7 +99,8 @@ class Evidence:
 
     # ---------- 序列构造 ----------
     def price_series(self, model: str, source: str, price_type: str,
-                     segment: Optional[str] = None) -> Dict[str, Any]:
+                     segment: Optional[str] = None,
+                     region: Optional[str] = None) -> Dict[str, Any]:
         """一条 (model, source, price_type) 的日度序列 + 口径指纹集合。"""
         points: Dict[str, float] = {}
         fingerprints = set()
@@ -110,6 +111,8 @@ class Evidence:
             if row["price_type"] != price_type:
                 continue
             if segment is not None and row["market_segment"] != segment:
+                continue
+            if region is not None and row["region"] != region:
                 continue
             if row["quality_flag"] in ("stale", "suspicious"):
                 flags.add(row["quality_flag"])
@@ -330,22 +333,22 @@ class Evidence:
             value = _f(row["price_usd_gpu_hour"])
             if value is None:
                 continue
-            by_key[(row["source"], row["market_segment"], row["price_type"])][
-                _d(row["obs_date"])] = value
+            by_key[(row["source"], row["market_segment"], row["region"],
+                    row["price_type"])][_d(row["obs_date"])] = value
 
         out: List[Dict[str, Any]] = []
-        for (source, segment, ptype) in list(by_key):
+        for (source, segment, region, ptype) in list(by_key):
             if ptype not in ("spot", "preemptible", "offer_min"):
                 continue
-            base_key = (source, segment, "on_demand")
+            base_key = (source, segment, region, "on_demand")
             if ptype == "offer_min":
-                base_key = (source, "on_demand", "offer_median")
+                base_key = (source, "on_demand", region, "offer_median")
                 if segment != "interruptible":
                     continue
             base = by_key.get(base_key)
             if not base:
                 continue
-            cheap = by_key[(source, segment, ptype)]
+            cheap = by_key[(source, segment, region, ptype)]
             days = sorted(set(cheap) & set(base))
             if not days:
                 continue
@@ -355,8 +358,9 @@ class Evidence:
                         if k > (date.fromisoformat(latest_day) - timedelta(days=30)).isoformat()]
             avg30 = sum(trailing) / len(trailing) if trailing else None
             out.append({
-                "source": source, "segment": segment, "cheap_type": ptype,
-                "base_type": base_key[2], "base_segment": base_key[1],
+                "source": source, "segment": segment, "region": region,
+                "cheap_type": ptype,
+                "base_type": base_key[3], "base_segment": base_key[1],
                 "latest_date": latest_day,
                 "discount_pct": round(ratio[latest_day], 4),
                 "avg_30d_pct": round(avg30, 4) if avg30 is not None else None,
@@ -602,12 +606,18 @@ class Evidence:
                 # 必须按 (price_type, market_segment) 展开。Runpod 同一天的
                 # on_demand 有 secure / community / lowest 三个 segment，
                 # 只按 price_type 分组会让三个数字互相覆盖，剩下的那个是随机的。
-                pairs = sorted({(r["price_type"], r["market_segment"]) for r in self.prices
+                # region 也是主键的一部分：CoreWeave 同一天有北美与欧洲两套 spot，
+                # 只按 (type, segment) 分组会让两个地区的值互相覆盖，剩下哪个是随机的。
+                pairs = sorted({(r["price_type"], r["market_segment"], r["region"])
+                                for r in self.prices
                                 if r["gpu_model"] == model and r["source"] == source})
                 by_source[source] = {}
-                for ptype, segment in pairs:
+                for ptype, segment, region in pairs:
                     key = ptype if segment == "default" else f"{ptype}@{segment}"
-                    built = self.price_series(model, source, ptype, segment=segment)
+                    if region != "global":
+                        key = f"{key}#{region}"
+                    built = self.price_series(model, source, ptype, segment=segment,
+                                              region=region)
                     if not built["points"]:
                         continue
                     block = self.changes(built["points"])
@@ -621,6 +631,7 @@ class Evidence:
                     if built["excluded_flags"]:
                         block["excluded_flags"] = built["excluded_flags"]
                     block["market_segment"] = segment
+                    block["region"] = region
                     by_source[source][key] = block
             per_model[model] = {
                 "label": self.catalog.label(model),

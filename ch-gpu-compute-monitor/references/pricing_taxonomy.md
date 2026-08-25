@@ -39,6 +39,14 @@
 7. **同费用范围才能比。** Vast 的 `dph_total` 裹着磁盘费与 SLA 溢价，`search.gpuCostPerHour` 才是纯 GPU 费。默认取纯 GPU 费（`price_scope=gpu_only`）；Neocloud 的整机挂牌价通常含本地 NVMe 与网络，只能标 `bundled`，与纯 GPU 价对比时要说明这层差异。
 8. **同 SKU 才能比。** "H100" 不是一个 SKU。Runpod 实测同日 SXM 2.69 / NVL 2.59 / PCIe 1.99，差 35%。canonical id 一律到 SKU 粒度。
 
+## 三点五、挂牌价与成交中枢不在同一个价位带
+
+2026-08-25 核对完 CoreWeave 后发现的结构性事实，值得当成常识记住：
+
+CoreWeave 的 H100 按需价是 6.16 USD/GPU·hour，Ornn 的成交指数是 3.00——**企业级挂牌价是实际成交中枢的两倍还多**。但 CoreWeave 同规格的 spot 价 2.46，反而落进了成交中枢与 Runpod 社区云 2.69 的同一区间。
+
+推论：OCPI 那条"实际成交"曲线对应的不是 list price，而更接近可抢占档与议价水平。所以拿④标准报价去解释①成交价的走势时，别期待两者的绝对值收敛；它们本来就在不同价位带上。能对照的是**方向**和**同源内部的折价**，不是水平。
+
 ## 四、折价的分子分母
 
 - `Spot Discount = 1 − Spot ÷ On-demand`，**分子分母必须同源同 segment**。跨平台算折价没有含义：两边的成本结构不一样。

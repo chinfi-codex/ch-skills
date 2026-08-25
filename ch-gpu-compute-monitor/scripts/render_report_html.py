@@ -42,10 +42,11 @@ PILL_RULES = [
     (r"^(偏紧|收紧|紧张|High)$", "pill neg"),
     (r"^(偏松|宽松|Low|None)$", "pill"),
     (r"^(中性|平衡|Medium|观察中)$", "pill"),
-    (r"^(暂无数据|采集失败|样本不足|口径变动|冷启动)$", "pill warn"),
+    (r"^(暂无数据|暂无|采集失败|样本不足|不可比|口径变动|冷启动|未核对)$", "pill warn"),
 ]
 
 EXTRA_CSS = """
+:root { --gpu-b200: #b4522f; --gpu-h200: #a07d2c; --gpu-h100: #4f6f7a; }
 .gpu-health { display: grid; gap: 8px; margin: 6px 0 2px; }
 .gpu-health .gh-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 7px 10px; border: 1px solid var(--line-2, #eef1f5); border-radius: 8px;
@@ -203,10 +204,13 @@ CHART_JS = r"""
 })();
 """
 
+# 曲线配色走 CSS 变量 + 十六进制兜底：claude 主题是暖色调编辑风纸面，
+# 原来的紫/青/琥珀是冷色，铺在米色纸上会打架。换主题时只要覆盖这三个变量。
+# 三个色的色相与明度都拉开，不靠颜色单独承载信息（图例始终带型号名与数值）。
 SERIES_COLORS = {
-    "B200": "#7c3aed",
-    "H200 SXM": "#0891b2",
-    "H100 SXM": "#b45309",
+    "B200": "var(--gpu-b200, #b4522f)",      # 砖红：最新一代，最重
+    "H200 SXM": "var(--gpu-h200, #a07d2c)",  # 赭黄
+    "H100 SXM": "var(--gpu-h100, #4f6f7a)",  # 暗青灰，压住不抢
 }
 
 
@@ -317,6 +321,10 @@ def _health(evidence: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+# 本 skill 的 HTML 一律用 claude 主题；--theme 仍可显式覆盖。
+DEFAULT_THEME = "claude"
+
+
 def add_arguments(parser) -> None:
     parser.add_argument("--evidence", default=None,
                         help="metrics.py 产出的证据包；缺省按报告文件名里的日期猜")
@@ -351,7 +359,8 @@ def build_job(args) -> RenderJob:
 
     builder = HtmlReportBuilder(
         title=args.title or f"GPU 算力价格与供给监控 {asof}",
-        theme=args.theme, meta_text=meta_text, extra_css=EXTRA_CSS)
+        theme=(args.theme if args.theme and args.theme != "default" else DEFAULT_THEME),
+        meta_text=meta_text, extra_css=EXTRA_CSS)
     builder.add_decoration(PillDecoration(PILL_RULES))
     builder.add_chart_hook(ChartHook(name="gpu-monitor-charts", payload=payload,
                                      js=CHART_JS))
@@ -361,6 +370,7 @@ def build_job(args) -> RenderJob:
         markdown_text=markdown, builder=builder, output_path=output,
         summary={
             "asof": asof,
+            "theme": builder.theme if hasattr(builder, "theme") else DEFAULT_THEME,
             "price_series_models": [s["name"] for s in payload["price_series"]
                                     if s["points"]],
             "supply_series_models": [s["name"] for s in payload["supply_series"]

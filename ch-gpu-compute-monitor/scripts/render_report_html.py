@@ -49,6 +49,11 @@ ORDER = ["B200", "H200 SXM", "H100 SXM"]
 SHORT = {"B200": "B200", "H200 SXM": "H200", "H100 SXM": "H100"}
 
 # 状态语义。颜色只是辅助，文字始终在场（PRD §10）。
+# 每块面板底部那行「异动说明」：说今天这块图里什么在动、值得看哪里。
+# 这是判断不是取数，所以由模型写在 verdict.panels 里，脚本只搬运 + 查字数。
+PANEL_KEYS = ("price", "supply", "quotes", "matrix")
+PANEL_NOTE_MAX = 100
+
 TONES = {
     "tight": ("偏紧", "t-tight"),
     "watch": ("观察", "t-watch"),
@@ -69,8 +74,6 @@ body { font-size: 14.5px; line-height: 1.6; }
 .hd .stamp { font-family: var(--font-mono); font-size: 12px; color: var(--ink-4); }
 .panel { background: var(--surface); border: 1px solid var(--line-1);
          border-radius: 12px; padding: 16px 18px; box-shadow: 0 1px 2px rgba(43,38,32,.04); }
-.grid { display: grid; gap: 14px; }
-.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .stack { margin-bottom: 14px; }
 .sec-head { display: flex; justify-content: space-between; align-items: baseline;
             gap: 12px; flex-wrap: wrap; }
@@ -114,6 +117,9 @@ svg.chart text { fill: var(--ink-4); font-size: 10.5px; font-family: var(--font-
          border: 1px dashed var(--line-1); border-radius: 9px; margin-top: 11px;
          line-height: 1.7; }
 .footnote { font-size: 11.5px; color: var(--ink-4); margin-top: 9px; line-height: 1.6; }
+.panel-note { margin-top: 11px; padding: 9px 12px; border-left: 3px solid var(--clay);
+              background: var(--clay-soft); border-radius: 0 7px 7px 0;
+              font-size: 12.5px; line-height: 1.65; color: var(--ink-2); }
 /* 源状态 */
 .srcs { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
         gap: 9px; margin-top: 12px; }
@@ -125,7 +131,6 @@ svg.chart text { fill: var(--ink-4); font-size: 10.5px; font-family: var(--font-
              font-family: var(--font-mono); }
 .ok { color: var(--pos); } .bad { color: var(--neg); } .warnc { color: var(--warn); }
 @media (max-width: 980px) {
-  .two { grid-template-columns: 1fr; }
   .signals { grid-template-columns: 1fr; }
   .wrap { width: calc(100vw - 24px); }
 }
@@ -218,6 +223,24 @@ def render_verdict(verdict: Dict[str, Any], models: Dict[str, Any]) -> str:
 </section>"""
 
 
+def panel_note(notes: Dict[str, Any], key: str) -> str:
+    """面板底部的异动说明。模型没写就整行不出现，脚本不代笔。"""
+    text = (notes or {}).get(key)
+    if not text:
+        return ""
+    return f'<div class="panel-note">{esc(str(text).strip())}</div>'
+
+
+def over_length_notes(notes: Dict[str, Any]) -> Dict[str, int]:
+    """超出 100 字的异动说明。只报不截——截断会把话拦腰砍断。"""
+    out = {}
+    for key in PANEL_KEYS:
+        text = (notes or {}).get(key)
+        if text and len(str(text).strip()) > PANEL_NOTE_MAX:
+            out[key] = len(str(text).strip())
+    return out
+
+
 def line_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
                colors: Dict[str, str], digits: int = 2) -> str:
     """多序列折线。少于 2 个点的序列不画线，也不补值。"""
@@ -228,8 +251,10 @@ def line_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
         return (f'<div class="empty">暂无数据：{esc(names)}在窗口内不足 2 个观测点。'
                 f'<br>不画线，也不用前值补齐。</div>')
 
-    W, H = 760, 250
-    L, R, T, B = 46, 54, 14, 26
+    # 面板现在独占一整行，viewBox 必须跟着加宽。SVG 是等比缩放的：
+    # 拿 760 宽的画布铺到 1400px 上，10.5px 的字会被放成约 19px。
+    W, H = 1440, 320
+    L, R, T, B = 56, 60, 16, 30
     days = sorted({p["date"] for s in live for p in s["points"]})
     values = [p["value"] for s in live for p in s["points"]]
     lo, hi = min(values), max(values)
@@ -254,10 +279,13 @@ def line_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
                      f'x2="{W - R}" y2="{y:.1f}"/>')
         parts.append(f'<text x="{L - 6}" y="{y + 3.5:.1f}" text-anchor="end">'
                      f'{unit_prefix}{v:.{digits}f}</text>')
-    for idx in (0, len(days) // 2, len(days) - 1):
+    ticks = 6 if len(days) >= 12 else 3
+    idxs = sorted({round(i * (len(days) - 1) / (ticks - 1)) for i in range(ticks)})
+    for idx in idxs:
         day = days[idx]
-        anchor = "start" if idx == 0 else ("end" if idx == len(days) - 1 else "middle")
-        parts.append(f'<text x="{x_of(day):.1f}" y="{H - 7}" '
+        anchor = ("start" if idx == 0
+                  else "end" if idx == len(days) - 1 else "middle")
+        parts.append(f'<text x="{x_of(day):.1f}" y="{H - 9}" '
                      f'text-anchor="{anchor}">{esc(day[5:])}</text>')
     for s in live:
         color = colors.get(s["name"], "var(--clay)")
@@ -282,7 +310,7 @@ def line_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
     return chart
 
 
-def render_price_panel(ev: Dict[str, Any]) -> str:
+def render_price_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     colors = {"B200": "var(--gpu-b200)", "H200 SXM": "var(--gpu-h200)",
               "H100 SXM": "var(--gpu-h100)"}
     series = []
@@ -314,10 +342,11 @@ def render_price_panel(ev: Dict[str, Any]) -> str:
     <div class="sec-hint">{esc(anchor)}</div>
   </div>
   {body}
+  {panel_note(notes, "price")}
 </section>"""
 
 
-def render_supply_panel(ev: Dict[str, Any]) -> str:
+def render_supply_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     colors = {"B200": "var(--gpu-b200)", "H200 SXM": "var(--gpu-h200)",
               "H100 SXM": "var(--gpu-h100)"}
     series = []
@@ -351,10 +380,11 @@ def render_supply_panel(ev: Dict[str, Any]) -> str:
     <div class="sec-hint">越高 = 越宽松</div>
   </div>
   {body}
+  {panel_note(notes, "supply")}
 </section>"""
 
 
-def render_market_quotes(ev: Dict[str, Any]) -> str:
+def render_market_quotes(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     rows = []
     for model in ORDER:
         block = (ev.get("models") or {}).get(model) or {}
@@ -405,10 +435,11 @@ def render_market_quotes(ev: Dict[str, Any]) -> str:
       <th>P75</th><th>样本</th><th>供给</th></tr></thead>
     <tbody>{table}</tbody>
   </table></div>
+  {panel_note(notes, "quotes")}
 </section>"""
 
 
-def render_standard_matrix(ev: Dict[str, Any]) -> str:
+def render_standard_matrix(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     """Provider × (GPU × OD/Spot) 矩阵。缺失明确显示，不留空白。"""
     providers: Dict[str, Dict[str, Dict[str, Any]]] = {}
     labels = {"coreweave": "CoreWeave", "nebius": "Nebius", "runpod": "Runpod"}
@@ -467,6 +498,7 @@ def render_standard_matrix(ev: Dict[str, Any]) -> str:
     <thead><tr><th>Provider</th>{head}</tr></thead>
     <tbody>{body}</tbody>
   </table></div>
+  {panel_note(notes, "matrix")}
 </section>"""
 
 
@@ -511,6 +543,7 @@ def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
     stamp = (ev.get("generated_at") or
              datetime.now(timezone.utc).isoformat())[:16].replace("T", " ")
     models = ev.get("models") or {}
+    notes = verdict.get("panels") or {}
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -530,14 +563,10 @@ def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
     <div class="stamp">观测日 {esc(asof)} · 数据源 {ok}/{len(health)} · UTC {esc(stamp)}</div>
   </header>
   {render_verdict(verdict, models)}
-  <div class="grid two stack">
-    {render_price_panel(ev)}
-    {render_supply_panel(ev)}
-  </div>
-  <div class="grid two stack">
-    {render_market_quotes(ev)}
-    {render_standard_matrix(ev)}
-  </div>
+  <div class="stack">{render_price_panel(ev, notes)}</div>
+  <div class="stack">{render_supply_panel(ev, notes)}</div>
+  <div class="stack">{render_market_quotes(ev, notes)}</div>
+  <div class="stack">{render_standard_matrix(ev, notes)}</div>
   {render_sources(ev)}
 </main>
 </body>
@@ -568,6 +597,8 @@ def main() -> int:
         "evidence": str(evidence_path),
         "asof": ev.get("asof"),
         "verdict_present": bool(verdict.get("headline")),
+        "panel_notes": [k for k in PANEL_KEYS if (verdict.get("panels") or {}).get(k)],
+        "panel_notes_over_limit": over_length_notes(verdict.get("panels") or {}),
         "models_charted": [m for m in ORDER
                            if ((((ev.get("models") or {}).get(m) or {}).get("by_source") or {})
                                .get("ornn", {}).get("transaction_index", {}).get("series"))],

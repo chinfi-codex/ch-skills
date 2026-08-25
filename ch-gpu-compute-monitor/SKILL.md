@@ -138,12 +138,15 @@ python scripts/render_report_html.py --evidence … --output docs/index.html
 ```
 
 自包含单页，无外部依赖，用 claude 主题的暖色纸面。按 PRD §5 的硬约束渲染：
-三型号同屏、无 GPU selector、无时间范围切换、窗口固定 90 天。五块面板依次是
-判断区、成交价趋势、供给趋势、市场报价、标准报价矩阵、数据源状态。
+三型号同屏、无 GPU selector、无时间范围切换、窗口固定 90 天。面板依次是判断区、
+成交价趋势、供给趋势、市场报价、标准报价矩阵、数据源状态；**中间四块各占整行**，
+每块底部带一行 ≤100 字的异动说明。
 
 **证据全部由脚本从 evidence 渲染，判断全部来自 `--input` 报告 frontmatter 的
-`verdict` 块。** 不传 `--input` 也能出图，判断区会显示「报告未提供整体判断」——
-脚本不会替模型编结论。
+`verdict` 块**（顶部结论 + 三个型号的状态 + 四块面板的异动说明 `verdict.panels`）。
+不传 `--input` 也能出图，判断区会显示「报告未提供整体判断」、面板说明整行不出现——
+脚本不会替模型编结论。异动说明超过 100 字会在输出摘要的
+`panel_notes_over_limit` 里点名，但不截断。
 
 ### `scripts/daily_update.py` —— 给 cron 用的流水线
 

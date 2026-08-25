@@ -263,6 +263,26 @@ class TestDashboardContract:
         assert out.count('class="state') == len(r.ORDER)
         assert "数据不足" in out
 
+    def test_panel_note_is_omitted_when_model_did_not_write_one(self):
+        """没写就整行不出现，脚本不代笔。"""
+        r = self._renderer()
+        assert r.panel_note({}, "price") == ""
+        assert r.panel_note({"supply": "x"}, "price") == ""
+
+    def test_panel_note_is_passed_through_verbatim(self):
+        r = self._renderer()
+        out = r.panel_note({"price": "H200 近一周独自跌 13.4%"}, "price")
+        assert "H200 近一周独自跌 13.4%" in out
+        assert "panel-note" in out
+
+    def test_over_length_note_is_reported_not_truncated(self):
+        """截断会把话拦腰砍断，宁可点名让作者自己改短。"""
+        r = self._renderer()
+        long_text = "行" * (r.PANEL_NOTE_MAX + 5)
+        flagged = r.over_length_notes({"price": long_text, "quotes": "短的"})
+        assert flagged == {"price": r.PANEL_NOTE_MAX + 5}
+        assert long_text in r.panel_note({"price": long_text}, "price")
+
     def test_empty_series_renders_explicit_missing_notice(self):
         r = self._renderer()
         out = r.line_chart([{"name": "B200", "label": "B200", "points": []}],

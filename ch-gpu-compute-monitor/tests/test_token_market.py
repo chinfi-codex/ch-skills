@@ -366,6 +366,75 @@ class TestCompositionChart:
         assert abs(sum(widths) - 1440) < 1.0
 
 
+class TestMalformedRows:
+    """单行脏数据不该判死整天，但"有量却无标识"必须失败。
+
+    实测线上每天有 1 行 model_permaslug 为空、prompt/completion/requests 全是 0
+    的占位行（token 占比 0.0000%）。为它把 530 行全废掉，代价远大于收益。
+    """
+
+    @staticmethod
+    def _cfg():
+        return {
+            "base_url": "https://example.invalid",
+            "endpoints": {"rankings": "/r", "models": "/m",
+                          "endpoints_of": "/m/{model}/e"},
+            "query": {"view": "day", "provider_probe_top_n": 0},
+            "coverage_scope": "gateway", "price_basis": "list",
+        }
+
+    @staticmethod
+    def _run(rows):
+        import collectors.openrouter as O
+        pricing = {"data": [{"id": "a/one", "canonical_slug": "a/one",
+                             "pricing": {"prompt": "0.000001",
+                                         "completion": "0.000002"}}]}
+        calls = {"n": 0}
+
+        def fake_request(url, **kwargs):
+            calls["n"] += 1
+            return {"data": rows} if calls["n"] == 1 else pricing
+
+        original_request, original_save = O.request_json, O.save_raw
+        O.request_json = fake_request
+        O.save_raw = lambda *a, **k: "raw/test.json"
+        try:
+            return O.collect(TestMalformedRows._cfg(), None, "2026-08-25")
+        finally:
+            O.request_json, O.save_raw = original_request, original_save
+
+    @staticmethod
+    def _row(slug, prompt=10, completion=1, count=2):
+        return {"date": "2026-08-24 00:00:00", "model_permaslug": slug,
+                "variant": "standard", "total_prompt_tokens": prompt,
+                "total_completion_tokens": completion, "count": count}
+
+    def test_zero_volume_placeholder_is_skipped_not_fatal(self):
+        result = self._run([self._row("a/one"), self._row("", 0, 0, 0)])
+        assert len(result.tokens) == 1
+        assert "<empty model_permaslug>" in result.unmapped
+        assert any("占位行" in n for n in result.notes)
+
+    def test_unlabelled_row_with_real_volume_fails_loudly(self):
+        """有量却无从归属：静默丢会让总量凭空少一块，必须显式失败。"""
+        import collectors.openrouter as O
+        try:
+            self._run([self._row("a/one"), self._row("", 5_000, 100, 3)])
+        except O.CollectorError as exc:
+            assert "无从归属" in str(exc)
+        else:
+            raise AssertionError("带量的无标识行必须抛 CollectorError")
+
+    def test_all_rows_unlabelled_fails(self):
+        import collectors.openrouter as O
+        try:
+            self._run([self._row("", 0, 0, 0)])
+        except O.CollectorError:
+            pass
+        else:
+            raise AssertionError("一行带标识的都没有，必须失败")
+
+
 def _run() -> int:
     failures, total = [], 0
     for name, obj in sorted(globals().items()):

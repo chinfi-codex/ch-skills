@@ -184,6 +184,13 @@ def collect(cfg: Dict[str, Any], catalog, obs_date: str,
 
     # 观测日取数据自己的结算日（T-1），不是运行日。同 Ornn 的做法：
     # 行的日期是它自己的，跑批的日期只是我们什么时候去拿。
+    # 响应级的结构问题必须显式失败；但「530 行里有一行是全零占位」不是结构问题，
+    # 为它把一整天的采集判死，代价远大于收益（实测那一行 prompt/completion/requests
+    # 全是 0，token 占比 0.0000%）。所以分两档：
+    #   * 没有标识、也没有任何量  → 空占位行，跳过并记账
+    #   * 没有标识、却带着真实的量 → 有量却无从归属，这是真的结构问题，失败
+    placeholder_rows = 0
+    kept: List[Dict[str, Any]] = []
     for i, row in enumerate(rows):
         if not isinstance(row, dict):
             raise CollectorError(
@@ -191,8 +198,23 @@ def collect(cfg: Dict[str, Any], catalog, obs_date: str,
         if not row.get("date"):
             raise CollectorError(f"rankings 第 {i} 行缺少必需字段 date")
         if not (row.get("model_permaslug") or "").strip():
-            raise CollectorError(
-                f"rankings 行 {str(row.get('date'))[:10]} 缺少必需字段 model_permaslug")
+            volume = ((row.get("total_prompt_tokens") or 0)
+                      + (row.get("total_completion_tokens") or 0)
+                      + (row.get("count") or 0))
+            if volume:
+                raise CollectorError(
+                    f"rankings 行 {str(row.get('date'))[:10]} 缺少 model_permaslug，"
+                    f"却带着 {volume} 的量——有量却无从归属，不能静默丢")
+            placeholder_rows += 1
+            result.unmapped.append("<empty model_permaslug>")
+            continue
+        kept.append(row)
+    if not kept:
+        raise CollectorError("rankings 里没有任何带标识的行")
+    if placeholder_rows:
+        result.notes.append(
+            f"跳过 {placeholder_rows} 行无标识的全零占位行（不带任何量，已记进 unmapped）")
+    rows = kept
     dates = sorted({str(r["date"])[:10] for r in rows})
     settled = dates[-1]
     if view == "day" and len(dates) > 1:

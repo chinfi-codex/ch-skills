@@ -102,6 +102,27 @@ def _price(entry: Dict[str, Any], key: str) -> Optional[float]:
         return None
 
 
+def _required_nonnegative_int(row: Dict[str, Any], key: str, identity: str) -> int:
+    """读取排行榜必需计数字段；缺失或形状异常时显式失败，绝不补 0。"""
+    if key not in row or row.get(key) is None:
+        raise CollectorError(f"rankings 行 {identity} 缺少必需字段 {key}")
+    raw = row[key]
+    if isinstance(raw, bool):
+        raise CollectorError(f"rankings 行 {identity} 的 {key} 不是整数：{raw!r}")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise CollectorError(
+            f"rankings 行 {identity} 的 {key} 不是整数：{raw!r}") from exc
+    if isinstance(raw, float) and not raw.is_integer():
+        raise CollectorError(f"rankings 行 {identity} 的 {key} 不是整数：{raw!r}")
+    if isinstance(raw, str) and not re.fullmatch(r"\d+", raw.strip()):
+        raise CollectorError(f"rankings 行 {identity} 的 {key} 不是整数：{raw!r}")
+    if value < 0:
+        raise CollectorError(f"rankings 行 {identity} 的 {key} 不能为负数：{value}")
+    return value
+
+
 def _provider_band(base_url: str, path_tpl: str, model_id: str,
                    req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """逐 provider 的 prompt 报价分布。拿不到就返回 None——这是补强不是核心。"""
@@ -163,9 +184,16 @@ def collect(cfg: Dict[str, Any], catalog, obs_date: str,
 
     # 观测日取数据自己的结算日（T-1），不是运行日。同 Ornn 的做法：
     # 行的日期是它自己的，跑批的日期只是我们什么时候去拿。
-    dates = sorted({str(r.get("date"))[:10] for r in rows if r.get("date")})
-    if not dates:
-        raise CollectorError("rankings 每一行都没有 date 字段，无法定锚")
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise CollectorError(
+                f"rankings 第 {i} 行不是对象（拿到 {type(row).__name__}）")
+        if not row.get("date"):
+            raise CollectorError(f"rankings 第 {i} 行缺少必需字段 date")
+        if not (row.get("model_permaslug") or "").strip():
+            raise CollectorError(
+                f"rankings 行 {str(row.get('date'))[:10]} 缺少必需字段 model_permaslug")
+    dates = sorted({str(r["date"])[:10] for r in rows})
     settled = dates[-1]
     if view == "day" and len(dates) > 1:
         result.notes.append(
@@ -179,12 +207,13 @@ def collect(cfg: Dict[str, Any], catalog, obs_date: str,
         if str(row.get("date"))[:10] != settled:
             continue
         slug = (row.get("model_permaslug") or "").strip()
-        if not slug:
-            result.unmapped.append("<empty model_permaslug>")
-            continue
         variant = (row.get("variant") or "standard").strip() or "standard"
-        prompt_tokens = int(row.get("total_prompt_tokens") or 0)
-        completion_tokens = int(row.get("total_completion_tokens") or 0)
+        identity = f"{settled} {slug}:{variant}"
+        prompt_tokens = _required_nonnegative_int(
+            row, "total_prompt_tokens", identity)
+        completion_tokens = _required_nonnegative_int(
+            row, "total_completion_tokens", identity)
+        requests = _required_nonnegative_int(row, "count", identity)
         volume = prompt_tokens + completion_tokens
         total_tokens += volume
 
@@ -195,19 +224,25 @@ def collect(cfg: Dict[str, Any], catalog, obs_date: str,
             staged.append({"row": row, "slug": slug, "variant": variant,
                            "entry": None, "how": how, "spend": None,
                            "prompt_tokens": prompt_tokens,
-                           "completion_tokens": completion_tokens})
+                           "completion_tokens": completion_tokens,
+                           "requests": requests})
             continue
         p_prompt = _price(entry, "prompt")
         p_completion = _price(entry, "completion")
-        if p_prompt is None and p_completion is None:
+        missing_sides = []
+        if prompt_tokens > 0 and p_prompt is None:
+            missing_sides.append("prompt")
+        if completion_tokens > 0 and p_completion is None:
+            missing_sides.append("completion")
+        if missing_sides:
             raise CollectorError(
-                f"{slug}:{variant} 匹配到 {entry.get('id')} 但 pricing 里既无 prompt "
-                f"也无 completion，价格字段结构可能已改")
+                f"{slug}:{variant} 匹配到 {entry.get('id')}，但有对应 token 的价格字段缺失："
+                f"{', '.join(missing_sides)}")
         spend = (prompt_tokens * (p_prompt or 0.0)
                  + completion_tokens * (p_completion or 0.0))
         staged.append({"row": row, "slug": slug, "variant": variant, "entry": entry,
                        "how": how, "spend": spend, "prompt_tokens": prompt_tokens,
-                       "completion_tokens": completion_tokens})
+                       "completion_tokens": completion_tokens, "requests": requests})
 
     if not staged:
         raise CollectorError(f"rankings 里没有 {settled} 这一天的行")
@@ -253,7 +288,7 @@ def collect(cfg: Dict[str, Any], catalog, obs_date: str,
             price_basis=cfg.get("price_basis", "list"),
             prompt_tokens=item["prompt_tokens"],
             completion_tokens=item["completion_tokens"],
-            requests=int(row.get("count") or 0) or None,
+            requests=item["requests"],
             price_prompt_usd_per_mtok=None if p_prompt is None else p_prompt * PER_MTOK,
             price_completion_usd_per_mtok=(None if p_completion is None
                                            else p_completion * PER_MTOK),

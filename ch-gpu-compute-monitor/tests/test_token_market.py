@@ -25,6 +25,8 @@ from collectors.openrouter import (  # noqa: E402
 )
 from metrics import Evidence, _unit_price  # noqa: E402
 import render_report_html as R  # noqa: E402
+from collectors import openrouter as openrouter_collector  # noqa: E402
+from collectors.base import CollectorError  # noqa: E402
 
 
 def _fake_evidence(rows, **composition):
@@ -51,6 +53,30 @@ def approx(expected: float, tol: float = 1e-6):
             return f"approx({expected})"
 
     return _Approx()
+
+
+def _collect_with(rankings, models):
+    """给 collector 喂固定响应，不碰网络和 raw 目录。"""
+    payloads = iter(({"data": rankings}, {"data": models}))
+    original_request = openrouter_collector.request_json
+    original_save_raw = openrouter_collector.save_raw
+    openrouter_collector.request_json = lambda *args, **kwargs: next(payloads)
+    openrouter_collector.save_raw = lambda *args, **kwargs: "raw/test.json"
+    try:
+        return openrouter_collector.collect({
+            "base_url": "https://example.invalid",
+            "endpoints": {
+                "rankings": "/rankings",
+                "models": "/models",
+                "endpoints_of": "/models/{model}/endpoints",
+            },
+            "query": {"view": "day", "provider_probe_top_n": 0},
+            "coverage_scope": "gateway",
+            "price_basis": "list",
+        }, None, "2026-08-25")
+    finally:
+        openrouter_collector.request_json = original_request
+        openrouter_collector.save_raw = original_save_raw
 
 
 # 实测形状：变体条目与标准条目共用同一个 canonical_slug。
@@ -163,6 +189,54 @@ class TestUnitPrice:
 
 
 class TestSpendMath:
+    def test_missing_required_token_field_fails_instead_of_becoming_zero(self):
+        rankings = [{
+            "date": "2026-08-24", "model_permaslug": "vendor/model",
+            "variant": "standard", "count": 10,
+            # 模拟接口改版：total_prompt_tokens 消失。
+            "total_completion_tokens": 100,
+        }]
+        models = [{
+            "id": "vendor/model", "canonical_slug": "vendor/model",
+            "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+        }]
+        try:
+            _collect_with(rankings, models)
+        except CollectorError as exc:
+            assert "total_prompt_tokens" in str(exc)
+        else:
+            assert False, "缺少必需 token 字段时必须显式失败"
+
+    def test_missing_price_for_nonzero_token_side_fails(self):
+        rankings = [{
+            "date": "2026-08-24", "model_permaslug": "vendor/model",
+            "variant": "standard", "count": 10,
+            "total_prompt_tokens": 1_000_000, "total_completion_tokens": 100_000,
+        }]
+        models = [{
+            "id": "vendor/model", "canonical_slug": "vendor/model",
+            "pricing": {"completion": "0.000002"},
+        }]
+        try:
+            _collect_with(rankings, models)
+        except CollectorError as exc:
+            assert "prompt" in str(exc)
+        else:
+            assert False, "有 prompt token 却缺 prompt 价格时必须显式失败"
+
+    def test_missing_price_for_zero_token_side_is_allowed(self):
+        rankings = [{
+            "date": "2026-08-24", "model_permaslug": "vendor/model",
+            "variant": "standard", "count": 10,
+            "total_prompt_tokens": 0, "total_completion_tokens": 100_000,
+        }]
+        models = [{
+            "id": "vendor/model", "canonical_slug": "vendor/model",
+            "pricing": {"completion": "0.000002"},
+        }]
+        result = _collect_with(rankings, models)
+        assert result.tokens[0]["spend_usd"] == approx(0.2)
+
     def test_spend_uses_split_prompt_and_completion_prices(self):
         """prompt 与 completion 单价差好几倍，用一个平均价算 spend 会错。"""
         prompt_tokens, completion_tokens = 1_000_000, 100_000

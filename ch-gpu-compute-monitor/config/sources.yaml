@@ -1,0 +1,101 @@
+# 数据源配置 —— endpoint、口径、限频、启停。
+#
+# 每个源的 query 一旦改动，历史序列就不可比：offer 数、分位数都会跳变。
+# 所以采集时会把 query 关键参数哈希成 query_fingerprint 存进每一行观测，
+# 指纹变了的两段序列不允许直接比（见 references/pricing_taxonomy.md §可比性）。
+
+schema_version: 1
+
+defaults:
+  timeout_seconds: 30
+  retries: 3
+  backoff_base_seconds: 2
+  user_agent: "ch-gpu-compute-monitor/1.0 (research; contact via repo owner)"
+
+sources:
+  ornn:
+    enabled: true
+    priority: P0
+    role: transaction_anchor
+    base_url: "https://api.ornnai.com"
+    auth: none                     # 匿名可用，按 IP 限频；有 key 可解锁全历史与更多 SKU
+    api_key_env: ORNN_API_KEY      # 可选；设了就带上，解锁 3 个月以外的历史
+    endpoints:
+      gpu_types_free: "/api/gpu-types-free"
+      gpu_types: "/api/gpu-types"
+      current: "/api/gpu/{gpu}"                       # 小时级实时值
+      daily_index_all: "/api/daily-index/all"         # 全部 SKU 的最新结算日
+      history: "/api/gpu/{gpu}/index-history"         # 日度结算历史
+    free_tier_history_days: 92     # 无 key 时被钳到滚动 3 个月
+    notes: "settled daily = T-1 收盘；current = 小时级实时。两者不能混进同一条序列。"
+
+  vast:
+    enabled: true
+    priority: P0
+    role: spot_market_depth
+    base_url: "https://console.vast.ai/api/v0"
+    auth: none                     # 查询类 bundles 接口匿名可用；有 key 更稳
+    api_key_env: VAST_API_KEY
+    endpoints:
+      bundles: "/bundles/"
+    # 冻结的查询口径。改这里 = 断序列，必须同时在 references/source_notes.md 记一笔。
+    query:
+      rentable: true
+      limit: 1000
+      # 只要按需（非竞价）offer；is_bid=true 是可抢占档，单独一条 segment 采。
+      include_interruptible: true
+    # 报价口径：gpu_only 用 search.gpuCostPerHour（纯 GPU 费），
+    # bundled 用 dph_total（含磁盘与 SLA 溢价）。默认 gpu_only，跨平台才可比。
+    price_scope: gpu_only
+    filters:
+      min_reliability: 0.90        # 低于此值的机器不进分位数，避免垃圾供给压低价格中枢
+      exclude_deverified: true     # verification == "deverified" 的机器剔除
+    min_sample_for_quantiles: 8    # 样本不足只报 min 与 count，不报 P25/P75
+
+  runpod:
+    enabled: true
+    priority: P0
+    role: stock_status
+    base_url: "https://api.runpod.io/graphql"
+    auth: none                     # gpuTypes 查询匿名可用
+    api_key_env: RUNPOD_API_KEY
+    # secure（自营数据中心）与 community（P2P）是两个市场，分开存 market_segment。
+    segments: ["secure", "community"]
+    notes: "minimumBidPrice 常与 uninterruptablePrice 相等，相等时不得记成 spot 折价。"
+
+  lambda:
+    enabled: true
+    priority: P0
+    role: neocloud_list_price
+    base_url: "https://cloud.lambda.ai/api/v1"
+    auth: api_key                  # 实测无 key 返回 401，无法降级为匿名
+    api_key_env: LAMBDA_API_KEY
+    endpoints:
+      instance_types: "/instance-types"
+    notes: "实例是整机（1x/8x），必须除以 node_gpu_count 换算成 USD/GPU·hour。"
+
+  # ---- P1/P2：公开 Pricing 网页，没有稳定 API ----
+  # 这几家不做自动抓取（页面改版是最高频故障源，静默抓错比没数据更糟）。
+  # 走 attested 模式：人工核对后写进 config/attested_prices.yaml，带 as_of 与来源 URL，
+  # 超过 max_age_days 自动降级为 stale，不参与"最新价"也不参与评分。
+  coreweave:
+    enabled: true
+    priority: P1
+    role: neocloud_list_price
+    mode: attested
+    pricing_url: "https://coreweave.com/pricing"
+    max_age_days: 30
+  nebius:
+    enabled: true
+    priority: P1
+    role: neocloud_list_price
+    mode: attested
+    pricing_url: "https://nebius.com/prices"
+    max_age_days: 30
+  crusoe:
+    enabled: false                 # P2，MVP 不启用
+    priority: P2
+    role: neocloud_list_price
+    mode: attested
+    pricing_url: "https://www.crusoe.ai/cloud/pricing"
+    max_age_days: 30

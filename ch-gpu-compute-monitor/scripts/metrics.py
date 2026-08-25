@@ -1,0 +1,631 @@
+#!/usr/bin/env python3
+"""确定性指标层：把库里的观测算成证据包，交给模型去读。
+
+这个脚本刻意不写一句结论性文字。它算变化率、分位数、折价、供给指数、
+样本量、新鲜度、评分分项，并把每个数字的来源、样本量、可比性标记一起吐出来。
+"这是不是真拐点"由模型判断——所以每个聚合值旁边都留着推翻它所需的原料。
+
+几条不肯让步的纪律：
+  * 缺数就是缺数。窗口两端有一头没有观测，变化率返回 null，不用前值补。
+  * query_fingerprint 不同的两个观测不许相减——口径变了序列就断了。
+  * 冷启动（历史不足 min_history_days）不出评分，出 usable=false 加原因。
+  * stale 的人工报价不进跨平台中位数，也不进评分。
+  * offer 数用份额比绝对数，剔掉平台自身规模变化带来的伪信号。
+
+用法：
+    python scripts/metrics.py                          # 最新观测日，90D 窗口
+    python scripts/metrics.py --date 2026-08-25 --window 90
+    python scripts/metrics.py --output evidence/gpu-2026-08-25.json
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+from collections import defaultdict
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import yaml
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+import db_adapter  # noqa: E402
+from collectors.base import percentile  # noqa: E402
+from collectors.runpod import stock_rank  # noqa: E402
+from gpu_catalog import load_catalog  # noqa: E402
+
+CONFIG_DIR = SCRIPT_DIR.parent / "config"
+
+# 进入"跨平台中位数"的价格类型。刻意排除：
+#   transaction_live —— 小时级实时值，和日度结算不同频，混进去会让当日点跳动
+#   committed_3m     —— 承诺期价，和按需价差 20%+，混进去会假装成降价
+#   spot             —— 可抢占档，单独算折价，不进中枢
+CORE_PRICE_TYPES = ("transaction_index", "offer_median", "on_demand")
+CHANGE_WINDOWS = (("1d", 1), ("7d", 7), ("30d", 30))
+
+
+def _f(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(out) else out
+
+
+def _d(value: Any) -> str:
+    return value.isoformat() if isinstance(value, date) else str(value)
+
+
+def pct_change(new: Optional[float], old: Optional[float]) -> Optional[float]:
+    if new is None or old is None or old == 0:
+        return None
+    return (new - old) / abs(old) * 100.0
+
+
+def nearest_on_or_before(series: Dict[str, float], target: str) -> Optional[Tuple[str, float]]:
+    """取 target 当天或之前最近的一个观测。
+
+    容忍单日缺采，但不会跨越任意长的缺口——调用方拿到返回的日期后
+    自己判断偏离了多少天，偏太远就该当成缺数。
+    """
+    keys = [k for k in series if k <= target]
+    if not keys:
+        return None
+    key = max(keys)
+    return key, series[key]
+
+
+class Evidence:
+    def __init__(self, asof: str, window: int) -> None:
+        self.catalog = load_catalog()
+        self.thresholds = yaml.safe_load(
+            (CONFIG_DIR / "thresholds.yaml").read_text(encoding="utf-8"))
+        self.sources_cfg = yaml.safe_load(
+            (CONFIG_DIR / "sources.yaml").read_text(encoding="utf-8")).get("sources", {})
+        self.asof = asof
+        self.window = window
+        self.start = (date.fromisoformat(asof) - timedelta(days=window + 45)).isoformat()
+        self.prices = [r for r in db_adapter.read_prices(self.start, asof)
+                       if _f(r.get("price_usd_gpu_hour")) is not None]
+        self.supply = db_adapter.read_supply(self.start, asof)
+        self.runs = db_adapter.read_runs(self.start, asof)
+
+    # ---------- 序列构造 ----------
+    def price_series(self, model: str, source: str, price_type: str,
+                     segment: Optional[str] = None) -> Dict[str, Any]:
+        """一条 (model, source, price_type) 的日度序列 + 口径指纹集合。"""
+        points: Dict[str, float] = {}
+        fingerprints = set()
+        flags = set()
+        for row in self.prices:
+            if row["gpu_model"] != model or row["source"] != source:
+                continue
+            if row["price_type"] != price_type:
+                continue
+            if segment is not None and row["market_segment"] != segment:
+                continue
+            if row["quality_flag"] in ("stale", "suspicious"):
+                flags.add(row["quality_flag"])
+                continue
+            value = _f(row["price_usd_gpu_hour"])
+            if value is None:
+                continue
+            points[_d(row["obs_date"])] = value
+            if row.get("query_fingerprint"):
+                fingerprints.add(row["query_fingerprint"])
+        return {"points": points, "fingerprints": sorted(fingerprints),
+                "excluded_flags": sorted(flags)}
+
+    def changes(self, series: Dict[str, float],
+                basis: Optional[Dict[str, Any]] = None,
+                anchor_date: Optional[str] = None) -> Dict[str, Any]:
+        """1D/7D/30D 变化率 + 90D 回撤。每个数字带上实际比对的日期。
+
+        basis 是每天的"口径身份"（比如当天参与中位数的源集合）。两端口径不同的
+        变化率一律判为不可用——拿 1 个源的中位数去比 3 个源的中位数，得到的
+        百分比是数据源上下线造成的，不是价格动了。这是本项目最容易出的假信号：
+        实测新接入 Runpod+Vast 的那天，H100 跨平台中枢会凭空"跌" 25%。
+        """
+        out: Dict[str, Any] = {}
+        latest = nearest_on_or_before(series, anchor_date or self.asof)
+        if latest is None:
+            return {"latest": None, "changes": {}, "drawdown_from_window_high_pct": None}
+        latest_date, latest_value = latest
+        out["latest"] = {"date": latest_date, "value": round(latest_value, 6)}
+        changes: Dict[str, Any] = {}
+        for label, days in CHANGE_WINDOWS:
+            target = (date.fromisoformat(latest_date) - timedelta(days=days)).isoformat()
+            found = nearest_on_or_before(series, target)
+            if found is None:
+                changes[label] = {"pct": None, "reason": "窗口起点无观测"}
+                continue
+            base_date, base_value = found
+            drift = (date.fromisoformat(target) - date.fromisoformat(base_date)).days
+            # 找到的基准点偏离目标日太远，就不该当成"7 日前"来读
+            usable = drift <= max(2, days // 3)
+            reason = None if usable else f"基准点偏离目标日 {drift} 天"
+            basis_now = basis.get(latest_date) if basis else None
+            basis_then = basis.get(base_date) if basis else None
+            basis_match = True
+            if basis is not None and basis_now != basis_then:
+                basis_match = False
+                usable = False
+                reason = (f"两端口径不同（{base_date}: {basis_then} → "
+                          f"{latest_date}: {basis_now}），变化率反映的是口径变动而非价格变动")
+            entry = {
+                "pct": round(pct_change(latest_value, base_value), 4),
+                "from_date": base_date, "from_value": round(base_value, 6),
+                "date_drift_days": drift,
+                "usable": usable,
+            }
+            if basis is not None:
+                entry["basis_match"] = basis_match
+                entry["basis_from"] = basis_then
+                entry["basis_to"] = basis_now
+            if reason:
+                entry["reason"] = reason
+            changes[label] = entry
+        out["changes"] = changes
+        window_start = (date.fromisoformat(self.asof) - timedelta(days=self.window)).isoformat()
+        window_values = [v for k, v in series.items() if window_start <= k <= self.asof]
+        if window_values:
+            high = max(window_values)
+            out["window_high"] = round(high, 6)
+            out["drawdown_from_window_high_pct"] = round(
+                (latest_value - high) / high * 100.0, 4) if high else None
+            out["window_points"] = len(window_values)
+        else:
+            out["drawdown_from_window_high_pct"] = None
+            out["window_points"] = 0
+        return out
+
+    # ---------- 跨平台中枢 ----------
+    def cross_platform_median(self, model: str) -> Dict[str, Any]:
+        """同一 GPU 跨平台的日度中位数。
+
+        每天分别取各源的核心价格类型，一源一票（同一源多个 segment 先取该源
+        的中位再投票），再对各源的票取中位数。这样某个源的 segment 数量变化
+        不会左右结果。
+        """
+        by_day: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
+        for row in self.prices:
+            if row["gpu_model"] != model or row["price_type"] not in CORE_PRICE_TYPES:
+                continue
+            if row["quality_flag"] in ("stale", "suspicious"):
+                continue
+            value = _f(row["price_usd_gpu_hour"])
+            if value is not None:
+                by_day[_d(row["obs_date"])][row["source"]].append(value)
+
+        series: Dict[str, float] = {}
+        contributors: Dict[str, List[str]] = {}
+        for day, per_source in by_day.items():
+            votes = [percentile(sorted(v), 0.5) for v in per_source.values() if v]
+            votes = [v for v in votes if v is not None]
+            if not votes:
+                continue
+            series[day] = percentile(sorted(votes), 0.5)
+            contributors[day] = sorted(per_source)
+        basis = {day: "+".join(names) for day, names in contributors.items()}
+        # 锚点不一定是最后一天。Ornn 是 T-1 结算，所以"今天"的中枢常常只剩
+        # runpod+vast，拿它去比昨天的 ornn-only 中枢，跌出来的百分比全是口径差。
+        # 改成：取最近 14 天里出现最多的那个口径（modal basis），锚在该口径下
+        # 最新的一天，再在同口径内做同期比较。
+        anchor_date, modal_basis = self._modal_basis_anchor(basis)
+        out = self.changes(series, basis=basis, anchor_date=anchor_date)
+        out["anchor_date"] = anchor_date
+        out["anchor_basis"] = modal_basis
+        raw_latest_day = max(series) if series else None
+        out["raw_latest"] = ({"date": raw_latest_day,
+                              "value": round(series[raw_latest_day], 6),
+                              "basis": basis.get(raw_latest_day)}
+                             if raw_latest_day else None)
+        out["anchor_lags_raw_latest_days"] = (
+            (date.fromisoformat(raw_latest_day) - date.fromisoformat(anchor_date)).days
+            if raw_latest_day and anchor_date else None)
+        out["series"] = [{"date": k, "value": round(v, 6), "sources": contributors[k]}
+                         for k, v in sorted(series.items())]
+        out["basis_by_day"] = basis
+        latest_day = max(series) if series else None
+        out["source_set"] = contributors.get(latest_day, []) if latest_day else []
+        # 参与打分的源集合变了，跨日比较就不干净——标出来让模型自己决定采不采信
+        prev_days = sorted(d for d in contributors if d < (latest_day or ""))
+        out["source_set_changed_vs_prev_day"] = bool(
+            prev_days and contributors[prev_days[-1]] != out["source_set"])
+        return out
+
+    def _modal_basis_anchor(self, basis: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
+        """在最近 14 天里找出现最频繁的口径，并返回该口径下最新的一天。
+
+        口径最全的那个不一定最频繁，但"最频繁"才是能拿来做同期比较的那个：
+        它两侧都有同口径的历史点。频次并列时取涉及源更多的那个。
+        """
+        if not basis:
+            return None, None
+        recent_start = (date.fromisoformat(self.asof) - timedelta(days=14)).isoformat()
+        recent = {d: b for d, b in basis.items() if d >= recent_start} or basis
+        counts: Dict[str, int] = defaultdict(int)
+        for value in recent.values():
+            counts[value] += 1
+        modal = max(counts, key=lambda b: (counts[b], len(b.split("+"))))
+        days = sorted(d for d, b in basis.items() if b == modal)
+        return (days[-1] if days else None), modal
+
+    # ---------- 供给 ----------
+    def supply_view(self, model: str) -> Dict[str, Any]:
+        """供给三件套：offer 份额、可用 GPU 数、库存档位 + region 覆盖。
+
+        offer 份额而不是绝对数是有意的：Vast 整体规模变大时所有 SKU 的
+        offer 数都会涨，那是平台效应不是这块 GPU 的供需。份额剔掉了这一层。
+        """
+        share: Dict[str, float] = {}
+        gpus: Dict[str, float] = {}
+        stock_series: Dict[str, Any] = {}
+        regions: Dict[str, float] = {}
+        detail: List[Dict[str, Any]] = []
+        for row in self.supply:
+            if row["gpu_model"] != model:
+                continue
+            day = _d(row["obs_date"])
+            if row.get("offer_share") is not None:
+                share[day] = max(share.get(day, 0.0), _f(row["offer_share"]) or 0.0)
+            if row.get("offer_count") is not None:
+                gpus[day] = gpus.get(day, 0.0) + float(row.get("available_gpu_count") or 0)
+            if row.get("stock_status"):
+                stock_series[day] = row["stock_status"]
+            if row.get("available_region_count") is not None:
+                regions[day] = max(regions.get(day, 0.0),
+                                   float(row["available_region_count"]))
+            if day == self.asof:
+                detail.append({k: (_d(v) if isinstance(v, date) else v)
+                               for k, v in row.items() if k not in ("capacity_detail",)})
+
+        latest_stock = stock_series.get(max(stock_series)) if stock_series else None
+        stock_days = sorted(stock_series)
+        streak = 0
+        for day in reversed(stock_days):
+            if stock_series[day] == latest_stock:
+                streak += 1
+            else:
+                break
+        return {
+            "offer_share": {**self.changes(share), "series":
+                            [{"date": k, "value": round(v, 6)} for k, v in sorted(share.items())]},
+            "available_gpu_count": {**self.changes(gpus), "series":
+                                    [{"date": k, "value": v} for k, v in sorted(gpus.items())]},
+            "available_region_count": self.changes(regions),
+            "stock_status": {"latest": latest_stock,
+                             "rank": stock_rank(latest_stock),
+                             "consecutive_days_at_latest": streak,
+                             "history": [{"date": k, "status": stock_series[k]}
+                                         for k in stock_days]},
+            "today_rows": detail,
+        }
+
+    # ---------- 折价 ----------
+    def discounts(self, model: str) -> List[Dict[str, Any]]:
+        """折价必须同源同 segment 比。跨平台算 spot 折价是错的——
+
+        分子分母来自两个不同的成本结构，算出来的数没有含义。
+        """
+        by_key: Dict[Tuple[str, str, str], Dict[str, float]] = defaultdict(dict)
+        for row in self.prices:
+            if row["gpu_model"] != model or row["quality_flag"] in ("stale", "suspicious"):
+                continue
+            value = _f(row["price_usd_gpu_hour"])
+            if value is None:
+                continue
+            by_key[(row["source"], row["market_segment"], row["price_type"])][
+                _d(row["obs_date"])] = value
+
+        out: List[Dict[str, Any]] = []
+        for (source, segment, ptype) in list(by_key):
+            if ptype not in ("spot", "preemptible", "offer_min"):
+                continue
+            base_key = (source, segment, "on_demand")
+            if ptype == "offer_min":
+                base_key = (source, "on_demand", "offer_median")
+                if segment != "interruptible":
+                    continue
+            base = by_key.get(base_key)
+            if not base:
+                continue
+            cheap = by_key[(source, segment, ptype)]
+            days = sorted(set(cheap) & set(base))
+            if not days:
+                continue
+            ratio = {d: (1 - cheap[d] / base[d]) * 100.0 for d in days if base[d]}
+            latest_day = max(ratio)
+            trailing = [v for k, v in ratio.items()
+                        if k > (date.fromisoformat(latest_day) - timedelta(days=30)).isoformat()]
+            avg30 = sum(trailing) / len(trailing) if trailing else None
+            out.append({
+                "source": source, "segment": segment, "cheap_type": ptype,
+                "base_type": base_key[2], "base_segment": base_key[1],
+                "latest_date": latest_day,
+                "discount_pct": round(ratio[latest_day], 4),
+                "avg_30d_pct": round(avg30, 4) if avg30 is not None else None,
+                "delta_vs_30d_avg_pct_points": (
+                    round(ratio[latest_day] - avg30, 4) if avg30 is not None else None),
+                "sample_days": len(ratio),
+            })
+        return out
+
+    # ---------- 评分 ----------
+    def score(self, model: str, price_block: Dict[str, Any],
+              supply_block: Dict[str, Any], discount_block: List[Dict[str, Any]]
+              ) -> Dict[str, Any]:
+        """规则型 Supply-Demand Score：正 = 偏紧，负 = 偏松。
+
+        这不是判断，是把已有证据压成一个数。每个分项的原始值、权重、
+        以及"为什么不出分"都一并返回，模型必须能靠这些原料推翻它。
+        """
+        cfg = self.thresholds["scoring"]
+        scale = cfg["squash_scale"]
+        weights = cfg["weights"]
+
+        def squash(value: Optional[float], key: str) -> Optional[float]:
+            if value is None:
+                return None
+            return math.tanh(value / float(scale[key]))
+
+        blockers: List[str] = []
+        components: List[Dict[str, Any]] = []
+
+        def add(dim: str, name: str, raw: Optional[float], key: str, sign: int) -> None:
+            squashed = squash(raw, key)
+            components.append({
+                "dimension": dim, "name": name, "raw_pct": raw,
+                "squashed": None if squashed is None else round(squashed, 4),
+                # sign=+1 表示"该项上升 = 偏紧"
+                "sign": sign,
+                "contribution": None if squashed is None else round(squashed * sign, 4),
+            })
+
+        pc = price_block.get("changes", {})
+        add("price", "cross_platform_median_7d", _usable_pct(pc.get("7d")), "price_7d_pct", +1)
+        add("price", "cross_platform_median_30d", _usable_pct(pc.get("30d")), "price_30d_pct", +1)
+
+        sc = supply_block["offer_share"].get("changes", {})
+        gc = supply_block["available_gpu_count"].get("changes", {})
+        add("supply", "offer_share_7d", _usable_pct(sc.get("7d")), "supply_share_7d_pct", -1)
+        add("supply", "available_gpu_7d", _usable_pct(gc.get("7d")), "supply_gpu_7d_pct", -1)
+
+        widest = None
+        for entry in discount_block:
+            delta = entry.get("delta_vs_30d_avg_pct_points")
+            if delta is not None and (widest is None or delta > widest):
+                widest = delta
+        add("discount", "discount_widening_vs_30d", widest, "discount_delta_pct", -1)
+
+        history_days = price_block.get("window_points", 0)
+        if history_days < cfg["min_history_days"]:
+            blockers.append(
+                f"跨平台中枢只有 {history_days} 个观测日，少于 {cfg['min_history_days']} 天门槛，"
+                "7D/30D 变化率不可信")
+        live_price = sum(1 for c in components
+                         if c["dimension"] == "price" and c["contribution"] is not None)
+        live_supply = sum(1 for c in components
+                          if c["dimension"] == "supply" and c["contribution"] is not None)
+        if live_price < cfg["min_price_signals"]:
+            blockers.append(f"在场价格信号 {live_price} 个，少于 {cfg['min_price_signals']} 个门槛")
+        if live_supply < cfg["min_supply_signals"]:
+            blockers.append(f"在场供给信号 {live_supply} 个，少于 {cfg['min_supply_signals']} 个门槛")
+
+        dim_scores: Dict[str, Optional[float]] = {}
+        for dim in ("price", "supply", "discount"):
+            vals = [c["contribution"] for c in components
+                    if c["dimension"] == dim and c["contribution"] is not None]
+            dim_scores[dim] = round(sum(vals) / len(vals), 4) if vals else None
+
+        total = None
+        if not blockers:
+            used = {d: v for d, v in dim_scores.items() if v is not None}
+            weight_sum = sum(weights[d] for d in used)
+            if weight_sum > 0:
+                total = round(sum(v * weights[d] for d, v in used.items()) / weight_sum * 100, 2)
+
+        return {
+            "value": total,
+            "usable": total is not None,
+            "blockers": blockers,
+            "dimension_scores": dim_scores,
+            "weights": weights,
+            "components": components,
+            "source_set": price_block.get("source_set", []),
+            "source_set_changed_vs_prev_day": price_block.get(
+                "source_set_changed_vs_prev_day", False),
+            "comparable_across_days": not price_block.get(
+                "source_set_changed_vs_prev_day", False),
+            "interpretation_note": (
+                "正值偏紧、负值偏松。这是对已有证据的算术压缩，不是判断；"
+                "读之前先看 components 里每一项的 raw_pct 与在场情况。"),
+        }
+
+    # ---------- 告警 ----------
+    def alerts(self, model: str, price_block: Dict[str, Any],
+               supply_block: Dict[str, Any], discount_block: List[Dict[str, Any]]
+               ) -> List[Dict[str, Any]]:
+        cfg = self.thresholds["alerts"]
+        fired: List[Dict[str, Any]] = []
+        values = {
+            "cross_platform_median_7d_pct": _usable_pct(price_block.get("changes", {}).get("7d")),
+            "cross_platform_median_30d_pct": _usable_pct(price_block.get("changes", {}).get("30d")),
+            "offer_share_7d_pct": _usable_pct(
+                supply_block["offer_share"].get("changes", {}).get("7d")),
+            "stock_status_rank_change_days": (
+                supply_block["stock_status"]["consecutive_days_at_latest"]
+                if supply_block["stock_status"]["latest"] else None),
+            "spot_discount_vs_30d_avg_pct_points": max(
+                [e["delta_vs_30d_avg_pct_points"] for e in discount_block
+                 if e.get("delta_vs_30d_avg_pct_points") is not None] or [None]
+            ) if discount_block else None,
+        }
+        for rule in cfg["rules"]:
+            if cfg.get("direction") == "loosening_only" and rule["id"].endswith(
+                    ("spike", "rise", "contraction")):
+                continue
+            value = values.get(rule["metric"])
+            if value is None:
+                continue
+            if rule["metric"] == "stock_status_rank_change_days":
+                if supply_block["stock_status"]["latest"] != rule.get("target_status"):
+                    continue
+            triggered = (value <= rule["threshold"]) if rule["op"] == "<=" else (
+                value >= rule["threshold"])
+            if not triggered:
+                continue
+            fired.append({
+                "id": rule["id"], "label": rule["label"], "meaning": rule["meaning"],
+                "metric": rule["metric"], "observed": round(float(value), 4),
+                "threshold": rule["threshold"], "op": rule["op"],
+                "mode": cfg.get("mode", "record_only"),
+                "note": "阈值来自 config/thresholds.yaml 的起始配置，尚未按实际波动率校准；"
+                        "触发只代表越过了这条线，不代表这是真信号。",
+            })
+        return fired
+
+    # ---------- 健康度 ----------
+    def freshness(self) -> List[Dict[str, Any]]:
+        out = []
+        for row in db_adapter.latest_run_per_source():
+            obs = _d(row.get("obs_date")) if row.get("obs_date") else None
+            age = ((date.fromisoformat(self.asof) - date.fromisoformat(obs)).days
+                   if obs else None)
+            cfg = self.sources_cfg.get(row["source"], {})
+            out.append({
+                "source": row["source"],
+                "priority": cfg.get("priority"),
+                "role": cfg.get("role"),
+                "mode": cfg.get("mode", "api"),
+                "status": row.get("status"),
+                "last_obs_date": obs,
+                "age_days": age,
+                "price_rows": row.get("price_rows"),
+                "supply_rows": row.get("supply_rows"),
+                "latency_ms": row.get("latency_ms"),
+                "error": row.get("error"),
+                # 超过 1 天没有新观测就不能再当成"最新"用
+                "fresh": age is not None and age <= 1 and row.get("status") in ("ok", "empty"),
+            })
+        return sorted(out, key=lambda r: (r.get("priority") or "Z", r["source"]))
+
+    def generation_premium(self, medians: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out = []
+        for pair in self.catalog.generation_pairs:
+            num = medians.get(pair["numerator"], {}).get("latest")
+            den = medians.get(pair["denominator"], {}).get("latest")
+            if not num or not den or not den.get("value"):
+                out.append({"name": pair["name"], "ratio": None,
+                            "reason": "两端缺一，无法计算"})
+                continue
+            aligned = num["date"] == den["date"]
+            out.append({
+                "name": pair["name"],
+                "ratio": round(num["value"] / den["value"], 4),
+                "numerator": {**num, "model": pair["numerator"]},
+                "denominator": {**den, "model": pair["denominator"]},
+                # 两端不是同一天的价，比值就掺了时间错位
+                "date_aligned": aligned,
+            })
+        return out
+
+    def build(self) -> Dict[str, Any]:
+        models = self.catalog.primary_models
+        per_model: Dict[str, Any] = {}
+        medians: Dict[str, Dict[str, Any]] = {}
+        for model in models:
+            cross = self.cross_platform_median(model)
+            medians[model] = cross
+            supply = self.supply_view(model)
+            disc = self.discounts(model)
+            by_source = {}
+            for source in sorted({r["source"] for r in self.prices
+                                  if r["gpu_model"] == model}):
+                # 必须按 (price_type, market_segment) 展开。Runpod 同一天的
+                # on_demand 有 secure / community / lowest 三个 segment，
+                # 只按 price_type 分组会让三个数字互相覆盖，剩下的那个是随机的。
+                pairs = sorted({(r["price_type"], r["market_segment"]) for r in self.prices
+                                if r["gpu_model"] == model and r["source"] == source})
+                by_source[source] = {}
+                for ptype, segment in pairs:
+                    key = ptype if segment == "default" else f"{ptype}@{segment}"
+                    built = self.price_series(model, source, ptype, segment=segment)
+                    if not built["points"]:
+                        continue
+                    block = self.changes(built["points"])
+                    window_start = (date.fromisoformat(self.asof)
+                                    - timedelta(days=self.window)).isoformat()
+                    block["series"] = [{"date": k, "value": round(v, 6)}
+                                       for k, v in sorted(built["points"].items())
+                                       if window_start <= k <= self.asof]
+                    block["fingerprints"] = built["fingerprints"]
+                    block["fingerprint_stable"] = len(built["fingerprints"]) <= 1
+                    if built["excluded_flags"]:
+                        block["excluded_flags"] = built["excluded_flags"]
+                    block["market_segment"] = segment
+                    by_source[source][key] = block
+            per_model[model] = {
+                "label": self.catalog.label(model),
+                "cross_platform_median": cross,
+                "by_source": by_source,
+                "supply": supply,
+                "discounts": disc,
+                "score": self.score(model, cross, supply, disc),
+                "alerts": self.alerts(model, cross, supply, disc),
+            }
+
+        return {
+            "schema": "gpu-compute-monitor/evidence/1.0",
+            "asof": self.asof,
+            "window_days": self.window,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "models": per_model,
+            "generation_premium": self.generation_premium(medians),
+            "source_health": self.freshness(),
+            "config": {
+                "core_price_types": list(CORE_PRICE_TYPES),
+                "scoring": self.thresholds["scoring"],
+                "alert_mode": self.thresholds["alerts"]["mode"],
+                "alert_direction": self.thresholds["alerts"]["direction"],
+                "confirmation": self.thresholds["confirmation"],
+            },
+        }
+
+
+def _usable_pct(change: Optional[Dict[str, Any]]) -> Optional[float]:
+    """只有基准点落在容差内的变化率才拿来用。"""
+    if not change or change.get("pct") is None or not change.get("usable"):
+        return None
+    return float(change["pct"])
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="GPU 价格与供给指标计算")
+    parser.add_argument("--date", default=date.today().isoformat())
+    parser.add_argument("--window", type=int, default=90, help="趋势窗口天数，默认 90")
+    parser.add_argument("--output", default=None)
+    args = parser.parse_args()
+
+    evidence = Evidence(args.date, args.window).build()
+    text = json.dumps(evidence, ensure_ascii=False, indent=2, default=str)
+    if args.output:
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.output).write_text(text, encoding="utf-8")
+        print(json.dumps({"ok": True, "output": args.output,
+                          "models": list(evidence["models"]),
+                          "asof": evidence["asof"]}, ensure_ascii=False))
+    else:
+        print(text)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,28 @@
+# 人工核对的公开挂牌价（CoreWeave / Nebius / Crusoe 等只有 Pricing 网页、没有稳定 API 的源）。
+#
+# 为什么不写爬虫：这类营销页改版频繁，选择器一失效，解析器最容易做的事就是
+# 悄悄返回 0 或上一个数——那比没有数据更危险。这里改成"人核对 + 留证据"：
+# 每条必须带 as_of 与 source_url，超过 sources.yaml 里该源的 max_age_days
+# 就自动降级成 stale，不进"最新价"、不进跨平台中位数、不参与评分。
+#
+# 更新方法：打开 source_url，抄下 on-demand 与 spot/preemptible 的公开价，
+# 把 as_of 改成你核对的那天。整机报价务必填 node_gpu_count，脚本会换算成
+# USD/GPU·hour 并把换算过程写进 unit_basis，保证可审计。
+
+schema_version: 1
+
+entries: []
+
+# 样例（照抄格式，删掉这段注释里的内容自己填）：
+#
+# entries:
+#   - source: coreweave
+#     gpu_model: "H100 SXM"
+#     price_type: on_demand
+#     price_usd: 49.24            # 该实例整机每小时价
+#     node_gpu_count: 8           # 整机 GPU 数；1 表示报价本身就是单卡价
+#     price_scope: gpu_plus_storage
+#     region: global
+#     as_of: "2026-08-25"
+#     source_url: "https://coreweave.com/pricing"
+#     note: "HGX H100 8x, on-demand, 不含出站流量"

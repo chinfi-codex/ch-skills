@@ -1,0 +1,95 @@
+# 评分权重与告警阈值 —— 全部可校准，不写死在代码里。
+#
+# PRD 自己也说这套数字要在积累 2–3 个月后按各 GPU 的真实波动率重标。
+# 在那之前它们只是"起始配置"，所以 alerts.mode 默认 record_only：
+# 只写库、不推送。实测 2026-05~08 三个月里 OCPI-B200 是 +23%、H100 +5%，
+# 方向是收紧不是宽松；如果一上线就把 6 条宽松告警全打开，前两个月会是
+# 长期零告警，看着像系统坏了。所以告警必须双边，见 alerts.direction。
+
+schema_version: 1
+
+scoring:
+  # Supply-Demand Score: -100(极松) ~ +100(极紧)。正 = 偏紧。
+  weights:
+    price: 0.40
+    supply: 0.40
+    discount: 0.20
+  # 每个分项把"变化率"压缩到 [-1, 1]。用 tanh(x / scale)，scale 是该分项的
+  # 典型日常波动幅度；scale 越大越迟钝。没有历史波动率之前用这组先验值。
+  squash_scale:
+    price_7d_pct: 6.0
+    price_30d_pct: 15.0
+    supply_share_7d_pct: 25.0
+    supply_gpu_7d_pct: 40.0
+    discount_delta_pct: 8.0
+  # 冷启动与缺数：不满足就拒绝出分，而不是用默认值糊过去。
+  min_history_days: 21          # 少于这么多天的历史，7D/30D 都不可信
+  min_price_signals: 2          # 至少两类价格信号在场
+  min_supply_signals: 1
+  # 参与打分的源集合发生变化时，当日分数标 comparable=false。
+  # 源集合变了还照常比分数，会把"数据源上下线"读成"市场变了"。
+  flag_on_source_set_change: true
+
+alerts:
+  mode: record_only             # record_only | notify。校准前只入库不推送。
+  direction: both               # both | loosening_only。PRD 原稿只有宽松侧，这里补齐收紧侧。
+  rules:
+    - id: fast_price_drop
+      label: 快速降价
+      metric: cross_platform_median_7d_pct
+      op: "<="
+      threshold: -10
+      meaning: 短期价格压力
+    - id: fast_price_spike
+      label: 快速涨价
+      metric: cross_platform_median_7d_pct
+      op: ">="
+      threshold: 10
+      meaning: 短期抢产能
+    - id: trend_price_drop
+      label: 趋势降价
+      metric: cross_platform_median_30d_pct
+      op: "<="
+      threshold: -20
+      min_sources_same_direction: 3
+      meaning: 结构性价格下移
+    - id: trend_price_rise
+      label: 趋势涨价
+      metric: cross_platform_median_30d_pct
+      op: ">="
+      threshold: 20
+      min_sources_same_direction: 3
+      meaning: 结构性价格上移
+    - id: supply_expansion
+      label: 供给扩张
+      metric: offer_share_7d_pct       # 用份额而非绝对 offer 数，剔平台自身规模效应
+      op: ">="
+      threshold: 50
+      meaning: 可用供给快速释放
+    - id: supply_contraction
+      label: 供给收缩
+      metric: offer_share_7d_pct
+      op: "<="
+      threshold: -35
+      meaning: 可用供给快速抽紧
+    - id: stock_easing
+      label: 库存宽松
+      metric: stock_status_rank_change_days
+      op: ">="
+      threshold: 3                     # 连续 3 个采集日档位不降且已升至 High
+      target_status: High
+      meaning: 库存压力下降
+    - id: discount_widening
+      label: 折价扩大
+      metric: spot_discount_vs_30d_avg_pct_points
+      op: ">="
+      threshold: 10
+      meaning: 闲置算力增加
+
+# "确认型宽松/收紧"：多信号 + 持续性双条件，两边对称。
+confirmation:
+  min_price_signals: 3
+  min_supply_signals: 2
+  min_consecutive_collection_days: 10
+  # 这 10 天必须是真实采到数的天，缺采的日子不算数，也不许跨缺口连续计数。
+  allow_gap_days: 0

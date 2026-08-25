@@ -1,0 +1,72 @@
+# Canonical GPU SKU 目录 —— 跨平台可比的唯一口径来源。
+#
+# 为什么按 SKU 而不是按"型号家族"：Runpod 同一个"H100"下挂着 SXM / NVL / PCIe
+# 三个 SKU，实测报价 2.69 / 2.59 / 1.99 USD·h，同一天内价差 35%。把它们合并成
+# "H100" 会让"价格中枢"随各 SKU 的样本构成漂移，看起来像市场在变，其实只是
+# 混样比例在变。所以 canonical id 一律到 SKU 粒度。
+#
+# aliases 是"源侧原始标识 → canonical id"的映射。采集器只按这张表认；
+# 表里没有的原始标识会被记成 unmapped 并计数，不静默丢弃（见 references/source_notes.md）。
+
+schema_version: 1
+
+models:
+  - id: "H100 SXM"
+    label: "H100 SXM5 80GB"
+    generation: hopper
+    tier: 1
+    aliases:
+      ornn: ["H100 SXM"]
+      runpod: ["NVIDIA H100 80GB HBM3"]
+      vast: ["H100 SXM"]
+      lambda: ["gpu_1x_h100_sxm5", "gpu_8x_h100_sxm5"]
+
+  - id: "H200 SXM"
+    label: "H200 SXM 141GB"
+    generation: hopper
+    tier: 1
+    aliases:
+      # Ornn 的自由标识就是裸 "H200"，指的是 SXM 版；NVL 是另一个 SKU，不并进来。
+      ornn: ["H200"]
+      runpod: ["NVIDIA H200"]
+      vast: ["H200"]
+      lambda: ["gpu_1x_h200_sxm", "gpu_8x_h200_sxm"]
+
+  - id: "B200"
+    label: "B200 SXM 180GB"
+    generation: blackwell
+    tier: 0
+    aliases:
+      ornn: ["B200"]
+      runpod: ["NVIDIA B200"]
+      vast: ["B200"]
+      lambda: ["gpu_8x_b200_sxm", "gpu_1x_b200_sxm"]
+
+# 观察但不进 MVP 主线的 SKU：采到就入库，不进首页三型号同屏，也不参与代际溢价。
+# 留着是因为它们是"H100/H200 是不是被替代"的旁证。
+watchlist:
+  - id: "H100 NVL"
+    aliases:
+      runpod: ["NVIDIA H100 NVL"]
+      vast: ["H100 NVL"]
+  - id: "H100 PCIe"
+    aliases:
+      runpod: ["NVIDIA H100 PCIe"]
+      vast: ["H100 PCIE"]
+  - id: "H200 NVL"
+    aliases:
+      runpod: ["NVIDIA H200 NVL"]
+      vast: ["H200 NVL"]
+  - id: "B300"
+    aliases:
+      runpod: ["NVIDIA B300 SXM6 AC"]
+      vast: ["B300"]
+
+# 代际溢价对（分子 / 分母），只在两边同日都有跨平台中位数时计算。
+generation_pairs:
+  - name: "B200/H200"
+    numerator: "B200"
+    denominator: "H200 SXM"
+  - name: "H200/H100"
+    numerator: "H200 SXM"
+    denominator: "H100 SXM"

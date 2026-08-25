@@ -209,6 +209,31 @@ def save_alerts(rows: Iterable[Dict[str, Any]]) -> int:
     return _upsert(ALERT_TABLE, ALERT_COLUMNS, ALERT_KEY, rows)
 
 
+def replace_alerts(obs_date: str, gpu_models: List[str],
+                   rows: Iterable[Dict[str, Any]]) -> int:
+    """在同一事务内替换指定日期/型号的告警，避免清空后写入失败留下空窗。"""
+    rows = list(rows)
+    if not gpu_models:
+        return 0
+    delete_sql = (f"DELETE FROM {ALERT_TABLE} WHERE obs_date = ? AND gpu_model IN ("
+                  + ", ".join(["?"] * len(gpu_models)) + ")")
+    delete_params: List[Any] = [obs_date, *gpu_models]
+    updatable = [c for c in ALERT_COLUMNS if c not in ALERT_KEY]
+    placeholders = ", ".join(["?"] * len(ALERT_COLUMNS))
+    assignments = ", ".join(f"{c} = EXCLUDED.{c}" for c in updatable)
+    insert_sql = (
+        f"INSERT INTO {ALERT_TABLE} ({', '.join(ALERT_COLUMNS)}) VALUES ({placeholders}) "
+        f"ON CONFLICT ({', '.join(ALERT_KEY)}) DO UPDATE SET {assignments}"
+    )
+    payload = [tuple(_encode(c, row.get(c)) for c in ALERT_COLUMNS) for row in rows]
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(adapt_sql(delete_sql), tuple(delete_params))
+        if payload:
+            cur.executemany(adapt_sql(insert_sql), payload)
+    return len(payload)
+
+
 def clear_alerts(obs_date: str, gpu_models: Optional[List[str]] = None) -> int:
     """清掉某天的旧告警，再写新的——否则规则改阈值后，昨天触发过、
     今天不该触发的那条会永远留在库里。"""

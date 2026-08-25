@@ -119,11 +119,14 @@ class DedupTest(unittest.TestCase):
 
 class PublishGateTest(unittest.TestCase):
     @staticmethod
-    def _entry(events: int, p_mean: float, means: tuple) -> dict:
+    def _entry(events: int, p_mean: float, means: tuple,
+               completed: dict = None) -> dict:
+        completed = completed or {}
         return {
             "sample": {"events": events},
             "horizons": [
-                {"horizon_days": n, "permutation": {"p_mean": p_mean}}
+                {"horizon_days": n, "n": completed.get(n, events),
+                 "permutation": {"p_mean": p_mean}}
                 for n in fo.HORIZONS
             ],
             "subsample": [
@@ -165,6 +168,28 @@ class PublishGateTest(unittest.TestCase):
         self.assertTrue(ok)
         self.assertNotIn(1, detail["subsample_consistent"]["horizons"])
         self.assertEqual(detail["subsample_consistent"]["horizons"], [2, 3, 5])
+        self.assertEqual(detail["publishable_horizons"], [2, 3, 5])
+
+    def test_incomplete_horizon_below_minimum_is_not_quotable(self):
+        ok, detail = fo._publish_gate(self._entry(
+            14, 0.001,
+            ((-0.1, 2.0, 3.0, 2.5), (1.4, 1.9, 3.5, 2.3)),
+            completed={1: 14, 2: 14, 3: 11, 5: 11},
+        ))
+        self.assertTrue(ok, "+2 日仍满足完整发布门槛")
+        self.assertEqual(detail["publishable_horizons"], [2])
+        self.assertNotIn(3, detail["min_events"]["horizons"])
+
+    def test_different_horizons_cannot_jointly_satisfy_the_gate(self):
+        entry = self._entry(
+            14, 0.42,
+            ((-0.1, 2.0, 3.0, 2.5), (1.4, 1.9, 3.5, 2.3)),
+        )
+        # +1 日只有置换显著、但子样本方向不一致；其余视窗只有子样本一致。
+        entry["horizons"][0]["permutation"]["p_mean"] = 0.001
+        ok, detail = fo._publish_gate(entry)
+        self.assertFalse(ok)
+        self.assertEqual(detail["publishable_horizons"], [])
 
 
 class TopSideTest(unittest.TestCase):
@@ -203,7 +228,8 @@ def _sections(sentiment_body: str) -> dict:
         level=3, title="情绪趋势", stripped="情绪趋势", body=sentiment_body)}
 
 
-def _evidence(gate: bool, publishable: bool, events: int = 14) -> dict:
+def _evidence(gate: bool, publishable: bool, events: int = 14,
+              horizon_n: int = 13, publishable_horizons=(3,)) -> dict:
     return {
         "forward_odds": {
             "available": True,
@@ -212,6 +238,10 @@ def _evidence(gate: bool, publishable: bool, events: int = 14) -> dict:
                 "key": "pulse_gate",
                 "publishable": publishable,
                 "sample": {"events": events},
+                "horizons": [{"horizon_days": 3, "n": horizon_n}],
+                "gate_detail": {
+                    "publishable_horizons": list(publishable_horizons) if publishable else [],
+                },
             }],
         }
     }
@@ -240,7 +270,7 @@ class ForwardAxisContractTest(unittest.TestCase):
     def test_well_formed_reading_passes(self):
         problems: list = []
         body = ("- **前瞻轴**：情绪脉冲 四腿全中\n\n"
-                "==趋势判断：情绪脉冲触发——历史上 14 次同类日之后，+3 日 84.6% 收涨、"
+                "==趋势判断：情绪脉冲触发——历史上 13 次同类日之后，+3 日 84.6% 收涨、"
                 "均值 +3.40%，全样本基准 52.5% / +0.06%。==")
         detail = doc._validate_forward_axis(_sections(body), _evidence(True, True, 14), problems)
         self.assertEqual(problems, [])
@@ -248,7 +278,14 @@ class ForwardAxisContractTest(unittest.TestCase):
 
     def test_compact_chinese_sample_size_passes(self):
         problems: list = []
-        body = "情绪脉冲四腿全中；历史上14次同类日之后，+3 日有 84.6% 收涨。"
+        body = "情绪脉冲四腿全中；历史上13次同类日之后，+3 日有 84.6% 收涨。"
+        detail = doc._validate_forward_axis(_sections(body), _evidence(True, True, 14), problems)
+        self.assertEqual(problems, [])
+        self.assertTrue(detail["sample_size_cited"])
+
+    def test_effective_horizon_sample_phrasing_passes(self):
+        problems: list = []
+        body = "情绪脉冲四腿全中；历史上 13 次已完成 +3 日观察的同类日中，84.6% 收涨。"
         detail = doc._validate_forward_axis(_sections(body), _evidence(True, True, 14), problems)
         self.assertEqual(problems, [])
         self.assertTrue(detail["sample_size_cited"])
@@ -259,6 +296,43 @@ class ForwardAxisContractTest(unittest.TestCase):
         detail = doc._validate_forward_axis(_sections(body), _evidence(True, True, 14), problems)
         self.assertFalse(detail["sample_size_cited"])
         self.assertTrue(any("sample size" in p for p in problems))
+
+    def test_total_event_count_cannot_replace_horizon_sample_size(self):
+        problems: list = []
+        body = "情绪脉冲四腿全中；历史上14次同类日之后，+3 日有 84.6% 收涨。"
+        detail = doc._validate_forward_axis(
+            _sections(body), _evidence(True, True, events=14, horizon_n=13), problems
+        )
+        self.assertFalse(detail["sample_size_cited"])
+        self.assertEqual(detail["required_sample_sizes"], {"+3": 13})
+
+    def test_non_publishable_horizon_is_caught(self):
+        problems: list = []
+        body = "情绪脉冲四腿全中；历史上13次同类日之后，+3 日有 84.6% 收涨。"
+        detail = doc._validate_forward_axis(
+            _sections(body),
+            _evidence(True, True, horizon_n=13, publishable_horizons=(2,)),
+            problems,
+        )
+        self.assertEqual(detail["unsupported_horizons"], [3])
+        self.assertTrue(any("non-publishable horizons" in p for p in problems))
+
+    def test_horizon_absent_from_evidence_is_caught(self):
+        problems: list = []
+        body = "情绪脉冲四腿全中；历史上13次同类日之后，+10 日有 84.6% 收涨。"
+        detail = doc._validate_forward_axis(_sections(body), _evidence(True, True), problems)
+        self.assertEqual(detail["unknown_horizons"], [10])
+        self.assertTrue(any("absent from evidence" in p for p in problems))
+
+    def test_legacy_evidence_uses_subsample_horizon_fallback(self):
+        problems: list = []
+        evidence = _evidence(True, True, horizon_n=13)
+        signal = evidence["forward_odds"]["signals"][0]
+        signal["gate_detail"] = {"subsample_consistent": {"horizons": [3]}}
+        body = "情绪脉冲四腿全中；历史上13次同类日之后，+3 日有 84.6% 收涨。"
+        detail = doc._validate_forward_axis(_sections(body), evidence, problems)
+        self.assertEqual(problems, [])
+        self.assertEqual(detail["publishable_horizons_source"], "legacy_subsample_fallback")
 
     def test_card_absent_skips_check(self):
         problems: list = []
@@ -281,7 +355,7 @@ class ForecastPhrasingTest(unittest.TestCase):
                 f"{text!r} 应被拦截")
 
     def test_conditional_distribution_phrasing_passes(self):
-        text = "历史上 14 次同类日之后，+3 日有 84.6% 收涨、均值 +3.40%（全样本基准 52.5%）。"
+        text = "历史上 13 次已完成 +3 日观察的同类日中，84.6% 收涨、均值 +3.40%（全样本基准 52.5%）。"
         for pattern in doc._FORBIDDEN_FORECAST_PATTERNS.values():
             self.assertIsNone(pattern.search(text), "合规的条件分布写法不得被误伤")
 

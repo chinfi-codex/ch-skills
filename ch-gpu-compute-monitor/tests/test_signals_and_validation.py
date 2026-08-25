@@ -30,7 +30,8 @@ def make_evidence(asof: str = "2026-08-25", window: int = 90) -> Evidence:
 def price_row(day, source, ptype, value, model="H100 SXM"):
     return {"obs_date": day, "source": source, "gpu_model": model,
             "price_type": ptype, "market_segment": "default", "region": "global",
-            "price_usd_gpu_hour": value, "quality_flag": "ok", "sample_count": 20}
+            "price_usd_gpu_hour": value, "quality_flag": "ok", "sample_count": 20,
+            "query_fingerprint": "f"}
 
 
 def supply_row(day, source, model="H100 SXM", **kw):
@@ -123,6 +124,37 @@ class TestConfirmation:
         out = ev.confirmation("H100 SXM")
         assert out["reference_date"] == "2026-08-20"
 
+    def test_segment_series_are_aggregated_without_order_dependent_overwrite(self):
+        """同一来源/类型的多个档位只算一票，且方向不依赖数据库返回顺序。"""
+        days = _days(25)
+        prices = []
+        for i, day in enumerate(days):
+            for segment, value in (("community", 12.0 - i * 0.3),
+                                   ("secure", 10.0 - i * 0.2),
+                                   ("lowest", 6.0 + i * 0.05)):
+                row = price_row(day, "runpod", "on_demand", value)
+                row["market_segment"] = segment
+                prices.append(row)
+        tallies = []
+        for ordered in (prices, list(reversed(prices))):
+            ev = make_evidence(asof=days[-1])
+            ev.prices = ordered
+            tallies.append(ev._daily_signal_tally("H100 SXM")[days[-1]])
+        assert tallies[0] == tallies[1]
+        assert tallies[0]["price_series_live"] == 1
+        assert tallies[0]["price_down"] == 1
+
+    def test_fingerprint_change_breaks_confirmation_streak(self):
+        """查询口径变化前后的值不可比较，也不能拼成连续确认。"""
+        days = _days(25)
+        ev = make_evidence(asof=days[-1])
+        ev.prices, ev.supply = self._loosening_fixture(days)
+        for row in ev.prices + ev.supply:
+            row["query_fingerprint"] = "old" if row["obs_date"] < "2026-08-16" else "new"
+        out = ev.confirmation("H100 SXM")
+        assert out["verdict"] == "none"
+        assert out["loosening"]["streak_days"] < 10
+
 
 class TestQuoteDispersion:
     def test_spread_and_relative_spread(self):
@@ -170,6 +202,21 @@ class TestSupplyBreadth:
         out = ev.supply_breadth("H100 SXM")
         assert out["with_stock"] == 1 and out["reporting"] == 2
         assert out["breadth"] == 0.5
+
+    def test_explicit_no_stock_stays_in_denominator(self):
+        ev = make_evidence()
+        missing = supply_row("2026-08-25", "runpod")
+        missing["quality_flag"] = "no_stock"
+        ev.supply = [supply_row("2026-08-25", "vast", offer_count=5), missing]
+        out = ev.supply_breadth("H100 SXM")
+        assert out["reporting"] == 2 and out["with_stock"] == 1
+        assert out["breadth"] == 0.5
+
+    def test_unknown_stock_status_is_not_treated_as_available(self):
+        ev = make_evidence()
+        ev.supply = [supply_row("2026-08-25", "runpod", stock_status="Unknown")]
+        out = ev.supply_breadth("H100 SXM")
+        assert out["reporting"] == 0 and out["breadth"] is None
 
     def test_no_observations_reports_reason(self):
         out = make_evidence().supply_breadth("H100 SXM")
@@ -276,6 +323,36 @@ class TestAlertPersistence:
             (SKILL_ROOT / "config" / "thresholds.yaml").read_text(encoding="utf-8"))
         for rule in cfg["alerts"]["rules"]:
             assert rule.get("direction") in ("loosening", "tightening"), rule["id"]
+
+
+class TestCollectDryRun:
+    def test_dry_run_uses_empty_history_instead_of_querying_database(self):
+        """回归保护：dry-run 不建表时不能再由离群检测隐式读库。"""
+        import collect
+
+        source_cfg = {"enabled": True}
+        result = type("Result", (), {
+            "prices": [], "supply": [], "notes": [], "unmapped": [], "raw_path": None,
+        })()
+        original_sources = collect.load_sources
+        original_catalog = collect.load_catalog
+        original_run_one = collect.run_one
+        original_history = collect.validate.trailing_history
+        original_argv = sys.argv
+        try:
+            collect.load_sources = lambda: {"defaults": {}, "sources": {"fake": source_cfg}}
+            collect.load_catalog = lambda: object()
+            collect.run_one = lambda *args, **kwargs: result
+            collect.validate.trailing_history = lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("dry-run 不应查询历史数据库"))
+            sys.argv = ["collect.py", "--dry-run", "--date", "2026-08-25"]
+            assert collect.main() == 0  # empty 是成功降级，但不得访问数据库
+        finally:
+            collect.load_sources = original_sources
+            collect.load_catalog = original_catalog
+            collect.run_one = original_run_one
+            collect.validate.trailing_history = original_history
+            sys.argv = original_argv
 
 
 def _run() -> int:

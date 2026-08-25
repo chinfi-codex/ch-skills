@@ -41,8 +41,8 @@ forward_odds（前瞻概率）
 底部侧输出方向分布（上涨概率 / 收益）、路径分布（触及与不破）、前瞻广度；
 顶部侧**只输出回撤风险分布，不输出方向**——实证见 `references/methodology/forward_odds.md`。
 
-发布门槛三条，任一不满足则读数照出但标 `publishable=false`，不得进判断词：
-  事件簇去重后 n ≥ 12 ｜ 两个子样本方向一致 ｜ 置换检验 p < 0.05
+发布门槛三条必须在同一个前瞻视窗内同时满足，否则该视窗不得进判断词：
+  已完成该视窗的事件 n ≥ 12 ｜ 两个子样本方向一致 ｜ 置换检验 p < 0.05
 
 用法：
   python3 scripts/forward_odds.py --asof 20260819
@@ -520,14 +520,8 @@ def evaluate_signal(df: pd.DataFrame, spec: Dict[str, Any], valid: pd.Series,
 
 
 def _publish_gate(entry: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
-    """发布门槛三条：样本量 / 子样本一致 / 置换检验。任一不过则不得进判断词。"""
-    n_ok = entry["sample"]["events"] >= MIN_EVENTS
+    """逐视窗执行发布门槛；三条纪律必须在同一个视窗内同时成立。"""
     horizons = entry.get("horizons", [])
-    perm_ok = any(
-        (h.get("permutation") or {}).get("p_mean") is not None
-        and h["permutation"]["p_mean"] < PERM_ALPHA
-        for h in horizons
-    )
     sub = entry.get("subsample", [])
     consistent: List[int] = []
     for n in HORIZONS:
@@ -538,11 +532,45 @@ def _publish_gate(entry: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
                 vals.append(row["mean_pct"])
         if len(vals) == len(sub) and vals and all(v > 0 for v in vals):
             consistent.append(n)
-    sub_ok = bool(consistent)
-    return (n_ok and perm_ok and sub_ok), {
-        "min_events": {"required": MIN_EVENTS, "actual": entry["sample"]["events"], "pass": n_ok},
-        "permutation": {"alpha": PERM_ALPHA, "pass": perm_ok},
-        "subsample_consistent": {"horizons": consistent, "pass": sub_ok},
+
+    checks: List[Dict[str, Any]] = []
+    for horizon in horizons:
+        days = int(horizon["horizon_days"])
+        completed_n = int(horizon.get("n") or 0)
+        p_mean = (horizon.get("permutation") or {}).get("p_mean")
+        n_pass = completed_n >= MIN_EVENTS
+        permutation_pass = p_mean is not None and p_mean < PERM_ALPHA
+        subsample_pass = days in consistent
+        checks.append({
+            "horizon_days": days,
+            "n": completed_n,
+            "n_pass": n_pass,
+            "p_mean": p_mean,
+            "permutation_pass": permutation_pass,
+            "subsample_pass": subsample_pass,
+            "publishable": n_pass and permutation_pass and subsample_pass,
+        })
+
+    publishable_horizons = [row["horizon_days"] for row in checks if row["publishable"]]
+    n_horizons = [row["horizon_days"] for row in checks if row["n_pass"]]
+    permutation_horizons = [
+        row["horizon_days"] for row in checks if row["permutation_pass"]
+    ]
+    return bool(publishable_horizons), {
+        "min_events": {
+            "required": MIN_EVENTS,
+            "actual": entry["sample"]["events"],
+            "horizons": n_horizons,
+            "pass": bool(n_horizons),
+        },
+        "permutation": {
+            "alpha": PERM_ALPHA,
+            "horizons": permutation_horizons,
+            "pass": bool(permutation_horizons),
+        },
+        "subsample_consistent": {"horizons": consistent, "pass": bool(consistent)},
+        "publishable_horizons": publishable_horizons,
+        "horizon_checks": checks,
     }
 
 
@@ -713,8 +741,8 @@ def _compute(df: pd.DataFrame, asof_date: date, full: bool) -> Dict[str, Any]:
             "dedup_gap_days": DEDUP_GAP,
             "subsample_split": str(SUBSAMPLE_SPLIT),
             "permutation_draws": PERM_DRAWS,
-            "publish_gate": (f"事件簇去重后 n ≥ {MIN_EVENTS} ｜ 两个子样本方向一致 ｜ "
-                             f"置换检验 p < {PERM_ALPHA}"),
+            "publish_gate": (f"同一视窗内：已完成事件 n ≥ {MIN_EVENTS} ｜ "
+                             f"两个子样本方向一致 ｜ 置换检验 p < {PERM_ALPHA}"),
             "no_lookahead": "分位线只用信号日之前的历史算，阈值随日滚动。",
         },
         "discipline": (

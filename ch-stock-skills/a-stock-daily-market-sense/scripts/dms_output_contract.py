@@ -441,23 +441,80 @@ def _validate_forward_axis(
     # R3 命中且可发布时，条件分布必须带样本量——概率不带 n 就是断言不是证据
     if gate_hit and publishable:
         events = (signal.get("sample") or {}).get("events")
-        detail["required_sample_size"] = events
-        # `\b14\b` 在「历史上14次」里匹配不到：中文与数字都属于 Unicode word
-        # character；同时，正文里一个无关的独立 14 也不该冒充样本量。只接受明确的
-        # n=、样本量或「历史上 N 次同类日/样本/事件」三种引用形态。
-        sample_patterns = (
-            rf"(?<![A-Za-z0-9_])n\s*[=:：]\s*{events}(?!\d)",
-            rf"样本(?:量)?\s*(?:为|[=:：])?\s*{events}(?!\d)",
-            rf"历史上\s*{events}\s*次(?:同类日|样本|事件)",
+        horizon_rows = {
+            int(row["horizon_days"]): row
+            for row in signal.get("horizons", [])
+            if row.get("horizon_days") is not None
+        }
+        mentioned_horizons = sorted({
+            int(match.group(1))
+            for match in re.finditer(
+                r"(?:\+|T\s*\+|未来)\s*(\d+)\s*日", body, re.IGNORECASE
+            )
+        })
+        unknown = [days for days in mentioned_horizons if days not in horizon_rows]
+        detail["unknown_horizons"] = unknown
+        if unknown:
+            problems.append(
+                "[sentiment_trend] forward-odds cited horizons absent from evidence: "
+                f"{unknown}"
+            )
+        gate_detail = signal.get("gate_detail") or {}
+        published = gate_detail.get("publishable_horizons")
+        # 兼容修复前已落盘的 evidence；新证据以同视窗三门槛合取后的列表为准。
+        if published is None:
+            published = (gate_detail.get("subsample_consistent") or {}).get("horizons") or []
+            detail["publishable_horizons_source"] = "legacy_subsample_fallback"
+        else:
+            detail["publishable_horizons_source"] = "publishable_horizons"
+        publishable_horizons = set(published)
+        unsupported = [
+            days for days in mentioned_horizons
+            if days in horizon_rows and days not in publishable_horizons
+        ]
+        detail["mentioned_horizons"] = mentioned_horizons
+        detail["publishable_horizons"] = sorted(publishable_horizons)
+        detail["unsupported_horizons"] = unsupported
+        if unsupported:
+            problems.append(
+                "[sentiment_trend] forward-odds cited from non-publishable horizons: "
+                f"{unsupported}"
+            )
+
+        required = {
+            f"+{days}": horizon_rows[days].get("n")
+            for days in mentioned_horizons if days in horizon_rows
+        } or {"events": events}
+        detail["required_sample_sizes"] = required
+        unique_sample_sizes = {value for value in required.values() if isinstance(value, int)}
+        # 保留旧 audit 字段；多个视窗 n 不同的时候不再伪造一个统一样本量。
+        detail["required_sample_size"] = (
+            next(iter(unique_sample_sizes)) if len(unique_sample_sizes) == 1 else None
         )
-        detail["sample_size_cited"] = bool(
-            events and any(re.search(pattern, body, re.IGNORECASE) for pattern in sample_patterns)
-        )
+        missing = [
+            label for label, sample_n in required.items()
+            if not _forward_sample_size_cited(body, sample_n)
+        ]
+        detail["sample_size_cited"] = not missing
         if not detail["sample_size_cited"]:
             problems.append(
-                f"[sentiment_trend] forward-odds cited without its sample size (n={events})"
+                "[sentiment_trend] forward-odds cited without horizon-specific sample size: "
+                f"{missing} require {required}"
             )
     return detail
+
+
+def _forward_sample_size_cited(body: str, sample_n: Any) -> bool:
+    """只接受明确的 n=、样本量或「历史上 N 次同类日/样本/事件」引用。"""
+    if not isinstance(sample_n, int) or isinstance(sample_n, bool) or sample_n <= 0:
+        return False
+    sample_patterns = (
+        rf"(?<![A-Za-z0-9_])n\s*[=:：]\s*{sample_n}(?!\d)",
+        rf"样本(?:量)?\s*(?:为|[=:：])?\s*{sample_n}(?!\d)",
+        rf"历史上\s*{sample_n}\s*次(?:"
+        rf"(?:已完成\s*(?:\+|T\s*\+|未来)?\s*\d+\s*日观察的\s*)?同类日|样本|事件)",
+    )
+    return any(re.search(pattern, body, re.IGNORECASE) for pattern in sample_patterns)
 
 
 def _validate_highlights(

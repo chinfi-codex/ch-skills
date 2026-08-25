@@ -372,8 +372,8 @@ class Evidence:
         """多平台「有货」占比，PRD §4.2 的 Supply Breadth。
 
         单平台放量可能只是那家在促销；宽松要算数，得从一个平台扩散到全市场。
-        「有货」的判定按各源能给的信号：报了 offer 就算有货，报了库存档位就看
-        档位不是 None。判不出来的源不进分母——分母里塞一个没表态的源，
+        「有货」的判定按各源能给的信号：offer_count > 0 或库存档位 Low 以上；
+        明确的 no_stock 计作无货，未知档位不进分母——分母里塞一个没表态的源，
         会把「没数据」读成「没货」。
         """
         latest_day = None
@@ -392,10 +392,15 @@ class Evidence:
                 continue
             source = row["source"]
             has_stock: Optional[bool] = None
-            if row.get("offer_count") is not None:
+            if row.get("quality_flag") == "no_stock":
+                # Runpod 在价格与库存字段同时为空时会明确写 no_stock；这是已知无货，
+                # 不能从分母里丢掉，否则供给广度会系统性偏高。
+                has_stock = False
+            elif row.get("offer_count") is not None:
                 has_stock = int(row["offer_count"]) > 0
             elif row.get("stock_status") is not None:
-                has_stock = str(row["stock_status"]) not in ("None", "none")
+                rank = stock_rank(row.get("stock_status"))
+                has_stock = rank > 0 if rank is not None else None
             if has_stock is None:
                 continue
             per_source[source] = bool(per_source.get(source)) or has_stock
@@ -601,15 +606,18 @@ class Evidence:
 
         PRD §4.3 的「至少 3 类价格信号同时下行 + 至少 2 类供给信号改善」，
         「类」指的是独立的观测序列，不是告警条数——同一个变化触发两条告警
-        只是同一个证据被数了两遍。所以这里按 (source, price_type) 逐条序列
-        算 7 日方向，一条序列一票。
+        只是同一个证据被数了两遍。所以这里按 (source, price_type) 逐条序列算
+        7 日方向，一条序列一票；多个 segment/region 先按日聚合，两端
+        query_fingerprint 集合不同则不可比。
 
         不落新表：全部从已有观测重算。这样历史可回溯、口径改了能重跑，
         也不会出现「表里的旧账和现在的算法对不上」。
         """
         noise = 1.0  # 7 日变化在 ±1% 以内当没动，避免噪音凑数
 
-        price_series: Dict[Tuple[str, str], Dict[str, float]] = {}
+        # 同一 source/price_type 的多个 segment/region 仍只算一票，但必须先按日
+        # 确定性聚合，不能让最后一行覆盖前面的行。口径指纹集合也跟着日聚合。
+        price_buckets: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
         for row in self.prices:
             if row["gpu_model"] != model or row["quality_flag"] != "ok":
                 continue
@@ -617,36 +625,68 @@ class Evidence:
                 continue
             value = _f(row["price_usd_gpu_hour"])
             if value is not None:
-                price_series.setdefault(
-                    (row["source"], row["price_type"]), {})[_d(row["obs_date"])] = value
+                slot = price_buckets.setdefault(
+                    (row["source"], row["price_type"]), {}).setdefault(
+                        _d(row["obs_date"]), {"values": [], "fingerprints": set()})
+                slot["values"].append(value)
+                if row.get("query_fingerprint"):
+                    slot["fingerprints"].add(str(row["query_fingerprint"]))
 
-        supply_series: Dict[Tuple[str, str], Dict[str, float]] = {}
+        price_series: Dict[Tuple[str, str], Dict[str, Tuple[float, Optional[str]]]] = {}
+        for key, by_day in price_buckets.items():
+            price_series[key] = {
+                day: (percentile(sorted(slot["values"]), 0.5),
+                      "+".join(sorted(slot["fingerprints"])) or None)
+                for day, slot in by_day.items()
+            }
+
+        supply_buckets: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
         for row in self.supply:
             if row["gpu_model"] != model:
                 continue
             for field in ("offer_share", "available_gpu_count", "available_region_count"):
                 value = _f(row.get(field))
                 if value is not None:
-                    supply_series.setdefault(
-                        (row["source"], field), {})[_d(row["obs_date"])] = value
+                    slot = supply_buckets.setdefault((row["source"], field), {}).setdefault(
+                        _d(row["obs_date"]), {"values": [], "fingerprints": set()})
+                    slot["values"].append(value)
+                    if row.get("query_fingerprint"):
+                        slot["fingerprints"].add(str(row["query_fingerprint"]))
             rank = stock_rank(row.get("stock_status"))
             if rank is not None:
-                supply_series.setdefault(
-                    (row["source"], "stock_rank"), {})[_d(row["obs_date"])] = float(rank)
+                slot = supply_buckets.setdefault(
+                    (row["source"], "stock_rank"), {}).setdefault(
+                        _d(row["obs_date"]), {"values": [], "fingerprints": set()})
+                slot["values"].append(float(rank))
+                if row.get("query_fingerprint"):
+                    slot["fingerprints"].add(str(row["query_fingerprint"]))
 
-        def direction_on(series: Dict[str, float], day: str) -> Optional[int]:
+        supply_series: Dict[Tuple[str, str], Dict[str, Tuple[float, Optional[str]]]] = {}
+        for key, by_day in supply_buckets.items():
+            supply_series[key] = {
+                day: (percentile(sorted(slot["values"]), 0.5),
+                      "+".join(sorted(slot["fingerprints"])) or None)
+                for day, slot in by_day.items()
+            }
+
+        def direction_on(
+                series: Dict[str, Tuple[float, Optional[str]]], day: str) -> Optional[int]:
             """该序列在 day 这天的 7 日方向：+1 上行 / -1 下行 / 0 基本没动。"""
             if day not in series:
                 return None
             target = (date.fromisoformat(day) - timedelta(days=7)).isoformat()
-            found = nearest_on_or_before(series, target)
-            if found is None:
+            base_days = [d for d in series if d <= target]
+            if not base_days:
                 return None
-            base_day, base_value = found
+            base_day = max(base_days)
+            base_value, base_fingerprint = series[base_day]
+            current_value, current_fingerprint = series[day]
             drift = (date.fromisoformat(target) - date.fromisoformat(base_day)).days
             if drift > 2 or not base_value:
                 return None
-            change = (series[day] - base_value) / abs(base_value) * 100.0
+            if current_fingerprint != base_fingerprint:
+                return None
+            change = (current_value - base_value) / abs(base_value) * 100.0
             return 0 if abs(change) < noise else (1 if change > 0 else -1)
 
         days = sorted({d for s in list(price_series.values()) + list(supply_series.values())
@@ -930,7 +970,6 @@ def persist_alerts(evidence: Dict[str, Any]) -> int:
     """
     asof = evidence["asof"]
     models = list((evidence.get("models") or {}).keys())
-    db_adapter.clear_alerts(asof, models)
     rows = []
     now = datetime.now(timezone.utc).isoformat()
     for model, block in (evidence.get("models") or {}).items():
@@ -943,7 +982,9 @@ def persist_alerts(evidence: Dict[str, Any]) -> int:
                 "meaning": alert.get("meaning"), "mode": alert.get("mode"),
                 "fired_at": now,
             })
-    return db_adapter.save_alerts(rows)
+    # metrics.py 可以独立运行；升级后的旧库可能还没有 gpu_alerts。
+    db_adapter.init_schema()
+    return db_adapter.replace_alerts(asof, models, rows)
 
 
 def _usable_pct(change: Optional[Dict[str, Any]]) -> Optional[float]:

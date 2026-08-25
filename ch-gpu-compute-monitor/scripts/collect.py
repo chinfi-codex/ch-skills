@@ -96,7 +96,8 @@ def main() -> int:
     validation_cfg = load_validation_cfg()
     # 比对基准一次性读出来：逐源各查一遍数据库没必要，而且基准应该是
     # 「本次采集开始前」的历史，不该被同一批新数据影响。
-    history = None
+    # dry-run 不建表也不应隐式依赖已有数据库；传空基准即可按冷启动规则跳过打标。
+    history = {}
     if validation_cfg.get("enabled", True) and not args.dry_run:
         # 多读一段：Ornn 每次带回 90 天历史，基准池要盖得住最早那一行
         # 往前 lookback 天，否则回填的头几十天全都没有基准。

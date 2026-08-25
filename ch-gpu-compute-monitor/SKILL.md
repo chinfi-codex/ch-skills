@@ -84,10 +84,11 @@ RTX 5090 都在同步上行，那更像整体需求在抬。
    然后逐条检查 `changes.*.usable`。**`usable=false` 的百分比不许进结论。**
 4. **判断**：按 `references/signal_reading.md` 的读法，分辨价格变动的成因，
    决定评分和告警采不采信，给出整体结论与三个型号各自的状态。
-5. **写报告**：按 `references/report_template.md` 的结构写 Markdown 到 `reports/gpu-<date>.md`。
-   小节标题里的「市场判断」「市场成交价趋势」「数据源与采集状态」是渲染器的注入锚点，别改措辞。
-6. **出 HTML**（用户要求时）：`python scripts/render_report_html.py --input reports/gpu-<date>.md
-   --evidence evidence/gpu-<date>.json`。
+5. **写报告**：按 `references/report_template.md` 写 Markdown 到 `reports/gpu-<date>.md`。
+   **frontmatter 的 `verdict` 块是仪表盘唯一认的判断契约**，必须填；正文写仪表盘表达不了的
+   推理，不要重抄报价表和标准报价矩阵——那是仪表盘的活。
+6. **出仪表盘**：`python scripts/render_report_html.py --evidence evidence/gpu-<date>.json
+   --input reports/gpu-<date>.md`。
 
 补录 CoreWeave / Nebius 挂牌价时，编辑 `config/attested_prices.yaml`（每条必须带 `as_of` 与
 `source_url`），再重跑 collect 与 metrics。**动手前先读 `references/source_notes.md` 的
@@ -128,16 +129,21 @@ python scripts/metrics.py --output evidence/gpu-2026-08-25.json
 python scripts/metrics.py --date 2026-08-25 --window 90
 ```
 
-### `scripts/render_report_html.py` —— HTML Dashboard
+### `scripts/render_report_html.py` —— 单页 Dashboard
 
 ```bash
-python scripts/render_report_html.py --input reports/gpu-2026-08-25.md \
-    --evidence evidence/gpu-2026-08-25.json
+python scripts/render_report_html.py --evidence evidence/gpu-2026-08-25.json
+python scripts/render_report_html.py --evidence … --input reports/gpu-2026-08-25.md
+python scripts/render_report_html.py --evidence … --output docs/index.html
 ```
 
-按 PRD §5 的硬约束渲染：三型号同屏、无 GPU selector、无时间范围切换、窗口固定 90 天。
-**主题固定用 `claude`**（暖色编辑风纸面），曲线配色随之走暖色三元组；
-`--theme print` 之类可以显式覆盖，但默认不要改。
+自包含单页，无外部依赖，用 claude 主题的暖色纸面。按 PRD §5 的硬约束渲染：
+三型号同屏、无 GPU selector、无时间范围切换、窗口固定 90 天。五块面板依次是
+判断区、成交价趋势、供给趋势、市场报价、标准报价矩阵、数据源状态。
+
+**证据全部由脚本从 evidence 渲染，判断全部来自 `--input` 报告 frontmatter 的
+`verdict` 块。** 不传 `--input` 也能出图，判断区会显示「报告未提供整体判断」——
+脚本不会替模型编结论。
 
 ### `scripts/daily_update.py` —— 给 cron 用的流水线
 

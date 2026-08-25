@@ -103,6 +103,7 @@ class Evidence:
                      region: Optional[str] = None) -> Dict[str, Any]:
         """一条 (model, source, price_type) 的日度序列 + 口径指纹集合。"""
         points: Dict[str, float] = {}
+        samples: Dict[str, Any] = {}
         fingerprints = set()
         flags = set()
         for row in self.prices:
@@ -121,9 +122,12 @@ class Evidence:
             if value is None:
                 continue
             points[_d(row["obs_date"])] = value
+            if row.get("sample_count") is not None:
+                samples[_d(row["obs_date"])] = int(row["sample_count"])
             if row.get("query_fingerprint"):
                 fingerprints.add(row["query_fingerprint"])
-        return {"points": points, "fingerprints": sorted(fingerprints),
+        return {"points": points, "samples": samples,
+                "fingerprints": sorted(fingerprints),
                 "excluded_flags": sorted(flags)}
 
     def changes(self, series: Dict[str, float],
@@ -632,6 +636,9 @@ class Evidence:
                         block["excluded_flags"] = built["excluded_flags"]
                     block["market_segment"] = segment
                     block["region"] = region
+                    latest_day = (block.get("latest") or {}).get("date")
+                    if latest_day and latest_day in built["samples"]:
+                        block["sample_count"] = built["samples"][latest_day]
                     by_source[source][key] = block
             per_model[model] = {
                 "label": self.catalog.label(model),

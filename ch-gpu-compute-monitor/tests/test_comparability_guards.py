@@ -226,6 +226,52 @@ class TestReferenceModels:
         assert set(ev.reference_models()) & set(ev.catalog.primary_models) == set()
 
 
+class TestDashboardContract:
+    """仪表盘的判断契约：脚本只搬运模型的结论，绝不自己生成。"""
+
+    def _renderer(self):
+        import importlib
+        return importlib.import_module("render_report_html")
+
+    def test_missing_verdict_says_so_instead_of_inventing_one(self):
+        r = self._renderer()
+        out = r.render_verdict({}, {})
+        assert "报告未提供整体判断" in out
+        # 没有判断时不许出现任何定档词
+        for word in ("偏紧", "偏松", "宽松拐点已确认"):
+            assert word not in out
+
+    def test_verdict_text_is_passed_through_verbatim(self):
+        r = self._renderer()
+        verdict = {"badge": "未确认宽松拐点", "badge_tone": "watch",
+                   "headline": "H200 单边转弱但供给侧不认账",
+                   "summary": "一句话摘要",
+                   "models": {"B200": {"status": "偏紧", "tone": "tight",
+                                       "note": "库存 Low"}}}
+        out = r.render_verdict(verdict, {})
+        assert "H200 单边转弱但供给侧不认账" in out
+        assert "未确认宽松拐点" in out
+        assert "库存 Low" in out
+
+    def test_status_text_always_present_not_only_colour(self):
+        """PRD §10：状态必须用文字表达，不能只靠颜色。"""
+        r = self._renderer()
+        out = r.render_verdict({"headline": "x", "summary": "y"}, {})
+        for label, cls in r.TONES.values():
+            pass
+        # 三个型号即使没给 tone，也要各自渲染出一个文字状态
+        assert out.count('class="state') == len(r.ORDER)
+        assert "数据不足" in out
+
+    def test_empty_series_renders_explicit_missing_notice(self):
+        r = self._renderer()
+        out = r.line_chart([{"name": "B200", "label": "B200", "points": []}],
+                           unit_prefix="$", colors={})
+        assert "暂无数据" in out
+        assert "不用前值补齐" in out
+        assert "<path" not in out
+
+
 class TestPctChange:
     def test_none_inputs_return_none(self):
         assert pct_change(None, 3.0) is None

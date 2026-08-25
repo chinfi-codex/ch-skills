@@ -1,6 +1,6 @@
 ---
 name: ch-gpu-compute-monitor
-description: 当用户要跟踪 GPU 算力租赁的价格与可用供给、判断算力供需是紧还是松、看 B200/H200/H100 的租金走势与代际溢价、比较 Vast/Runpod/Lambda/CoreWeave 等平台的报价、观察 Ornn OCPI 成交价指数、判断 spot 折价与库存档位变化，或要生成 GPU 算力供需监控日报与 HTML Dashboard 时使用此 skill。适用提问包括“现在 H100 租金多少”“B200 价格在涨还是在跌”“GPU 算力紧不紧张”“算力价格拐点到了吗”“Vast 上 H200 报价分布怎么样”“Runpod 库存什么情况”“B200 相对 H200 的溢价在收窄吗”“spot 折价扩大了吗”“出一份今天的算力监控日报”“把算力监控导成网页”，以及配置每日定时采集、补录 CoreWeave/Nebius 挂牌价、排查某个数据源为什么没采到数。脚本只做采集、标准化、确定性统计与渲染；“这是不是真拐点、要不要采信这个信号”由模型判断。不覆盖 GPU 芯片二级市场买卖价、云厂商股票分析、模型推理 token 价格；不给买卖建议、目标价或仓位。
+description: 当用户要跟踪 GPU 算力租赁的价格与可用供给、判断算力供需是紧还是松、看 B200/H200/H100 的租金走势与代际溢价、比较 Vast/Runpod/CoreWeave/Nebius 等平台的报价、观察 Ornn OCPI 成交价指数、判断 spot 折价与库存档位变化，或要生成 GPU 算力供需监控日报与 HTML Dashboard 时使用此 skill。适用提问包括“现在 H100 租金多少”“B200 价格在涨还是在跌”“GPU 算力紧不紧张”“算力价格拐点到了吗”“Vast 上 H200 报价分布怎么样”“Runpod 库存什么情况”“B200 相对 H200 的溢价在收窄吗”“spot 折价扩大了吗”“出一份今天的算力监控日报”“把算力监控导成网页”，以及配置每日定时采集、回填历史 90 天数据、补录 CoreWeave/Nebius 挂牌价、排查某个数据源为什么没采到数。脚本只做采集、标准化、确定性统计与渲染；“这是不是真拐点、要不要采信这个信号”由模型判断。不覆盖 GPU 芯片二级市场买卖价、云厂商股票分析、模型推理 token 价格；不给买卖建议、目标价或仓位。
 ---
 
 # GPU 算力价格与供给监控
@@ -21,8 +21,9 @@ description: 当用户要跟踪 GPU 算力租赁的价格与可用供给、判�
 - **单位**：一律 USD / GPU·hour。整机报价除以 `node_gpu_count` 后入库，换算过程存在 `unit_basis` 里可审计。
 - **SKU 粒度**：canonical id 到 SKU 级（`H100 SXM` 而不是 `H100`）。同日 Runpod 的
   SXM/NVL/PCIe 实测差 35%，合并会让「价格中枢」随混样比例漂移。
-- **历史不同龄**：Ornn 免费层直接给滚动 3 个月日度历史，上线当天就有 90 天曲线；
-  Vast/Runpod/Lambda 只能从首次采集当天开始攒。**报告里必须讲清这个不对称。**
+- **历史不同龄**：Ornn 是唯一有历史接口的源，免费层直接给滚动 3 个月日度历史，
+  上线当天就有 90 天曲线；Vast 与 Runpod 只回当下快照，序列只能从首次采集当天
+  开始往后长，**补不回去**。**报告里必须讲清这个不对称。**
 - **脑 / 手边界**：脚本做采集、单位换算、分位数、变化率、折价、供给指数、评分算术、渲染。
   「这是不是真拐点、这个信号采不采信、缺的这块影响多大」全部由模型判断。
 - **冷启动**：供给序列不足 21 天时评分会拒绝出数（`usable=false`）。这是正确状态，
@@ -55,6 +56,13 @@ description: 当用户要跟踪 GPU 算力租赁的价格与可用供给、判�
 **告警必须双边**：实测 2026-05~08 三个月 OCPI-B200 是 +23%、H100 +5%，方向是收紧，
 单边告警在这种行情下会长期零触发。
 
+### 参照系：不只看三个主力 SKU
+
+`A100 SXM4` 与 `RTX 5090` 也进库（Ornn 免费层同样给 90 天历史，取它们零额外成本），
+但不进首页三型号同屏。它们的用处是回答一个主力 SKU 自己答不了的问题：
+**高端在涨，是某一代 GPU 结构性紧缺，还是整条算力曲线都在抬？** 如果连消费级的
+RTX 5090 都在同步上行，那更像整体需求在抬。
+
 ### 价格降了，先分辨成因
 
 价格跌 + offer 份额涨 + 可用 GPU 涨 = 供给释放，这是真宽松；
@@ -64,6 +72,9 @@ description: 当用户要跟踪 GPU 算力租赁的价格与可用供给、判�
 
 ## 工作流程
 
+0. **首次部署先回填**：`python scripts/backfill.py`。把有历史接口的源（目前只有 Ornn）
+   的 90 天日度历史一次拉满，并逐条报出每个 (source, gpu, price_type) 实际覆盖到哪天、
+   多少个点、有没有缺口。日常不用重复跑。
 1. **采集**：`python scripts/collect.py`。逐源独立，单源失败不阻断其它源，
    成败与耗时写进 `gpu_collect_runs`。
 2. **算指标**：`python scripts/metrics.py --output evidence/gpu-<date>.json`。
@@ -96,6 +107,18 @@ python scripts/collect.py --dry-run                    # 采但不写库
 输出一份 JSON 摘要：每个源的 status（`ok` / `empty` / `failed`）、行数、耗时、
 未映射的原始标识、降级说明。全部源都失败才返回非 0。
 
+### `scripts/backfill.py` —— 历史回填与覆盖体检
+
+```bash
+python scripts/backfill.py                    # 回填至今 90 天
+python scripts/backfill.py --days 120         # 无 key 时 Ornn 会被钳到滚动 3 个月
+python scripts/backfill.py --report-only      # 不取数，只看库里现在覆盖到哪
+```
+
+只有 `has_history_api: true` 的源会被回填；其余源会在 `no_history_api` 里列出
+原因，而不是假装回填过。`coverage` 段逐条给出首末日期、点数与缺口天数，
+缺口如实报出，不做插值。
+
 ### `scripts/metrics.py` —— 指标与证据包
 
 ```bash
@@ -121,9 +144,10 @@ python scripts/daily_update.py --skip-collect
 
 ### 环境变量
 
-`ALPHA_PG_URL` 必需（走 `shared/data/db_core.py` 统一契约）；`LAMBDA_API_KEY` 是
-Lambda 源的硬依赖，缺了该源整天缺采；`ORNN_API_KEY` / `VAST_API_KEY` / `RUNPOD_API_KEY`
-可选，设了更稳。各源的实测契约、字段陷阱与降级策略见 `references/source_notes.md`。
+只有 `ALPHA_PG_URL` 是必需的（走 `shared/data/db_core.py` 统一契约）。三个 P0 源
+全部匿名可用，一把 key 都不用配就能跑通；`ORNN_API_KEY`（解锁 3 个月以外的历史与
+更多 SKU）/ `VAST_API_KEY` / `RUNPOD_API_KEY` 都是可选项，设了限频更宽松。
+各源的实测契约、字段陷阱与降级策略见 `references/source_notes.md`。
 
 ### 配置
 
@@ -170,7 +194,7 @@ Lambda 源的硬依赖，缺了该源整天缺采；`ORNN_API_KEY` / `VAST_API_K
 > 价格侧可以讲：锚定 2026-08-24（Ornn T-1 结算，比日历日晚 1 天），
 > H100 SXM 7D +9.5%、B200 7D +6.2%、H200 SXM 7D −13.4%，
 > 三个型号里只有 H200 触发了快速降价告警，且模式是 `record_only`。
-> 明确写出「Lambda 因缺 `LAMBDA_API_KEY` 全天缺采，标准报价层目前只有 Runpod 一路，
+> 明确写出「标准报价层目前只有 Runpod 一路（CoreWeave / Nebius 尚未人工核对），
 > 这一层的结论强度有限」。
 
 **边界示例**：用户问「H100 现在多少钱」这类单点查询，直接跑 collect + metrics 后

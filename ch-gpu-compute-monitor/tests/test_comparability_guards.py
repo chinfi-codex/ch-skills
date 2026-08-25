@@ -181,6 +181,51 @@ class TestAlerts:
         assert [a["id"] for a in fired] == ["fast_price_spike"]
 
 
+class TestSupplyFingerprintGuard:
+    def test_offer_share_change_is_unusable_across_query_change(self):
+        """往 SKU 目录里加一个型号，offer 份额的分母就变了。
+
+        实测：加进 A100 SXM4 与 RTX 5090 的当天，H100 SXM 的份额从 20.0%
+        掉到 6.7%——分母多了 RTX 5090 的二十几条 offer。那不是供给收缩。
+        """
+        ev = make_evidence()
+        ev.supply = [
+            {"gpu_model": "H100 SXM", "obs_date": "2026-08-18", "offer_share": 0.20,
+             "offer_count": 11, "available_gpu_count": 22, "stock_status": "High",
+             "available_region_count": 5, "query_fingerprint": "aaaaaaaaaaaa"},
+            {"gpu_model": "H100 SXM", "obs_date": "2026-08-25", "offer_share": 0.067,
+             "offer_count": 3, "available_gpu_count": 7, "stock_status": "Medium",
+             "available_region_count": 1, "query_fingerprint": "bbbbbbbbbbbb"},
+        ]
+        change = ev.supply_view("H100 SXM")["offer_share"]["changes"]["7d"]
+        assert change["usable"] is False
+        assert change["basis_match"] is False
+        assert _usable_pct(change) is None
+
+    def test_same_fingerprint_supply_change_is_usable(self):
+        ev = make_evidence()
+        ev.supply = [
+            {"gpu_model": "H100 SXM", "obs_date": "2026-08-18", "offer_share": 0.20,
+             "offer_count": 11, "available_gpu_count": 22, "stock_status": "High",
+             "available_region_count": 5, "query_fingerprint": "aaaaaaaaaaaa"},
+            {"gpu_model": "H100 SXM", "obs_date": "2026-08-25", "offer_share": 0.32,
+             "offer_count": 18, "available_gpu_count": 40, "stock_status": "High",
+             "available_region_count": 6, "query_fingerprint": "aaaaaaaaaaaa"},
+        ]
+        change = ev.supply_view("H100 SXM")["offer_share"]["changes"]["7d"]
+        assert change["usable"] is True
+        assert _usable_pct(change) > 0
+
+
+class TestReferenceModels:
+    def test_reference_models_exclude_the_primary_three(self):
+        """参照系只是背景板，不许混进首页三型号同屏。"""
+        ev = make_evidence()
+        ev.catalog = __import__("gpu_catalog").load_catalog()
+        ev.prices = []
+        assert set(ev.reference_models()) & set(ev.catalog.primary_models) == set()
+
+
 class TestPctChange:
     def test_none_inputs_return_none(self):
         assert pct_change(None, 3.0) is None

@@ -270,10 +270,16 @@ class Evidence:
         stock_series: Dict[str, Any] = {}
         regions: Dict[str, float] = {}
         detail: List[Dict[str, Any]] = []
+        # 供给指标同样要认口径。offer 份额的分母是"当天这次查询覆盖了哪些 SKU"，
+        # 往目录里加一个 SKU 就会让所有份额重算——那是口径变动不是供给变动。
+        # 把每天的采集指纹当 basis 传给 changes()，复用价格侧那套守卫。
+        fingerprints: Dict[str, set] = defaultdict(set)
         for row in self.supply:
             if row["gpu_model"] != model:
                 continue
             day = _d(row["obs_date"])
+            if row.get("query_fingerprint"):
+                fingerprints[day].add(row["query_fingerprint"])
             if row.get("offer_share") is not None:
                 share[day] = max(share.get(day, 0.0), _f(row["offer_share"]) or 0.0)
             if row.get("offer_count") is not None:
@@ -295,12 +301,14 @@ class Evidence:
                 streak += 1
             else:
                 break
+        basis = {day: "+".join(sorted(fps)) for day, fps in fingerprints.items()}
         return {
-            "offer_share": {**self.changes(share), "series":
-                            [{"date": k, "value": round(v, 6)} for k, v in sorted(share.items())]},
-            "available_gpu_count": {**self.changes(gpus), "series":
+            "offer_share": {**self.changes(share, basis=basis), "series":
+                            [{"date": k, "value": round(v, 6)} for k, v in sorted(share.items())],
+                            "basis_by_day": basis},
+            "available_gpu_count": {**self.changes(gpus, basis=basis), "series":
                                     [{"date": k, "value": v} for k, v in sorted(gpus.items())]},
-            "available_region_count": self.changes(regions),
+            "available_region_count": self.changes(regions, basis=basis),
             "stock_status": {"latest": latest_stock,
                              "rank": stock_rank(latest_stock),
                              "consecutive_days_at_latest": streak,
@@ -494,8 +502,17 @@ class Evidence:
 
     # ---------- 健康度 ----------
     def freshness(self) -> List[Dict[str, Any]]:
+        """各源最近一次采集的状态。
+
+        只报 config 里还在的源。下线一个数据源后，它在 gpu_collect_runs 里的
+        历史行仍然留着（历史观测要能追溯），但不该继续出现在"今天缺了谁"的
+        面板上——否则一个早就移除的源会永远显示成红色的采集失败。
+        """
+        configured = set(self.sources_cfg)
         out = []
         for row in db_adapter.latest_run_per_source():
+            if row["source"] not in configured:
+                continue
             obs = _d(row.get("obs_date")) if row.get("obs_date") else None
             age = ((date.fromisoformat(self.asof) - date.fromisoformat(obs)).days
                    if obs else None)
@@ -535,6 +552,39 @@ class Evidence:
                 # 两端不是同一天的价，比值就掺了时间错位
                 "date_aligned": aligned,
             })
+        return out
+
+    def reference_models(self) -> Dict[str, Any]:
+        """参照系 SKU（watchlist）的轻量视图：只给成交价序列与变化率。
+
+        它们不进首页三型号同屏，也不参与评分和代际溢价。留着是为了回答一个
+        主力 SKU 自己答不了的问题——高端在涨，是某一代结构性紧缺，还是整条
+        算力曲线都在抬？A100 是上一代的价格地板，RTX 5090 是消费级溢出产能
+        的温度计；两者在 Ornn 免费层里同样有 90 天历史，取它们零额外成本。
+        """
+        out: Dict[str, Any] = {}
+        primary = set(self.catalog.primary_models)
+        for model in self.catalog.all_models:
+            if model in primary:
+                continue
+            built = self.price_series(model, "ornn", "transaction_index")
+            if len(built["points"]) < 2:
+                continue
+            block = self.changes(built["points"])
+            window_start = (date.fromisoformat(self.asof)
+                            - timedelta(days=self.window)).isoformat()
+            clipped = {k: v for k, v in built["points"].items()
+                       if window_start <= k <= self.asof}
+            block["series"] = [{"date": k, "value": round(v, 6)}
+                               for k, v in sorted(clipped.items())]
+            if clipped:
+                days = sorted(clipped)
+                first, last = clipped[days[0]], clipped[days[-1]]
+                block["window_change_pct"] = (
+                    round(pct_change(last, first), 4) if first else None)
+                block["window_from"] = {"date": days[0], "value": round(first, 6)}
+            block["role"] = "reference_only"
+            out[model] = block
         return out
 
     def build(self) -> Dict[str, Any]:
@@ -588,6 +638,7 @@ class Evidence:
             "window_days": self.window,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "models": per_model,
+            "reference_models": self.reference_models(),
             "generation_premium": self.generation_premium(medians),
             "source_health": self.freshness(),
             "config": {

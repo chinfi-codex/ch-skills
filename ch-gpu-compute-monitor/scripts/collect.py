@@ -32,7 +32,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import db_adapter  # noqa: E402
-from collectors import attested, lambda_cloud, ornn, runpod, vast  # noqa: E402
+from collectors import attested, ornn, runpod, vast  # noqa: E402
 from collectors.base import CollectResult, CollectorError, utc_now_iso  # noqa: E402
 from gpu_catalog import load_catalog  # noqa: E402
 
@@ -42,7 +42,6 @@ API_COLLECTORS = {
     "ornn": ornn.collect,
     "vast": vast.collect,
     "runpod": runpod.collect,
-    "lambda": lambda_cloud.collect,
 }
 
 

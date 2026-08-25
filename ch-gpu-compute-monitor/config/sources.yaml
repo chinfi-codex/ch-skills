@@ -26,7 +26,10 @@ sources:
       current: "/api/gpu/{gpu}"                       # 小时级实时值
       daily_index_all: "/api/daily-index/all"         # 全部 SKU 的最新结算日
       history: "/api/gpu/{gpu}/index-history"         # 日度结算历史
-    free_tier_history_days: 92     # 无 key 时被钳到滚动 3 个月
+    # 唯一有历史接口的源：无 key 时被钳到滚动 3 个月（实测 92 个日度点），
+    # 正好盖住首页的 90D 窗口，所以这一路上线当天就有完整曲线。
+    has_history_api: true
+    free_tier_history_days: 92
     notes: "settled daily = T-1 收盘；current = 小时级实时。两者不能混进同一条序列。"
 
   vast:
@@ -51,6 +54,9 @@ sources:
       min_reliability: 0.90        # 低于此值的机器不进分位数，避免垃圾供给压低价格中枢
       exclude_deverified: true     # verification == "deverified" 的机器剔除
     min_sample_for_quantiles: 8    # 样本不足只报 min 与 count，不报 P25/P75
+    # 没有任何公开的历史接口：bundles 只回当下这一刻的挂牌。
+    # 所以 Vast 的序列必然从首次采集当天开始，补不回去。
+    has_history_api: false
 
   runpod:
     enabled: true
@@ -61,18 +67,9 @@ sources:
     api_key_env: RUNPOD_API_KEY
     # secure（自营数据中心）与 community（P2P）是两个市场，分开存 market_segment。
     segments: ["secure", "community"]
+    # 同样没有历史接口，且 GraphQL 关了 introspection，找不到别的时序入口。
+    has_history_api: false
     notes: "minimumBidPrice 常与 uninterruptablePrice 相等，相等时不得记成 spot 折价。"
-
-  lambda:
-    enabled: true
-    priority: P0
-    role: neocloud_list_price
-    base_url: "https://cloud.lambda.ai/api/v1"
-    auth: api_key                  # 实测无 key 返回 401，无法降级为匿名
-    api_key_env: LAMBDA_API_KEY
-    endpoints:
-      instance_types: "/instance-types"
-    notes: "实例是整机（1x/8x），必须除以 node_gpu_count 换算成 USD/GPU·hour。"
 
   # ---- P1/P2：公开 Pricing 网页，没有稳定 API ----
   # 这几家不做自动抓取（页面改版是最高频故障源，静默抓错比没数据更糟）。
@@ -83,6 +80,7 @@ sources:
     priority: P1
     role: neocloud_list_price
     mode: attested
+    has_history_api: false
     pricing_url: "https://coreweave.com/pricing"
     max_age_days: 30
   nebius:
@@ -90,6 +88,7 @@ sources:
     priority: P1
     role: neocloud_list_price
     mode: attested
+    has_history_api: false
     pricing_url: "https://nebius.com/prices"
     max_age_days: 30
   crusoe:
@@ -97,5 +96,6 @@ sources:
     priority: P2
     role: neocloud_list_price
     mode: attested
+    has_history_api: false
     pricing_url: "https://www.crusoe.ai/cloud/pricing"
     max_age_days: 30

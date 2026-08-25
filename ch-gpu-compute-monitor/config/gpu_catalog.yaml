@@ -19,7 +19,6 @@ models:
       ornn: ["H100 SXM"]
       runpod: ["NVIDIA H100 80GB HBM3"]
       vast: ["H100 SXM"]
-      lambda: ["gpu_1x_h100_sxm5", "gpu_8x_h100_sxm5"]
 
   - id: "H200 SXM"
     label: "H200 SXM 141GB"
@@ -30,7 +29,6 @@ models:
       ornn: ["H200"]
       runpod: ["NVIDIA H200"]
       vast: ["H200"]
-      lambda: ["gpu_1x_h200_sxm", "gpu_8x_h200_sxm"]
 
   - id: "B200"
     label: "B200 SXM 180GB"
@@ -40,7 +38,6 @@ models:
       ornn: ["B200"]
       runpod: ["NVIDIA B200"]
       vast: ["B200"]
-      lambda: ["gpu_8x_b200_sxm", "gpu_1x_b200_sxm"]
 
 # 观察但不进 MVP 主线的 SKU：采到就入库，不进首页三型号同屏，也不参与代际溢价。
 # 留着是因为它们是"H100/H200 是不是被替代"的旁证。
@@ -61,6 +58,19 @@ watchlist:
     aliases:
       runpod: ["NVIDIA B300 SXM6 AC"]
       vast: ["B300"]
+  # 下面两个在 Ornn 免费层里同样带滚动 3 个月日度历史，取它们不额外花钱，
+  # 却能给三个主力 SKU 一个参照系：A100 是上一代的价格地板，
+  # RTX 5090 是消费级溢出产能的温度计。
+  - id: "A100 SXM4"
+    aliases:
+      ornn: ["A100 SXM4"]
+      runpod: ["NVIDIA A100-SXM4-80GB"]
+      vast: ["A100 SXM4"]
+  - id: "RTX 5090"
+    aliases:
+      ornn: ["RTX 5090"]
+      runpod: ["NVIDIA GeForce RTX 5090"]
+      vast: ["RTX 5090"]
 
 # 代际溢价对（分子 / 分母），只在两边同日都有跨平台中位数时计算。
 generation_pairs:

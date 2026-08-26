@@ -1564,7 +1564,7 @@ const charts = [
   { title: "成交额趋势", fields: [{ key: "成交额", color: "var(--blue)", scale: 1e9, unit: "万亿" }] },
   { title: "活跃度 / 情绪值", fields: [{ key: "活跃度", color: "var(--orange)" }, { key: "情绪值", color: "var(--purple)" }] },
   { title: "融资净买入", type: "bar", fields: [{ key: "融资净买入", color: "var(--green)", scale: 1e8, unit: "亿" }] },
-  { title: "上涨 vs 下跌家数", fields: [{ key: "上涨", color: "var(--red)" }, { key: "下跌", color: "var(--green)" }] },
+  { title: "上涨 vs 下跌家数占比", type: "share", fields: [{ key: "上涨", color: "var(--red)" }, { key: "下跌", color: "var(--green)" }] },
   { title: "涨停 vs 跌停家数", fields: [{ key: "涨停", color: "var(--red)" }, { key: "跌停", color: "var(--green)" }] },
 ];
 
@@ -1602,6 +1602,7 @@ window.__render.attest(HOOK, {
 });
 
 function drawChart(rows, config, card, subtitle) {
+  if (config.type === "share") return drawShareChart(rows, config, card, subtitle);
   const width = 480;
   const height = 200;
   const pad = { left: 42, right: 16, top: 14, bottom: 28 };
@@ -1703,6 +1704,96 @@ function drawChart(rows, config, card, subtitle) {
   });
   svg.appendChild(svgText(4, pad.top + 4, formatValue(max, config.fields[0].unit), "start", "var(--text-tertiary)"));
   svg.appendChild(svgText(4, height - pad.bottom, formatValue(min, config.fields[0].unit), "start", "var(--text-tertiary)"));
+  return svg;
+}
+
+/* 同日一根柱：把当天的上涨/下跌家数按占比堆进同一根柱子里，红在下、绿在上，
+   两色的交界高度就是当日上涨占比，和 50% 分界线一比就知道多空谁占上风。
+   分母只算有方向的票（上涨 + 下跌），平盘不参与——问的是「动了的票里多数
+   往哪走」，而不是「全市场有多少票在动」。 */
+function drawShareChart(rows, config, card, subtitle) {
+  const width = 480;
+  const height = 200;
+  const pad = { left: 42, right: 16, top: 14, bottom: 28 };
+  const usableW = width - pad.left - pad.right;
+  const usableH = height - pad.top - pad.bottom;
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img" });
+  const [upField, downField] = config.fields;
+  const bars = rows.map(row => {
+    const up = row[upField.key];
+    const down = row[downField.key];
+    if (!Number.isFinite(up) || !Number.isFinite(down) || up + down <= 0) return null;
+    return { date: row.trade_date, up, down, share: up / (up + down) };
+  }).filter(Boolean);
+  if (!bars.length) {
+    svg.appendChild(svgText(width / 2, height / 2, "暂无数据", "middle", "var(--text-tertiary)"));
+    subtitle.textContent = "该列暂无可绘制数值";
+    return svg;
+  }
+
+  const y = share => pad.top + (1 - share) * usableH;
+  [0, 0.25, 0.5, 0.75, 1].forEach(level => {
+    const gy = y(level);
+    svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: gy, y2: gy, class: "grid-line" }));
+    svg.appendChild(svgText(4, gy + 3, `${Math.round(level * 100)}%`, "start", "var(--text-tertiary)"));
+  });
+
+  const slot = usableW / bars.length;
+  const barWidth = Math.max(1, slot * 0.8);
+  const tooltip = CK.tooltip(card);
+  const hits = [];
+  bars.forEach((bar, idx) => {
+    const px = pad.left + slot * idx + (slot - barWidth) / 2;
+    const boundary = y(bar.share);
+    const upRect = svgEl("rect", {
+      x: px.toFixed(2), y: boundary.toFixed(2),
+      width: barWidth.toFixed(2),
+      height: Math.max(0, y(0) - boundary).toFixed(2),
+      fill: upField.color, opacity: 0.85
+    });
+    const downRect = svgEl("rect", {
+      x: px.toFixed(2), y: y(1).toFixed(2),
+      width: barWidth.toFixed(2),
+      height: Math.max(0, boundary - y(1)).toFixed(2),
+      fill: downField.color, opacity: 0.85
+    });
+    svg.appendChild(downRect);
+    svg.appendChild(upRect);
+
+    const hit = svgEl("rect", {
+      x: (pad.left + slot * idx).toFixed(2), y: pad.top.toFixed(2),
+      width: slot.toFixed(2), height: usableH.toFixed(2),
+      fill: "transparent", stroke: "none",
+      style: "cursor:pointer"
+    });
+    const upPct = (bar.share * 100).toFixed(1);
+    const downPct = (100 - bar.share * 100).toFixed(1);
+    hit.addEventListener("mouseenter", () => {
+      upRect.setAttribute("opacity", "1");
+      downRect.setAttribute("opacity", "1");
+      tooltip.innerHTML = [
+        `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${formatDate(bar.date)}</div>`,
+        `<div style="font-weight:600;">${upField.key}: ${bar.up} 家（${upPct}%）</div>`,
+        `<div style="font-weight:600;">${downField.key}: ${bar.down} 家（${downPct}%）</div>`
+      ].join("");
+      tooltip.style.opacity = "1";
+    });
+    hit.addEventListener("mousemove", e => CK.moveTip(tooltip, card, e));
+    hit.addEventListener("mouseleave", () => {
+      upRect.setAttribute("opacity", "0.85");
+      downRect.setAttribute("opacity", "0.85");
+      tooltip.style.opacity = "0";
+    });
+    hits.push(hit);
+  });
+
+  /* 分界线压在柱子上方，多空各半那条线任何时候都看得见 */
+  svg.appendChild(svgEl("line", {
+    x1: pad.left, x2: width - pad.right, y1: y(0.5), y2: y(0.5),
+    class: "axis", "stroke-width": 1.4, opacity: 0.9
+  }));
+  svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: y(0), y2: y(0), class: "axis" }));
+  hits.forEach(hit => svg.appendChild(hit));
   return svg;
 }
 

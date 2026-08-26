@@ -108,6 +108,17 @@ tbody tr:last-child td { border-bottom: none; }
 td.num { font-family: var(--font-mono); }
 td.na, .na { color: var(--ink-4); }
 .dim { color: var(--ink-4); font-size: 11.5px; }
+.pct-up { color: var(--neg); font-weight: 700; }
+.pct-down { color: var(--pos); font-weight: 700; }
+.pct-flat { color: var(--ink-4); font-weight: 600; }
+.stock-tag { display: inline-flex; align-items: center; min-width: 42px;
+             justify-content: center; margin-left: 4px; padding: 2px 7px;
+             border-radius: 999px; border: 1px solid currentColor;
+             font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
+             line-height: 1.25; letter-spacing: .02em; }
+.stock-high { color: var(--pos); background: var(--pos-soft); }
+.stock-low { color: var(--neg); background: var(--neg-soft); }
+.stock-other { color: var(--warn); background: var(--warn-soft); }
 /* 图 */
 svg.chart { width: 100%; min-width: 520px; height: auto; display: block; }
 svg.chart text { fill: var(--ink-4); font-size: 10.5px; font-family: var(--font-sans); }
@@ -365,6 +376,99 @@ def line_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
     return chart
 
 
+def bar_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
+              colors: Dict[str, str], digits: int = 0) -> str:
+    """多序列按日期堆叠成单柱。只画真实观测点，缺日不补值。"""
+    live = [s for s in series if len(s.get("points") or []) >= 2]
+    missing = [s for s in series if len(s.get("points") or []) < 2]
+    if not live:
+        names = "、".join(s["label"] for s in missing) or "全部序列"
+        return (f'<div class="empty">暂无数据：{esc(names)}在窗口内不足 2 个观测点。'
+                f'<br>不画柱，也不用前值补齐。</div>')
+
+    W, H = 1440, 320
+    L, R, T, B = 56, 28, 34, 30
+    days = sorted({p["date"] for s in live for p in s["points"]})
+    values = [float(p["value"]) for s in live for p in s["points"]]
+    point_maps = {s["name"]: {p["date"]: float(p["value"])
+                               for p in s["points"]} for s in live}
+    daily_totals = [sum(points.get(day, 0.0) for points in point_maps.values())
+                    for day in days]
+    hi = max(100.0, max(daily_totals))
+
+    def y_of(value: float) -> float:
+        return T + (1 - value / hi) * (H - T - B)
+
+    parts = []
+    for i in range(5):
+        y = T + i * (H - T - B) / 4
+        value = hi - i * hi / 4
+        parts.append(f'<line class="gridline" x1="{L}" y1="{y:.1f}" '
+                     f'x2="{W - R}" y2="{y:.1f}"/>')
+        parts.append(f'<text x="{L - 6}" y="{y + 3.5:.1f}" text-anchor="end">'
+                     f'{unit_prefix}{value:.{digits}f}</text>')
+
+    plot_w = W - L - R
+    group_w = plot_w / max(1, len(days))
+    bar_w = max(3.0, min(group_w * 0.52, 72.0))
+    for day_idx, day in enumerate(days):
+        center = L + (day_idx + 0.5) * group_w
+        stacked = 0.0
+        for s in live:
+            value = point_maps[s["name"]].get(day)
+            if value is None:
+                continue
+            x = center - bar_w / 2
+            y = y_of(stacked + value)
+            height = max(1.0, y_of(stacked) - y)
+            color = colors.get(s["name"], "var(--clay)")
+            parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" '
+                         f'height="{height:.1f}" rx="1.5" fill="{color}" fill-opacity=".82"/>')
+            stacked += value
+
+    ticks = 6 if len(days) >= 12 else min(3, len(days))
+    idxs = ([0] if ticks == 1 else
+            sorted({round(i * (len(days) - 1) / (ticks - 1)) for i in range(ticks)}))
+    for idx in idxs:
+        day = days[idx]
+        x = L + (idx + 0.5) * group_w
+        anchor = "start" if idx == 0 else "end" if idx == len(days) - 1 else "middle"
+        parts.append(f'<text x="{x:.1f}" y="{H - 9}" text-anchor="{anchor}">'
+                     f'{esc(day[5:])}</text>')
+
+    legend_x = L
+    for s in live:
+        color = colors.get(s["name"], "var(--clay)")
+        label = SHORT.get(s["name"], s["name"])
+        parts.append(f'<rect x="{legend_x}" y="10" width="10" height="10" rx="2" fill="{color}"/>')
+        parts.append(f'<text x="{legend_x + 15}" y="19" style="font-weight:600">{esc(label)}</text>')
+        legend_x += 88
+
+    chart = (f'<div class="scroll"><svg class="chart" viewBox="0 0 {W} {H}" '
+             f'role="img" aria-label="90 天可用供给堆叠柱状趋势">{"".join(parts)}</svg></div>')
+    if missing:
+        names = "、".join(SHORT.get(s["name"], s["name"]) for s in missing)
+        chart += (f'<div class="footnote">暂无数据：{esc(names)}观测点不足 2 个，'
+                  f'未画柱也未补值。</div>')
+    return chart
+
+
+def signed_pct(value: float) -> str:
+    """报价变化比例：正值红、负值绿，文字正负号始终保留。"""
+    cls = "pct-up" if value > 0 else "pct-down" if value < 0 else "pct-flat"
+    return f'<span class="{cls}"> {value:+.0f}%</span>'
+
+
+def stock_badge(value: Any) -> str:
+    """库存档位必须同时用文字和高亮标签表达。"""
+    label = str(value or "").strip()
+    if not label:
+        return '<span class="na">暂无数据</span>'
+    normalized = label.lower()
+    cls = "stock-high" if normalized == "high" else "stock-low" if normalized == "low" else "stock-other"
+    return f'<span class="stock-tag {cls}">{esc(label)}</span>'
+
+
 def render_price_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     colors = {"B200": "var(--gpu-b200)", "H200 SXM": "var(--gpu-h200)",
               "H100 SXM": "var(--gpu-h100)"}
@@ -429,7 +533,7 @@ def render_supply_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
         else:
             bits.append(f"{SHORT.get(model, model)} {br['with_stock']}/{br['reporting']} 家有货")
     breadth_line = f'<div class="footnote">供给广度　{esc("　·　".join(bits))}</div>' 
-    body = line_chart(series, unit_prefix="", colors=colors, digits=0)
+    body = bar_chart(series, unit_prefix="", colors=colors, digits=0)
     if all(len(s["points"]) < 2 for s in series):
         body = ('<div class="empty">暂无数据：供给序列还不足 2 个观测点。<br>'
                 'Vast 与 Runpod 都没有历史接口，只回当下快照，'
@@ -485,7 +589,7 @@ def render_market_quotes(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
                 f'<td class="num">{money(low.get("value"))}</td>'
                 f'<td class="na" colspan="3">不提供分位数</td>'
                 f'<td class="na">—</td><td class="na">—</td>'
-                f'<td class="dim">库存 {esc(stock or "暂无数据")}</td></tr>')
+                f'<td class="dim">库存 {stock_badge(stock)}</td></tr>')
 
     table = ("".join(rows) or
              '<tr><td class="na" colspan="9">暂无数据：今日没有采到市场化报价</td></tr>')
@@ -538,7 +642,7 @@ def render_standard_matrix(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
                          else '<td class="na">暂无</td>')
             if spot is not None and od:
                 cells.append(f'<td class="num">{money(spot)}'
-                             f'<span class="dim"> {(spot / od - 1) * 100:.0f}%</span></td>')
+                             f'{signed_pct((spot / od - 1) * 100)}</td>')
             else:
                 cells.append('<td class="na">暂无</td>')
         rows.append(f'<tr><td>{esc(labels[source])}</td>{"".join(cells)}</tr>')

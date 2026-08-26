@@ -279,7 +279,7 @@ class TestDashboardContract:
         """截断会把话拦腰砍断，宁可点名让作者自己改短。"""
         r = self._renderer()
         long_text = "行" * (r.PANEL_NOTE_MAX + 5)
-        flagged = r.over_length_notes({"price": long_text, "quotes": "短的"})
+        flagged = r.over_length_notes({"price": long_text, "supply": "短的"})
         assert flagged == {"price": r.PANEL_NOTE_MAX + 5}
         assert long_text in r.panel_note({"price": long_text}, "price")
 

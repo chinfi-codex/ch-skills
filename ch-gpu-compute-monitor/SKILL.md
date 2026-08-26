@@ -125,7 +125,7 @@ stealth 模型在免费放量，它进出榜单就能让总量凭空跳一大截
 5. **写报告**：按 `references/report_template.md` 写 Markdown 到 `reports/gpu-<date>.md`。
    需求端单独一小节，frontmatter 里对应 `verdict.token` 与 `verdict.panels.tokens`。
    **frontmatter 的 `verdict` 块是仪表盘唯一认的判断契约**，必须填；正文写仪表盘表达不了的
-   推理，不要重抄报价表和标准报价矩阵——那是仪表盘的活。
+   推理，不要重抄标准报价矩阵——那是仪表盘的活。
 6. **出仪表盘**：`python scripts/render_report_html.py --evidence evidence/gpu-<date>.json
    --input reports/gpu-<date>.md`。
 
@@ -197,7 +197,7 @@ python scripts/render_report_html.py --evidence … --output docs/index.html
 
 自包含单页，无外部依赖，用 claude 主题的暖色纸面。按 PRD §5 的硬约束渲染：
 三型号同屏、无 GPU selector、无时间范围切换、窗口固定 90 天。面板依次是判断区、
-成交价趋势、供给趋势、市场报价、标准报价矩阵、数据源状态；**中间四块各占整行**，
+成交价趋势、标准报价矩阵、供给趋势、token 需求、数据源状态；**中间四块各占整行**，
 每块底部带一行 ≤100 字的异动说明。
 
 **证据全部由脚本从 evidence 渲染，判断全部来自 `--input` 报告 frontmatter 的

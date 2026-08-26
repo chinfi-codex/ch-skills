@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import math
 import re
 import sys
 from datetime import datetime, timezone
@@ -51,7 +52,7 @@ SHORT = {"B200": "B200", "H200 SXM": "H200", "H100 SXM": "H100"}
 # 状态语义。颜色只是辅助，文字始终在场（PRD §10）。
 # 每块面板底部那行「异动说明」：说今天这块图里什么在动、值得看哪里。
 # 这是判断不是取数，所以由模型写在 verdict.panels 里，脚本只搬运 + 查字数。
-PANEL_KEYS = ("price", "supply", "quotes", "matrix", "tokens")
+PANEL_KEYS = ("price", "supply", "matrix", "tokens")
 PANEL_NOTE_MAX = 100
 
 TONES = {
@@ -111,14 +112,6 @@ td.na, .na { color: var(--ink-4); }
 .pct-up { color: var(--neg); font-weight: 700; }
 .pct-down { color: var(--pos); font-weight: 700; }
 .pct-flat { color: var(--ink-4); font-weight: 600; }
-.stock-tag { display: inline-flex; align-items: center; min-width: 42px;
-             justify-content: center; margin-left: 4px; padding: 2px 7px;
-             border-radius: 999px; border: 1px solid currentColor;
-             font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
-             line-height: 1.25; letter-spacing: .02em; }
-.stock-high { color: var(--pos); background: var(--pos-soft); }
-.stock-low { color: var(--neg); background: var(--neg-soft); }
-.stock-other { color: var(--warn); background: var(--warn-soft); }
 /* 图 */
 svg.chart { width: 100%; min-width: 520px; height: auto; display: block; }
 svg.chart text { fill: var(--ink-4); font-size: 10.5px; font-family: var(--font-sans); }
@@ -256,51 +249,6 @@ def over_length_notes(notes: Dict[str, Any]) -> Dict[str, int]:
         if text and len(str(text).strip()) > PANEL_NOTE_MAX:
             out[key] = len(str(text).strip())
     return out
-
-
-def render_confirmation_strip(ev: Dict[str, Any]) -> str:
-    """确认型拐点的状态条（PRD §4.3 / §8）。
-
-    这是全项目的落脚点，所以单独占一条：三个型号各自的连续天数、门槛、
-    以及差在哪一步。「还没确认」和「确认没有」不是一回事，blockers 要露出来。
-    """
-    cells = []
-    thresholds = None
-    for model in ORDER:
-        conf = ((ev.get("models") or {}).get(model) or {}).get("confirmation") or {}
-        if not conf:
-            continue
-        thresholds = thresholds or conf.get("thresholds")
-        need = (conf.get("thresholds") or {}).get("min_consecutive_collection_days", 10)
-        loose = (conf.get("loosening") or {}).get("streak_days", 0)
-        tight = (conf.get("tightening") or {}).get("streak_days", 0)
-        verdict = conf.get("verdict", "none")
-        if verdict == "loosening":
-            state, cls = f"确认宽松（连续 {loose} 天）", "t-loose"
-        elif verdict == "tightening":
-            state, cls = f"确认收紧（连续 {tight} 天）", "t-tight"
-        elif conf.get("blockers"):
-            state, cls = "信号不足，未判定", "t-unknown"
-        else:
-            state, cls = f"未确认（最长 {max(loose, tight)}/{need} 天）", "t-watch"
-        detail = (conf.get("blockers") or [None])[0] or (
-            f"松 {loose} 天 · 紧 {tight} 天 · 门槛 {need} 天")
-        cells.append(f'<div class="conf-cell"><div class="name">{esc(SHORT.get(model, model))}</div>'
-                     f'<div class="state {cls}">{esc(state)}</div>'
-                     f'<div class="why">{esc(detail)}</div></div>')
-    if not cells:
-        return ""
-    t = thresholds or {}
-    rule = (f"价格类 ≥{t.get('min_price_signals', 3)} 个信号 + "
-            f"供给类 ≥{t.get('min_supply_signals', 2)} 个信号，"
-            f"连续 ≥{t.get('min_consecutive_collection_days', 10)} 个采集日，"
-            f"中间不许有缺口")
-    return f"""<section class="panel stack">
-  <div class="sec-head">
-    <div><strong>拐点确认</strong></div>
-  </div>
-  <div class="conf-grid">{''.join(cells)}</div>
-</section>"""
 
 
 def line_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
@@ -459,16 +407,6 @@ def signed_pct(value: float) -> str:
     return f'<span class="{cls}"> {value:+.0f}%</span>'
 
 
-def stock_badge(value: Any) -> str:
-    """库存档位必须同时用文字和高亮标签表达。"""
-    label = str(value or "").strip()
-    if not label:
-        return '<span class="na">暂无数据</span>'
-    normalized = label.lower()
-    cls = "stock-high" if normalized == "high" else "stock-low" if normalized == "low" else "stock-other"
-    return f'<span class="stock-tag {cls}">{esc(label)}</span>'
-
-
 def render_price_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     colors = {"B200": "var(--gpu-b200)", "H200 SXM": "var(--gpu-h200)",
               "H100 SXM": "var(--gpu-h100)"}
@@ -545,64 +483,6 @@ def render_supply_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
   {body}
   {breadth_line}
   {panel_note(notes, "supply")}
-</section>"""
-
-
-def render_market_quotes(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
-    rows = []
-    for model in ORDER:
-        block = (ev.get("models") or {}).get(model) or {}
-        by_source = block.get("by_source") or {}
-        supply = block.get("supply") or {}
-        vast = by_source.get("vast") or {}
-
-        def val(key: str) -> Optional[float]:
-            node = vast.get(f"{key}@on_demand") or {}
-            return (node.get("latest") or {}).get("value")
-
-        sample = ((vast.get("offer_median@on_demand") or {}).get("sample_count")
-                  or (vast.get("offer_min@on_demand") or {}).get("sample_count"))
-        thin = val("offer_median") is None and val("offer_min") is not None
-        gpus = (supply.get("available_gpu_count") or {}).get("latest") or {}
-        if vast:
-            disp = next((d for d in (block.get("quote_dispersion") or [])
-                         if d.get("source") == "vast" and d.get("spread") is not None), None)
-            disp_cell = (f'<td class="num">{money(disp["spread"])}'
-                         f'<span class="dim"> {disp["spread_pct_of_median"]:.0f}%</span></td>'
-                         if disp else '<td class="na">—</td>')
-            quant = ('<td class="na" colspan="3">样本不足</td>' if thin else
-                     f'<td class="num">{money(val("offer_p25"))}</td>'
-                     f'<td class="num">{money(val("offer_median"))}</td>'
-                     f'<td class="num">{money(val("offer_p75"))}</td>')
-            rows.append(
-                f'<tr><td>Vast.ai</td><td>{esc(SHORT.get(model, model))}</td>'
-                f'<td class="num">{money(val("offer_min"))}</td>{quant}{disp_cell}'
-                f'<td class="num">{esc(sample or "—")}</td>'
-                f'<td class="dim">{esc(int(gpus["value"]) if gpus.get("value") is not None else "—")} 张</td></tr>')
-
-        runpod = by_source.get("runpod") or {}
-        low = (runpod.get("on_demand@lowest") or {}).get("latest") or {}
-        stock = (supply.get("stock_status") or {}).get("latest")
-        if low:
-            rows.append(
-                f'<tr><td>Runpod</td><td>{esc(SHORT.get(model, model))}</td>'
-                f'<td class="num">{money(low.get("value"))}</td>'
-                f'<td class="na" colspan="3">不提供分位数</td>'
-                f'<td class="na">—</td><td class="na">—</td>'
-                f'<td class="dim">库存 {stock_badge(stock)}</td></tr>')
-
-    table = ("".join(rows) or
-             '<tr><td class="na" colspan="9">暂无数据：今日没有采到市场化报价</td></tr>')
-    return f"""<section class="panel">
-  <div class="sec-head">
-    <div><strong>市场报价</strong></div>
-  </div>
-  <div class="scroll"><table>
-    <thead><tr><th>来源</th><th>GPU</th><th>Min</th><th>P25</th><th>中位</th>
-      <th>P75</th><th>分散度</th><th>样本</th><th>供给</th></tr></thead>
-    <tbody>{table}</tbody>
-  </table></div>
-  {panel_note(notes, "quotes")}
 </section>"""
 
 
@@ -849,6 +729,93 @@ def render_composition(comp: Dict[str, Any]) -> str:
             f'{composition_table(comp)}<div class="footnote">{tail}</div>')
 
 
+def history_combo_chart(volume: List[Dict[str, Any]],
+                        structure: List[Dict[str, Any]]) -> str:
+    """一年结构史合并图：面积是总价指数，两条曲线是它的两个因子。
+
+    总价指数 = 量指数 × 结构效应指数 ÷ 100。纵轴取对数，因为三条线跨了
+    40 到 2000 两个数量级，线性轴会把结构效应压成贴着底边的一条直线。
+    对数轴还有个附带好处：乘法变加法，量指数线与总价线之间的垂直落差，
+    正好等于结构效应线掉到 100 以下的幅度——结构迁移吃掉了多少一眼能读出来。
+    """
+    vmap = {p["date"]: float(p["value"]) for p in (volume or [])
+            if p.get("value") is not None}
+    smap = {p["date"]: float(p["value"]) for p in (structure or [])
+            if p.get("value") is not None}
+    days = sorted(d for d in vmap if d in smap and vmap[d] > 0 and smap[d] > 0)
+    if len(days) < 2:
+        return ('<div class="empty">暂无数据：量指数与结构效应指数对得上的周不足 2 个。'
+                '<br>两条序列不对齐就不合成总价指数，也不补值。</div>')
+    combo = {d: vmap[d] * smap[d] / 100.0 for d in days}
+
+    W, H = 1440, 360
+    L, R, T, B = 60, 88, 18, 30
+    values = ([vmap[d] for d in days] + [smap[d] for d in days]
+              + [combo[d] for d in days])
+    lg_lo, lg_hi = math.log10(min(values)), math.log10(max(values))
+    pad = (lg_hi - lg_lo) * 0.06 or 0.05
+    lg_lo -= pad
+    lg_hi += pad
+
+    def x_of(day: str) -> float:
+        return L + days.index(day) / (len(days) - 1) * (W - L - R)
+
+    def y_of(value: float) -> float:
+        return T + (1 - (math.log10(value) - lg_lo) / (lg_hi - lg_lo)) * (H - T - B)
+
+    parts = ['<defs><linearGradient id="hist-area" x1="0" y1="0" x2="0" y2="1">'
+             '<stop offset="0%" stop-color="var(--gpu-h100)" stop-opacity="0.30"/>'
+             '<stop offset="100%" stop-color="var(--gpu-h100)" stop-opacity="0.03"/>'
+             '</linearGradient></defs>']
+    for exp in range(math.floor(lg_lo), math.ceil(lg_hi) + 1):
+        for mant in (1, 2, 5):
+            tick = mant * 10 ** exp
+            if not lg_lo <= math.log10(tick) <= lg_hi:
+                continue
+            y = y_of(tick)
+            parts.append(f'<line class="gridline" x1="{L}" y1="{y:.1f}" '
+                         f'x2="{W - R}" y2="{y:.1f}"/>')
+            parts.append(f'<text x="{L - 6}" y="{y + 3.5:.1f}" text-anchor="end">'
+                         f'{tick:g}</text>')
+    ticks = 6 if len(days) >= 12 else 3
+    for idx in sorted({round(i * (len(days) - 1) / (ticks - 1)) for i in range(ticks)}):
+        anchor = ("start" if idx == 0
+                  else "end" if idx == len(days) - 1 else "middle")
+        parts.append(f'<text x="{x_of(days[idx]):.1f}" y="{H - 9}" '
+                     f'text-anchor="{anchor}">{esc(days[idx][5:])}</text>')
+    # 基期线：结构效应在它上面还是下面，就是买家在往贵处还是往便宜处搬
+    if lg_lo <= 2.0 <= lg_hi:
+        y100 = y_of(100.0)
+        parts.append(f'<line x1="{L}" y1="{y100:.1f}" x2="{W - R}" y2="{y100:.1f}" '
+                     f'stroke="var(--ink-4)" stroke-width="1" stroke-dasharray="4 4"/>')
+
+    area = " ".join(("M" if i == 0 else "L")
+                    + f"{x_of(d):.1f} {y_of(combo[d]):.1f}" for i, d in enumerate(days))
+    parts.append(f'<path d="{area} L{x_of(days[-1]):.1f} {H - B:.1f} '
+                 f'L{x_of(days[0]):.1f} {H - B:.1f} Z" fill="url(#hist-area)" '
+                 f'stroke="none"/>')
+
+    for label, point_map, color, width in (
+            ("总价指数", combo, "var(--gpu-h100)", 2.4),
+            ("量指数", vmap, "var(--gpu-h200)", 2),
+            ("结构效应", smap, "var(--gpu-b200)", 2)):
+        path = " ".join(("M" if i == 0 else "L")
+                        + f"{x_of(d):.1f} {y_of(point_map[d]):.1f}"
+                        for i, d in enumerate(days))
+        last = point_map[days[-1]]
+        parts.append(f'<path d="{path}" fill="none" stroke="{color}" '
+                     f'stroke-width="{width}" stroke-linejoin="round"/>')
+        parts.append(f'<circle cx="{x_of(days[-1]):.1f}" cy="{y_of(last):.1f}" '
+                     f'r="3" fill="{color}"/>')
+        parts.append(f'<text x="{W - R + 6}" y="{y_of(last) + 3.5:.1f}" '
+                     f'fill="{color}" style="font-weight:600">{esc(label)} '
+                     f'{last:.0f}</text>')
+
+    return (f'<div class="scroll"><svg class="chart" viewBox="0 0 {W} {H}" '
+            f'role="img" aria-label="一年结构史：总价指数与量、结构效应两个因子">'
+            f'{"".join(parts)}</svg></div>')
+
+
 def render_token_panel(ev: Dict[str, Any], notes: Dict[str, Any],
                        verdict: Dict[str, Any]) -> str:
     tok = ev.get("token_market") or {}
@@ -931,33 +898,37 @@ def render_token_panel(ev: Dict[str, Any], notes: Dict[str, Any],
     if hist.get("usable"):
         vi = hist.get("volume_index") or {}
         se = hist.get("structure_effect_index") or {}
-        vol_chart = line_chart(
-            [{"name": "量指数", "label": "厂商级周度量指数",
-              "points": vi.get("series") or []}],
-            unit_prefix="", colors={"量指数": "var(--gpu-h200)"}, digits=0)
-        se_chart = line_chart(
-            [{"name": "结构效应", "label": "结构效应指数",
-              "points": se.get("series") or []}],
-            unit_prefix="", colors={"结构效应": "var(--gpu-b200)"}, digits=1)
+        vi_series = vi.get("series") or []
+        se_series = (se.get("series") or []) if se.get("usable") else []
+        # 结构效应算不出来时不硬合成：退回只画量指数，别把缺的那一半藏进面积里
+        hist_chart = (history_combo_chart(vi_series, se_series) if se_series else
+                      line_chart([{"name": "量指数", "label": "厂商级周度量指数",
+                                   "points": vi_series}],
+                                 unit_prefix="", colors={"量指数": "var(--gpu-h200)"},
+                                 digits=0))
         shares = hist.get("author_shares") or {}
         def _top(block, n=4):
             items = sorted((block or {}).items(), key=lambda kv: -kv[1])[:n]
             return "、".join(f"{k} {v * 100:.1f}%" for k, v in items)
         g4 = (vi.get("growth_4w") or {}).get("pct")
         g13 = (vi.get("growth_13w") or {}).get("pct")
-        se_latest = (se.get("series") or [{}])[-1].get("value")
-        se_line = (f'结构效应指数 {se_latest:.1f}　·　<b>买家往便宜厂商迁移，'
-                   f'把均价拉低了 {100 - se_latest:.0f}%</b>'
-                   if se.get("usable") and se_latest else
-                   f'结构效应指数不可用：{esc(str(se.get("reason")))}')
+        vi_latest = (vi_series or [{}])[-1].get("value")
+        se_latest = (se_series or [{}])[-1].get("value")
+        if se.get("usable") and se_latest and vi_latest:
+            head_line = (
+                f'总价指数 {vi_latest * se_latest / 100:.0f}　·　'
+                f'量指数 {vi_latest:.0f}（近 4 周 {pct(g4)}　·　近 13 周 {pct(g13)}）'
+                f'　·　结构效应指数 {se_latest:.1f}　'
+                f'<b>买家往便宜厂商迁移，把均价拉低了 {100 - se_latest:.0f}%</b>')
+        else:
+            head_line = (f'量指数　近 4 周 {pct(g4)}　·　近 13 周 {pct(g13)}'
+                         f'　·　结构效应指数不可用：{esc(str(se.get("reason")))}')
         history_html = f"""
   <div class="sec-head" style="margin-top:18px">
     <div><strong>一年结构史</strong></div>
   </div>
-  <div class="footnote">量指数　近 4 周 {pct(g4)}　·　近 13 周 {pct(g13)}</div>
-  {vol_chart}
-  <div class="footnote">{se_line}</div>
-  {se_chart}
+  <div class="footnote">{head_line}</div>
+  {hist_chart}
   <div class="footnote">份额搬家　{esc(str(shares.get("first_week")))}：{esc(_top(shares.get("first")))}
     　→　{esc(str(shares.get("latest_week")))}：{esc(_top(shares.get("latest")))}</div>"""
 
@@ -1075,16 +1046,14 @@ def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
     <div>
       <div class="eyebrow">全型号总览 · 最近 {esc(window)} 天 · 不设型号与时间切换</div>
       <h1>GPU Compute Price &amp; Supply Monitor</h1>
-      <div class="sub">成交价 × 市场报价 × 标准报价 × 可用供给 × 推理 token 量价 → 算力供需与下游需求的边际变化</div>
+      <div class="sub">成交价 × 标准报价 × 可用供给 × 推理 token 量价 → 算力供需与下游需求的边际变化</div>
     </div>
     <div class="stamp">观测日 {esc(asof)} · 数据源 {ok}/{len(health)} · UTC {esc(stamp)}</div>
   </header>
   {render_verdict(verdict, models)}
-  {render_confirmation_strip(ev)}
   <div class="stack">{render_price_panel(ev, notes)}</div>
-  <div class="stack">{render_supply_panel(ev, notes)}</div>
-  <div class="stack">{render_market_quotes(ev, notes)}</div>
   <div class="stack">{render_standard_matrix(ev, notes)}</div>
+  <div class="stack">{render_supply_panel(ev, notes)}</div>
   <div class="stack">{render_token_panel(ev, notes, verdict)}</div>
   {render_sources(ev)}
 </main>

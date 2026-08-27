@@ -223,6 +223,32 @@ class TestSupplyBreadth:
         assert out["breadth"] is None and "没有任何供给观测" in out["reason"]
 
 
+class TestFullHistorySeries:
+    """补不回去的序列不许被 90 天窗口裁掉——掐掉的那一段永久丢失。"""
+
+    def test_supply_series_ignores_window(self):
+        ev = make_evidence(asof="2026-08-25", window=7)
+        # 窗口起点是 08-18，但 08-01 那个点必须还在
+        ev.supply = [supply_row("2026-08-01", "vast", offer_count=10,
+                                offer_share=0.4, available_gpu_count=100),
+                     supply_row("2026-08-25", "vast", offer_count=12,
+                                offer_share=0.5, available_gpu_count=140)]
+        out = ev.supply_view("H100 SXM")
+        for key in ("offer_share", "available_gpu_count"):
+            days = [p["date"] for p in out[key]["series"]]
+            assert days == ["2026-08-01", "2026-08-25"], key
+            assert out[key]["series_scope"] == "full_history"
+
+    def test_series_list_without_window_keeps_everything(self):
+        from metrics import _series_list
+
+        series = {"2026-01-01": 1.0, "2026-08-01": 2.0, "2026-08-25": 3.0}
+        clipped = [p["date"] for p in _series_list(series, "2026-08-25", 7)]
+        assert clipped == ["2026-08-25"]
+        full = [p["date"] for p in _series_list(series, "2026-08-25", None)]
+        assert full == ["2026-01-01", "2026-08-01", "2026-08-25"]
+
+
 class TestOutlierValidation:
     CFG = {"enabled": True, "lookback_days": 30, "min_history_points": 5,
            "max_jump_pct": 60, "unit_error_tolerance": 0.12}

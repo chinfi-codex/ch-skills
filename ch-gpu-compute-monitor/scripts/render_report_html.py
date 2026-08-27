@@ -2,7 +2,9 @@
 """把证据包渲染成单页 GPU 算力监控 Dashboard（自包含 HTML，无外部依赖）。
 
 这是 PRD §5 要的那个东西：一屏之内回答「不同代际的价格在怎么变、供给是否
-同步松紧」，不设 GPU selector、不设时间范围切换、窗口固定 90 天。
+同步松紧」，不设 GPU selector、不设时间范围切换。窗口只管成交价（固定 90 天，
+Ornn 自带滚动 3 个月历史，掉出窗口的点明天还能重取）；供给与 token 两条序列
+没有历史接口、补不回去，一律画全部历史。
 
 脑 / 手边界在这里体现得最清楚：
   * 判断（整体结论、每个型号的状态与一句话依据）由模型写在报告 Markdown 的
@@ -233,6 +235,20 @@ def render_verdict(verdict: Dict[str, Any], models: Dict[str, Any]) -> str:
 </section>"""
 
 
+def span_hint(series: List[Dict[str, Any]], *, prefix: str = "全部历史") -> str:
+    """一条「画的是哪一段」的说明。
+
+    补不回去的序列画的是全部历史而不是 90 天窗口，页面上必须写清楚——
+    否则读者会拿它跟旁边那张 90 天成交价曲线当同一个时间轴读。
+    """
+    days = sorted({p["date"] for s in series for p in (s.get("points") or [])})
+    if not days:
+        return ""
+    if len(days) == 1:
+        return f"{prefix} · {days[0]} 起 1 天"
+    return f"{prefix} · {days[0]} → {days[-1]} · {len(days)} 天"
+
+
 def panel_note(notes: Dict[str, Any], key: str) -> str:
     """面板底部的异动说明。模型没写就整行不出现，脚本不代笔。"""
     text = (notes or {}).get(key)
@@ -252,13 +268,18 @@ def over_length_notes(notes: Dict[str, Any]) -> Dict[str, int]:
 
 
 def line_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
-               colors: Dict[str, str], digits: int = 2) -> str:
-    """多序列折线。少于 2 个点的序列不画线，也不补值。"""
+               colors: Dict[str, str], digits: int = 2,
+               scope: str = "窗口内", aria: str = "90 天趋势") -> str:
+    """多序列折线。少于 2 个点的序列不画线，也不补值。
+
+    `scope` 只影响文案：补不回去的序列画的是全部历史，说成"窗口内不足 2 个点"
+    会让人以为把窗口调宽就有数了。
+    """
     live = [s for s in series if len(s.get("points") or []) >= 2]
     missing = [s for s in series if len(s.get("points") or []) < 2]
     if not live:
         names = "、".join(s["label"] for s in missing) or "全部序列"
-        return (f'<div class="empty">暂无数据：{esc(names)}在窗口内不足 2 个观测点。'
+        return (f'<div class="empty">暂无数据：{esc(names)}{esc(scope)}不足 2 个观测点。'
                 f'<br>不画线，也不用前值补齐。</div>')
 
     # 面板现在独占一整行，viewBox 必须跟着加宽。SVG 是等比缩放的：
@@ -316,7 +337,7 @@ def line_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
                      f'{esc(SHORT.get(s["name"], s["name"]))}</text>')
 
     chart = (f'<div class="scroll"><svg class="chart" viewBox="0 0 {W} {H}" '
-             f'role="img" aria-label="90 天趋势">{"".join(parts)}</svg></div>')
+             f'role="img" aria-label="{esc(aria)}">{"".join(parts)}</svg></div>')
     if missing:
         names = "、".join(SHORT.get(s["name"], s["name"]) for s in missing)
         chart += (f'<div class="footnote">暂无数据：{esc(names)}观测点不足 2 个，'
@@ -325,13 +346,14 @@ def line_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
 
 
 def bar_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
-              colors: Dict[str, str], digits: int = 0) -> str:
+              colors: Dict[str, str], digits: int = 0,
+              scope: str = "窗口内", aria: str = "堆叠柱状趋势") -> str:
     """多序列按日期堆叠成单柱。只画真实观测点，缺日不补值。"""
     live = [s for s in series if len(s.get("points") or []) >= 2]
     missing = [s for s in series if len(s.get("points") or []) < 2]
     if not live:
         names = "、".join(s["label"] for s in missing) or "全部序列"
-        return (f'<div class="empty">暂无数据：{esc(names)}在窗口内不足 2 个观测点。'
+        return (f'<div class="empty">暂无数据：{esc(names)}{esc(scope)}不足 2 个观测点。'
                 f'<br>不画柱，也不用前值补齐。</div>')
 
     W, H = 1440, 320
@@ -393,7 +415,7 @@ def bar_chart(series: List[Dict[str, Any]], *, unit_prefix: str,
         legend_x += 88
 
     chart = (f'<div class="scroll"><svg class="chart" viewBox="0 0 {W} {H}" '
-             f'role="img" aria-label="90 天可用供给堆叠柱状趋势">{"".join(parts)}</svg></div>')
+             f'role="img" aria-label="{esc(aria)}">{"".join(parts)}</svg></div>')
     if missing:
         names = "、".join(SHORT.get(s["name"], s["name"]) for s in missing)
         chart += (f'<div class="footnote">暂无数据：{esc(names)}观测点不足 2 个，'
@@ -471,7 +493,9 @@ def render_supply_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
         else:
             bits.append(f"{SHORT.get(model, model)} {br['with_stock']}/{br['reporting']} 家有货")
     breadth_line = f'<div class="footnote">供给广度　{esc("　·　".join(bits))}</div>' 
-    body = bar_chart(series, unit_prefix="", colors=colors, digits=0)
+    span = span_hint(series)
+    body = bar_chart(series, unit_prefix="", colors=colors, digits=0,
+                     scope="全部历史里", aria="可用供给全部历史堆叠柱状趋势")
     if all(len(s["points"]) < 2 for s in series):
         body = ('<div class="empty">暂无数据：供给序列还不足 2 个观测点。<br>'
                 'Vast 与 Runpod 都没有历史接口，只回当下快照，'
@@ -479,6 +503,7 @@ def render_supply_panel(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     return f"""<section class="panel">
   <div class="sec-head">
     <div><strong>可用供给趋势</strong></div>
+    <div class="sec-hint">{esc(span)}</div>
   </div>
   {body}
   {breadth_line}
@@ -577,15 +602,6 @@ def _win(block: Dict[str, Any], label: str = "7d") -> str:
         reason = entry.get("reason") or "窗口起点无观测"
         return f'<span class="na">{esc(label.upper())} 不可用（{esc(reason)}）</span>'
     return f'{esc(label.upper())} {pct(entry.get("pct"))}'
-
-
-def _rebased(series: List[Dict[str, Any]], base_date: Optional[str]) -> List[Dict[str, Any]]:
-    """把一条水平序列换算成 base=100 的指数，好和固定篮子指数放进同一张图。"""
-    points = {p["date"]: p["value"] for p in series or []}
-    if not base_date or base_date not in points or not points[base_date]:
-        return []
-    base = points[base_date]
-    return [{"date": d, "value": v / base * 100.0} for d, v in sorted(points.items())]
 
 
 # 构成图的条带配色。前 7 条给模型，最后一条固定给「其他」——
@@ -865,15 +881,6 @@ def render_token_panel(ev: Dict[str, Any], notes: Dict[str, Any],
         for name, value, why in cells)
 
     base_date = basket.get("base_date")
-    price_series = [
-        {"name": "混合价", "label": "混合价（当期权重）",
-         "points": _rebased((price.get("blended") or {}).get("series"), base_date)},
-        {"name": "固定篮子", "label": "固定篮子真价格",
-         "points": (price.get("laspeyres") or {}).get("series") or []},
-    ]
-    price_chart = line_chart(price_series, unit_prefix="",
-                             colors={"混合价": "var(--gpu-b200)",
-                                     "固定篮子": "var(--gpu-h100)"}, digits=1)
     volume_chart = render_composition(tok.get("composition") or {})
 
     rows = []
@@ -905,7 +912,8 @@ def render_token_panel(ev: Dict[str, Any], notes: Dict[str, Any],
                       line_chart([{"name": "量指数", "label": "厂商级周度量指数",
                                    "points": vi_series}],
                                  unit_prefix="", colors={"量指数": "var(--gpu-h200)"},
-                                 digits=0))
+                                 digits=0, scope="全部历史里",
+                                 aria="厂商级周度量指数（一年结构史）"))
         shares = hist.get("author_shares") or {}
         def _top(block, n=4):
             items = sorted((block or {}).items(), key=lambda kv: -kv[1])[:n]
@@ -978,7 +986,6 @@ def render_token_panel(ev: Dict[str, Any], notes: Dict[str, Any],
     <div class="sec-hint">锚定 {esc(str(anchor))}（{esc(align)}）{start_hint}</div>
   </div>
   <div class="conf-grid">{grid}{chip}</div>
-  {price_chart}
   {volume_chart}
   {table}
   {history_html}
@@ -1044,7 +1051,7 @@ def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
 <main class="wrap">
   <header class="hd">
     <div>
-      <div class="eyebrow">全型号总览 · 最近 {esc(window)} 天 · 不设型号与时间切换</div>
+      <div class="eyebrow">全型号总览 · 成交价最近 {esc(window)} 天 · 供给与 token 全部历史 · 不设型号与时间切换</div>
       <h1>GPU Compute Price &amp; Supply Monitor</h1>
       <div class="sub">成交价 × 标准报价 × 可用供给 × 推理 token 量价 → 算力供需与下游需求的边际变化</div>
     </div>

@@ -49,6 +49,14 @@ CONFIG_DIR = SCRIPT_DIR.parent / "config"
 CORE_PRICE_TYPES = ("transaction_index", "offer_median", "on_demand")
 CHANGE_WINDOWS = (("1d", 1), ("7d", 7), ("30d", 30))
 
+# 供给与 token 是两条补不回去的序列：Vast / Runpod 只回当下快照，OpenRouter 的
+# 日榜也没有历史接口，它们只能从首次采集当天往后长。90 天窗口一旦滚过它们的
+# 起点，掐掉的那一段就是**永久丢失**的——没有任何办法再取回来。所以这两类
+# 一律读到底、出到底，窗口只管成交价（Ornn 自带滚动 3 个月历史，掉出窗口的点
+# 明天还能重新取到）与各种 *_change_pct 的比较基准。
+FULL_HISTORY_START = "2000-01-01"
+FULL_HISTORY_SCOPE = "full_history"
+
 
 def _f(value: Any) -> Optional[float]:
     if value is None:
@@ -95,14 +103,15 @@ class Evidence:
         self.start = (date.fromisoformat(asof) - timedelta(days=window + 45)).isoformat()
         self.prices = [r for r in db_adapter.read_prices(self.start, asof)
                        if _f(r.get("price_usd_gpu_hour")) is not None]
-        self.supply = db_adapter.read_supply(self.start, asof)
+        # 供给读到底：见 FULL_HISTORY_START，序列补不回去，掐头等于永久丢失
+        self.supply = db_adapter.read_supply(FULL_HISTORY_START, asof)
         self.runs = db_adapter.read_runs(self.start, asof)
         self.basket_cfg = yaml.safe_load(
             (CONFIG_DIR / "token_basket.yaml").read_text(encoding="utf-8")) or {}
         # token 观测可能整体缺席（老库、或者只跑了 GPU 侧的源），
         # 缺就是缺，token_market 会如实报 usable=false，不影响 GPU 侧任何指标。
         try:
-            self.tokens = db_adapter.read_tokens(self.start, asof)
+            self.tokens = db_adapter.read_tokens(FULL_HISTORY_START, asof)
         except Exception:
             self.tokens = []
 
@@ -319,11 +328,14 @@ class Evidence:
                 break
         basis = {day: "+".join(sorted(fps)) for day, fps in fingerprints.items()}
         return {
+            # 两条序列都不裁窗口：Vast / Runpod 没有历史接口，掐掉的一段补不回来
             "offer_share": {**self.changes(share, basis=basis), "series":
                             [{"date": k, "value": round(v, 6)} for k, v in sorted(share.items())],
+                            "series_scope": FULL_HISTORY_SCOPE,
                             "basis_by_day": basis},
             "available_gpu_count": {**self.changes(gpus, basis=basis), "series":
-                                    [{"date": k, "value": v} for k, v in sorted(gpus.items())]},
+                                    [{"date": k, "value": v} for k, v in sorted(gpus.items())],
+                                    "series_scope": FULL_HISTORY_SCOPE},
             "available_region_count": self.changes(regions, basis=basis),
             "stock_status": {"latest": latest_stock,
                              "rank": stock_rank(latest_stock),
@@ -1468,13 +1480,15 @@ class Evidence:
             },
             "volume": {
                 "paid": {**volume,
-                         "series": _series_list(paid_series, self.asof, self.window)},
+                         "series": _series_list(paid_series, self.asof, None),
+                         "series_scope": FULL_HISTORY_SCOPE},
                 "free_variant": {**self.changes(free_series, anchor_date=anchor),
-                                 "series": _series_list(free_series, self.asof,
-                                                        self.window)},
+                                 "series": _series_list(free_series, self.asof, None),
+                                 "series_scope": FULL_HISTORY_SCOPE},
                 "zero_priced_standard": {
                     **self.changes(zero_series, anchor_date=anchor),
-                    "series": _series_list(zero_series, self.asof, self.window),
+                    "series": _series_list(zero_series, self.asof, None),
+                    "series_scope": FULL_HISTORY_SCOPE,
                     "note": "零价的 standard 变体，主体是匿名 stealth 模型在免费放量",
                 },
                 "total_tokens_latest": latest["total_tokens"],
@@ -1491,15 +1505,15 @@ class Evidence:
                 "blended": {**blended, "unit": "USD/Mtok",
                             "usable": coverage_ok,
                             "reason": coverage_reason,
-                            "series": _series_list(blended_series, self.asof,
-                                                   self.window),
+                            "series": _series_list(blended_series, self.asof, None),
+                            "series_scope": FULL_HISTORY_SCOPE,
                             "note": "当期权重，会被购买结构迁移污染，单看没有意义"},
                 "laspeyres": {**lasp, "unit": "index, base=100",
                               "usable_index": laspeyres["usable"],
                               "reason": laspeyres.get("reason"),
                               "in_basket_weight": laspeyres.get("in_basket_weight"),
-                              "series": _series_list(laspeyres["points"], self.asof,
-                                                     self.window),
+                              "series": _series_list(laspeyres["points"], self.asof, None),
+                              "series_scope": FULL_HISTORY_SCOPE,
                               "note": "锁基期家族篮子权重与输入输出结构，只让单价动"},
                 "mix_shift": mix,
                 "basket": {k: v for k, v in basket.items() if k != "members"},
@@ -1509,7 +1523,8 @@ class Evidence:
             "spend": {
                 "nominal_usd_per_day": {
                     **spend,
-                    "series": _series_list(spend_series, self.asof, self.window),
+                    "series": _series_list(spend_series, self.asof, None),
+                    "series_scope": FULL_HISTORY_SCOPE,
                     "usable": coverage_ok,
                     "reason": coverage_reason,
                     "definition": ("按挂牌价计的名义支出，不是实际账单："
@@ -1646,8 +1661,14 @@ def _usable_pct(change: Optional[Dict[str, Any]]) -> Optional[float]:
     return float(change["pct"])
 
 
-def _series_list(series: Dict[str, float], asof: str, window: int) -> List[Dict[str, Any]]:
-    start = (date.fromisoformat(asof) - timedelta(days=window)).isoformat()
+def _series_list(series: Dict[str, float], asof: str,
+                 window: Optional[int]) -> List[Dict[str, Any]]:
+    """把日度字典摊成序列。`window=None` 表示不裁剪，出全部历史。
+
+    补不回去的序列（供给、token）传 None：见 FULL_HISTORY_START。
+    """
+    start = ("" if window is None
+             else (date.fromisoformat(asof) - timedelta(days=window)).isoformat())
     return [{"date": k, "value": round(float(v), 6)}
             for k, v in sorted(series.items()) if start <= k <= asof]
 

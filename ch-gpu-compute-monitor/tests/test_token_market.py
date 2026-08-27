@@ -18,6 +18,7 @@ sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from collectors.openrouter import (  # noqa: E402
     _required_nonnegative_int,
+    build_app_rows,
     build_price_index,
     lookup,
     parse_app_rows,
@@ -394,15 +395,17 @@ class TestAppRankings:
         _app_row("2026-08-25", 4, 50, 2, rank=9),
     ]
 
+    DAILY = {"2026-08-25": {"total_tokens": 2000}}
+
     def test_share_denominator_is_the_listed_set_not_the_site(self):
         """全站总量当分母算出的百分比两头不靠：既不是占全站也不是占应用侧。"""
-        out = _fake_apps(self.ROWS).token_apps("2026-08-25", site_tokens=2000)
+        out = _fake_apps(self.ROWS).token_apps("2026-08-25", self.DAILY)
         assert out["listed_tokens_anchor"] == 1000
         assert out["bands"][0]["share"] == 0.5          # 500 / 1000，不是 500 / 2000
         assert out["listed_share_of_site"] == 0.5       # 榜上合计占全站，单独一个数
 
     def test_other_is_the_remainder_of_the_listed_set(self):
-        out = _fake_apps(self.ROWS).token_apps("2026-08-25", site_tokens=2000)
+        out = _fake_apps(self.ROWS).token_apps("2026-08-25", self.DAILY)
         other = out["bands"][-1]
         assert other["key"] == "__other__"
         assert other["tokens"] == 50 and other["app_count"] == 1
@@ -410,22 +413,44 @@ class TestAppRankings:
 
     def test_rank_gaps_are_reported(self):
         """返回 4 行、最大名次 9 —— 这不是前 4 名，合计只是下界。"""
-        out = _fake_apps(self.ROWS).token_apps("2026-08-25", site_tokens=2000)
+        out = _fake_apps(self.ROWS).token_apps("2026-08-25", self.DAILY)
         assert out["max_rank"] == 9 and out["hidden_ranks"] == 5
 
     def test_no_spend_column_is_produced(self):
         """应用榜不拆模型，配不上价。凭空补一列 spend 就是编。"""
-        out = _fake_apps(self.ROWS).token_apps("2026-08-25", site_tokens=2000)
+        out = _fake_apps(self.ROWS).token_apps("2026-08-25", self.DAILY)
         assert all("spend_usd" not in b for b in out["bands"])
         assert out["no_spend_reason"]
         assert "spend" not in R.apps_table(out)
 
     def test_missing_site_total_leaves_share_none_not_zero(self):
-        out = _fake_apps(self.ROWS).token_apps("2026-08-25", site_tokens=None)
+        out = _fake_apps(self.ROWS).token_apps("2026-08-25", {})
         assert out["listed_share_of_site"] is None
 
+    def test_fallback_day_does_not_borrow_another_days_site_total(self):
+        """应用榜退到 8-25、token 锚点却是 8-26 时，占比会变成跨日相除。
+
+        分母必须跟着应用锚定日走；那天没有模型侧观测就不出这个数，
+        而不是拿 8-26 的全站量去除 8-25 的应用量。
+        """
+        daily = {"2026-08-25": {"total_tokens": 2000},
+                 "2026-08-26": {"total_tokens": 9999}}
+        out = _fake_apps(self.ROWS).token_apps("2026-08-26", daily)
+        assert out["anchor_date"] == "2026-08-25"
+        assert out["anchor_fallback_from"] == "2026-08-26"
+        assert out["site_tokens_anchor"] == 2000          # 不是 9999
+        assert out["listed_share_of_site"] == 0.5
+        assert out["site_tokens_date"] == "2026-08-25"
+
+    def test_fallback_without_that_days_site_total_drops_the_ratio(self):
+        out = _fake_apps(self.ROWS).token_apps(
+            "2026-08-26", {"2026-08-26": {"total_tokens": 9999}})
+        assert out["anchor_date"] == "2026-08-25"
+        assert out["listed_share_of_site"] is None
+        assert "2026-08-25" in out["share_of_site_reason"]
+
     def test_no_observations_reports_reason(self):
-        out = _fake_apps([]).token_apps("2026-08-25", site_tokens=100)
+        out = _fake_apps([]).token_apps("2026-08-25", self.DAILY)
         assert out["usable"] is False and "应用榜" in out["reason"]
 
 
@@ -473,6 +498,78 @@ class TestAppPayloadParsing:
             assert "data" in str(exc)
         else:
             raise AssertionError("data 不是对象时必须失败")
+
+
+class TestAppRowBuilding:
+    """应用榜是补强维度：它的脏数据不许把整个 OpenRouter 源判失败。"""
+
+    GOOD = {"app_id": 1, "rank": 1, "total_tokens": "100", "total_requests": 5,
+            "app": {"title": "A", "slug": "a", "categories": ["cli-agent"]}}
+
+    def test_builds_rows_and_sums_listed_tokens(self):
+        rows, listed = build_app_rows(
+            [self.GOOD], settled="2026-08-25", coverage_scope="gateway",
+            fingerprint="fp", raw_ref=None)
+        assert listed == 100
+        assert rows[0]["total_tokens"] == 100 and rows[0]["app_title"] == "A"
+        assert rows[0]["categories"] == ["cli-agent"]
+
+    def test_missing_total_requests_raises_instead_of_defaulting(self):
+        bad = dict(self.GOOD)
+        bad.pop("total_requests")
+        try:
+            build_app_rows([bad], settled="2026-08-25", coverage_scope="gateway",
+                           fingerprint="fp", raw_ref=None)
+        except CollectorError as exc:
+            assert "total_requests" in str(exc)
+        else:
+            raise AssertionError("缺必需计数字段必须失败，不能补 0")
+
+    def test_app_metadata_of_the_wrong_shape_raises_cleanly(self):
+        """`app` 变成字符串时以前会抛 AttributeError，逃出降级路径。"""
+        bad = dict(self.GOOD, app="not-an-object")
+        try:
+            build_app_rows([bad], settled="2026-08-25", coverage_scope="gateway",
+                           fingerprint="fp", raw_ref=None)
+        except CollectorError as exc:
+            assert "app" in str(exc)
+        else:
+            raise AssertionError("app 不是对象时必须抛 CollectorError")
+
+    def test_bad_app_row_does_not_kill_the_core_token_collection(self):
+        """回归保护：脏应用行只该少一个维度，521 行模型观测必须照样落库。"""
+        cfg = {"base_url": "https://x", "coverage_scope": "gateway",
+               "endpoints": {"rankings": "/r", "models": "/m",
+                             "endpoints_of": "/e/{model}", "apps": "/a"},
+               "query": {"view": "day", "provider_probe_top_n": 0}}
+        rankings = {"data": [{"date": "2026-08-25", "model_permaslug": "a/one",
+                              "variant": "standard", "total_prompt_tokens": 100,
+                              "total_completion_tokens": 10, "count": 3}]}
+        models = {"data": [{"id": "a/one", "canonical_slug": "a/one",
+                            "pricing": {"prompt": "0.000001",
+                                        "completion": "0.000002"}}]}
+        # total_requests 缺失：正是评审里那条最小复现
+        apps = {"data": {"day": [{"app_id": 7, "rank": 1,
+                                  "total_tokens": "100"}]}}
+
+        def fake_request_json(url, **kwargs):
+            return apps if url.endswith("/a") else (
+                rankings if url.endswith("/r") else models)
+
+        original_req = openrouter_collector.request_json
+        original_save = openrouter_collector.save_raw
+        try:
+            openrouter_collector.request_json = fake_request_json
+            openrouter_collector.save_raw = lambda *a, **k: "raw/fake.json"
+            result = openrouter_collector.collect(cfg, None, "2026-08-25")
+        finally:
+            openrouter_collector.request_json = original_req
+            openrouter_collector.save_raw = original_save
+
+        assert len(result.tokens) == 1          # 核心观测没被拖下水
+        assert result.apps == []                # 半截行也不许落库
+        assert any("应用榜异常" in n for n in result.notes)
+        assert any("total_requests" in n for n in result.notes)
 
 
 class TestMalformedRows:

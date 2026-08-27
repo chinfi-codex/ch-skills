@@ -1120,7 +1120,8 @@ class Evidence:
                 "reason": None if points else
                           f"在场权重始终低于 {min_weight}，篮子塌了不出指数"}
 
-    def token_apps(self, anchor: str, site_tokens: Optional[int]) -> Dict[str, Any]:
+    def token_apps(self, anchor: str,
+                   daily: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         """调用方维度：谁在消费这些 token。展示逻辑同日度构成——锚定日定死条带。
 
         份额的分母刻意是**榜上应用的合计**，不是全站总量。原因是榜单只回一段
@@ -1141,10 +1142,11 @@ class Evidence:
             rows_by_day[_d(row["obs_date"])].append(row)
         if not rows_by_day:
             return {"usable": False, "reason": "没有可用的应用榜观测"}
+        fallback_from = None
         if anchor not in rows_by_day:
             # 应用榜沿用模型榜的结算日，正常情况下两者同日；真不同日时宁可退到
             # 应用榜自己最新的那天，也不要拿别的日子冒充锚定日。
-            anchor = max(rows_by_day)
+            fallback_from, anchor = anchor, max(rows_by_day)
 
         def tally(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
             out: Dict[str, Dict[str, Any]] = {}
@@ -1216,17 +1218,30 @@ class Evidence:
             for cat in (stats["categories"] or ["未标类别"]):
                 cat_tokens[cat] += stats["tokens"]
 
+        # 全站总量必须取**应用锚定日那一天**的。退过日之后还拿 token 侧最新那天
+        # 的分母，算出来就是「8-25 的应用量 ÷ 8-26 的全站量」——一个跨日的比值，
+        # 看着像占比其实什么都不是。那天没有模型侧观测就不出这个数。
+        site_tokens = (daily.get(anchor) or {}).get("total_tokens")
+        share_of_site_reason = None
+        if not site_tokens:
+            share_of_site_reason = (
+                f"{anchor} 当天没有模型侧观测，占全站的比例算不出来"
+                if fallback_from else "当日全站总量缺失")
+
         return {
             "usable": True,
             "anchor_date": anchor,
+            "anchor_fallback_from": fallback_from,
             "top_n": top_n,
             "series": series,
             "bands": bands,
             "listed_tokens_anchor": listed_total,
             "listed_app_count_anchor": len(anchor_tally),
             "site_tokens_anchor": site_tokens,
+            "site_tokens_date": anchor if site_tokens else None,
             "listed_share_of_site": (round(listed_total / site_tokens, 4)
                                      if site_tokens else None),
+            "share_of_site_reason": share_of_site_reason,
             "max_rank": max_rank,
             "hidden_ranks": max(hidden, 0),
             "categories_by_tokens": dict(sorted(cat_tokens.items(),
@@ -1673,7 +1688,7 @@ class Evidence:
                 "decomposition": decomposition,
             },
             "composition": self.token_composition(anchor),
-            "apps": self.token_apps(anchor, latest.get("total_tokens")),
+            "apps": self.token_apps(anchor, daily),
             "history": self.token_history(daily, anchor),
             "cost_floor": _not_enabled(),
             "margin_pool": _not_enabled(),

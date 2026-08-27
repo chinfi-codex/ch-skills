@@ -181,6 +181,47 @@ def parse_app_rows(payload: Any, view: str) -> Tuple[List[Dict[str, Any]], int]:
     return rows, max(hidden, 0)
 
 
+def build_app_rows(rows: List[Dict[str, Any]], *, settled: str,
+                   coverage_scope: str, fingerprint: str,
+                   raw_ref: Optional[str]) -> Tuple[List[Dict[str, Any]], int]:
+    """把应用榜的行转成落库行，顺带算榜上合计。任何形状问题一律抛 CollectorError。
+
+    抽成独立函数是为了让调用方能用一个 try 把**整段**包住。之前逐行校验散在
+    降级用的 try 外面，任一应用缺 `total_requests` 或 `app` 元信息变形，都会
+    把整个 OpenRouter 源判失败——连带 500 多行核心模型观测一起不落库。
+    应用榜是补强维度，它的脏数据没有资格拖垮主路。
+    """
+    out: List[Dict[str, Any]] = []
+    listed_tokens = 0
+    for row in rows:
+        app_id = row["app_id"]
+        identity = f"{settled} app:{app_id}"
+        tokens = _required_nonnegative_int(row, "total_tokens", identity)
+        requests_ = _required_nonnegative_int(row, "total_requests", identity)
+        listed_tokens += tokens
+        meta = row.get("app") or {}
+        if not isinstance(meta, dict):
+            raise CollectorError(
+                f"apps 行 {identity} 的 app 不是对象（拿到 {type(meta).__name__}）")
+        cats = meta.get("categories")
+        out.append(token_app_row(
+            obs_date=settled,
+            source=SOURCE,
+            app_id=app_id,
+            app_slug=meta.get("slug"),
+            app_title=meta.get("title") or meta.get("slug") or f"app-{app_id}",
+            app_url=meta.get("origin_url") or meta.get("main_url"),
+            categories=[str(c) for c in cats] if isinstance(cats, list) else None,
+            rank=row.get("rank") if isinstance(row.get("rank"), int) else None,
+            total_tokens=tokens,
+            total_requests=requests_,
+            coverage_scope=coverage_scope,
+            query_fingerprint_=fingerprint,
+            raw_ref=raw_ref,
+        ))
+    return out, listed_tokens
+
+
 def collect(cfg: Dict[str, Any], catalog, obs_date: str,
             defaults: Optional[Dict] = None) -> CollectResult:
     """catalog 参数只为对齐其它采集器的签名——token 侧不认 GPU SKU 目录。"""
@@ -376,43 +417,31 @@ def collect(cfg: Dict[str, Any], catalog, obs_date: str,
         ))
 
     # 应用维度：观测日沿用模型榜的结算日——响应里没有 date，而两者是同站同 view。
+    #
+    # 整段被一个 try 包住，而且只有全部构造成功才写进 result.apps：应用榜是补强，
+    # 它坏了只能少一个维度，不能让 500 多行核心模型观测跟着不落库；半截行也不许
+    # 落库——那会在库里留下一份残缺的当日榜单，比没有更难发现。
+    # 这里刻意捕获 Exception 而不只是 CollectorError：主路的安全比"异常类型纯洁"
+    # 重要，但类型名会写进 note，坏了看得见。
     if apps_error:
         result.notes.append(f"应用榜取数失败，本次不出调用方维度：{apps_error}")
     elif apps_payload is not None:
         try:
             app_rows, hidden_ranks = parse_app_rows(apps_payload, view)
-        except CollectorError as exc:
-            result.notes.append(f"应用榜结构异常，本次不出调用方维度：{exc}")
-        else:
             app_fp = query_fingerprint({"source": SOURCE, "dataset": "apps",
                                         "view": view,
                                         "coverage_scope": cfg.get("coverage_scope"),
                                         "listing": "public_ranked"})
-            listed_tokens = 0
-            for row in app_rows:
-                app_id = row["app_id"]
-                identity = f"{settled} app:{app_id}"
-                tokens = _required_nonnegative_int(row, "total_tokens", identity)
-                requests_ = _required_nonnegative_int(row, "total_requests", identity)
-                listed_tokens += tokens
-                meta = row.get("app") or {}
-                cats = meta.get("categories")
-                result.apps.append(token_app_row(
-                    obs_date=settled,
-                    source=SOURCE,
-                    app_id=app_id,
-                    app_slug=meta.get("slug"),
-                    app_title=(meta.get("title") or meta.get("slug")
-                               or f"app-{app_id}"),
-                    app_url=meta.get("origin_url") or meta.get("main_url"),
-                    categories=[str(c) for c in cats] if isinstance(cats, list) else None,
-                    rank=row.get("rank") if isinstance(row.get("rank"), int) else None,
-                    total_tokens=tokens,
-                    total_requests=requests_,
-                    coverage_scope=cfg.get("coverage_scope", "gateway"),
-                    query_fingerprint_=app_fp,
-                    raw_ref=raw_ref,
-                ))
+            built, listed_tokens = build_app_rows(
+                app_rows, settled=settled,
+                coverage_scope=cfg.get("coverage_scope", "gateway"),
+                fingerprint=app_fp, raw_ref=raw_ref)
+        except Exception as exc:  # noqa: BLE001 —— 补强维度不许拖垮核心 token 采集
+            result.notes.append(
+                f"应用榜异常，本次不出调用方维度（{type(exc).__name__}: {exc}）；"
+                f"模型 × 变体的核心观测不受影响")
+        else:
+            result.apps.extend(built)
             share = (listed_tokens / total_tokens * 100) if total_tokens else 0.0
             result.notes.append(
                 f"调用方维度 {len(result.apps)} 个应用，合计 "

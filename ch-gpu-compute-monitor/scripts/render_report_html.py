@@ -819,11 +819,14 @@ def render_apps(apps: Dict[str, Any]) -> str:
     chart = stacked_area(apps) if days >= 2 else stacked_bar(apps)
     listed = apps.get("listed_tokens_anchor")
     site_share = apps.get("listed_share_of_site")
+    share_bit = (f'　·　占 {esc(str(apps.get("site_tokens_date")))} 全站 '
+                 f'{site_share * 100:.1f}%（下界）' if site_share
+                 else (f'　·　占全站比例不可用（{esc(str(apps.get("share_of_site_reason")))}）'
+                       if apps.get("share_of_site_reason") else ''))
     lead = (f'按 token 量取前 {apps.get("top_n")} 个应用，其余归「榜上其余应用」'
             f'　·　榜上 {apps.get("listed_app_count_anchor")} 个应用合计 '
             f'{tokens_fmt(listed)} tokens'
-            + (f'　·　占当日全站 {site_share * 100:.1f}%（下界）'
-               if site_share else '')
+            + share_bit
             + ('' if days >= 2 else '　·　序列仅 1 天，暂以堆叠条呈现'))
     hidden = apps.get("hidden_ranks") or 0
     tail = esc(str(apps.get("caveat") or ""))
@@ -833,9 +836,14 @@ def render_apps(apps: Dict[str, Any]) -> str:
                 f'#{apps.get("max_rank")}，中间有 {hidden} 个名次不公开露出。'
                 + tail)
     no_spend = esc(str(apps.get("no_spend_reason") or ""))
+    # 退过日就要说出来：读者会默认这块和上面的 token 面板是同一天
+    fallback = apps.get("anchor_fallback_from")
+    fallback_hint = (f'（token 锚定 {esc(str(fallback))}，应用榜那天没数据，退到本日）'
+                     if fallback else '')
     return (f'<div class="sec-head" style="margin-top:18px">'
             f'<div><strong>调用方：谁在消费这些 token</strong></div>'
-            f'<div class="sec-hint">锚定 {esc(str(apps.get("anchor_date")))}</div></div>'
+            f'<div class="sec-hint">锚定 {esc(str(apps.get("anchor_date")))}'
+            f'{fallback_hint}</div></div>'
             f'<div class="footnote">{lead}</div>{chart}'
             f'{apps_table(apps)}'
             f'<div class="footnote">{tail}</div>'

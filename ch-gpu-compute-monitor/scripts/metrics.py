@@ -114,6 +114,12 @@ class Evidence:
             self.tokens = db_adapter.read_tokens(FULL_HISTORY_START, asof)
         except Exception:
             self.tokens = []
+        # 应用榜是补强维度，老库里可能压根没这张表：缺就是缺，token_market.apps
+        # 会如实报 usable=false，不影响模型侧任何指标。
+        try:
+            self.apps = db_adapter.read_token_apps(FULL_HISTORY_START, asof)
+        except Exception:
+            self.apps = []
 
     # ---------- 序列构造 ----------
     def price_series(self, model: str, source: str, price_type: str,
@@ -1114,6 +1120,123 @@ class Evidence:
                 "reason": None if points else
                           f"在场权重始终低于 {min_weight}，篮子塌了不出指数"}
 
+    def token_apps(self, anchor: str, site_tokens: Optional[int]) -> Dict[str, Any]:
+        """调用方维度：谁在消费这些 token。展示逻辑同日度构成——锚定日定死条带。
+
+        份额的分母刻意是**榜上应用的合计**，不是全站总量。原因是榜单只回一段
+        名次，而且名次不连续（实测 20 行里 rank 跳过 2/3/4/15/16/18），拿全站
+        总量当分母算出来的百分比既不是"占全站"（漏了没上榜的和没有 app 归属的
+        直连流量），也不是"占应用侧"（漏了不公开露出的名次），两头不靠。
+
+        所以这里出两个数，各说各话：
+          * `bands[].share` —— 在**榜上这些应用之间**的占比，分母干净；
+          * `listed_share_of_site` —— 榜上合计占当日全站的比例，**是下界**。
+        """
+        cfg = (self.basket_cfg.get("composition") or {})
+        top_n = int(cfg.get("apps_top_n", cfg.get("top_n", 7)))
+        rows_by_day: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for row in self.apps:
+            if (row.get("quality_flag") or "ok") != "ok":
+                continue
+            rows_by_day[_d(row["obs_date"])].append(row)
+        if not rows_by_day:
+            return {"usable": False, "reason": "没有可用的应用榜观测"}
+        if anchor not in rows_by_day:
+            # 应用榜沿用模型榜的结算日，正常情况下两者同日；真不同日时宁可退到
+            # 应用榜自己最新的那天，也不要拿别的日子冒充锚定日。
+            anchor = max(rows_by_day)
+
+        def tally(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+            out: Dict[str, Dict[str, Any]] = {}
+            for row in rows:
+                key = str(row["app_id"])
+                slot = out.setdefault(key, {
+                    "tokens": 0, "requests": 0, "rank": row.get("rank"),
+                    "label": row.get("app_title") or row.get("app_slug") or key,
+                    "slug": row.get("app_slug"),
+                    "url": row.get("app_url"),
+                    "categories": _json_list(row.get("categories")),
+                })
+                slot["tokens"] += int(row.get("total_tokens") or 0)
+                slot["requests"] += int(row.get("total_requests") or 0)
+            return out
+
+        anchor_tally = tally(rows_by_day[anchor])
+        ranked = sorted(anchor_tally.items(), key=lambda kv: -kv[1]["tokens"])
+        top_keys = [k for k, _ in ranked[:top_n]]
+        listed_total = sum(v["tokens"] for v in anchor_tally.values())
+
+        series = []
+        for day in sorted(rows_by_day):
+            day_tally = tally(rows_by_day[day])
+            values = {k: day_tally.get(k, {}).get("tokens", 0) for k in top_keys}
+            total = sum(v["tokens"] for v in day_tally.values())
+            values["__other__"] = total - sum(values.values())
+            series.append({"date": day, "total": total, "values": values})
+
+        bands = []
+        for key in top_keys:
+            stats = anchor_tally[key]
+            bands.append({
+                "key": key,
+                "label": stats["label"],
+                "slug": stats["slug"],
+                "url": stats["url"],
+                "categories": stats["categories"],
+                "rank": stats["rank"],
+                "tokens": stats["tokens"],
+                "share": (round(stats["tokens"] / listed_total, 4)
+                          if listed_total else None),
+                "requests": stats["requests"],
+                "tokens_per_request": (round(stats["tokens"] / stats["requests"], 1)
+                                       if stats["requests"] else None),
+            })
+        other_tokens = listed_total - sum(b["tokens"] for b in bands)
+        other_requests = (sum(v["requests"] for v in anchor_tally.values())
+                          - sum(b["requests"] for b in bands))
+        bands.append({
+            "key": "__other__",
+            "label": "榜上其余应用",
+            "slug": None, "url": None, "categories": None, "rank": None,
+            "tokens": other_tokens,
+            "share": round(other_tokens / listed_total, 4) if listed_total else None,
+            "requests": other_requests,
+            "tokens_per_request": (round(other_tokens / other_requests, 1)
+                                   if other_requests else None),
+            "app_count": len(anchor_tally) - len(top_keys),
+        })
+
+        ranks = [v["rank"] for v in anchor_tally.values() if v["rank"] is not None]
+        max_rank = max(ranks) if ranks else None
+        hidden = (max_rank - len(anchor_tally)) if max_rank else 0
+
+        # 类别是应用自己填的标签，只做归并展示，不当分类学用
+        cat_tokens: Dict[str, int] = defaultdict(int)
+        for stats in anchor_tally.values():
+            for cat in (stats["categories"] or ["未标类别"]):
+                cat_tokens[cat] += stats["tokens"]
+
+        return {
+            "usable": True,
+            "anchor_date": anchor,
+            "top_n": top_n,
+            "series": series,
+            "bands": bands,
+            "listed_tokens_anchor": listed_total,
+            "listed_app_count_anchor": len(anchor_tally),
+            "site_tokens_anchor": site_tokens,
+            "listed_share_of_site": (round(listed_total / site_tokens, 4)
+                                     if site_tokens else None),
+            "max_rank": max_rank,
+            "hidden_ranks": max(hidden, 0),
+            "categories_by_tokens": dict(sorted(cat_tokens.items(),
+                                                key=lambda kv: -kv[1])),
+            "caveat": ("榜单只回一段名次且名次不连续，合计是应用侧总量的下界；"
+                       "剩下的部分混着未上榜应用、不公开露出的名次，"
+                       "以及压根没有 app 归属的直连 API 流量，三者拆不开"),
+            "no_spend_reason": "应用榜只给 token 与请求数，不拆模型，spend 无从归属",
+        }
+
     def token_composition(self, anchor: str) -> Dict[str, Any]:
         """日度总量拆成「前 N 个模型 + 其他」，给堆叠面积图用。
 
@@ -1142,11 +1265,17 @@ class Evidence:
             for row in rows:
                 key = key_of(row)
                 slot = out.setdefault(key, {"tokens": 0, "requests": 0,
-                                            "spend": 0.0, "is_priced": False})
-                slot["tokens"] += ((row.get("prompt_tokens") or 0)
-                                   + (row.get("completion_tokens") or 0))
+                                           "spend": 0.0, "priced_tokens": 0,
+                                           "is_priced": False})
+                volume = ((row.get("prompt_tokens") or 0)
+                          + (row.get("completion_tokens") or 0))
+                slot["tokens"] += volume
                 slot["requests"] += int(row.get("requests") or 0)
                 slot["spend"] += _f(row.get("spend_usd")) or 0.0
+                # 单价的分母只能是「配到了挂牌价的 token」。未匹配的行 spend 是
+                # 缺失不是 0，混进分母会把一个未知稀释成一个看起来很便宜的数。
+                if row.get("price_match") != "unmatched":
+                    slot["priced_tokens"] += volume
                 slot["is_priced"] = bool(slot["is_priced"] or row.get("is_priced"))
             return out
 
@@ -1178,6 +1307,9 @@ class Evidence:
                 "tokens_per_request": (round(stats["tokens"] / stats["requests"], 1)
                                        if stats["requests"] else None),
                 "spend_usd": round(stats["spend"], 2),
+                "unit_price_usd_per_mtok": _unit_price_per_mtok(
+                    stats["spend"], stats["priced_tokens"]),
+                "priced_tokens": stats["priced_tokens"],
                 "is_priced": stats["is_priced"],
             })
         other_tokens = anchor_total - sum(b["tokens"] for b in bands)
@@ -1193,9 +1325,14 @@ class Evidence:
                                    if other_requests else None),
             "spend_usd": round(sum(v["spend"] for v in anchor_tally.values())
                                - sum(b["spend_usd"] for b in bands), 2),
+            "unit_price_usd_per_mtok": None,   # 下面按余数重算，摆在这里只是占位
+            "priced_tokens": (sum(v["priced_tokens"] for v in anchor_tally.values())
+                              - sum(b["priced_tokens"] for b in bands)),
             "is_priced": None,
             "model_count": len(anchor_tally) - len(top_keys),
         })
+        bands[-1]["unit_price_usd_per_mtok"] = _unit_price_per_mtok(
+            bands[-1]["spend_usd"], bands[-1]["priced_tokens"])
         return {
             "usable": True,
             "anchor_date": anchor,
@@ -1536,6 +1673,7 @@ class Evidence:
                 "decomposition": decomposition,
             },
             "composition": self.token_composition(anchor),
+            "apps": self.token_apps(anchor, latest.get("total_tokens")),
             "history": self.token_history(daily, anchor),
             "cost_floor": _not_enabled(),
             "margin_pool": _not_enabled(),
@@ -1652,6 +1790,33 @@ def persist_alerts(evidence: Dict[str, Any]) -> int:
     # metrics.py 可以独立运行；升级后的旧库可能还没有 gpu_alerts。
     db_adapter.init_schema()
     return db_adapter.replace_alerts(asof, models, rows)
+
+
+def _unit_price_per_mtok(spend_usd: float,
+                         priced_tokens: int) -> Optional[float]:
+    """一条带子的挂牌单价，USD/Mtok。分母是配到价的 token，不是总 token。
+
+    没有任何 token 配上价时返回 None——那是"不知道"，不是"零"。零价模型
+    （pricing 明写 0）是配上了价的，会正常算出 0.0，两者必须分得开。
+    """
+    if not priced_tokens:
+        return None
+    return round(float(spend_usd) / priced_tokens * 1e6, 4)
+
+
+def _json_list(value: Any) -> Optional[List[str]]:
+    """JSON 列在 PG 里回来是 list，在 SQLite 里回来是字符串。两种都要认。"""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+        return [str(v) for v in parsed] if isinstance(parsed, list) else None
+    return None
 
 
 def _usable_pct(change: Optional[Dict[str, Any]]) -> Optional[float]:

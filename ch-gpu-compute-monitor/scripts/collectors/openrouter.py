@@ -21,6 +21,14 @@
   * 价取模型默认价。同模型跨 provider 有价差，实测 spend 加权 默认→中位 1.152x，
     所以给 spend 前 N 名额外拉一次 /endpoints，把 min/median/max 带宽存进行里。
   * rankings 没有任何历史接口，序列只能从首采日往后长，补不回去。
+
+第三路是调用方维度（/api/frontend/v1/rankings/apps?view=day），回答"谁在消费"：
+  * 只给 app_id、total_tokens、total_requests 与应用元信息，**没有模型拆分也没有价**，
+    所以它和模型 × 变体那张表没有可 join 的键，spend 也无从归属。
+  * `total_tokens` 是**字符串**（bigint 序列化成 str），当整数直接加会拼字符串。
+  * **返回的 20 行不是「前 20 名」**：实测 rank 跳过 2/3/4/15/16/18，说明有名次不公开露出。
+    所以它们的和是应用侧总量的**下界**，「其他」也不能读成「未上榜的应用」。
+  * 响应里没有 date 字段，日期只能沿用同一次取数里模型榜的结算日（同站同 view）。
 """
 
 from __future__ import annotations
@@ -36,6 +44,7 @@ from .base import (
     query_fingerprint,
     request_json,
     save_raw,
+    token_app_row,
     token_history_row,
     token_row,
 )
@@ -144,6 +153,34 @@ def _provider_band(base_url: str, path_tpl: str, model_id: str,
             "max": max(prices), "count": len(prices)}
 
 
+def parse_app_rows(payload: Any, view: str) -> Tuple[List[Dict[str, Any]], int]:
+    """把应用榜的响应拆成 (行, 名次缺口数)。
+
+    响应形状是 `data.{day,week,month}`，每个桶一个数组——和模型榜的 `data` 直接
+    是数组不一样，取错桶就会把滚动 7 天的量当成单日量。
+
+    名次缺口是这一路最容易被忽略的事实：返回 20 行、最大 rank 却是 26，中间的
+    2/3/4/15/16/18 不在里面。**这 20 行不是前 20 名**，求和只是下界。
+    """
+    data = (payload or {}).get("data")
+    if not isinstance(data, dict):
+        raise CollectorError(
+            f"apps 未返回预期的 data 对象（拿到 {type(data).__name__}）")
+    rows = data.get(view)
+    if not isinstance(rows, list) or not rows:
+        raise CollectorError(
+            f"apps 的 data 里没有 {view} 这个桶（现有 {sorted(data)}）")
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise CollectorError(
+                f"apps 第 {i} 行不是对象（拿到 {type(row).__name__}）")
+        if row.get("app_id") is None:
+            raise CollectorError(f"apps 第 {i} 行缺少必需字段 app_id")
+    ranks = [r["rank"] for r in rows if isinstance(r.get("rank"), int)]
+    hidden = (max(ranks) - len(rows)) if ranks else 0
+    return rows, max(hidden, 0)
+
+
 def collect(cfg: Dict[str, Any], catalog, obs_date: str,
             defaults: Optional[Dict] = None) -> CollectResult:
     """catalog 参数只为对齐其它采集器的签名——token 侧不认 GPU SKU 目录。"""
@@ -179,7 +216,19 @@ def collect(cfg: Dict[str, Any], catalog, obs_date: str,
     if not index:
         raise CollectorError("models 返回了数据但一条都建不出价格索引，字段结构可能已改")
 
-    raw_ref = save_raw(SOURCE, obs_date, {"rankings": rankings, "models": models})
+    # 应用榜是补强维度：拿不到只降级成一条 note，不拖垮 token 主路。
+    apps_payload: Any = None
+    apps_error: Optional[str] = None
+    apps_path = eps.get("apps")
+    if apps_path and query.get("collect_apps", True):
+        try:
+            apps_payload = request_json(f"{base}{apps_path}",
+                                        params={"view": view}, **req)
+        except CollectorError as exc:
+            apps_error = str(exc)
+
+    raw_ref = save_raw(SOURCE, obs_date, {"rankings": rankings, "models": models,
+                                          "apps": apps_payload})
     result.raw_path = raw_ref
 
     # 观测日取数据自己的结算日（T-1），不是运行日。同 Ornn 的做法：
@@ -325,6 +374,53 @@ def collect(cfg: Dict[str, Any], catalog, obs_date: str,
             query_fingerprint_=fp,
             raw_ref=raw_ref,
         ))
+
+    # 应用维度：观测日沿用模型榜的结算日——响应里没有 date，而两者是同站同 view。
+    if apps_error:
+        result.notes.append(f"应用榜取数失败，本次不出调用方维度：{apps_error}")
+    elif apps_payload is not None:
+        try:
+            app_rows, hidden_ranks = parse_app_rows(apps_payload, view)
+        except CollectorError as exc:
+            result.notes.append(f"应用榜结构异常，本次不出调用方维度：{exc}")
+        else:
+            app_fp = query_fingerprint({"source": SOURCE, "dataset": "apps",
+                                        "view": view,
+                                        "coverage_scope": cfg.get("coverage_scope"),
+                                        "listing": "public_ranked"})
+            listed_tokens = 0
+            for row in app_rows:
+                app_id = row["app_id"]
+                identity = f"{settled} app:{app_id}"
+                tokens = _required_nonnegative_int(row, "total_tokens", identity)
+                requests_ = _required_nonnegative_int(row, "total_requests", identity)
+                listed_tokens += tokens
+                meta = row.get("app") or {}
+                cats = meta.get("categories")
+                result.apps.append(token_app_row(
+                    obs_date=settled,
+                    source=SOURCE,
+                    app_id=app_id,
+                    app_slug=meta.get("slug"),
+                    app_title=(meta.get("title") or meta.get("slug")
+                               or f"app-{app_id}"),
+                    app_url=meta.get("origin_url") or meta.get("main_url"),
+                    categories=[str(c) for c in cats] if isinstance(cats, list) else None,
+                    rank=row.get("rank") if isinstance(row.get("rank"), int) else None,
+                    total_tokens=tokens,
+                    total_requests=requests_,
+                    coverage_scope=cfg.get("coverage_scope", "gateway"),
+                    query_fingerprint_=app_fp,
+                    raw_ref=raw_ref,
+                ))
+            share = (listed_tokens / total_tokens * 100) if total_tokens else 0.0
+            result.notes.append(
+                f"调用方维度 {len(result.apps)} 个应用，合计 "
+                f"{listed_tokens / 1e12:.2f}T token，占当日全站 {share:.1f}%")
+            if hidden_ranks:
+                result.notes.append(
+                    f"应用榜有 {hidden_ranks} 个名次不公开露出（返回 {len(app_rows)} 行、"
+                    f"最大 rank 更靠后）——这不是前 {len(app_rows)} 名，求和只是下界")
 
     matched_share = (1 - unmatched_tokens / total_tokens) if total_tokens else 0.0
     result.notes.append(

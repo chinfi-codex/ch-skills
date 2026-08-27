@@ -46,6 +46,7 @@
 | 量 | `/api/frontend/v1/rankings/models?view=day` | 匿名 | 530 行，模型 × 变体级 prompt/completion token 与请求数 |
 | 价 | `/api/v1/models` | 匿名 | 419 条，`pricing.{prompt,completion,input_cache_read}`，USD/token |
 | 价差带 | `/api/v1/models/{id}/endpoints` | 匿名 | 单模型最多 36 个 provider 报价 |
+| 调用方 | `/api/frontend/v1/rankings/apps?view=day` | 匿名 | 20 行，app_id + token + 请求数 + 应用元信息 |
 
 **字段陷阱（踩过的，按严重程度排）：**
 
@@ -67,6 +68,24 @@
    要跨日采集后回看，所以证据包里照样报 `alignment_lag_days`。
 6. **未匹配的 0.43% 主要是 embedding / rerank / STT / 图像视频模型**，
    它们本来就不按 token 对价。记进 `unmapped` 供审计，不静默丢。
+
+**调用方那一路（`rankings/apps`）自己的四个坑：**
+
+1. **响应形状是 `data.{day,week,month}` 三个桶，不是像模型榜那样 `data` 直接是数组。**
+   取错桶就会把滚动 7 天的量当成单日量。
+2. **`total_tokens` 是字符串**（bigint 序列化成 str），当整数直接相加会拼成字符串。
+   `total_requests` 倒是整数——同一行里两种类型，很容易只 cast 一个。
+3. **返回的 20 行不是「前 20 名」。** 实测 rank 是 `1,5,6,7,8,9,10,11,12,13,14,17,19,
+   20,21,22,23,24,25,26`——跳过了 2/3/4/15/16/18，说明有名次不公开露出。所以合计
+   只是应用侧总量的**下界**，「其他」也不能读成「未上榜的应用」。
+4. **响应里没有 date 字段。** 观测日只能沿用同一次取数里模型榜的结算日（同站同 `view`，
+   同一个 T-1）。这是个假设不是事实，跨日采集后要回看验证。
+
+还有一条不是坑但决定了它能干什么：**这一路只给 token 与请求数，不拆模型，也没有价**，
+所以它和 `token_model_observations` 没有任何可 join 的键，spend 无从归属。落进
+`token_app_observations` 另一张表。实测 2026-08-25 榜上 20 个应用合计 7.13T token，
+占当日全站 18.78T 的 38.0%；但请求数只占 9%——agentic 应用单次调用的 token 量比
+长尾对话高一到两个数量级，这个错位本身就是信息。
 
 **降级策略**：这是未文档化的前端接口，随时可能改版或封禁。解析不出预期结构一律抛
 `CollectorError`，绝不返回 0 或沿用前值。逐 provider 价差带是补强不是核心，

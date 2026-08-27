@@ -36,6 +36,9 @@ class CollectResult:
     # 周度、厂商级的历史量。与 tokens 分开装：两者口径不同，实测同一天
     # 各厂商比值 1.42–1.75 不是常数倍，拼进一条序列就是造假。
     history: List[Dict[str, Any]] = field(default_factory=list)
+    # 调用方（应用）维度的日度量。也单独装：应用榜只给 token 与请求数，
+    # 没有模型拆分也没有价，跟模型 × 变体那张表不是一个可 join 的粒度。
+    apps: List[Dict[str, Any]] = field(default_factory=list)
     unmapped: List[str] = field(default_factory=list)
     raw_path: Optional[str] = None
     attempts: int = 0
@@ -217,6 +220,48 @@ def token_row(*, obs_date: str, source: str, model_family: str, model_slug: str,
         "provider_price_median_usd_per_mtok": _r(provider_price_median_usd_per_mtok, 6),
         "provider_price_max_usd_per_mtok": _r(provider_price_max_usd_per_mtok, 6),
         "provider_count": provider_count,
+        "query_fingerprint": query_fingerprint_,
+        "raw_ref": raw_ref,
+        "quality_flag": quality_flag,
+    }
+
+
+def token_app_row(*, obs_date: str, source: str, app_id: str,
+                  app_slug: Optional[str] = None, app_title: Optional[str] = None,
+                  app_url: Optional[str] = None,
+                  categories: Optional[List[str]] = None,
+                  rank: Optional[int] = None,
+                  total_tokens: Optional[int] = None,
+                  total_requests: Optional[int] = None,
+                  coverage_scope: str = "gateway",
+                  listing_scope: str = "public_ranked",
+                  observed_at: Optional[str] = None,
+                  query_fingerprint_: Optional[str] = None,
+                  raw_ref: Optional[str] = None,
+                  quality_flag: str = "ok") -> Dict[str, Any]:
+    """一行「应用 × 日」的调用量观测。
+
+    `listing_scope` 默认 `public_ranked`，说的是一件必须记住的事：榜单返回的
+    名次**不连续**（实测 20 行里 rank 跳过了 2/3/4/15/16/18），所以这 20 行
+    不是「前 20 名」，而是「前 26 名里愿意公开露出的那些」。把它们求和当作
+    「应用侧总量」会系统性偏低，`__other__` 也不能被读成「未上榜的应用」。
+
+    这张表里没有 spend：应用榜只给 token 与请求数，不拆模型，也就没法配价。
+    """
+    return {
+        "obs_date": obs_date,
+        "source": source,
+        "app_id": str(app_id),
+        "observed_at": observed_at or utc_now_iso(),
+        "app_slug": app_slug,
+        "app_title": app_title,
+        "app_url": app_url,
+        "categories": categories or None,
+        "rank": None if rank is None else int(rank),
+        "total_tokens": None if total_tokens is None else int(total_tokens),
+        "total_requests": None if total_requests is None else int(total_requests),
+        "coverage_scope": coverage_scope,
+        "listing_scope": listing_scope,
         "query_fingerprint": query_fingerprint_,
         "raw_ref": raw_ref,
         "quality_flag": quality_flag,

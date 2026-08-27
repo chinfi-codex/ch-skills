@@ -112,9 +112,12 @@ sources:
       models: "/api/v1/models"
       endpoints_of: "/api/v1/models/{model}/endpoints"
       market_share: "/api/frontend/v1/rankings/market-share"   # 唯一有真历史的一路
+      apps: "/api/frontend/v1/rankings/apps"                    # 调用方维度：谁在消费这些 token
     query:
       view: day                    # day = 已结算的 T-1；week/month 是滚动窗口，不入日度序列
       provider_probe_top_n: 10     # 只给 spend 前 N 名拉逐 provider 报价，量化默认价的偏差
+      # 应用榜是补强维度：拿不到就记一条 note 降级，不拖垮整次 token 采集。
+      collect_apps: true
     # 这两个字段决定「能不能和别的源相减」，等同价格侧的 price_type + market_segment。
     # 将来接 Artificial Analysis / Vercel 时，它们的取值不同，序列就必须分开。
     coverage_scope: gateway        # gateway | production_app | hyperscaler | benchmark

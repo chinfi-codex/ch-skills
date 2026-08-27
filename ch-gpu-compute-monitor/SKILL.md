@@ -100,6 +100,18 @@ token 侧不做 `V × P` 那种指数——按用量加权的平均单价 ≡ �
 量的主轴只用 **paid**：实测零价 token 占 40.1%，其中免费档只有 7.8%，主体是匿名
 stealth 模型在免费放量，它进出榜单就能让总量凭空跳一大截。
 
+### 需求端还要看「谁在消费」
+
+模型 × 变体答的是钱花在哪个模型上，答不了谁在花。调用方维度补上后一半：
+实测榜上 20 个应用吃掉当日 38.0% 的 token，却只占 9% 的请求——agentic 应用单次调用
+10 万量级的 token，比长尾对话高一到两个数量级。**token 增长里有多少来自"更多人用"、
+多少来自"每次用得更重"，这是唯一能分辨的抓手。**
+
+三条硬边界：份额的分母是**榜上应用的合计**而不是全站（榜单名次不连续，两头不靠）；
+榜上合计占全站的比例是**下界**，剩下那部分混着未上榜应用、不露出的名次和没有 app
+归属的直连流量，拆不开；这一路**没有 spend**，只能答"谁吃 token 最多"，
+答不了"谁花钱最多"。完整口径见 `references/token_taxonomy.md` §五之四。
+
 ### 价格降了，先分辨成因
 
 价格跌 + offer 份额涨 + 可用 GPU 涨 = 供给释放，这是真宽松；
@@ -120,7 +132,8 @@ stealth 模型在免费放量，它进出榜单就能让总量凭空跳一大截
 2. **算指标**：`python scripts/metrics.py --output evidence/gpu-<date>.json`。
    产出确定性证据包——变化率、分位数、报价分散度、折价、供给指数与广度、
    评分分项、确认型拐点、源健康度，以及需求端的 `token_market` 段
-   （量的三条线、双价格指数、mix_shift、名义 spend 与它的缓存敏感性带）。
+   （量的三条线、双价格指数、mix_shift、名义 spend 与它的缓存敏感性带、
+   日度模型构成，以及调用方维度 `token_market.apps`）。
    触发的告警同时写进 `gpu_alerts`；**token 侧本轮不设告警**，序列没长出来之前
    阈值无从谈起。
 3. **读证据**：先看 `source_health` 判断今天数据完不完整，再看每个型号的
@@ -163,6 +176,12 @@ token 三类分开计）、耗时、未映射的原始标识、降级说明。�
 variant 就会错得很离谱**——`:batch` / `:free` 条目与标准条目共用同一个
 `canonical_slug`（实测 69 处碰撞），标准流量会被按半价甚至零价计，spend 差 63%。
 另外给 spend 前 10 名额外拉一次 `/endpoints`，量化默认价与各 provider 的价差带。
+
+第三路 `rankings/apps?view=day` 补的是**调用方维度**——谁在消费这些 token。它只给
+app_id、token 与请求数，不拆模型也没有价，落进 `token_app_observations` 单独一张表。
+两个必须记住的事实：`total_tokens` 是**字符串**；返回的 20 行**不是前 20 名**
+（实测 rank 跳过 2/3/4/15/16/18，有名次不公开露出），所以合计只是下界。
+这一路是补强，取不到只降级成一条 note，不拖垮 token 主路。
 
 ### `scripts/backfill.py` —— 历史回填与覆盖体检
 
@@ -209,7 +228,8 @@ python scripts/render_report_html.py --evidence … --output docs/index.html
 自包含单页，无外部依赖，用 claude 主题的暖色纸面。按 PRD §5 的硬约束渲染：
 三型号同屏、无 GPU selector、无时间范围切换；成交价固定 90 天窗口，
 可用供给与 token 量价出全部历史（见「窗口只管成交价」）。token 那块只有量的
-构成图，价格是指标格不是曲线。面板依次是判断区、
+构成图，价格是指标格不是曲线；块内顺序是指标格 → 一年结构史 → 日度总量构成 →
+量的分层 → 调用方。面板依次是判断区、
 成交价趋势、标准报价矩阵、供给趋势、token 需求、数据源状态；**中间四块各占整行**，
 每块底部带一行 ≤100 字的异动说明。
 
@@ -243,6 +263,7 @@ python scripts/daily_update.py --skip-collect
 | `gpu_alerts` | 触发的告警，键 (obs_date, gpu_model, rule_id)，供跨日追溯 |
 | `token_model_observations` | 需求端量价，键 (obs_date, source, model_slug, variant)，带 `coverage_scope` / `price_basis` 两个判据字段 |
 | `token_volume_history` | 厂商级周度历史量，键 (week_start, source, author)，口径独立不与日度相减 |
+| `token_app_observations` | 调用方（应用）日度量，键 (obs_date, source, app_id)，只有 token 与请求数、没有 spend |
 
 ### 配置
 

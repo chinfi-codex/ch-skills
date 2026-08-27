@@ -699,6 +699,31 @@ def stacked_bar(comp: Dict[str, Any]) -> str:
             f'aria-label="当日 token 构成堆叠条">{"".join(parts)}</svg></div>')
 
 
+def unit_price_cell(band: Dict[str, Any]) -> str:
+    """一条带子的挂牌单价。三种状态必须分得开：
+
+      * `None`  —— 这条带子的 token 一个都没配上价，是**不知道**，不是零；
+      * `0.000` —— 配上价了，价就是 0（零价模型免费放量），标成告警色，
+                   因为它不产生任何收入，别被当成"很便宜"来读；
+      * 其余    —— 按 prompt/completion 当期结构加权的挂牌单价。
+    """
+    value = band.get("unit_price_usd_per_mtok")
+    if value is None:
+        return '<span class="na">未匹配</span>'
+    if value <= 0:
+        return '<span class="warnc">$0.000</span>'
+    return f"${value:.3f}"
+
+
+def spend_cell(band: Dict[str, Any]) -> str:
+    """名义 spend。一个 token 都没配上价时是**不知道**，摆 $0.00 就是编——
+    实测 stealth/ox-alpha 一家 30.6% 的 token 从 /api/v1/models 里消失，
+    它的 spend 缺失，不是零。"""
+    if not band.get("priced_tokens"):
+        return '<span class="na">未匹配</span>'
+    return usd_fmt(band.get("spend_usd"))
+
+
 def composition_table(comp: Dict[str, Any]) -> str:
     rows = []
     for bi, band in enumerate(comp.get("bands") or []):
@@ -710,22 +735,20 @@ def composition_table(comp: Dict[str, Any]) -> str:
                if variant and variant != "standard" else "")
         if band["key"] == "__other__":
             name = f'其他 <span class="dim">（{band.get("model_count", 0)} 个模型）</span>'
-            priced = '<span class="na">混合</span>'
         else:
             name = esc(band["label"]) + tag
-            priced = ('有价' if band.get("is_priced")
-                      else '<span class="warnc">零价</span>')
         rows.append(
             f'<tr><td>{swatch}{name}</td>'
             f'<td class="num">{(band.get("share") or 0) * 100:.1f}%</td>'
             f'<td class="num">{tokens_fmt(band.get("tokens"))}</td>'
             f'<td class="num">{(band.get("requests") or 0):,}</td>'
             f'<td class="num">{tokens_fmt(band.get("tokens_per_request"), 1)}</td>'
-            f'<td class="num">{usd_fmt(band.get("spend_usd"))}</td>'
-            f'<td>{priced}</td></tr>')
+            f'<td class="num">{spend_cell(band)}</td>'
+            f'<td class="num">{unit_price_cell(band)}</td></tr>')
     return (f'<div class="scroll"><table><thead><tr><th>模型</th><th>份额</th>'
             f'<th>token</th><th>调用次数</th><th>tok/次</th><th>名义 spend</th>'
-            f'<th>计价</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>')
+            f'<th>单价 $/Mtok</th></tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table></div>')
 
 
 def render_composition(comp: Dict[str, Any]) -> str:
@@ -734,15 +757,89 @@ def render_composition(comp: Dict[str, Any]) -> str:
         return (f'<div class="empty">暂无数据：{esc(reason)}。</div>')
     days = len(comp.get("series") or [])
     chart = stacked_area(comp) if days >= 2 else stacked_bar(comp)
-    rank_label = "token 量" if comp.get("ranked_by") == "tokens" else "调用次数"
+    # 中英混排：拉丁词前后要留空格，中文词不留，所以整个短语一起给
+    rank_label = ("按 token 量" if comp.get("ranked_by") == "tokens"
+                  else "按调用次数")
     total = comp.get("total_tokens_anchor")
-    lead = (f'日度总量构成　按{rank_label}取前 {comp.get("top_n")} 名，其余归「其他」'
-            f'　·　全站 {tokens_fmt(total)} tokens　·　'
-            f'{comp.get("model_count_anchor")} 个模型 × 变体'
+    lead = (f'{rank_label}取前 {comp.get("top_n")} 名，其余归「其他」'
             + ('' if days >= 2 else '　·　序列仅 1 天，暂以堆叠条呈现'))
-    tail = '<b>「零价」那几条不产生任何收入</b>，别把它们算进需求强度'
-    return (f'<div class="footnote">{lead}</div>{chart}'
+    hint = (f'全站 {tokens_fmt(total)} tokens　·　'
+            f'{comp.get("model_count_anchor")} 个模型 × 变体')
+    tail = ('单价是按当期 prompt / completion 结构加权的挂牌价；'
+            '<b>$0.000 那几条不产生任何收入</b>，别把它们算进需求强度')
+    return (f'<div class="sec-head" style="margin-top:18px">'
+            f'<div><strong>日度总量构成</strong></div>'
+            f'<div class="sec-hint">{hint}</div></div>'
+            f'<div class="footnote">{lead}</div>{chart}'
             f'{composition_table(comp)}<div class="footnote">{tail}</div>')
+
+
+def apps_table(apps: Dict[str, Any]) -> str:
+    """应用榜的表。列和模型那张刻意不同：**没有 spend 也没有计价**。
+
+    应用榜不拆模型，配不上价，硬凑一列 spend 就是编。空出来的位置给「类别」
+    与名次——名次要摆出来，因为它不连续，摆出来才看得见中间缺了谁。
+    """
+    rows = []
+    for bi, band in enumerate(apps.get("bands") or []):
+        swatch = (f'<span style="display:inline-block;width:10px;height:10px;'
+                  f'border-radius:2px;background:{band_color(bi, band["key"])};'
+                  f'margin-right:7px"></span>')
+        if band["key"] == "__other__":
+            name = (f'榜上其余应用 <span class="dim">'
+                    f'（{band.get("app_count", 0)} 个）</span>')
+            rank = '<span class="na">—</span>'
+            cats = '<span class="na">混合</span>'
+        else:
+            name = esc(str(band.get("label")))
+            rank = (f'#{band["rank"]}' if band.get("rank")
+                    else '<span class="na">—</span>')
+            cats = (esc("、".join(band.get("categories") or []))
+                    or '<span class="na">未标类别</span>')
+        rows.append(
+            f'<tr><td>{swatch}{name}</td>'
+            f'<td class="num">{rank}</td>'
+            f'<td class="num">{(band.get("share") or 0) * 100:.1f}%</td>'
+            f'<td class="num">{tokens_fmt(band.get("tokens"))}</td>'
+            f'<td class="num">{(band.get("requests") or 0):,}</td>'
+            f'<td class="num">{tokens_fmt(band.get("tokens_per_request"), 1)}</td>'
+            f'<td class="dim">{cats}</td></tr>')
+    return (f'<div class="scroll"><table><thead><tr><th>应用</th><th>名次</th>'
+            f'<th>榜内份额</th><th>token</th><th>调用次数</th><th>tok/次</th>'
+            f'<th>类别</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>')
+
+
+def render_apps(apps: Dict[str, Any]) -> str:
+    if not apps.get("usable"):
+        reason = apps.get("reason") or "证据包里没有应用榜数据"
+        return (f'<div class="sec-head" style="margin-top:18px">'
+                f'<div><strong>调用方：谁在消费这些 token</strong></div></div>'
+                f'<div class="empty">暂无数据：{esc(reason)}。</div>')
+    days = len(apps.get("series") or [])
+    chart = stacked_area(apps) if days >= 2 else stacked_bar(apps)
+    listed = apps.get("listed_tokens_anchor")
+    site_share = apps.get("listed_share_of_site")
+    lead = (f'按 token 量取前 {apps.get("top_n")} 个应用，其余归「榜上其余应用」'
+            f'　·　榜上 {apps.get("listed_app_count_anchor")} 个应用合计 '
+            f'{tokens_fmt(listed)} tokens'
+            + (f'　·　占当日全站 {site_share * 100:.1f}%（下界）'
+               if site_share else '')
+            + ('' if days >= 2 else '　·　序列仅 1 天，暂以堆叠条呈现'))
+    hidden = apps.get("hidden_ranks") or 0
+    tail = esc(str(apps.get("caveat") or ""))
+    if hidden:
+        tail = (f'<b>返回的 {apps.get("listed_app_count_anchor")} 行不是前 '
+                f'{apps.get("listed_app_count_anchor")} 名</b>：最大名次到 '
+                f'#{apps.get("max_rank")}，中间有 {hidden} 个名次不公开露出。'
+                + tail)
+    no_spend = esc(str(apps.get("no_spend_reason") or ""))
+    return (f'<div class="sec-head" style="margin-top:18px">'
+            f'<div><strong>调用方：谁在消费这些 token</strong></div>'
+            f'<div class="sec-hint">锚定 {esc(str(apps.get("anchor_date")))}</div></div>'
+            f'<div class="footnote">{lead}</div>{chart}'
+            f'{apps_table(apps)}'
+            f'<div class="footnote">{tail}</div>'
+            f'<div class="footnote">{no_spend}</div>')
 
 
 def history_combo_chart(volume: List[Dict[str, Any]],
@@ -900,6 +997,8 @@ def render_token_panel(ev: Dict[str, Any], notes: Dict[str, Any],
              f'<th>1D</th><th>7D</th><th>30D</th><th>说明</th></tr></thead>'
              f'<tbody>{"".join(rows)}</tbody></table></div>')
 
+    apps_html = render_apps(tok.get("apps") or {})
+
     hist = tok.get("history") or {}
     history_html = ""
     if hist.get("usable"):
@@ -986,9 +1085,10 @@ def render_token_panel(ev: Dict[str, Any], notes: Dict[str, Any],
     <div class="sec-hint">锚定 {esc(str(anchor))}（{esc(align)}）{start_hint}</div>
   </div>
   <div class="conf-grid">{grid}{chip}</div>
+  {history_html}
   {volume_chart}
   {table}
-  {history_html}
+  {apps_html}
   {footnotes}
   {panel_note(notes, "tokens")}
 </section>"""

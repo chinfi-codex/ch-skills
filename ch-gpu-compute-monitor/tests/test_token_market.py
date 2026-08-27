@@ -17,8 +17,10 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from collectors.openrouter import (  # noqa: E402
+    _required_nonnegative_int,
     build_price_index,
     lookup,
+    parse_app_rows,
     settled_points,
     split_variant,
     strip_date,
@@ -364,6 +366,113 @@ class TestCompositionChart:
         bar = R.stacked_bar(dict(comp, series=comp["series"][-1:]))
         widths = [float(w) for w in re.findall(r'width="([0-9.]+)"', bar)]
         assert abs(sum(widths) - 1440) < 1.0
+
+
+def _app_row(day, app_id, tokens, requests, rank=None, title=None, cats=None):
+    """应用榜落库后的一行（源侧的字符串在采集时已经 cast 成 bigint）。"""
+    return {"obs_date": day, "source": "openrouter", "app_id": str(app_id),
+            "app_title": title or f"App {app_id}", "app_slug": f"app-{app_id}",
+            "app_url": None, "categories": cats, "rank": rank,
+            "total_tokens": tokens, "total_requests": requests,
+            "quality_flag": "ok"}
+
+
+def _fake_apps(rows, **composition):
+    ev = Evidence.__new__(Evidence)
+    ev.apps = rows
+    ev.basket_cfg = {"composition": {"apps_top_n": 3, **composition}}
+    return ev
+
+
+class TestAppRankings:
+    """调用方维度：份额分母、名次缺口、没有 spend 这三件事不能弄错。"""
+
+    ROWS = [
+        _app_row("2026-08-25", 1, 500, 5, rank=1, cats=["cli-agent"]),
+        _app_row("2026-08-25", 2, 300, 30, rank=5),
+        _app_row("2026-08-25", 3, 150, 3, rank=6),
+        _app_row("2026-08-25", 4, 50, 2, rank=9),
+    ]
+
+    def test_share_denominator_is_the_listed_set_not_the_site(self):
+        """全站总量当分母算出的百分比两头不靠：既不是占全站也不是占应用侧。"""
+        out = _fake_apps(self.ROWS).token_apps("2026-08-25", site_tokens=2000)
+        assert out["listed_tokens_anchor"] == 1000
+        assert out["bands"][0]["share"] == 0.5          # 500 / 1000，不是 500 / 2000
+        assert out["listed_share_of_site"] == 0.5       # 榜上合计占全站，单独一个数
+
+    def test_other_is_the_remainder_of_the_listed_set(self):
+        out = _fake_apps(self.ROWS).token_apps("2026-08-25", site_tokens=2000)
+        other = out["bands"][-1]
+        assert other["key"] == "__other__"
+        assert other["tokens"] == 50 and other["app_count"] == 1
+        assert sum(b["tokens"] for b in out["bands"]) == out["listed_tokens_anchor"]
+
+    def test_rank_gaps_are_reported(self):
+        """返回 4 行、最大名次 9 —— 这不是前 4 名，合计只是下界。"""
+        out = _fake_apps(self.ROWS).token_apps("2026-08-25", site_tokens=2000)
+        assert out["max_rank"] == 9 and out["hidden_ranks"] == 5
+
+    def test_no_spend_column_is_produced(self):
+        """应用榜不拆模型，配不上价。凭空补一列 spend 就是编。"""
+        out = _fake_apps(self.ROWS).token_apps("2026-08-25", site_tokens=2000)
+        assert all("spend_usd" not in b for b in out["bands"])
+        assert out["no_spend_reason"]
+        assert "spend" not in R.apps_table(out)
+
+    def test_missing_site_total_leaves_share_none_not_zero(self):
+        out = _fake_apps(self.ROWS).token_apps("2026-08-25", site_tokens=None)
+        assert out["listed_share_of_site"] is None
+
+    def test_no_observations_reports_reason(self):
+        out = _fake_apps([]).token_apps("2026-08-25", site_tokens=100)
+        assert out["usable"] is False and "应用榜" in out["reason"]
+
+
+class TestAppPayloadParsing:
+    def test_reads_the_view_bucket_not_the_data_array(self):
+        payload = {"data": {"day": [{"app_id": 1, "rank": 1}],
+                            "week": [{"app_id": 1, "rank": 1},
+                                     {"app_id": 2, "rank": 2}]}}
+        rows, hidden = parse_app_rows(payload, "day")
+        assert len(rows) == 1 and hidden == 0
+
+    def test_rank_gap_is_counted(self):
+        payload = {"data": {"day": [{"app_id": 1, "rank": 1},
+                                    {"app_id": 2, "rank": 5}]}}
+        _, hidden = parse_app_rows(payload, "day")
+        assert hidden == 3
+
+    def test_row_without_app_id_fails_loudly(self):
+        payload = {"data": {"day": [{"total_tokens": "100"}]}}
+        try:
+            parse_app_rows(payload, "day")
+        except CollectorError as exc:
+            assert "app_id" in str(exc)
+        else:
+            raise AssertionError("缺 app_id 必须失败，不能静默丢")
+
+    def test_string_bigint_is_accepted_as_a_count(self):
+        """源侧 total_tokens 是字符串。直接相加会拼字符串，必须走整数守卫。"""
+        assert _required_nonnegative_int(
+            {"total_tokens": "2468214405615"}, "total_tokens", "x") == 2468214405615
+
+    def test_float_string_is_not_a_count(self):
+        try:
+            _required_nonnegative_int({"total_tokens": "1.5"}, "total_tokens", "x")
+        except CollectorError:
+            pass
+        else:
+            raise AssertionError("不是整数的字符串必须失败，不能悄悄截断")
+
+    def test_data_as_array_is_rejected(self):
+        """模型榜的 data 是数组、应用榜的是对象。形状变了要当场炸，不能猜。"""
+        try:
+            parse_app_rows({"data": [{"app_id": 1}]}, "day")
+        except CollectorError as exc:
+            assert "data" in str(exc)
+        else:
+            raise AssertionError("data 不是对象时必须失败")
 
 
 class TestMalformedRows:

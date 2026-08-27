@@ -37,6 +37,7 @@ RUN_TABLE = "gpu_collect_runs"
 ALERT_TABLE = "gpu_alerts"
 TOKEN_TABLE = "token_model_observations"
 TOKEN_HISTORY_TABLE = "token_volume_history"
+TOKEN_APP_TABLE = "token_app_observations"
 
 _IS_PG = BACKEND is Backend.POSTGRESQL
 _JSON_TYPE = "jsonb" if _IS_PG else "text"
@@ -165,6 +166,28 @@ SCHEMA = [
         PRIMARY KEY (week_start, source, author)
     )
     """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {TOKEN_APP_TABLE} (
+        obs_date        date    NOT NULL,
+        source          text    NOT NULL,
+        app_id          text    NOT NULL,
+        observed_at     {_TS_TYPE},
+        app_slug        text,
+        app_title       text,
+        app_url         text,
+        categories      {_JSON_TYPE},
+        rank            integer,
+        total_tokens    bigint,
+        total_requests  bigint,
+        coverage_scope  text    NOT NULL DEFAULT 'gateway',
+        listing_scope   text    NOT NULL DEFAULT 'public_ranked',
+        query_fingerprint text,
+        raw_ref         text,
+        quality_flag    text    NOT NULL DEFAULT 'ok',
+        PRIMARY KEY (obs_date, source, app_id)
+    )
+    """,
+    f"CREATE INDEX IF NOT EXISTS idx_token_app_date ON {TOKEN_APP_TABLE} (obs_date)",
     f"CREATE INDEX IF NOT EXISTS idx_gpu_price_model_date ON {PRICE_TABLE} (gpu_model, obs_date)",
     f"CREATE INDEX IF NOT EXISTS idx_token_hist_week ON {TOKEN_HISTORY_TABLE} (week_start)",
     f"CREATE INDEX IF NOT EXISTS idx_token_obs_date ON {TOKEN_TABLE} (obs_date)",
@@ -192,7 +215,7 @@ SUPPLY_KEY = ["obs_date", "source", "gpu_model", "market_segment"]
 RUN_COLUMNS = [
     "run_id", "source", "obs_date", "started_at", "finished_at", "status",
     "attempts", "latency_ms", "price_rows", "supply_rows", "token_rows",
-    "unmapped_ids", "error", "raw_path",
+    "app_rows", "unmapped_ids", "error", "raw_path",
 ]
 RUN_KEY = ["run_id", "source"]
 
@@ -223,7 +246,16 @@ TOKEN_HISTORY_COLUMNS = [
 ]
 TOKEN_HISTORY_KEY = ["week_start", "source", "author"]
 
-_JSON_COLUMNS = {"capacity_detail", "unmapped_ids"}
+TOKEN_APP_COLUMNS = [
+    "obs_date", "source", "app_id", "observed_at", "app_slug", "app_title",
+    "app_url", "categories", "rank", "total_tokens", "total_requests",
+    "coverage_scope", "listing_scope", "query_fingerprint", "raw_ref",
+    "quality_flag",
+]
+# rank 不进主键：它是榜单当天给的名次，同一个应用换名次不该多出一行。
+TOKEN_APP_KEY = ["obs_date", "source", "app_id"]
+
+_JSON_COLUMNS = {"capacity_detail", "unmapped_ids", "categories"}
 
 
 # 后加的列。CREATE TABLE IF NOT EXISTS 对已经建好的表是空操作，所以
@@ -232,7 +264,7 @@ _JSON_COLUMNS = {"capacity_detail", "unmapped_ids"}
 # 查一遍现有列，缺哪个补哪个。ADD COLUMN IF NOT EXISTS 只有 PG 支持，
 # SQLite 没有，所以不能靠它。
 ADDED_COLUMNS = {
-    RUN_TABLE: {"token_rows": "integer"},
+    RUN_TABLE: {"token_rows": "integer", "app_rows": "integer"},
 }
 
 
@@ -307,6 +339,27 @@ def save_token_history(rows: Iterable[Dict[str, Any]]) -> int:
     """周度厂商级历史量。单独一张表是刻意的——它与日度模型级观测口径不同，
     放同一张表迟早会有人把两者 union 起来当一条序列用。"""
     return _upsert(TOKEN_HISTORY_TABLE, TOKEN_HISTORY_COLUMNS, TOKEN_HISTORY_KEY, rows)
+
+
+def save_token_apps(rows: Iterable[Dict[str, Any]]) -> int:
+    """调用方（应用）维度的日度量。
+
+    又是单独一张表，理由和周度历史一样：粒度不同、字段不同、可比范围不同。
+    应用榜只有 token 与请求数，没有模型拆分也没有价，跟 token_model_observations
+    没有任何可 join 的键——放同一张表迟早会有人把两边的 token 加起来。
+    """
+    return _upsert(TOKEN_APP_TABLE, TOKEN_APP_COLUMNS, TOKEN_APP_KEY, rows)
+
+
+def read_token_apps(start_date: str, end_date: str,
+                    sources: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    sql = f"SELECT * FROM {TOKEN_APP_TABLE} WHERE obs_date >= ? AND obs_date <= ?"
+    params: List[Any] = [start_date, end_date]
+    if sources:
+        sql += " AND source IN (" + ", ".join(["?"] * len(sources)) + ")"
+        params.extend(sources)
+    sql += " ORDER BY obs_date, source, rank, app_id"
+    return _fetch(sql, tuple(params))
 
 
 def read_token_history(start_week: str, end_week: str,
@@ -459,5 +512,6 @@ if __name__ == "__main__":
     init_schema()
     print(json.dumps({"ok": True, "backend": BACKEND.value,
                       "tables": [PRICE_TABLE, SUPPLY_TABLE, RUN_TABLE, ALERT_TABLE,
-                                 TOKEN_TABLE, TOKEN_HISTORY_TABLE]},
+                                 TOKEN_TABLE, TOKEN_HISTORY_TABLE,
+                                 TOKEN_APP_TABLE]},
                      ensure_ascii=False))

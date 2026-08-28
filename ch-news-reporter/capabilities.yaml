@@ -23,13 +23,6 @@ capabilities:
     judgment: forbidden
     effects: [net:target-urls, db:alpha_data.enrichments]
 
-  topic.retrieve:
-    kind: command
-    entry: scripts/topic_retrieve.py
-    terminal: false
-    judgment: forbidden
-    effects: [net:configured-retrievers, db:alpha_data.items]
-
   news.save-state:
     kind: command
     entry: scripts/save_report_state.py
@@ -68,7 +61,6 @@ capabilities:
       - macro-brief-markdown
       - geopolitical-daily-markdown
       - geopolitical-brief-markdown
-      - custom-daily-markdown
     requires_receipts: [news.prepare-evidence]
     effects: ["fs:reports/*.md"]
 
@@ -83,7 +75,6 @@ capabilities:
       - macro-brief-html
       - geopolitical-daily-html
       - geopolitical-brief-html
-      - custom-daily-html
     artifact_arg: --output
     source_arg: --input
     bound_arg_aliases: [-o, -i]

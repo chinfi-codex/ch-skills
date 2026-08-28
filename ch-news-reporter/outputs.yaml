@@ -159,31 +159,3 @@ outputs:
     contract:
       <<: *geo_brief_contract
       browser: *browser
-
-  custom-daily-markdown:
-    type: markdown
-    terminal_capability: report.finalize-markdown
-    path_glob: reports/custom_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md
-    contract_version: news/custom-daily/1.1.0
-    gate_policy: hard
-    features: [evidence-backed]
-    contract: &custom_contract
-      min_bytes: 500
-      order: strict
-      forbidden_patterns: *trading_advice_patterns
-      sections:
-        - {key: hero, patterns: ['^一句话结论$'], level: 2}
-        - {key: next, patterns: ['^24-72h 观察点$'], level: 2}
-    validators: *citation_gate
-
-  custom-daily-html:
-    type: html
-    terminal_capability: report.render-html
-    path_glob: reports/custom_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html
-    source_output: custom-daily-markdown
-    contract_version: news/custom-daily/1.1.0
-    gate_policy: hard
-    features: [evidence-backed, preserve-source-text, browser-attestation]
-    contract:
-      <<: *custom_contract
-      browser: *browser

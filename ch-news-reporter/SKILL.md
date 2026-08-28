@@ -1,6 +1,6 @@
 ---
 name: ch-news-reporter
-description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、Polymarket、RSS 等多信源采集财经、AI、宏观或全球地缘风险新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、地缘日报（覆盖中东、俄乌、台海、朝鲜半岛、红海/航运、能源通道、制裁、联盟与大国博弈，含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。也用于用户在 config/custom_topics.yaml 注册的自定义关注主题日报：当用户要求跟踪特定公司/产品/产业事项（如英伟达 Rubin 出货、Kimi 算力部署、华为升腾出货、商业航天与卫星产业进展）、生成每天的自定义主题日报（全部关注事项合并为一份）、新增/暂停/归档关注主题、或对关注主题做多通道（新闻库/实时搜索/本地 Vault 笔记/结构化数据）证据汇总时，走自定义主题流程。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“生成今天地缘日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“分析红海/霍尔木兹/俄乌/台海/制裁对油价、航运和风险资产的影响”“帮我每天跟踪 XX 的进展并出日报”“把 XX 加为关注主题”“今天 XX 主题有什么增量”“今天商业航天/火箭发射/卫星星座有什么进展”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述固定日报与已注册关注主题日报，不用于未注册主题的临时/零碎新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
+description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、Polymarket、RSS 等多信源采集财经、AI、宏观或全球地缘风险新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、地缘日报（覆盖中东、俄乌、台海、朝鲜半岛、红海/航运、能源通道、制裁、联盟与大国博弈，含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“生成今天地缘日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“分析红海/霍尔木兹/俄乌/台海/制裁对油价、航运和风险资产的影响”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述三类固定日报，不用于临时/零碎新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
 ---
 
 # CH News Reporter
@@ -47,12 +47,10 @@ DB-first 的取数/回写脚本(`collect_news.py` / `prepare_report_data.py` / `
 - 用户要生成 AI 日报，跟踪模型能力、Agent、开源生态、端侧运行时、AI 资本与产品发布。
 - 用户要生成每日宏观日报，跟踪金十电报中的中国/美国经济数据、利率、汇率、大宗商品和风险资产价格信号。
 - 用户要输出地缘日报，覆盖全球主要地缘冲突、能源与航运通道、制裁、联盟行动和风险资产传导。
-- 用户要跟踪已在 `config/custom_topics.yaml` 注册的自定义关注事项，生成「自定义主题日报」（全部关注事项合并为一份）。
-- 用户要新增、暂停或归档一个关注主题（onboarding 流程见「8. 自定义主题日报」）。
 
 不要使用本 skill 的场景：
 
-- 做固定日报与已注册关注主题之外的临时、自由主题新闻检索或研究（先把主题注册进 `config/custom_topics.yaml`，再走自定义主题流程）。
+- 做三类固定日报之外的临时、自由主题新闻检索或研究。
 - 只总结用户粘贴的一篇文章。
 - 只查询一个公开事实，不需要多信源采集。
 - 用户要求实时交易指令、买卖点或确定性预测。
@@ -117,7 +115,7 @@ evidence packet 现在还带两块新内容(DB-first 与活动状态):
 - `coverage`：本 profile 各期望源在库里当天的行数、缺失源、profile 相关 feed 失败，以及最终 packet 的分源选择摘要。某源缺数或具体 feed 失败时,报告里相应判断要降级标注；不能用 RSS 总行数掩盖关键官方源抓取失败。
 - `prior_state`：`state_enabled` 的 profile(三个日报都已开启)会带上**最近一期 watchboard**(date < 今天)。markdown 输出里是 `## Prior Watchboard` 段,列出今天必须逐条结算的 open 跟踪项;冷启动(无上一期)时按各 profile methodology 的种子/默认构造第一份。机制见 `references/reports/watchboard.md`。
 
-`prepare_report_data.py` 会按 profile 的 `rss_categories` 过滤 RSS，避免地缘 RSS 污染 AI 日报。RSS 池现有四类 category：`ai`(25 个源)、`geopolitics`(8)、`finance`(2)、`space`(10，服务自定义主题 `commercial_space`，见下文第 8 节)；固定三日报都声明了 `rss_categories`，所以新增的商业航天源不会漏进它们，自定义主题走关键词检索、不看 category。`macro_daily` 会先从当天金十和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
+`prepare_report_data.py` 会按 profile 的 `rss_categories` 过滤 RSS，避免地缘 RSS 污染 AI 日报。RSS 池现有三类 category：`ai`(25 个源)、`geopolitics`(8)、`finance`(2)；三个日报都声明了 `rss_categories`，新增源只会进它声明的那一类。`macro_daily` 会先从当天金十和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
 
 - **基础行情**（金十/Stooq/AV）：Brent、WTI、黄金、天然气、USDCNH、纳指期货等。
 - **位置富数据**（Yahoo）：美国 10Y / 5Y 国债收益率、DXY、VIX、BTC，以及核心估值锚——纳斯达克综合（^IXIC）与上证指数（000001.SS）。每个标的额外计算 52 周高低、距 52 周高 %、YTD、20/60 日均线、`pct_vs_ma20`，作为"市场相对位置"判断依据。
@@ -213,7 +211,7 @@ python scripts/prepare_report_data.py --profile ai_daily --date today --include-
 - **结算结果本身就是今天的判断变化**（某跟踪项被证实或被证伪、框架因此移动）：当作观点写进「一句话结论」或它所属的正文板块，说清什么变了、为什么，不带 T 编号流水。
 - **数据异常动摇了判断**（某源缺数、某通道降级、关键品种取不到）：就地写在被影响的那条判断旁边，说明缺的是什么、判断因此降到什么强度。没有异常就什么都不写。
 
-成稿后选择对应 output ID（`ai-daily-markdown`、`macro-daily-markdown`、`macro-brief-markdown`、`geopolitical-daily-markdown`、`geopolitical-brief-markdown`、`custom-daily-markdown`）执行晋级：
+成稿后选择对应 output ID（`ai-daily-markdown`、`macro-daily-markdown`、`macro-brief-markdown`、`geopolitical-daily-markdown`、`geopolitical-brief-markdown`）执行晋级：
 
 ```bash
 python scripts/_shared/skill_runtime/runner.py --skill-root . run report.finalize-markdown \
@@ -307,36 +305,6 @@ python scripts/_shared/skill_runtime/runner.py --skill-root . run report.render-
 
 渲染框架来自仓库通用 `shared/html_report`（随 `shared` bundle 同步到 `scripts/_shared/html_report/`），与 A 股各 skill 共用同一套主题与图表工具；新增样式主题只需在该目录 `themes/` 下放一个 CSS 文件。
 
-### 8. 自定义主题日报（custom topics）
-
-固定三日报之外，用户可以在 `config/custom_topics.yaml` 注册自己的关注事项（5-10 个，如英伟达 Rubin 出货、Kimi 算力部署、华为升腾出货、商业航天产业跟踪）。「自定义主题」在 News Reporter 里是**一个**与固定三日报平级的主题：所有 active 关注事项每天合并产出**一份**日报 `reports/custom_daily_<date>.md`，事项作为报告内板块，不按事项各出一份。单个事项当天有重大进展时，可应用户要求额外出一份该事项的单主题深挖报告。设计全文见 `docs/custom-topics-design.md`。
-
-**onboarding（新增主题）**：用户给出关注点 → Agent 按 `config/custom_topics.yaml` 的 schema 起草主题配置（slug、focus、keywords、web_search queries、通道挂钩）→ 用户确认后落盘 → 首次跑检索建立冷启动 watchboard。slug 禁止与固定 profile 冲突（加载时校验、冲突即报错）；`status: active / paused / archived` 管生命周期，`open_budget: 0` 或 `state_enabled: false` 关闭跨天状态。
-
-**当前已注册事项**：`nvidia_rubin`、`kimi_compute`、`huawei_ascend`、`ai_model_frontier`、`commercial_space`。
-
-`commercial_space`（商业航天产业跟踪）比其他事项面宽、且有专属读者，配置上有四处不一样，改它之前先看懂：
-
-- 库内证据靠 `config/sources.yaml` 里 `category: space` 的 10 个源打底（SpaceNews / Payload / TechCrunch Space / Ars Technica Space / NASASpaceflight / Spaceflight Now / NASA Breaking News / SpacePolicyOnline / European Spaceflight / Space.com）。国内公司与院所没有可抓的 RSS，只能靠金十电报、Tavily 中文 query 和 Vault 笔记补，写报告时国内线的覆盖要按这个前提打折。
-- `web_search` 给到 4 条 query（其他事项 3 条），第一条是中文国内线——retriever 按列表顺序取前 N 条，预算紧张时先保国内。
-- 关键词避开了 `space`、`constellation`、`ESA` 这类会误伤 workspace、Constellation Energy、lifesaving 的宽词；`SpaceX` 与 xAI 合并上市（SPCX.O）之后同名新闻大半是 Grok 与 AI 编程，靠 `exclude_keywords` 挡掉一部分，剩下的由模型按 focus 里的口径判断。
-- 关键词里另有《中国商业航天融资全景图》口径的 29 家国内民营/混合所有制公司（按赛道分组排列，改动时对着原图核），外加它们的英文写法与型号英文名——英文源报道中国公司时只用英文名和型号名，中文源命中不到（实测 NASASpaceflight 单日 `LandSpace` 命中 18 次、`Zhuque` 15 次）。这批词在现有语料上不新增召回也不新增噪音，价值在于 `matched_keywords` 能点名到具体公司。两个坑写在配置注释里：`iSpace` 会命中 Omnispace 所以只用 `"i-Space"`；星际荣耀全名带“航天科技集团”，会连带命中 CASC。
-- **输出有专属规范**：这个板块的成品是给 CEO（体制内 + 技术背景）与董事长（投融资背景）看的**汇报简报**，写法与结构见 `references/reports/custom_topic/commercial_space_output.md`。三条要点：简报不按人分栏、不设“给 CEO / 给董事长”小标题，一条信息写一次、工程含义与资本含义在同一段说完；不留歧义，“可能 / 或将 / 有望 / 据悉 / 近日”这类模糊词一律不用，原文含糊处要标出来而不是跟着含糊；结构是结论 → 国内 → 海外，国内按四条主线分节（发射与运力 / 卫星与载荷 / 订单披露 / 产业融资，顺序固定，融资与 IPO 变化表附在末尾），海外不分主线、全部合并成一节且篇幅不超过国内的三分之一；国内同行的具体动作（协议签订、活动组织、火箭进场与转运、出厂评审、试车、发射与回收、工位产线投产、人事股权变动）门槛更低，单条信息量不大也要写，数据源说明、覆盖说明、跟踪项结算、观察点都不进简报（照常回写 watchboard，只是不展示——这条现在是全 skill 通例，见第 5 步「过程声明不进正文」）。估值必须标口径——一级与 IPO 隐含不可比。其余关注事项不受这份规范约束。
-
-**每日流程（全部关注事项 → 一份合并日报）**：
-
-```bash
-python scripts/collect_news.py --date today --only-missing        # 照旧刷新新闻库
-python scripts/topic_retrieve.py --topic all --date today         # 遍历 active 事项:多通道检索 → 去重/落库 → 各事项证据包
-python scripts/prepare_report_data.py --topic <slug> --date today --format markdown   # 需要单看某事项证据包时
-```
-
-- 证据来自四个通道（脚本只取数/去重/落库/打包）：`news_db`（库内新闻关键词+时间窗）、`pg_data`（alpha_data 结构化表白名单查询，仅 PG）、`web_search`（Tavily 实时检索，结果落库 `items`，需 `TAVILY_API_KEY`，无 key 或网络失败时优雅降级并记 coverage；历史日期回放仅读取已落库 Web 证据，禁止调用以当前时刻为锚的实时检索）、`alpha_vault`（本地 Obsidian Vault 只读检索，只接受 `vault_root` 内相对路径或 glob；不存在或越界路径跳过并记警告）。新通道 = 在 `scripts/retrievers/` 加一个原子脚本 + 配置项。
-- `--topic all` 遍历所有 `active` 且 `frequency: daily` 的主题；`weekly` 主题不进每日批量，`paused` 主题只能显式点名手动跑，`archived` 不再检索。
-- web 检索预算：每主题 `max_queries_per_day` + 全局 `global_max_queries_per_day`，当日已执行 query 以库内收据计量，同日重跑不重复扣预算；落库行按 `retention_days` 自动清理（也可 `python scripts/topic_retrieve.py --groom`）。
-- 分析时读 `references/reports/custom_topic/methodology.md`（通用底线：证据分层 / 边际判定 / 传闻降级 / 无增量不硬凑）+ 各事项 `focus` + 各事项证据包与 `Prior Watchboard`，按 `references/reports/custom_topic/template.md`（`commercial_space` 板块另按 `commercial_space_output.md`）写**一份合并日报**：每个关注事项一个板块（边际变化 / 新证据 / 判断更新），当天无增量的事项一句话带过，不硬凑篇幅；跟踪项结算与覆盖状态照常做、照常回写 watchboard，但不进正文。
-- 回写仍按事项逐个进行：`save_report_state.py --profile custom_<slug> --date <报告日>`，watchboard 通用骨架（regime/tracking_items/next_nodes/falsifiers）照常校验，frame 自由结构。跨天状态按事项各自滚动，合并日报只是展示层。
-
 ## 数据表说明
 
 采集脚本默认写入 PostgreSQL；显式设置 `ALPHA_DB_BACKEND=sqlite` 时写入本地 SQLite fallback：
@@ -349,11 +317,11 @@ python scripts/prepare_report_data.py --topic <slug> --date today --format markd
 核心字段：
 
 - `date_key`：Asia/Shanghai 日期，格式 `YYYY-MM-DD`。
-- `source_type`：`jin10`、`github_trending`、`rss`、`product_hunt`、`hacker_news`、`polymarket`，以及自定义主题 web 检索落库的 `web_search`（自由 TEXT 值，无需 DDL）。
-- `source_name`：具体来源名称；web 检索行形如 `tavily:<slug>`。
+- `source_type`：`jin10`、`github_trending`、`rss`、`product_hunt`、`hacker_news`、`polymarket`（自由 TEXT 值，无需 DDL）。
+- `source_name`：具体来源名称。
 - `published_at` / `fetched_at`：发布时间与抓取时间。
 - `title` / `content` / `url`：主要文本与链接。
-- `tags_json` / `metadata_json` / `raw_json`：结构化补充信息；web 检索行的 `metadata_json` 必带 `query` 与 `retrieved_at`，保证证据可回指到具体检索动作。
+- `tags_json` / `metadata_json` / `raw_json`：结构化补充信息。
 
 采集使用稳定哈希去重。重复运行同一天采集不会重复插入同一条记录。
 

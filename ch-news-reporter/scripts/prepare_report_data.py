@@ -26,9 +26,7 @@ from db_adapter import (
 )
 from framework_loader import load_framework
 from profile_config import (
-    CUSTOM_TOPICS_CONFIG,
     DEFAULT_PROFILE_CONFIG,
-    custom_profile_name,
     load_profile,
     profile_sources,
     reference_dir,
@@ -124,25 +122,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build a report-profile evidence packet from SQLite."
     )
-    parser.add_argument(
-        "--profile",
-        default=None,
-        help="Profile name, e.g. ai_daily;自定义主题用 custom_<slug>。",
-    )
-    parser.add_argument(
-        "--topic",
-        default=None,
-        help="自定义主题 slug;等价于 --profile custom_<slug>,与 --profile 二选一。",
-    )
+    parser.add_argument("--profile", required=True, help="Profile name, e.g. ai_daily.")
     parser.add_argument("--date", default="today", help="today, all, or YYYY-MM-DD.")
     parser.add_argument("--db", default=str(DEFAULT_DB), help="SQLite database path.")
     parser.add_argument(
         "--config", default=str(DEFAULT_CONFIG), help="Report profiles YAML path."
-    )
-    parser.add_argument(
-        "--custom-config",
-        default=str(CUSTOM_TOPICS_CONFIG),
-        help="Custom topics YAML path(仅 custom_<slug> 主题使用)。",
     )
     parser.add_argument("--limit", type=int, default=200, help="Maximum base items.")
     parser.add_argument(
@@ -156,14 +140,7 @@ def parse_args() -> argparse.Namespace:
         default="json",
         help="Evidence packet output format.",
     )
-    args = parser.parse_args()
-    if args.topic and args.profile:
-        raise SystemExit("--profile 与 --topic 只能给一个")
-    if args.topic:
-        args.profile = custom_profile_name(args.topic)
-    if not args.profile:
-        raise SystemExit("--profile 为必填(自定义主题也可用 --topic <slug>)")
-    return args
+    return parser.parse_args()
 
 
 def now_iso() -> str:
@@ -957,35 +934,8 @@ def load_framework_review(
     }
 
 
-def build_custom_topic_packet(
-    args: argparse.Namespace, profile: dict[str, Any]
-) -> dict[str, Any]:
-    """custom_<slug> 主题证据包:多通道检索 + coverage + prior watchboard。
-
-    与固定 profile 的差异(设计文档 D2/D5):
-    - 证据来自 topic_retrieve 的多通道检索(news_db / pg_data / web_search /
-      alpha_vault),不走固定 sources 池与 profile 关键词过滤;
-    - 不做 macro_daily 的行情附加逻辑,也不做 ai_daily 的 value_grading /
-      enrichment_candidates;
-    - prior watchboard 由检索编排层一并读回(state_enabled 时)。
-    """
-    import topic_retrieve
-
-    date_key = resolve_date_key(args.date)
-    if date_key is None:
-        raise SystemExit("自定义主题不支持 --date all,请给具体日期或 today")
-    return topic_retrieve.retrieve_topic(
-        slug=str(profile["topic_slug"]),
-        date_key=date_key,
-        db_path=str(Path(args.db)),
-        config_path=Path(args.custom_config),
-    )
-
-
 def build_packet(args: argparse.Namespace) -> dict[str, Any]:
-    profile = load_profile(args.profile, Path(args.config), Path(args.custom_config))
-    if profile.get("custom_topic"):
-        return build_custom_topic_packet(args, profile)
+    profile = load_profile(args.profile, Path(args.config))
     date_key = resolve_date_key(args.date)
     state_enabled = bool(profile.get("state_enabled"))
     db_path = str(Path(args.db))
@@ -1453,11 +1403,6 @@ def main() -> int:
         return 2
     if args.format == "json":
         print(json.dumps(packet, ensure_ascii=False, indent=2, default=str))
-    elif packet.get("custom_topic"):
-        # 自定义主题走 topic_retrieve 的多通道 markdown 版式
-        import topic_retrieve
-
-        topic_retrieve.emit_topic_markdown(packet)
     else:
         emit_markdown(packet)
     return 0

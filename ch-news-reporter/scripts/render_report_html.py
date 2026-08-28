@@ -302,8 +302,6 @@ def add_arguments(parser) -> None:
 
 def output_id_for_report(profile_name: Optional[str], stem: str) -> str:
     brief = stem.endswith("_brief")
-    if stem.startswith("custom_daily_"):
-        return "custom-daily-html"
     mapping = {
         "ai_daily": "ai-daily-html",
         "macro_daily": "macro-brief-html" if brief else "macro-daily-html",

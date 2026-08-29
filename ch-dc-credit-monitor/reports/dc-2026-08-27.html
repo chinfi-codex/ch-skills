@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据中心信用监控 · 2026-08-27</title>
+<style>/* claude theme — Claude.ai look (warm editorial).
+ *
+ * Cream/bone paper, clay (coral) accent, serif display headings, warm ink and
+ * hairlines, soft shadows. Same CSS-variable / class contract as the other
+ * themes, so every chart hook + decoration works unchanged; only values and
+ * component styling differ. Chart series colours are a warm, mutually-distinct
+ * palette. A-share convention kept: up/positive = red (--neg), down = green
+ * (--pos). Fonts are system + Georgia (no external load needed). */
+:root {
+  color-scheme: light;
+
+  /* warm paper / ink / lines */
+  --bg: #f0ede4;
+  --surface: #fbfaf6;
+  --card: #fbfaf6;
+  --surface-2: #f4f1e8;
+  --surface-3: #efebe0;
+  --tint: #f2efe6;
+  --ink-1: #2b2620;
+  --ink-2: #4a443b;
+  --ink-3: #6b6458;
+  --ink-4: #9a9181;
+  --muted: #6b6458;
+  --text-tertiary: #8a8273;
+  --line-1: #e4dece;
+  --line-2: #ece7da;
+
+  /* clay accent (Anthropic coral) */
+  --clay: #d97757;
+  --clay-ink: #b4522f;
+  --clay-soft: #f3e3d9;
+  --clay-hair: #ecceba;
+  --accent: var(--clay);
+  --accent-ink: var(--clay-ink);
+  --accent-soft: var(--clay-soft);
+  --accent-hair: var(--clay-hair);
+
+  /* semantic + chart series (warm, mutually distinct) */
+  --pos: #5c8a4e;          /* sage green */
+  --pos-soft: #e7eddf;
+  --neg: #c0533b;          /* brick red */
+  --neg-soft: #f4e2db;
+  --warn: #b9802f;         /* amber */
+  --warn-soft: #f4e8d2;
+  --orange: #cd8a45;
+  --violet: #8c6f9e;       /* muted plum */
+  --cyan: #5a8e89;         /* muted teal */
+  --blue: #6e86a8;         /* dusty blue */
+  --green: var(--pos);
+  --red: var(--neg);
+  --purple: var(--violet);
+  --yellow: var(--warn);
+
+  /* type */
+  --font-serif: "Georgia", "Songti SC", "STSong", "Times New Roman", serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* radii + soft warm elevation */
+  --r-xs: 4px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --pill: 999px;
+  --shadow-1: 0 1px 2px rgba(74, 60, 42, 0.06), 0 1px 3px rgba(74, 60, 42, 0.05);
+  --shadow-2: 0 2px 6px rgba(74, 60, 42, 0.08), 0 8px 24px rgba(74, 60, 42, 0.07);
+  --shadow-card: var(--shadow-1);
+  --shadow-hover: var(--shadow-2);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: var(--bg); }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink-1);
+  font-family: var(--font-sans);
+  font-size: 15.5px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+td, th, code, pre { font-variant-numeric: tabular-nums; }
+a { color: var(--clay-ink); text-decoration: none; overflow-wrap: anywhere; }
+a:hover { text-decoration: underline; }
+
+.page {
+  width: min(1120px, calc(100vw - 40px));
+  margin: 0 auto 80px;
+  padding-top: 30px;
+}
+
+/* slim page header above the report card */
+.doc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 4px 6px 16px;
+  margin-bottom: 16px;
+}
+.doc-head .dh-title {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: var(--font-serif); font-size: 17px; font-weight: 600; color: var(--ink-1); letter-spacing: 0.01em;
+}
+.doc-head .dh-title::before {
+  content: ""; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--clay); box-shadow: 0 0 0 4px rgba(217, 119, 87, 0.16);
+}
+.doc-head .dh-meta { font-family: var(--font-mono); font-size: 12px; color: var(--muted); letter-spacing: 0.02em; }
+
+/* the report itself: a warm paper card */
+.report {
+  background: var(--surface);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+  padding: min(5.5vw, 52px);
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.report h1, .report h2 { font-family: var(--font-serif); color: var(--ink-1); text-wrap: pretty; line-height: 1.25; }
+.report h3, .report h4 { font-family: var(--font-sans); color: var(--ink-1); line-height: 1.4; }
+.report h1 { font-size: 32px; font-weight: 700; margin: 0 0 18px; letter-spacing: -0.01em; }
+.report h2 {
+  font-size: 25px; font-weight: 600; margin: 44px 0 16px;
+  padding-bottom: 9px; border-bottom: 1px solid var(--line-2);
+  display: flex; align-items: center; gap: 11px;
+}
+.report h2::before {
+  content: ""; flex: none; width: 9px; height: 9px; border-radius: 2px;
+  background: var(--clay); transform: rotate(45deg);
+}
+/* base UI rotates data-idx across the warm palette */
+.report h2[data-idx="0"]::before { background: var(--clay); }
+.report h2[data-idx="1"]::before { background: var(--violet); }
+.report h2[data-idx="2"]::before { background: var(--cyan); }
+.report h2[data-idx="3"]::before { background: var(--neg); }
+.report h2[data-idx="4"]::before { background: var(--pos); }
+.report h2[data-idx="5"]::before { background: var(--warn); }
+.report h2 .sec-num {
+  display: inline-block; font-family: var(--font-mono); color: var(--muted);
+  font-weight: 500; font-size: 15px; margin-right: 2px; font-variant-numeric: tabular-nums;
+}
+.report > h1:first-child, .report > h2:first-child { margin-top: 0; }
+.report > h2:first-child { border-top: none; }
+
+.report h3 { font-size: 18px; font-weight: 600; margin: 30px 0 12px; }
+.report h4 { font-size: 15.5px; font-weight: 600; margin: 20px 0 10px; color: var(--ink-2); }
+.report p { margin: 13px 0; color: var(--ink-2); font-size: 15.5px; line-height: 1.85; text-wrap: pretty; }
+.report ul, .report ol { margin: 13px 0 13px 4px; padding-left: 22px; color: var(--ink-2); }
+.report li { margin: 6px 0; font-size: 15.5px; line-height: 1.8; }
+
+.report blockquote {
+  margin: 20px 0; padding: 12px 18px;
+  border-left: 3px solid var(--clay);
+  background: var(--clay-soft);
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  color: var(--ink-2); font-size: 15px; font-style: italic;
+}
+
+/* callout — warm highlight card (amber default, clay insight) */
+.callout {
+  position: relative; color: #6f4a1c;
+  background: var(--warn-soft);
+  border: 1px solid #e8c78a; border-left: 4px solid var(--warn); border-radius: var(--r-md);
+  padding: 14px 18px 14px 44px; margin: 20px 0; font-weight: 500; font-size: 15px; line-height: 1.8;
+}
+.callout::before {
+  content: ""; position: absolute; left: 16px; top: 17px; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 4px rgba(185, 128, 47, 0.18);
+}
+.callout::after {
+  content: ""; position: absolute; left: 22.5px; top: 22px; width: 3px; height: 3px;
+  border-radius: 50%; background: #fff; box-shadow: 0 4px 0 -0.5px #fff;
+}
+.callout.insight {
+  color: var(--ink-1); background: var(--clay-soft);
+  border: 1px solid var(--clay-hair); border-left: 4px solid var(--clay);
+}
+.callout.insight::before { background: var(--clay); box-shadow: 0 0 0 4px rgba(217, 119, 87, 0.18); }
+
+/* tables */
+.table-wrap {
+  overflow-x: auto; margin: 16px 0 24px; border: 1px solid var(--line-1);
+  border-radius: var(--r-md); background: var(--surface);
+}
+table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 640px; background: var(--surface); font-size: 13.5px; }
+th, td { padding: 9px 12px; border-bottom: 1px solid var(--line-2); vertical-align: middle; color: var(--ink-2); line-height: 1.55; }
+th {
+  background: var(--surface-2); font-weight: 600; color: var(--muted);
+  font-size: 12px; text-align: left; white-space: nowrap;
+  position: sticky; top: 0; z-index: 1; border-bottom: 1px solid var(--line-1);
+}
+th.align-right, td.align-right { text-align: right; }
+th.align-center, td.align-center { text-align: center; }
+td.align-right { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink-1); }
+td .num-pos { color: var(--neg); font-weight: 600; }   /* A股惯例: 涨/正 = 红 */
+td .num-neg { color: var(--pos); font-weight: 600; }   /* 跌/负 = 绿 */
+td .stars { color: var(--warn); letter-spacing: 2px; font-size: 13px; }
+td .stars.dim { color: var(--line-1); }
+td .pill {
+  display: inline-block; padding: 2px 10px; border-radius: var(--pill); font-size: 12px; font-weight: 600;
+  line-height: 1.6; background: var(--clay-soft); color: var(--clay-ink); border: 1px solid transparent;
+}
+td .pill.pos { background: var(--pos-soft); color: #43663a; }
+td .pill.neg { background: var(--neg-soft); color: var(--neg); }
+td .pill.warn { background: var(--warn-soft); color: #8a5e1f; }
+td .pill.violet { background: #ece2f1; color: #6f578a; }
+tbody td:first-child { color: var(--ink-1); font-weight: 600; }
+tbody tr:hover td { background: var(--surface-2); }
+tr:last-child td { border-bottom: none; }
+
+code { background: var(--surface-3); border-radius: var(--r-xs); padding: 1px 6px; color: var(--clay-ink); font-family: var(--font-mono); font-size: 0.92em; }
+pre { overflow-x: auto; background: #2b2620; color: #f0ede4; border-radius: var(--r-md); padding: 16px 18px; margin: 16px 0; font-family: var(--font-mono); font-size: 13px; line-height: 1.65; }
+mark { background: rgba(217, 119, 87, 0.22); padding: 1px 4px; border-radius: var(--r-xs); }
+
+/* charts */
+.chart-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 16px 0 8px; }
+.chart-card { background: var(--surface); border: 1px solid var(--line-1); border-radius: var(--r-md); box-shadow: var(--shadow-1); padding: 14px 16px 12px; transition: box-shadow 0.14s ease, border-color 0.14s ease; }
+.chart-card:hover { box-shadow: var(--shadow-2); border-color: var(--clay-hair); }
+.chart-title { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--ink-2); }
+.chart-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 6px; font-family: var(--font-mono); }
+.chart-card svg { display: block; width: 100%; height: auto; overflow: visible; }
+.metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 16px 0 8px; }
+.metric-card { background: var(--surface); border: 1px solid var(--line-1); border-radius: var(--r-md); box-shadow: var(--shadow-1); padding: 14px 16px 13px; }
+.metric-title { color: var(--muted); font-size: 12px; font-weight: 600; margin-bottom: 5px; }
+.metric-value { font-family: var(--font-mono); font-size: 24px; line-height: 1.2; color: var(--ink-1); }
+.metric-value.pos, .bar-value.pos { color: var(--neg); fill: var(--neg); }
+.metric-value.neg, .bar-value.neg { color: var(--pos); fill: var(--pos); }
+.metric-sub { color: var(--muted); font-size: 12px; line-height: 1.6; margin-top: 5px; }
+.bar-pos { fill: var(--neg); }
+.bar-neg { fill: var(--pos); }
+.bar-fill { opacity: 0.82; }
+
+/* candlestick / k-line */
+.kline-card { background: var(--surface); border: 1px solid var(--line-1); border-radius: var(--r-md); box-shadow: var(--shadow-1); padding: 14px 16px 12px; margin: 10px 0 16px; position: relative; }
+.kline-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 10px 0 16px; }
+.stock-kline-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 12px 0 28px; }
+.kline-grid .kline-card { margin: 0; min-width: 0; }
+.stock-kline-grid .kline-card { margin: 0; min-width: 0; padding: 14px 12px 12px; }
+.kline-card svg { display: block; width: 100%; height: auto; overflow: visible; }
+.kline-candle-up { fill: var(--neg); stroke: var(--neg); }
+.kline-candle-down { fill: var(--pos); stroke: var(--pos); }
+.amount-bar-up { fill: rgba(192, 83, 59, 0.40); }
+.amount-bar-down { fill: rgba(92, 138, 78, 0.40); }
+.kline-wick { stroke-width: 1; }
+.ma-line { fill: none; stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+.axis, .grid-line { stroke: var(--line-2); stroke-width: 1; }
+.series-line { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--muted); font-size: 12px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); }
+.legend span::before { content: ""; display: inline-block; width: 8px; height: 2px; border-radius: 1px; background: var(--legend-color); }
+
+/* valuation band markers */
+.band-box { fill: var(--accent-soft); }
+.band-median { stroke: var(--ink-3); stroke-width: 1.5; }
+.band-current { fill: var(--orange); stroke: var(--surface); stroke-width: 1.5; }
+
+/* hero summary card (一句话结论 / 核心判断) — warm elevated highlight */
+.summary-card {
+  position: relative;
+  background:
+    radial-gradient(120% 140% at 100% 0%, rgba(217, 119, 87, 0.08) 0%, transparent 55%),
+    var(--surface);
+  color: var(--ink-1);
+  border: 1px solid var(--clay-hair);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2);
+  padding: 26px 30px 24px; margin: 4px 0 34px; overflow: hidden;
+}
+.summary-card::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--clay) 0%, var(--warn) 45%, var(--violet) 100%);
+}
+.summary-card .summary-label {
+  font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--clay-ink);
+  font-weight: 600; margin: 0 0 12px; display: inline-flex; align-items: center; gap: 9px;
+  font-family: var(--font-sans);
+}
+.summary-card .summary-label::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--clay);
+  box-shadow: 0 0 0 4px rgba(217, 119, 87, 0.16);
+}
+.summary-card .summary-body { font-family: var(--font-serif); font-size: 17px; line-height: 1.8; color: var(--ink-1); margin: 0 0 8px; text-wrap: pretty; }
+.summary-card .summary-body:last-child { margin-bottom: 0; }
+.summary-card .summary-body .num-pos { color: var(--neg); font-weight: 600; }
+.summary-card .summary-body .num-neg { color: var(--pos); font-weight: 600; }
+.summary-card .summary-body .kw {
+  color: var(--ink-1); font-weight: 700;
+  background: linear-gradient(180deg, transparent 62%, rgba(217, 119, 87, 0.24) 62%);
+  padding: 0 1px;
+}
+
+@media (max-width: 1024px) { .chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 900px) {
+  .page { width: calc(100vw - 24px); padding-top: 20px; margin-bottom: 56px; }
+  .report { padding: 24px 18px; }
+  .chart-grid { grid-template-columns: 1fr; gap: 14px; }
+  .metric-grid { grid-template-columns: 1fr; gap: 14px; }
+  .kline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .stock-kline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .kline-card { padding: 12px 10px 10px; }
+  .report h2 { font-size: 21px; margin-top: 34px; }
+  .report h3 { font-size: 16px; }
+  table { min-width: 520px; }
+}
+
+body { font-size: 14.5px; line-height: 1.6; }
+.wrap { width: min(1500px, calc(100vw - 40px)); margin: 0 auto 56px; padding-top: 26px; }
+.hd { display: flex; justify-content: space-between; align-items: flex-end; gap: 18px;
+      flex-wrap: wrap; margin-bottom: 16px; padding: 0 2px; }
+.hd .eyebrow { font-size: 12px; color: var(--ink-4); letter-spacing: .02em; }
+.hd h1 { font-family: var(--font-serif); font-size: 25px; font-weight: 700;
+         margin: 6px 0 5px; letter-spacing: -.01em; color: var(--ink-1); }
+.hd .sub { font-size: 13.5px; color: var(--ink-3); }
+.hd .stamp { font-family: var(--font-mono); font-size: 12px; color: var(--ink-4);
+             text-align: right; line-height: 1.7; }
+.panel { background: var(--surface); border: 1px solid var(--line-1);
+         border-radius: 12px; padding: 16px 18px; box-shadow: 0 1px 2px rgba(43,38,32,.04); }
+.stack { margin-bottom: 14px; }
+.sec-head { display: flex; justify-content: space-between; align-items: baseline;
+            gap: 12px; flex-wrap: wrap; }
+.sec-head strong { font-size: 14.5px; color: var(--ink-1); }
+.sec-hint { font-size: 11.5px; color: var(--ink-4); font-family: var(--font-mono); }
+.lead { font-size: 12.5px; color: var(--ink-3); margin-top: 6px; line-height: 1.6;
+        max-width: 1080px; }
+/* 判断面板 */
+.verdict { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+.verdict .copy { flex: 1 1 340px; min-width: 300px; }
+.verdict h2 { font-family: var(--font-serif); font-size: 20px; line-height: 1.35;
+              margin: 9px 0 7px; color: var(--ink-1); }
+.verdict .summary { font-size: 13.5px; color: var(--ink-2); max-width: 820px; }
+.badge-row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+.badge-row .lbl { font-size: 12px; color: var(--ink-4); }
+.badge { font-size: 12px; border: 1px solid currentColor; border-radius: 6px;
+         padding: 2px 8px; font-weight: 500; }
+.signals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+           gap: 9px; flex: 0 1 460px; min-width: 300px; }
+.sig { border: 1px solid var(--line-1); border-radius: 9px; padding: 11px 12px;
+       background: var(--surface-2); }
+.sig .name { font-size: 11.5px; color: var(--ink-4); letter-spacing: .03em; }
+.sig .state { font-weight: 700; font-size: 15px; margin-top: 5px; }
+.sig .why { font-size: 11.5px; color: var(--ink-3); margin-top: 7px; line-height: 1.5; }
+.t-wide { color: var(--neg); } .t-watch { color: var(--warn); }
+.t-tight { color: var(--pos); } .t-unknown { color: var(--ink-4); }
+/* 表格 */
+.scroll { overflow-x: auto; margin-top: 11px; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line-2);
+         white-space: nowrap; }
+th { color: var(--ink-4); font-weight: 500; font-size: 11.5px; }
+tbody tr:last-child td { border-bottom: none; }
+td.num { font-family: var(--font-mono); text-align: right; }
+td.na, .na { color: var(--ink-4); }
+.dim { color: var(--ink-4); font-size: 11.5px; }
+.chip { display: inline-block; font-size: 10.5px; padding: 1px 6px; border-radius: 5px;
+        border: 1px solid var(--line-1); color: var(--ink-4); background: var(--surface-2);
+        margin-left: 5px; font-family: var(--font-mono); }
+.chip.warn { color: var(--warn); border-color: var(--warn); }
+.chip.bad { color: var(--neg); border-color: var(--neg); }
+.pct-up { color: var(--neg); font-weight: 700; }
+.pct-down { color: var(--pos); font-weight: 700; }
+.pct-flat { color: var(--ink-4); font-weight: 600; }
+/* 图 */
+svg.chart { width: 100%; min-width: 560px; height: auto; display: block; }
+svg.chart text { fill: var(--ink-4); font-size: 10.5px; font-family: var(--font-sans); }
+.gridline { stroke: var(--line-2); stroke-width: 1; }
+.empty { padding: 34px 16px; text-align: center; color: var(--ink-4); font-size: 12.5px;
+         border: 1px dashed var(--line-1); border-radius: 9px; margin-top: 11px;
+         line-height: 1.7; }
+.footnote { font-size: 11.5px; color: var(--ink-4); margin-top: 9px; line-height: 1.6; }
+.panel-note { margin-top: 11px; padding: 9px 12px; border-left: 3px solid var(--clay);
+              background: var(--clay-soft); border-radius: 0 7px 7px 0;
+              font-size: 12.5px; line-height: 1.65; color: var(--ink-2); }
+.two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.gap-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+            gap: 9px; margin-top: 12px; }
+.gap-cell { border: 1px solid var(--line-1); border-radius: 9px; padding: 11px 12px;
+            background: var(--surface-2); }
+.gap-cell .name { font-size: 11.5px; color: var(--ink-4); }
+.gap-cell .val { font-family: var(--font-mono); font-size: 19px; font-weight: 700;
+                 margin-top: 5px; color: var(--ink-1); }
+.gap-cell .drift { font-size: 11.5px; margin-top: 3px; }
+.gap-cell .means { font-size: 11.5px; color: var(--ink-3); margin-top: 7px;
+                   line-height: 1.5; }
+.srcs { display: grid; grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+        gap: 9px; margin-top: 12px; }
+.src { border: 1px solid var(--line-1); border-radius: 9px; padding: 10px 11px;
+       background: var(--surface-2); }
+.src b { font-size: 13px; }
+.src .st { font-size: 11.5px; margin-top: 4px; }
+.src .meta { font-size: 11px; color: var(--ink-4); margin-top: 3px;
+             font-family: var(--font-mono); line-height: 1.5; white-space: normal; }
+.ok { color: var(--pos); } .bad { color: var(--neg); } .warnc { color: var(--warn); }
+.ev { border-left: 3px solid var(--line-1); padding: 7px 0 7px 12px; margin-top: 9px; }
+.ev .crit { font-size: 11px; color: var(--ink-4); font-family: var(--font-mono); }
+.ev .body { font-size: 12.5px; color: var(--ink-2); margin-top: 3px; line-height: 1.6; }
+@media (max-width: 1080px) {
+  .signals, .two-col { grid-template-columns: 1fr; }
+  .wrap { width: calc(100vw - 24px); }
+}
+
+.dial-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 4px; }
+.dial-table th { font-size: 11px; color: var(--ink-4); font-weight: 500;
+                 text-align: right; padding: 6px 10px; white-space: nowrap; }
+.dial-table th:first-child, .dial-table td:first-child { text-align: left; }
+.dial-table td { padding: 8px 10px; border-top: 1px solid var(--line-2);
+                 white-space: nowrap; text-align: right; }
+.dial-table tr.grp td { border-top: none; padding: 14px 10px 2px;
+                        font-size: 11px; color: var(--ink-4); letter-spacing: .04em; }
+.dial-table tr.grp:first-child td { padding-top: 2px; }
+.dial-name { display: flex; align-items: baseline; gap: 8px; }
+.dial-name b { font-weight: 600; font-size: 13px; color: var(--ink-1); }
+.dial-name .sub { font-size: 11px; color: var(--ink-4); font-weight: 400;
+                  white-space: normal; }
+.dial-val { font-family: var(--font-mono); font-size: 15px; font-weight: 700;
+            color: var(--ink-1); }
+.dial-d { font-family: var(--font-mono); font-size: 12.5px; }
+.bar-cell { width: 120px; }
+.bar { height: 5px; background: var(--line-2); border-radius: 3px; overflow: hidden; }
+.bar > i { display: block; height: 100%; border-radius: 3px; }
+.headline-row { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.headline-row .copy { flex: 1 1 420px; min-width: 320px; }
+.watch { margin-top: 4px; }
+.watch li { font-size: 12.5px; color: var(--ink-2); line-height: 1.65;
+            margin: 7px 0; list-style: none; padding-left: 14px; position: relative; }
+.watch li:before { content: ""; position: absolute; left: 0; top: .62em;
+                   width: 5px; height: 5px; border-radius: 50%; background: var(--clay); }
+.watch li .tag { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-4);
+                 margin-right: 6px; }
+.statusbar { display: flex; gap: 18px; flex-wrap: wrap; font-size: 11.5px;
+             color: var(--ink-4); font-family: var(--font-mono); }
+.caveat { font-size: 11.5px; color: var(--ink-4); line-height: 1.7; margin-top: 10px; }
+@media (max-width: 760px) {
+  .bar-cell, .dial-table th.opt, .dial-table td.opt { display: none; }
+}
+</style>
+</head>
+<body>
+<main class="wrap" style="width:min(1080px, calc(100vw - 40px))">
+  <header class="hd">
+    <div>
+      <div class="eyebrow">AI 基建信用 · 日频追踪</div>
+      <h1>Data Center Credit Monitor</h1>
+    </div>
+    <div class="stamp">观测日 2026-08-27<br>UTC 2026-08-29 00:28</div>
+  </header>
+  <section class="panel stack">
+  <div class="headline-row">
+    <div class="copy">
+      <div class="badge-row"><span class="lbl">体系状态</span>
+        <span class="badge t-tight">未定档 · 单日压缩</span></div>
+      <h2>弱档收窄更快，梯级出现追逐收益式压缩；一天行情还不足以改档</h2>
+      <div class="summary">七档 5–10Y 利差单日全线收窄，CRWV −10.3bp、ORCL −5.3bp、META −3.7bp， 明显快于强档约 −2bp，梯级离散度同步下降 2.8bp。这符合“全档收窄、弱档更强”的 单日追逐收益形态，但固定期限 alpha 仍为历史不足，一级市场层也没有新记录， 因此不能把收窄写成信用改善，体系继续未定档。
+</div>
+    </div>
+  </div>
+  <div class="badge-row" style="margin-top:12px"><span class="badge t-tight">档4 资本开支溢价收窄</span><span class="badge t-tight">档6 弱档领涨</span><span class="badge t-watch">档7 高溢价、未倒挂</span></div>
+</section>
+  <section class="panel stack">
+  <div class="sec-head"><strong>核心刻度</strong><span class="sec-hint">单位 bp</span></div>
+  <table class="dial-table">
+    <thead><tr><th>刻度</th><th class="opt"></th><th>当前</th>
+      <th>1D</th><th>1W</th><th>1M</th><th>vs 锚点</th></tr></thead>
+    <tbody><tr class="grp"><td colspan="7">梯级</td></tr><tr><td><div class="dial-name"><b>档1 AAA 超大厂</b><span class="sub">MSFT</span></div></td><td class="bar-cell opt"><div class="bar"><i style="width:18%;background:#6e86a8"></i></div></td><td class="dial-val">38</td><td class="dial-d pct-down">-2.2</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d pct-down">-0.7</td></tr><tr><td><div class="dial-name"><b>档2 主流超大厂</b><span class="sub">AMZN、GOOGL</span></div></td><td class="bar-cell opt"><div class="bar"><i style="width:34%;background:#5a8e89"></i></div></td><td class="dial-val">68</td><td class="dial-d pct-down">-1.8</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d pct-up">+0.3</td></tr><tr><td><div class="dial-name"><b>档3 受监管公用事业</b><span class="sub">AEP、D、ETR</span></div></td><td class="bar-cell opt"><div class="bar"><i style="width:37%;background:#5c8a4e"></i></div></td><td class="dial-val">77</td><td class="dial-d pct-down">-1.8</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d pct-down">-0.6</td></tr><tr><td><div class="dial-name"><b>档4 重 capex 超大厂</b><span class="sub">META</span></div></td><td class="bar-cell opt"><div class="bar"><i style="width:42%;background:#b9802f"></i></div></td><td class="dial-val">93</td><td class="dial-d pct-down">-3.7</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d pct-down">-4.1</td></tr><tr><td><div class="dial-name"><b>档5 数据中心 REIT</b><span class="sub">DLR、EQIX</span></div></td><td class="bar-cell opt"><div class="bar"><i style="width:46%;background:#cd8a45"></i></div></td><td class="dial-val">107</td><td class="dial-d pct-down">-2.1</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d pct-up">+0.3</td></tr><tr><td><div class="dial-name"><b>档6 单一押注超大厂</b><span class="sub">ORCL</span></div></td><td class="bar-cell opt"><div class="bar"><i style="width:63%;background:#c0533b"></i></div></td><td class="dial-val">198</td><td class="dial-d pct-down">-5.3</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d pct-down">-6.6</td></tr><tr><td><div class="dial-name"><b>档7 纯算力商</b><span class="sub">CRWV</span></div></td><td class="bar-cell opt"><div class="bar"><i style="width:100%;background:#8c2f1f"></i></div></td><td class="dial-val">766</td><td class="dial-d pct-down">-10.3</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d pct-down">-9.3</td></tr><tr class="grp"><td colspan="7">跨档距离</td></tr><tr><td><div class="dial-name"><b>AI 资本开支溢价</b><span class="sub">META − GOOGL · 重 capex 超大厂比同侪多付多少</span></div></td><td class="bar-cell opt"></td><td class="dial-val">24</td><td class="dial-d pct-down">-2.2</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d pct-down">-3.8</td></tr><tr><td><div class="dial-name"><b>单一押注溢价</b><span class="sub">ORCL − GOOGL · 没有其他业务兜底的超大厂要多付多少</span></div></td><td class="bar-cell opt"></td><td class="dial-val">130</td><td class="dial-d pct-down">-3.8</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d pct-down">-6.3</td></tr><tr><td><div class="dial-name"><b>纯算力商溢价</b><span class="sub">CRWV − ORCL · 连超大厂信用外壳都没有的溢价</span></div></td><td class="bar-cell opt"></td><td class="dial-val">567</td><td class="dial-d pct-down">-5.0</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d pct-down">-2.7</td></tr><tr><td><div class="dial-name"><b>公用事业 AI 证伪器</b><span class="sub">公用事业中位 − IG 指数 · 显著转正=AI 进了受监管电力定价，框架要重写</span></div></td><td class="bar-cell opt"></td><td class="dial-val">-2</td><td class="dial-d pct-down">-0.8</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d pct-up">+1.4</td></tr><tr class="grp"><td colspan="7">结构</td></tr><tr><td><div class="dial-name"><b>梯级离散度</b><span class="sub">扩张=质量分层；压缩+同向走宽=体系性；压缩+同向收窄=追逐收益</span></div></td><td class="bar-cell opt"></td><td class="dial-val">238</td><td class="dial-d pct-down">-2.8</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d na">—</td></tr><tr><td><div class="dial-name"><b>Beignet 票息 vs 租户 META</b><span class="sub">票息 6.581% vs 租户同期限 6.807%；正数=SPV 更便宜，补偿偏薄</span></div></td><td class="bar-cell opt"></td><td class="dial-val">23</td><td class="dial-d pct-down">-1.8</td><td class="dial-d na">—</td><td class="dial-d na">—</td><td class="dial-d na">—</td></tr></tbody>
+  </table>
+  <div class="panel-note">七档单日全部收窄，弱档快于强档，离散度 −2.8bp；更像追逐收益，不足以确认信用改善。</div>
+</section>
+  <section class="panel stack">
+  <div class="sec-head"><strong>今天值得看的</strong>
+    <span class="sec-hint">5 条 · 事件不是结论</span></div>
+  <ul class="watch"><li><span class="tag">判据3·曲线形状</span><b>D</b> — 曲线整体未倒挂，但分桶不单调：10-20y 101bp → 20y+ 94bp</li><li><span class="tag">判据3·曲线形状</span><b>EQIX</b> — 曲线整体未倒挂，但分桶不单调：5-10y 107bp → 20y+ 102bp</li><li><span class="tag">SPV·租户锚</span><b>SPV:beignet</b> — 票息 6.581% vs 租户 META 同期限 6.807%，低 23bp</li><li><span class="tag">转债</span>11 只全部<b>信用不可提取</b>——G-spread 里是期权价值不是信用；这几家的信用观察走基本面层。</li><li><span class="tag">缺口</span>GPU 抵押载体未取到——R-file 路径需要 <code>SEC_CONTACT_EMAIL</code>，否则 <code>www.sec.gov/Archives</code> 一律 403。</li></ul>
+</section>
+  <section class="panel">
+  <div class="statusbar">
+    <span>持仓 As of 2026-08-27</span>
+    <span>国债曲线 2026-08-27（同日）</span>
+    <span>IG 79bp · HY 263bp</span>
+    <span>319/319 只有利差</span>
+    <span>stale 0 · 含权剔除 12</span>
+    <span class="bad">降级源：sec</span>
+  </div>
+  <div class="caveat">G-spread 不是 OAS，含权券已剔除；ETF 持仓价是基金管理人的估值不是成交价；
+  样本是各发行人在指数内的子集，不是全部存量债；SPV 组合级数字含多项投资不是单体；
+  CDS 与逐笔 TRACE 无免费源，本监控不覆盖。
+  <b>明细（逐只债、发行人曲线、转债与抵押品）在证据包与报告正文里，不上日频页；
+  需要时用 <code>--full</code> 渲染完整版。</b></div>
+</section>
+</main>
+</body>
+</html>

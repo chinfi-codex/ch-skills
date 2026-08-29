@@ -1,0 +1,164 @@
+# 监控对象与信用梯级 —— 谁在库里，以及他们各自站在标尺的哪一档。
+#
+# 档位（rung）是方法论的骨架：单看「ORCL 205bp」读不出任何东西，有意义的是
+# 它在梯级里的位置以及这个位置在移动。所以档位归属写在配置里、由人维护，
+# **脚本不自动调整档位归属**——标尺本身会漂，重新分档是判断不是计算。
+#
+# 实测锚点 as-of 2026-08-25（G-spread，已剔含权），用来校准量级，不是阈值。
+
+schema_version: 1
+
+# 每档的定义与它在框架里的角色。
+rungs:
+  1:
+    name: "AAA 超大厂"
+    role: "梯级的地板。它走宽 = 整个 IG 市场在走宽，不是 AI 的事"
+    anchor_5_10y: 39
+  2:
+    name: "主流超大厂"
+    role: "对照组。META/ORCL 相对它的距离就是 AI 溢价的定义式"
+    anchor_5_10y: 68
+  3:
+    name: "受监管公用事业"
+    role: "反向证伪器。身上没有 AI 溢价（实测 74–82bp，贴着 IG 指数 81bp）"
+    anchor_5_10y: 78
+  4:
+    name: "重 capex 超大厂"
+    role: "AI 资本开支溢价的载体"
+    anchor_5_10y: 97
+  5:
+    name: "数据中心 REIT"
+    role: "纯 DC 资产的上市信用锚"
+    anchor_5_10y: 107
+  6:
+    name: "单一押注超大厂"
+    role: "没有其他业务兜底的超大厂"
+    anchor_5_10y: 205
+  7:
+    name: "纯算力商"
+    role: "连超大厂的信用外壳都没有；曲线倒挂是全监控优先级最高的单一事件"
+    anchor_5_10y: 775
+
+# 跨档距离：方法论判据 2 盯的三个数，加一个反向证伪器。
+rung_gaps:
+  - {id: ai_capex_premium, a: META, b: GOOGL, tenor: "5-10y", anchor_bp: 28,
+     label: "AI 资本开支溢价", detail: "META − GOOGL",
+     means: "重 capex 超大厂比同侪多付多少"}
+  - {id: single_bet_premium, a: ORCL, b: GOOGL, tenor: "5-10y", anchor_bp: 136,
+     label: "单一押注溢价", detail: "ORCL − GOOGL",
+     means: "没有其他业务兜底的超大厂要多付多少"}
+  - {id: neocloud_premium, a: CRWV, b: ORCL, tenor: "5-10y", anchor_bp: 570,
+     label: "纯算力商溢价", detail: "CRWV − ORCL",
+     means: "连超大厂信用外壳都没有的溢价"}
+  - {id: utility_ai_check, a: UTIL_MEDIAN, b: IG_INDEX, tenor: "5-10y", anchor_bp: -3,
+     label: "公用事业 AI 证伪器", detail: "公用事业中位 − IG 指数",
+     means: "显著转正=AI 进了受监管电力定价，框架要重写"}
+
+issuers:
+  MSFT:
+    name: "Microsoft"
+    cik: "0000789019"
+    rung: 1
+    regime: public_corp
+    match: ["MICROSOFT"]
+  AMZN:
+    name: "Amazon.com"
+    cik: "0001018724"
+    rung: 2
+    regime: public_corp
+    match: ["AMAZON"]
+  GOOGL:
+    name: "Alphabet"
+    cik: "0001652044"
+    rung: 2
+    regime: public_corp
+    match: ["ALPHABET"]
+  META:
+    name: "Meta Platforms"
+    cik: "0001326801"
+    rung: 4
+    regime: public_corp
+    match: ["META PLATFORMS"]
+    # Beignet 2049 的信用锚就是它的长端，见 spv 段。
+  ORCL:
+    name: "Oracle"
+    cik: "0001341439"
+    rung: 6
+    regime: public_corp
+    match: ["ORACLE"]
+  DLR:
+    name: "Digital Realty"
+    cik: "0001297996"
+    rung: 5
+    regime: public_corp
+    match: ["DIGITAL REALTY"]
+    note: "样本内仅 3–5 只，强制 thin_curve，不许拟合曲线"
+  EQIX:
+    name: "Equinix"
+    cik: "0001101239"
+    rung: 5
+    regime: public_corp
+    match: ["EQUINIX"]
+  D:
+    name: "Dominion Energy"
+    cik: "0000715957"
+    rung: 3
+    regime: public_corp
+    # opco 一按揭债比母公司无担保债更贴近数据中心负荷的真实担保结构。
+    match: ["DOMINION ENERGY", "VIRGINIA ELECTRIC"]
+    exclude: ["TORONTO DOMINION"]
+  AEP:
+    name: "American Electric Power"
+    cik: "0000004904"
+    rung: 3
+    regime: public_corp
+    match: ["AMERICAN ELECTRIC", "APPALACHIAN POWER", "OHIO POWER", "AEP TEXAS",
+            "INDIANA MICHIGAN", "SOUTHWESTERN ELECTRIC", "PUBLIC SERVICE CO OF OK"]
+  ETR:
+    name: "Entergy"
+    cik: "0000065984"
+    rung: 3
+    regime: public_corp
+    match: ["ENTERGY"]
+  CRWV:
+    name: "CoreWeave"
+    cik: "0001769628"
+    rung: 7
+    regime: public_corp
+    match: ["COREWEAVE"]
+    gpu_secured: true          # 走 R-file 抽工具级债务与 VIE 抵押品
+  NBIS:
+    name: "Nebius Group"
+    cik: "0001513845"
+    rung: 7
+    regime: convertible
+    match: ["NEBIUS"]
+    note: "外国私人发行人，companyfacts 标签可能缺；缺就标 regime_na 不填空值"
+
+# 受监管公用事业的中位数成员（utility_ai_check 用）。
+utility_median_members: [D, AEP, ETR]
+
+# SPV 台账：单体不交易、不再单独披露，只能一次性记条款 + 靠租户利差间接观测。
+spv:
+  beignet:
+    display_name: "Beignet"
+    legal_name: "Beignet Investor LLC"
+    project: "Project Beignet Holdings"
+    tenant: META                      # 信用锚 = 租户的长端，不是 SPV 自己
+    sponsor_cik: "0001944366"         # Blue Owl Real Estate Net Lease Trust (OSNL)
+    sponsor_ticker: OSNL
+    disclosed_in: "0001944366-25-000126"   # 2025Q3 10-Q 期后事项附注
+    disclosure_date: "2025-10-21"
+    notes_outstanding_usd_mn: 27293.849
+    coupon_pct: 6.581
+    maturity: "2049-05-30"
+    sponsor_equity_commitment_usd_mn: 1533.307
+    sponsor_stake_pct: 63.0
+    stake_in_jv_pct: 80.0
+    quality: disclosure_once
+    # 之后并入 FVO 合计行，2025-12-31 口径：8 项投资 / 15 处物业 / 持股 10.6–65.5%
+    portfolio_line: "net lease data centers"
+    portfolio_investments: 8
+    portfolio_properties: 15
+    portfolio_fv_usd_mn: 951.121
+    portfolio_fv_asof: "2025-12-31"

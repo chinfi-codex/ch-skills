@@ -1,0 +1,85 @@
+# 判据阈值与状态机 —— 全部可校准，不写死在代码里。
+#
+# 这些数字是**起始配置**，来自 2026-08-25 单日实测的量级，不是统计出来的。
+# 序列长到 3 个月之前，它们只用来把「值得看一眼」的东西挑出来交给模型，
+# 不用来定档。所以 events.mode 默认 record_only。
+#
+# 关键纪律：脚本产出的是**阈值穿越事件**，不是结论。脚本可以报
+# 「CRWV 曲线在 5.10Y 与 5.89Y 之间出现负斜率」，不可以报「CRWV 出现违约预警」。
+
+schema_version: 1
+
+window_days: 90
+
+# 判据 1 · alpha 分解
+attribution:
+  # 单日 alpha 一律不定性：ETF 估值有粘滞，单日残差里混着估值噪音。
+  min_days_for_alpha: 2
+  cum_windows: [5, 20]
+  # 累积 alpha 超过这个量级才值得交给模型看一眼。
+  notable_cum_bp:
+    ig: 15
+    hy: 50
+  # 分解闭合检查：Δ总 − (beta_market + beta_tier + alpha) 必须小于这个数。
+  closure_tolerance_bp: 0.5
+
+# 判据 2 · 梯级离散度
+ladder:
+  # 跨档距离变动多少算「值得看」。锚点见 universe.yaml 的 rung_gaps。
+  notable_gap_move_bp: 20
+  # 离散度用各档固定期限点的标准差。
+  dispersion_tenor: "5y"
+
+# 判据 3 · 曲线形状
+curve:
+  # 固定期限插值点。单只债的时间序列不能直接当利差走势读（rolldown），
+  # 发行人层序列必须走这些点。
+  constant_maturities: [5, 10, 30]
+  # 拟合曲线的最低样本数。低于它连形状都读不出来，标 thin_curve。
+  # **不要用它兼管期限覆盖**：CRWV 只有 4 只债但落在 3.8–5.9Y，5Y 是真插值；
+  # 10Y/30Y 由 constant_maturity 自己的外推守卫拒掉，这比一刀切准确。
+  min_bonds_for_curve: 4
+  # 倒挂判定：短端固定期限点减长端，超过这个数才算真倒挂而非噪音。
+  inversion_threshold_bp: 10
+  # 斜率收窄多少算「近端担忧上升」。
+  notable_slope_flattening_bp: 25
+
+# 判据 4 · 长短端分化
+term_structure:
+  short_tenor: 5
+  long_tenor: 30
+  notable_gap_move_bp: 20
+
+# 判据 5 · 抵押品剪刀差（P5 未实现，阈值先占位）
+collateral:
+  enabled: false
+  notable_scissors_pct: 5.0
+
+# 质量码规则
+quality:
+  # 价格连续多少天不动就判管理人未重估。带 stale 的点不进 alpha 计算，
+  # 否则残差会系统性偏小。
+  stale_price_days: 3
+  # 发行人样本内债券数低于这个数，强制 thin_curve。
+  thin_curve_min_bonds: 5
+  # 转债离债底多远就算深度价内、信用信息不可提取。
+  convertible_deep_itm_price: 130
+  convertible_credit_extractable_max_price: 115
+  # 光看价格不够。1.75% 票息的转债报 104.6 看着贴债底，但按直债折现算出来的
+  # G-spread 会是负几百 bp——那不是信用极好，是期权价值被算进了折价里。
+  # 所以再加一道：同期限直债利差 − 转债 G-spread 就是期权价值的下界，
+  # 超过这个量级说明这只转债还是靠股票定价，信用信息不可提取。
+  convertible_max_option_value_bp: 300
+
+# 体系状态机。**脚本只报各档条件是否满足，定档由模型做。**
+# 升档要两个独立层同时确认，降档只需一个层失效——宁可晚降不可早降。
+regime_states:
+  R0: {name: "正常", enter: "梯级稳定、无持续同向 alpha、一级市场对各档均开放"}
+  R1: {name: "分层", enter: "离散度扩张 且 弱档 alpha 连续同向走宽"}
+  R2: {name: "收缩", enter: "一级市场对弱档关闭 且 R1 仍成立"}
+  R3: {name: "体系", enter: "离散度压缩 + 全档同向走宽 且 强档 alpha 转正"}
+  T:  {name: "滞后定价（过渡态）",
+       enter: "剪刀差扩大 且 alpha 为零——看起来像 R0，是最危险的伪装"}
+
+events:
+  mode: record_only

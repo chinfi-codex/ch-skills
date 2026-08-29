@@ -1,0 +1,3190 @@
+{
+  "asof": "2026-08-26",
+  "generated_at": "2026-08-27T23:45:52.082396+00:00",
+  "window_days": 90,
+  "anchors": {
+    "holdings_asof": "2026-08-26",
+    "treasury_curve": "2026-08-26",
+    "index_oas": "2026-08-26",
+    "curve_lag_days": 0,
+    "index_oas_bp": {
+      "ig": 80.0,
+      "hy": 267.0
+    }
+  },
+  "dials": [
+    {
+      "group": "梯级",
+      "name": "档1 AAA 超大厂",
+      "rung": 1,
+      "value": 40.5,
+      "unit": "bp",
+      "anchor": 39,
+      "vs_anchor": 1.5,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "MSFT",
+      "quality": "ok"
+    },
+    {
+      "group": "梯级",
+      "name": "档2 主流超大厂",
+      "rung": 2,
+      "value": 70.1,
+      "unit": "bp",
+      "anchor": 68,
+      "vs_anchor": 2.1,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "AMZN、GOOGL",
+      "quality": "ok"
+    },
+    {
+      "group": "梯级",
+      "name": "档3 受监管公用事业",
+      "rung": 3,
+      "value": 79.2,
+      "unit": "bp",
+      "anchor": 78,
+      "vs_anchor": 1.2,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "AEP、D、ETR",
+      "quality": "ok"
+    },
+    {
+      "group": "梯级",
+      "name": "档4 重 capex 超大厂",
+      "rung": 4,
+      "value": 96.6,
+      "unit": "bp",
+      "anchor": 97,
+      "vs_anchor": -0.4,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "META",
+      "quality": "ok"
+    },
+    {
+      "group": "梯级",
+      "name": "档5 数据中心 REIT",
+      "rung": 5,
+      "value": 109.4,
+      "unit": "bp",
+      "anchor": 107,
+      "vs_anchor": 2.4,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "DLR、EQIX",
+      "quality": "ok"
+    },
+    {
+      "group": "梯级",
+      "name": "档6 单一押注超大厂",
+      "rung": 6,
+      "value": 203.7,
+      "unit": "bp",
+      "anchor": 205,
+      "vs_anchor": -1.3,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "ORCL",
+      "quality": "ok"
+    },
+    {
+      "group": "梯级",
+      "name": "档7 纯算力商",
+      "rung": 7,
+      "value": 776.0,
+      "unit": "bp",
+      "anchor": 775,
+      "vs_anchor": 1.0,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "CRWV",
+      "quality": "ok"
+    },
+    {
+      "group": "跨档距离",
+      "name": "AI 资本开支溢价",
+      "rung": null,
+      "value": 26.4,
+      "unit": "bp",
+      "anchor": 28,
+      "vs_anchor": -1.6,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "META − GOOGL · 重 capex 超大厂比同侪多付多少",
+      "quality": "ok"
+    },
+    {
+      "group": "跨档距离",
+      "name": "单一押注溢价",
+      "rung": null,
+      "value": 133.5,
+      "unit": "bp",
+      "anchor": 136,
+      "vs_anchor": -2.5,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "ORCL − GOOGL · 没有其他业务兜底的超大厂要多付多少",
+      "quality": "ok"
+    },
+    {
+      "group": "跨档距离",
+      "name": "纯算力商溢价",
+      "rung": null,
+      "value": 572.3,
+      "unit": "bp",
+      "anchor": 570,
+      "vs_anchor": 2.3,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "CRWV − ORCL · 连超大厂信用外壳都没有的溢价",
+      "quality": "ok"
+    },
+    {
+      "group": "跨档距离",
+      "name": "公用事业 AI 证伪器",
+      "rung": null,
+      "value": -0.8,
+      "unit": "bp",
+      "anchor": -3,
+      "vs_anchor": 2.2,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "公用事业中位 − IG 指数 · 显著转正=AI 进了受监管电力定价，框架要重写",
+      "quality": "ok"
+    },
+    {
+      "group": "结构",
+      "name": "梯级离散度",
+      "rung": null,
+      "value": 241.3,
+      "unit": "bp",
+      "anchor": null,
+      "vs_anchor": null,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "扩张=质量分层；压缩+同向走宽=体系性；压缩+同向收窄=追逐收益",
+      "quality": "ok"
+    },
+    {
+      "group": "结构",
+      "name": "Beignet 票息 vs 租户 META",
+      "rung": null,
+      "value": 24.4,
+      "unit": "bp",
+      "anchor": null,
+      "vs_anchor": null,
+      "d1": null,
+      "d7": null,
+      "d30": null,
+      "note": "票息 6.581% vs 租户同期限 6.825%；正数=SPV 更便宜，补偿偏薄",
+      "quality": "ok"
+    }
+  ],
+  "ladder": [
+    {
+      "rung": 1,
+      "name": "AAA 超大厂",
+      "role": "梯级的地板。它走宽 = 整个 IG 市场在走宽，不是 AI 的事",
+      "anchor_5_10y": 39,
+      "members": [
+        "MSFT"
+      ],
+      "readings_5_10y": {
+        "MSFT": 40.5
+      },
+      "median_5_10y": 40.5,
+      "drift_vs_anchor_bp": 1.5
+    },
+    {
+      "rung": 2,
+      "name": "主流超大厂",
+      "role": "对照组。META/ORCL 相对它的距离就是 AI 溢价的定义式",
+      "anchor_5_10y": 68,
+      "members": [
+        "AMZN",
+        "GOOGL"
+      ],
+      "readings_5_10y": {
+        "AMZN": 69.9,
+        "GOOGL": 70.2
+      },
+      "median_5_10y": 70.1,
+      "drift_vs_anchor_bp": 2.1
+    },
+    {
+      "rung": 3,
+      "name": "受监管公用事业",
+      "role": "反向证伪器。身上没有 AI 溢价（实测 74–82bp，贴着 IG 指数 81bp）",
+      "anchor_5_10y": 78,
+      "members": [
+        "AEP",
+        "D",
+        "ETR"
+      ],
+      "readings_5_10y": {
+        "AEP": 84.1,
+        "D": 79.2,
+        "ETR": 76.7
+      },
+      "median_5_10y": 79.2,
+      "drift_vs_anchor_bp": 1.2
+    },
+    {
+      "rung": 4,
+      "name": "重 capex 超大厂",
+      "role": "AI 资本开支溢价的载体",
+      "anchor_5_10y": 97,
+      "members": [
+        "META"
+      ],
+      "readings_5_10y": {
+        "META": 96.6
+      },
+      "median_5_10y": 96.6,
+      "drift_vs_anchor_bp": -0.4
+    },
+    {
+      "rung": 5,
+      "name": "数据中心 REIT",
+      "role": "纯 DC 资产的上市信用锚",
+      "anchor_5_10y": 107,
+      "members": [
+        "DLR",
+        "EQIX"
+      ],
+      "readings_5_10y": {
+        "DLR": null,
+        "EQIX": 109.4
+      },
+      "median_5_10y": 109.4,
+      "drift_vs_anchor_bp": 2.4
+    },
+    {
+      "rung": 6,
+      "name": "单一押注超大厂",
+      "role": "没有其他业务兜底的超大厂",
+      "anchor_5_10y": 205,
+      "members": [
+        "ORCL"
+      ],
+      "readings_5_10y": {
+        "ORCL": 203.7
+      },
+      "median_5_10y": 203.7,
+      "drift_vs_anchor_bp": -1.3
+    },
+    {
+      "rung": 7,
+      "name": "纯算力商",
+      "role": "连超大厂的信用外壳都没有；曲线倒挂是全监控优先级最高的单一事件",
+      "anchor_5_10y": 775,
+      "members": [
+        "CRWV"
+      ],
+      "readings_5_10y": {
+        "CRWV": 776.0
+      },
+      "median_5_10y": 776.0,
+      "drift_vs_anchor_bp": 1.0
+    }
+  ],
+  "gaps": [
+    {
+      "id": "ai_capex_premium",
+      "a": "META",
+      "b": "GOOGL",
+      "a_bp": 96.6,
+      "b_bp": 70.2,
+      "observed_bp": 26.4,
+      "anchor_bp": 28,
+      "drift_bp": -1.6,
+      "means": "重 capex 超大厂比同侪多付多少",
+      "quality": "ok"
+    },
+    {
+      "id": "single_bet_premium",
+      "a": "ORCL",
+      "b": "GOOGL",
+      "a_bp": 203.7,
+      "b_bp": 70.2,
+      "observed_bp": 133.5,
+      "anchor_bp": 136,
+      "drift_bp": -2.5,
+      "means": "没有其他业务兜底的超大厂要多付多少",
+      "quality": "ok"
+    },
+    {
+      "id": "neocloud_premium",
+      "a": "CRWV",
+      "b": "ORCL",
+      "a_bp": 776.0,
+      "b_bp": 203.7,
+      "observed_bp": 572.3,
+      "anchor_bp": 570,
+      "drift_bp": 2.3,
+      "means": "连超大厂信用外壳都没有的溢价",
+      "quality": "ok"
+    },
+    {
+      "id": "utility_ai_check",
+      "a": "UTIL_MEDIAN",
+      "b": "IG_INDEX",
+      "a_bp": 79.2,
+      "b_bp": 80.0,
+      "observed_bp": -0.8,
+      "anchor_bp": -3,
+      "drift_bp": 2.2,
+      "means": "显著转正=AI 进了受监管电力定价，框架要重写",
+      "quality": "ok"
+    }
+  ],
+  "dispersion": {
+    "value": 241.3,
+    "n_rungs": 7,
+    "min_bp": 40.5,
+    "max_bp": 776.0,
+    "range_bp": 735.5,
+    "quality": "ok"
+  },
+  "issuers": {
+    "MSFT": {
+      "n_bonds": 19,
+      "bucket_monotonic": true,
+      "bucket_breaks": [],
+      "n_excluded_option": 0,
+      "thin_curve": false,
+      "tenor_span_years": 31.5,
+      "tenor_min_years": 4.05,
+      "tenor_max_years": 35.56,
+      "buckets": {
+        "2-5y": {
+          "label": "2–5Y",
+          "mean_bp": 19.0,
+          "n": 1
+        },
+        "5-10y": {
+          "label": "5–10Y",
+          "mean_bp": 40.5,
+          "n": 1
+        },
+        "10-20y": {
+          "label": "10–20Y",
+          "mean_bp": 58.1,
+          "n": 7
+        },
+        "20y+": {
+          "label": "20Y+",
+          "mean_bp": 73.4,
+          "n": 10
+        }
+      },
+      "constant_maturity_bp": {
+        "5y": 22.5,
+        "10y": 40.5,
+        "30y": 72.6
+      },
+      "slope_bp": 62.3,
+      "curve_inverted": false,
+      "negative_segment": null,
+      "quality": "ok",
+      "points": [
+        {
+          "years": 4.05,
+          "gspread_bp": 19.0,
+          "name": "MICROSOFT CORP SR UNSECURED 09/30 1.35",
+          "isin": "US594918CS17"
+        },
+        {
+          "years": 9.95,
+          "gspread_bp": 40.5,
+          "name": "MICROSOFT CORP SR UNSECURED 08/36 3.45",
+          "isin": "US594918BS26"
+        },
+        {
+          "years": 12.76,
+          "gspread_bp": 36.7,
+          "name": "MICROSOFT CORP SR UNSECURED 06/39 5.2",
+          "isin": "US594918AD65"
+        },
+        {
+          "years": 14.1,
+          "gspread_bp": 54.5,
+          "name": "MICROSOFT CORP SR UNSECURED 10/40 4.5",
+          "isin": "US594918AJ36"
+        },
+        {
+          "years": 14.46,
+          "gspread_bp": 47.2,
+          "name": "MICROSOFT CORP SR UNSECURED 02/41 5.3",
+          "isin": "US594918AM64"
+        },
+        {
+          "years": 16.22,
+          "gspread_bp": 67.4,
+          "name": "MICROSOFT CORP SR UNSECURED 11/42 3.5",
+          "isin": "US594918AR51"
+        },
+        {
+          "years": 18.47,
+          "gspread_bp": 68.9,
+          "name": "MICROSOFT CORP SR UNSECURED 02/45 3.75",
+          "isin": "US594918BD56"
+        },
+        {
+          "years": 19.19,
+          "gspread_bp": 65.5,
+          "name": "MICROSOFT CORP SR UNSECURED 11/45 4.45",
+          "isin": "US594918BL72"
+        },
+        {
+          "years": 19.95,
+          "gspread_bp": 66.6,
+          "name": "MICROSOFT CORP SR UNSECURED 08/46 3.7",
+          "isin": "US594918BT09"
+        },
+        {
+          "years": 20.45,
+          "gspread_bp": 63.9,
+          "name": "MICROSOFT CORP SR UNSECURED 02/47 4.25",
+          "isin": "US594918CA09"
+        },
+        {
+          "years": 20.8,
+          "gspread_bp": 65.3,
+          "name": "MICROSOFT CORP SR UNSECURED 06/47 4.5",
+          "isin": "US594918CU62"
+        },
+        {
+          "years": 23.76,
+          "gspread_bp": 75.6,
+          "name": "MICROSOFT CORP SR UNSECURED 06/50 2.525",
+          "isin": "US594918CC64"
+        },
+        {
+          "years": 24.05,
+          "gspread_bp": 78.6,
+          "name": "MICROSOFT CORP SR UNSECURED 09/50 2.5",
+          "isin": "US594918CW29"
+        },
+        {
+          "years": 25.56,
+          "gspread_bp": 77.3,
+          "name": "MICROSOFT CORP SR UNSECURED 03/52 2.921",
+          "isin": "US594918CE21"
+        },
+        {
+          "years": 28.47,
+          "gspread_bp": 69.8,
+          "name": "MICROSOFT CORP SR UNSECURED 02/55 4",
+          "isin": "US594918BE30"
+        },
+        {
+          "years": 29.95,
+          "gspread_bp": 73.0,
+          "name": "MICROSOFT CORP SR UNSECURED 08/56 3.95",
+          "isin": "US594918BU71"
+        },
+        {
+          "years": 30.45,
+          "gspread_bp": 69.5,
+          "name": "MICROSOFT CORP SR UNSECURED 02/57 4.5",
+          "isin": "US594918CB81"
+        },
+        {
+          "years": 33.77,
+          "gspread_bp": 79.7,
+          "name": "MICROSOFT CORP SR UNSECURED 06/60 2.675",
+          "isin": "US594918CD48"
+        },
+        {
+          "years": 35.56,
+          "gspread_bp": 81.3,
+          "name": "MICROSOFT CORP SR UNSECURED 03/62 3.041",
+          "isin": "US594918CF95"
+        }
+      ],
+      "shape_points_used": 19,
+      "issuer": "MSFT",
+      "name": "Microsoft",
+      "rung": 1,
+      "note": null
+    },
+    "EQIX": {
+      "n_bonds": 17,
+      "bucket_monotonic": false,
+      "bucket_breaks": [
+        "5-10y 109bp → 20y+ 103bp"
+      ],
+      "n_excluded_option": 0,
+      "thin_curve": false,
+      "tenor_span_years": 23.92,
+      "tenor_min_years": 1.55,
+      "tenor_max_years": 25.47,
+      "buckets": {
+        "2-5y": {
+          "label": "2–5Y",
+          "mean_bp": 84.3,
+          "n": 7
+        },
+        "5-10y": {
+          "label": "5–10Y",
+          "mean_bp": 109.4,
+          "n": 5
+        },
+        "10-20y": {
+          "label": "10–20Y",
+          "mean_bp": null,
+          "n": 0
+        },
+        "20y+": {
+          "label": "20Y+",
+          "mean_bp": 103.0,
+          "n": 3
+        }
+      },
+      "constant_maturity_bp": {
+        "5y": 95.8,
+        "10y": 127.1,
+        "30y": null
+      },
+      "slope_bp": 34.1,
+      "curve_inverted": false,
+      "negative_segment": "9.97Y 127bp → 23.89Y 102bp（−25bp）",
+      "quality": "ok",
+      "points": [
+        {
+          "years": 1.55,
+          "gspread_bp": 65.3,
+          "name": "EQUINIX INC SR UNSECURED 03/28 1.55",
+          "isin": "US29444UBL98"
+        },
+        {
+          "years": 1.72,
+          "gspread_bp": 93.8,
+          "name": "EQUINIX INC SR UNSECURED 05/28 2",
+          "isin": "US29444UBR68"
+        },
+        {
+          "years": 2.97,
+          "gspread_bp": 70.0,
+          "name": "EQUINIX INC SR UNSECURED 08/29 5",
+          "isin": "US29444UBV70"
+        },
+        {
+          "years": 3.23,
+          "gspread_bp": 80.5,
+          "name": "EQUINIX INC SR UNSECURED 11/29 3.2",
+          "isin": "US29444UBE55"
+        },
+        {
+          "years": 3.88,
+          "gspread_bp": 72.4,
+          "name": "EQUINIX INC SR UNSECURED 07/30 2.15",
+          "isin": "US29444UBH86"
+        },
+        {
+          "years": 4.22,
+          "gspread_bp": 87.6,
+          "name": "EQUINIX EU 2 FINANCING C COMPANY GUAR 11/30 4.6",
+          "isin": "US29390XAG97"
+        },
+        {
+          "years": 4.55,
+          "gspread_bp": 86.1,
+          "name": "EQUINIX ASIA FIN CORP COMPANY GUAR 03/31 4.4",
+          "isin": "US29447KAA34"
+        },
+        {
+          "years": 4.72,
+          "gspread_bp": 97.7,
+          "name": "EQUINIX INC SR UNSECURED 05/31 2.5",
+          "isin": "US29444UBS42"
+        },
+        {
+          "years": 4.97,
+          "gspread_bp": 95.8,
+          "name": "EQUINIX EU 2 FINANCING C COMPANY GUAR 08/31 5.25",
+          "isin": "US29390XAK00"
+        },
+        {
+          "years": 5.64,
+          "gspread_bp": 95.8,
+          "name": "EQUINIX INC SR UNSECURED 04/32 3.9",
+          "isin": "US29444UBU97"
+        },
+        {
+          "years": 6.55,
+          "gspread_bp": 103.7,
+          "name": "EQUINIX EU 2 FINANCING C COMPANY GUAR 03/33 4.7",
+          "isin": "US29390XAH70"
+        },
+        {
+          "years": 6.97,
+          "gspread_bp": 112.4,
+          "name": "EQUINIX INC SR UNSECURED 08/33 5.5",
+          "isin": "US29444UBY10"
+        },
+        {
+          "years": 7.8,
+          "gspread_bp": 107.8,
+          "name": "EQUINIX EU 2 FINANCING C COMPANY GUAR 06/34 5.5",
+          "isin": "US29390XAA28"
+        },
+        {
+          "years": 9.97,
+          "gspread_bp": 127.1,
+          "name": "EQUINIX INC SR UNSECURED 08/36 5.8",
+          "isin": "US29444UBX37"
+        },
+        {
+          "years": 23.89,
+          "gspread_bp": 102.0,
+          "name": "EQUINIX INC SR UNSECURED 07/50 3",
+          "isin": "US29444UBJ43"
+        },
+        {
+          "years": 25.05,
+          "gspread_bp": 103.0,
+          "name": "EQUINIX INC SR UNSECURED 09/51 2.95",
+          "isin": "US29444UBM71"
+        },
+        {
+          "years": 25.47,
+          "gspread_bp": 104.1,
+          "name": "EQUINIX INC SR UNSECURED 02/52 3.4",
+          "isin": "US29444UBT25"
+        }
+      ],
+      "shape_points_used": 15,
+      "issuer": "EQIX",
+      "name": "Equinix",
+      "rung": 5,
+      "note": null
+    },
+    "AMZN": {
+      "n_bonds": 40,
+      "bucket_monotonic": true,
+      "bucket_breaks": [],
+      "n_excluded_option": 0,
+      "thin_curve": false,
+      "tenor_span_years": 48.56,
+      "tenor_min_years": 0.99,
+      "tenor_max_years": 49.55,
+      "buckets": {
+        "2-5y": {
+          "label": "2–5Y",
+          "mean_bp": 47.0,
+          "n": 10
+        },
+        "5-10y": {
+          "label": "5–10Y",
+          "mean_bp": 69.9,
+          "n": 8
+        },
+        "10-20y": {
+          "label": "10–20Y",
+          "mean_bp": 88.7,
+          "n": 5
+        },
+        "20y+": {
+          "label": "20Y+",
+          "mean_bp": 112.6,
+          "n": 15
+        }
+      },
+      "constant_maturity_bp": {
+        "5y": 58.8,
+        "10y": 83.0,
+        "30y": 111.3
+      },
+      "slope_bp": 96.0,
+      "curve_inverted": false,
+      "negative_segment": "9.87Y 84bp → 10.99Y 73bp（−12bp）",
+      "quality": "ok",
+      "points": [
+        {
+          "years": 0.99,
+          "gspread_bp": 17.0,
+          "name": "AMAZON.COM INC SR UNSECURED 08/27 3.15",
+          "isin": "US023135BC96"
+        },
+        {
+          "years": 1.71,
+          "gspread_bp": 69.0,
+          "name": "AMAZON.COM INC SR UNSECURED 05/28 1.65",
+          "isin": "US023135BY17"
+        },
+        {
+          "years": 2.24,
+          "gspread_bp": 38.4,
+          "name": "AMAZON.COM INC SR UNSECURED 11/28 3.9",
+          "isin": "US023135CS30"
+        },
+        {
+          "years": 2.55,
+          "gspread_bp": 41.7,
+          "name": "AMAZON.COM INC SR UNSECURED 03/29 4",
+          "isin": "US023135DC78"
+        },
+        {
+          "years": 2.63,
+          "gspread_bp": 39.3,
+          "name": "AMAZON.COM INC SR UNSECURED 04/29 3.45",
+          "isin": "US023135CG91"
+        },
+        {
+          "years": 2.87,
+          "gspread_bp": 43.2,
+          "name": "AMAZON.COM INC SR UNSECURED 07/29 4.6",
+          "isin": "US023135EB86"
+        },
+        {
+          "years": 3.27,
+          "gspread_bp": 36.6,
+          "name": "AMAZON.COM INC SR UNSECURED 12/29 4.65",
+          "isin": "US023135CQ73"
+        },
+        {
+          "years": 3.77,
+          "gspread_bp": 32.0,
+          "name": "AMAZON.COM INC SR UNSECURED 06/30 1.5",
+          "isin": "US023135BS49"
+        },
+        {
+          "years": 4.24,
+          "gspread_bp": 53.2,
+          "name": "AMAZON.COM INC SR UNSECURED 11/30 4.1",
+          "isin": "US023135CT13"
+        },
+        {
+          "years": 4.54,
+          "gspread_bp": 58.3,
+          "name": "AMAZON.COM INC SR UNSECURED 03/31 4.25",
+          "isin": "US023135DD51"
+        },
+        {
+          "years": 4.71,
+          "gspread_bp": 67.5,
+          "name": "AMAZON.COM INC SR UNSECURED 05/31 2.1",
+          "isin": "US023135BZ81"
+        },
+        {
+          "years": 4.87,
+          "gspread_bp": 59.7,
+          "name": "AMAZON.COM INC SR UNSECURED 07/31 4.8",
+          "isin": "US023135EC69"
+        },
+        {
+          "years": 5.63,
+          "gspread_bp": 54.3,
+          "name": "AMAZON.COM INC SR UNSECURED 04/32 3.6",
+          "isin": "US023135CH74"
+        },
+        {
+          "years": 6.27,
+          "gspread_bp": 49.1,
+          "name": "AMAZON.COM INC SR UNSECURED 12/32 4.7",
+          "isin": "US023135CR56"
+        },
+        {
+          "years": 6.55,
+          "gspread_bp": 68.2,
+          "name": "AMAZON.COM INC SR UNSECURED 03/33 4.55",
+          "isin": "US023135DE35"
+        },
+        {
+          "years": 6.57,
+          "gspread_bp": 68.7,
+          "name": "AMAZON.COM INC SR UNSECURED 03/33 4.35",
+          "isin": "US023135CU85"
+        },
+        {
+          "years": 6.87,
+          "gspread_bp": 72.1,
+          "name": "AMAZON.COM INC SR UNSECURED 07/33 5.1",
+          "isin": "US023135ED43"
+        },
+        {
+          "years": 9.23,
+          "gspread_bp": 78.1,
+          "name": "AMAZON.COM INC SR UNSECURED 11/35 4.65",
+          "isin": "US023135CV68"
+        },
+        {
+          "years": 9.55,
+          "gspread_bp": 84.3,
+          "name": "AMAZON.COM INC SR UNSECURED 03/36 4.875",
+          "isin": "US023135DF00"
+        },
+        {
+          "years": 9.87,
+          "gspread_bp": 84.4,
+          "name": "AMAZON.COM INC SR UNSECURED 07/36 5.3",
+          "isin": "US023135EE26"
+        },
+        {
+          "years": 10.99,
+          "gspread_bp": 72.6,
+          "name": "AMAZON.COM INC SR UNSECURED 08/37 3.875",
+          "isin": "US023135BF28"
+        },
+        {
+          "years": 14.71,
+          "gspread_bp": 86.8,
+          "name": "AMAZON.COM INC SR UNSECURED 05/41 2.875",
+          "isin": "US023135CA22"
+        },
+        {
+          "years": 18.28,
+          "gspread_bp": 80.9,
+          "name": "AMAZON.COM INC SR UNSECURED 12/44 4.95",
+          "isin": "US023135AQ91"
+        },
+        {
+          "years": 19.55,
+          "gspread_bp": 100.9,
+          "name": "AMAZON.COM INC SR UNSECURED 03/46 5.65",
+          "isin": "US023135DG82"
+        },
+        {
+          "years": 19.87,
+          "gspread_bp": 102.3,
+          "name": "AMAZON.COM INC SR UNSECURED 07/46 6",
+          "isin": "US023135EF90"
+        },
+        {
+          "years": 20.99,
+          "gspread_bp": 101.3,
+          "name": "AMAZON.COM INC SR UNSECURED 08/47 4.05",
+          "isin": "US023135BJ40"
+        },
+        {
+          "years": 23.77,
+          "gspread_bp": 96.7,
+          "name": "AMAZON.COM INC SR UNSECURED 06/50 2.5",
+          "isin": "US023135BT22"
+        },
+        {
+          "years": 24.71,
+          "gspread_bp": 104.3,
+          "name": "AMAZON.COM INC SR UNSECURED 05/51 3.1",
+          "isin": "US023135CB05"
+        },
+        {
+          "years": 25.63,
+          "gspread_bp": 102.7,
+          "name": "AMAZON.COM INC SR UNSECURED 04/52 3.95",
+          "isin": "US023135CJ31"
+        },
+        {
+          "years": 29.23,
+          "gspread_bp": 111.3,
+          "name": "AMAZON.COM INC SR UNSECURED 11/55 5.45",
+          "isin": "US023135CW42"
+        },
+        {
+          "years": 29.55,
+          "gspread_bp": 114.9,
+          "name": "AMAZON.COM INC SR UNSECURED 03/56 5.8",
+          "isin": "US023135DH65"
+        },
+        {
+          "years": 29.87,
+          "gspread_bp": 111.6,
+          "name": "AMAZON.COM INC SR UNSECURED 07/56 6.1",
+          "isin": "US023135EG73"
+        },
+        {
+          "years": 30.99,
+          "gspread_bp": 109.0,
+          "name": "AMAZON.COM INC SR UNSECURED 08/57 4.25",
+          "isin": "US023135BM78"
+        },
+        {
+          "years": 33.77,
+          "gspread_bp": 98.4,
+          "name": "AMAZON.COM INC SR UNSECURED 06/60 2.7",
+          "isin": "US023135BU94"
+        },
+        {
+          "years": 34.71,
+          "gspread_bp": 110.3,
+          "name": "AMAZON.COM INC SR UNSECURED 05/61 3.25",
+          "isin": "US023135CC87"
+        },
+        {
+          "years": 35.63,
+          "gspread_bp": 109.0,
+          "name": "AMAZON.COM INC SR UNSECURED 04/62 4.1",
+          "isin": "US023135CK04"
+        },
+        {
+          "years": 39.24,
+          "gspread_bp": 126.6,
+          "name": "AMAZON.COM INC SR UNSECURED 11/65 5.55",
+          "isin": "US023135CY08"
+        },
+        {
+          "years": 39.55,
+          "gspread_bp": 128.5,
+          "name": "AMAZON.COM INC SR UNSECURED 03/66 5.95",
+          "isin": "US023135DJ22"
+        },
+        {
+          "years": 39.87,
+          "gspread_bp": 130.7,
+          "name": "AMAZON.COM INC SR UNSECURED 07/66 6.25",
+          "isin": "US023135EH56"
+        },
+        {
+          "years": 49.55,
+          "gspread_bp": 134.5,
+          "name": "AMAZON.COM INC SR UNSECURED 03/76 6.05",
+          "isin": "US023135DK94"
+        }
+      ],
+      "shape_points_used": 38,
+      "issuer": "AMZN",
+      "name": "Amazon.com",
+      "rung": 2,
+      "note": null
+    },
+    "META": {
+      "n_bonds": 26,
+      "bucket_monotonic": true,
+      "bucket_breaks": [],
+      "n_excluded_option": 0,
+      "thin_curve": false,
+      "tenor_span_years": 38.75,
+      "tenor_min_years": 0.97,
+      "tenor_max_years": 39.72,
+      "buckets": {
+        "2-5y": {
+          "label": "2–5Y",
+          "mean_bp": 56.1,
+          "n": 5
+        },
+        "5-10y": {
+          "label": "5–10Y",
+          "mean_bp": 96.6,
+          "n": 7
+        },
+        "10-20y": {
+          "label": "10–20Y",
+          "mean_bp": 162.6,
+          "n": 2
+        },
+        "20y+": {
+          "label": "20Y+",
+          "mean_bp": 180.8,
+          "n": 10
+        }
+      },
+      "constant_maturity_bp": {
+        "5y": 66.3,
+        "10y": 113.5,
+        "30y": 176.4
+      },
+      "slope_bp": 164.6,
+      "curve_inverted": false,
+      "negative_segment": null,
+      "quality": "ok",
+      "points": [
+        {
+          "years": 0.97,
+          "gspread_bp": 19.7,
+          "name": "META PLATFORMS INC SR UNSECURED 08/27 3.5",
+          "isin": "US30303M8G02"
+        },
+        {
+          "years": 1.72,
+          "gspread_bp": 26.3,
+          "name": "META PLATFORMS INC SR UNSECURED 05/28 4.6",
+          "isin": "US30303M8L96"
+        },
+        {
+          "years": 2.97,
+          "gspread_bp": 27.5,
+          "name": "META PLATFORMS INC SR UNSECURED 08/29 4.3",
+          "isin": "US30303M8S40"
+        },
+        {
+          "years": 3.72,
+          "gspread_bp": 50.1,
+          "name": "META PLATFORMS INC SR UNSECURED 05/30 4.8",
+          "isin": "US30303M8M79"
+        },
+        {
+          "years": 4.22,
+          "gspread_bp": 65.7,
+          "name": "META PLATFORMS INC SR UNSECURED 11/30 4.2",
+          "isin": "US30303MAB81"
+        },
+        {
+          "years": 4.72,
+          "gspread_bp": 71.3,
+          "name": "META PLATFORMS INC SR UNSECURED 05/31 4.55",
+          "isin": "US30303MAF95"
+        },
+        {
+          "years": 4.97,
+          "gspread_bp": 65.8,
+          "name": "META PLATFORMS INC SR UNSECURED 08/31 4.55",
+          "isin": "US30303M8T23"
+        },
+        {
+          "years": 5.97,
+          "gspread_bp": 81.3,
+          "name": "META PLATFORMS INC SR UNSECURED 08/32 3.85",
+          "isin": "US30303M8H84"
+        },
+        {
+          "years": 6.22,
+          "gspread_bp": 88.1,
+          "name": "META PLATFORMS INC SR UNSECURED 11/32 4.6",
+          "isin": "US30303MAC64"
+        },
+        {
+          "years": 6.72,
+          "gspread_bp": 98.8,
+          "name": "META PLATFORMS INC SR UNSECURED 05/33 4.875",
+          "isin": "US30303MAG78"
+        },
+        {
+          "years": 6.72,
+          "gspread_bp": 85.8,
+          "name": "META PLATFORMS INC SR UNSECURED 05/33 4.95",
+          "isin": "US30303M8N52"
+        },
+        {
+          "years": 7.97,
+          "gspread_bp": 93.7,
+          "name": "META PLATFORMS INC SR UNSECURED 08/34 4.75",
+          "isin": "US30303M8U95"
+        },
+        {
+          "years": 9.22,
+          "gspread_bp": 116.2,
+          "name": "META PLATFORMS INC SR UNSECURED 11/35 4.875",
+          "isin": "US30303MAD48"
+        },
+        {
+          "years": 9.72,
+          "gspread_bp": 112.0,
+          "name": "META PLATFORMS INC SR UNSECURED 05/36 5.25",
+          "isin": "US30303MAH51"
+        },
+        {
+          "years": 19.22,
+          "gspread_bp": 161.2,
+          "name": "META PLATFORMS INC SR UNSECURED 11/45 5.5",
+          "isin": "US30303M8X35"
+        },
+        {
+          "years": 19.72,
+          "gspread_bp": 163.9,
+          "name": "META PLATFORMS INC SR UNSECURED 05/46 6.2",
+          "isin": "US30303MAJ18"
+        },
+        {
+          "years": 25.97,
+          "gspread_bp": 161.6,
+          "name": "META PLATFORMS INC SR UNSECURED 08/52 4.45",
+          "isin": "US30303M8J41"
+        },
+        {
+          "years": 26.72,
+          "gspread_bp": 174.2,
+          "name": "META PLATFORMS INC SR UNSECURED 05/53 5.6",
+          "isin": "US30303M8Q83"
+        },
+        {
+          "years": 27.97,
+          "gspread_bp": 174.8,
+          "name": "META PLATFORMS INC SR UNSECURED 08/54 5.4",
+          "isin": "US30303M8V78"
+        },
+        {
+          "years": 29.22,
+          "gspread_bp": 177.6,
+          "name": "META PLATFORMS INC SR UNSECURED 11/55 5.625",
+          "isin": "US30303MAE21"
+        },
+        {
+          "years": 29.72,
+          "gspread_bp": 176.3,
+          "name": "META PLATFORMS INC SR UNSECURED 05/56 6.3",
+          "isin": "US30303MAK80"
+        },
+        {
+          "years": 35.97,
+          "gspread_bp": 176.9,
+          "name": "META PLATFORMS INC SR UNSECURED 08/62 4.65",
+          "isin": "US30303M8K14"
+        },
+        {
+          "years": 36.72,
+          "gspread_bp": 191.7,
+          "name": "META PLATFORMS INC SR UNSECURED 05/63 5.75",
+          "isin": "US30303M8R66"
+        },
+        {
+          "years": 37.97,
+          "gspread_bp": 191.7,
+          "name": "META PLATFORMS INC SR UNSECURED 08/64 5.55",
+          "isin": "US30303M8W51"
+        },
+        {
+          "years": 39.22,
+          "gspread_bp": 191.1,
+          "name": "META PLATFORMS INC SR UNSECURED 11/65 5.75",
+          "isin": "US30303M8Y18"
+        },
+        {
+          "years": 39.72,
+          "gspread_bp": 192.1,
+          "name": "META PLATFORMS INC SR UNSECURED 05/66 6.45",
+          "isin": "US30303MAL63"
+        }
+      ],
+      "shape_points_used": 24,
+      "issuer": "META",
+      "name": "Meta Platforms",
+      "rung": 4,
+      "note": null
+    },
+    "ORCL": {
+      "n_bonds": 51,
+      "bucket_monotonic": true,
+      "bucket_breaks": [],
+      "n_excluded_option": 0,
+      "thin_curve": false,
+      "tenor_span_years": 38.22,
+      "tenor_min_years": 1.22,
+      "tenor_max_years": 39.44,
+      "buckets": {
+        "2-5y": {
+          "label": "2–5Y",
+          "mean_bp": 153.4,
+          "n": 9
+        },
+        "5-10y": {
+          "label": "5–10Y",
+          "mean_bp": 203.7,
+          "n": 12
+        },
+        "10-20y": {
+          "label": "10–20Y",
+          "mean_bp": 241.6,
+          "n": 11
+        },
+        "20y+": {
+          "label": "20Y+",
+          "mean_bp": 252.8,
+          "n": 16
+        }
+      },
+      "constant_maturity_bp": {
+        "5y": 172.5,
+        "10y": 211.8,
+        "30y": 254.5
+      },
+      "slope_bp": 146.5,
+      "curve_inverted": false,
+      "negative_segment": "29.44Y 259bp → 33.60Y 228bp（−31bp）",
+      "quality": "ok",
+      "points": [
+        {
+          "years": 1.22,
+          "gspread_bp": 114.7,
+          "name": "ORACLE CORP SR UNSECURED 11/27 3.25",
+          "isin": "US68389XBN49"
+        },
+        {
+          "years": 1.69,
+          "gspread_bp": 104.7,
+          "name": "ORACLE CORP SR UNSECURED 05/28 4.5",
+          "isin": "US68389XCM56"
+        },
+        {
+          "years": 1.94,
+          "gspread_bp": 92.2,
+          "name": "ORACLE CORP SR UNSECURED 08/28 4.8",
+          "isin": "US68389XCY94"
+        },
+        {
+          "years": 2.44,
+          "gspread_bp": 125.4,
+          "name": "ORACLE CORP SR UNSECURED 02/29 4.55",
+          "isin": "US68389XDW20"
+        },
+        {
+          "years": 3.09,
+          "gspread_bp": 130.8,
+          "name": "ORACLE CORP SR UNSECURED 09/29 4.2",
+          "isin": "US68389XCS27"
+        },
+        {
+          "years": 3.21,
+          "gspread_bp": 132.8,
+          "name": "ORACLE CORP SR UNSECURED 11/29 6.15",
+          "isin": "US68389XCH61"
+        },
+        {
+          "years": 3.6,
+          "gspread_bp": 162.1,
+          "name": "ORACLE CORP SR UNSECURED 04/30 2.95",
+          "isin": "US68389XBV64"
+        },
+        {
+          "years": 3.69,
+          "gspread_bp": 149.8,
+          "name": "ORACLE CORP SR UNSECURED 05/30 4.65",
+          "isin": "US68389XCN30"
+        },
+        {
+          "years": 3.72,
+          "gspread_bp": 172.6,
+          "name": "ORACLE CORP SR UNSECURED 05/30 3.25",
+          "isin": "US68389XBD66"
+        },
+        {
+          "years": 4.08,
+          "gspread_bp": 163.6,
+          "name": "ORACLE CORP SR UNSECURED 09/30 4.45",
+          "isin": "US68389XDH52"
+        },
+        {
+          "years": 4.44,
+          "gspread_bp": 169.8,
+          "name": "ORACLE CORP SR UNSECURED 02/31 4.95",
+          "isin": "US68389XDX03"
+        },
+        {
+          "years": 4.58,
+          "gspread_bp": 173.6,
+          "name": "ORACLE CORP SR UNSECURED 03/31 2.875",
+          "isin": "US68389XCE31"
+        },
+        {
+          "years": 5.44,
+          "gspread_bp": 171.3,
+          "name": "ORACLE CORP SR UNSECURED 02/32 5.25",
+          "isin": "US68389XCZ69"
+        },
+        {
+          "years": 6.09,
+          "gspread_bp": 191.1,
+          "name": "ORACLE CORP SR UNSECURED 09/32 4.8",
+          "isin": "US68389XDK81"
+        },
+        {
+          "years": 6.21,
+          "gspread_bp": 190.0,
+          "name": "ORACLE CORP SR UNSECURED 11/32 6.25",
+          "isin": "US68389XCJ28"
+        },
+        {
+          "years": 6.45,
+          "gspread_bp": 197.5,
+          "name": "ORACLE CORP SR UNSECURED 02/33 4.9",
+          "isin": "US68389XCP87"
+        },
+        {
+          "years": 6.69,
+          "gspread_bp": 201.7,
+          "name": "ORACLE CORP SR UNSECURED 05/33 5.35",
+          "isin": "US68389XDY85"
+        },
+        {
+          "years": 7.87,
+          "gspread_bp": 202.9,
+          "name": "ORACLE CORP SR UNSECURED 07/34 4.3",
+          "isin": "US68389XAV73"
+        },
+        {
+          "years": 8.09,
+          "gspread_bp": 210.5,
+          "name": "ORACLE CORP SR UNSECURED 09/34 4.7",
+          "isin": "US68389XCT00"
+        },
+        {
+          "years": 8.72,
+          "gspread_bp": 220.2,
+          "name": "ORACLE CORP SR UNSECURED 05/35 3.9",
+          "isin": "US68389XBE40"
+        },
+        {
+          "years": 8.94,
+          "gspread_bp": 214.9,
+          "name": "ORACLE CORP SR UNSECURED 08/35 5.5",
+          "isin": "US68389XDA00"
+        },
+        {
+          "years": 9.08,
+          "gspread_bp": 217.3,
+          "name": "ORACLE CORP SR UNSECURED 09/35 5.2",
+          "isin": "US68389XDM48"
+        },
+        {
+          "years": 9.44,
+          "gspread_bp": 217.1,
+          "name": "ORACLE CORP SR UNSECURED 02/36 5.7",
+          "isin": "US68389XDZ50"
+        },
+        {
+          "years": 9.89,
+          "gspread_bp": 210.4,
+          "name": "ORACLE CORP SR UNSECURED 07/36 3.85",
+          "isin": "US68389XBH70"
+        },
+        {
+          "years": 11.22,
+          "gspread_bp": 226.8,
+          "name": "ORACLE CORP SR UNSECURED 11/37 3.8",
+          "isin": "US68389XBP96"
+        },
+        {
+          "years": 11.64,
+          "gspread_bp": 225.7,
+          "name": "ORACLE CORP SR UNSECURED 04/38 6.5",
+          "isin": "US68389XAE58"
+        },
+        {
+          "years": 12.87,
+          "gspread_bp": 237.8,
+          "name": "ORACLE CORP SR UNSECURED 07/39 6.125",
+          "isin": "US68389XAH89"
+        },
+        {
+          "years": 13.6,
+          "gspread_bp": 233.8,
+          "name": "ORACLE CORP SR UNSECURED 04/40 3.6",
+          "isin": "US68389XBW48"
+        },
+        {
+          "years": 13.89,
+          "gspread_bp": 248.8,
+          "name": "ORACLE CORP SR UNSECURED 07/40 5.375",
+          "isin": "US68389XAM74"
+        },
+        {
+          "years": 14.58,
+          "gspread_bp": 242.9,
+          "name": "ORACLE CORP SR UNSECURED 03/41 3.65",
+          "isin": "US68389XBZ78"
+        },
+        {
+          "years": 17.87,
+          "gspread_bp": 246.8,
+          "name": "ORACLE CORP SR UNSECURED 07/44 4.5",
+          "isin": "US68389XAW56"
+        },
+        {
+          "years": 18.72,
+          "gspread_bp": 250.5,
+          "name": "ORACLE CORP SR UNSECURED 05/45 4.125",
+          "isin": "US68389XBF15"
+        },
+        {
+          "years": 19.09,
+          "gspread_bp": 254.3,
+          "name": "ORACLE CORP SR UNSECURED 09/45 5.875",
+          "isin": "US68389XDP78"
+        },
+        {
+          "years": 19.44,
+          "gspread_bp": 252.7,
+          "name": "ORACLE CORP SR UNSECURED 02/46 6.55",
+          "isin": "US68389XEA90"
+        },
+        {
+          "years": 19.89,
+          "gspread_bp": 237.6,
+          "name": "ORACLE CORP SR UNSECURED 07/46 4",
+          "isin": "US68389XBJ37"
+        },
+        {
+          "years": 21.22,
+          "gspread_bp": 241.3,
+          "name": "ORACLE CORP SR UNSECURED 11/47 4",
+          "isin": "US68389XBQ79"
+        },
+        {
+          "years": 23.6,
+          "gspread_bp": 227.9,
+          "name": "ORACLE CORP SR UNSECURED 04/50 3.6",
+          "isin": "US68389XBX21"
+        },
+        {
+          "years": 24.58,
+          "gspread_bp": 231.3,
+          "name": "ORACLE CORP SR UNSECURED 03/51 3.95",
+          "isin": "US68389XCA19"
+        },
+        {
+          "years": 26.21,
+          "gspread_bp": 263.8,
+          "name": "ORACLE CORP SR UNSECURED 11/52 6.9",
+          "isin": "US68389XCK90"
+        },
+        {
+          "years": 26.45,
+          "gspread_bp": 263.3,
+          "name": "ORACLE CORP SR UNSECURED 02/53 5.55",
+          "isin": "US68389XCQ60"
+        },
+        {
+          "years": 28.09,
+          "gspread_bp": 258.7,
+          "name": "ORACLE CORP SR UNSECURED 09/54 5.375",
+          "isin": "US68389XCU72"
+        },
+        {
+          "years": 28.72,
+          "gspread_bp": 240.4,
+          "name": "ORACLE CORP SR UNSECURED 05/55 4.375",
+          "isin": "US68389XBG97"
+        },
+        {
+          "years": 28.94,
+          "gspread_bp": 258.4,
+          "name": "ORACLE CORP SR UNSECURED 08/55 6",
+          "isin": "US68389XDB82"
+        },
+        {
+          "years": 29.08,
+          "gspread_bp": 259.5,
+          "name": "ORACLE CORP SR UNSECURED 09/55 5.95",
+          "isin": "US68389XDR35"
+        },
+        {
+          "years": 29.44,
+          "gspread_bp": 258.7,
+          "name": "ORACLE CORP SR UNSECURED 02/56 6.7",
+          "isin": "US68389XEB73"
+        },
+        {
+          "years": 33.6,
+          "gspread_bp": 227.8,
+          "name": "ORACLE CORP SR UNSECURED 04/60 3.85",
+          "isin": "US68389XBY04"
+        },
+        {
+          "years": 34.58,
+          "gspread_bp": 230.9,
+          "name": "ORACLE CORP SR UNSECURED 03/61 4.1",
+          "isin": "US68389XCB91"
+        },
+        {
+          "years": 38.09,
+          "gspread_bp": 268.3,
+          "name": "ORACLE CORP SR UNSECURED 09/64 5.5",
+          "isin": "US68389XCV55"
+        },
+        {
+          "years": 38.94,
+          "gspread_bp": 269.9,
+          "name": "ORACLE CORP SR UNSECURED 08/65 6.125",
+          "isin": "US68389XDC65"
+        },
+        {
+          "years": 39.09,
+          "gspread_bp": 272.7,
+          "name": "ORACLE CORP SR UNSECURED 09/65 6.1",
+          "isin": "US68389XDT90"
+        },
+        {
+          "years": 39.44,
+          "gspread_bp": 271.9,
+          "name": "ORACLE CORP SR UNSECURED 02/66 6.85",
+          "isin": "US68389XEC56"
+        }
+      ],
+      "shape_points_used": 48,
+      "issuer": "ORCL",
+      "name": "Oracle",
+      "rung": 6,
+      "note": null
+    },
+    "GOOGL": {
+      "n_bonds": 30,
+      "bucket_monotonic": true,
+      "bucket_breaks": [],
+      "n_excluded_option": 0,
+      "thin_curve": false,
+      "tenor_span_years": 48.25,
+      "tenor_min_years": 0.97,
+      "tenor_max_years": 49.22,
+      "buckets": {
+        "2-5y": {
+          "label": "2–5Y",
+          "mean_bp": 42.3,
+          "n": 8
+        },
+        "5-10y": {
+          "label": "5–10Y",
+          "mean_bp": 70.2,
+          "n": 6
+        },
+        "10-20y": {
+          "label": "10–20Y",
+          "mean_bp": 91.0,
+          "n": 4
+        },
+        "20y+": {
+          "label": "20Y+",
+          "mean_bp": 108.9,
+          "n": 10
+        }
+      },
+      "constant_maturity_bp": {
+        "5y": 57.4,
+        "10y": 81.4,
+        "30y": 109.4
+      },
+      "slope_bp": 100.7,
+      "curve_inverted": false,
+      "negative_segment": "29.97Y 110bp → 33.97Y 78bp（−32bp）",
+      "quality": "ok",
+      "points": [
+        {
+          "years": 0.97,
+          "gspread_bp": -2.3,
+          "name": "ALPHABET INC SR UNSECURED 08/27 0.8",
+          "isin": "US02079KAJ60"
+        },
+        {
+          "years": 1.96,
+          "gspread_bp": 23.5,
+          "name": "ALPHABET INC SR UNSECURED 08/28 4.5",
+          "isin": "US02079KCL98"
+        },
+        {
+          "years": 2.22,
+          "gspread_bp": 30.9,
+          "name": "ALPHABET INC SR UNSECURED 11/28 3.875",
+          "isin": "US02079KAV98"
+        },
+        {
+          "years": 2.48,
+          "gspread_bp": 30.3,
+          "name": "ALPHABET INC SR UNSECURED 02/29 3.7",
+          "isin": "US02079KBJ51"
+        },
+        {
+          "years": 2.96,
+          "gspread_bp": 38.6,
+          "name": "ALPHABET INC SR UNSECURED 08/29 4.625",
+          "isin": "US02079KCN54"
+        },
+        {
+          "years": 3.72,
+          "gspread_bp": 43.1,
+          "name": "ALPHABET INC SR UNSECURED 05/30 4",
+          "isin": "US02079KAK34"
+        },
+        {
+          "years": 3.97,
+          "gspread_bp": 35.0,
+          "name": "ALPHABET INC SR UNSECURED 08/30 1.1",
+          "isin": "US02079KAD90"
+        },
+        {
+          "years": 4.22,
+          "gspread_bp": 52.9,
+          "name": "ALPHABET INC SR UNSECURED 11/30 4.1",
+          "isin": "US02079KAW71"
+        },
+        {
+          "years": 4.47,
+          "gspread_bp": 50.4,
+          "name": "ALPHABET INC SR UNSECURED 02/31 4.1",
+          "isin": "US02079KBK25"
+        },
+        {
+          "years": 4.97,
+          "gspread_bp": 57.5,
+          "name": "ALPHABET INC SR UNSECURED 08/31 4.875",
+          "isin": "US02079KCQ85"
+        },
+        {
+          "years": 6.22,
+          "gspread_bp": 53.4,
+          "name": "ALPHABET INC SR UNSECURED 11/32 4.375",
+          "isin": "US02079KAX54"
+        },
+        {
+          "years": 6.47,
+          "gspread_bp": 64.0,
+          "name": "ALPHABET INC SR UNSECURED 02/33 4.4",
+          "isin": "US02079KBL08"
+        },
+        {
+          "years": 6.97,
+          "gspread_bp": 69.1,
+          "name": "ALPHABET INC SR UNSECURED 08/33 5.2",
+          "isin": "US02079KCR68"
+        },
+        {
+          "years": 9.22,
+          "gspread_bp": 76.8,
+          "name": "ALPHABET INC SR UNSECURED 11/35 4.7",
+          "isin": "US02079KAY38"
+        },
+        {
+          "years": 9.47,
+          "gspread_bp": 76.5,
+          "name": "ALPHABET INC SR UNSECURED 02/36 4.8",
+          "isin": "US02079KBM80"
+        },
+        {
+          "years": 9.97,
+          "gspread_bp": 81.4,
+          "name": "ALPHABET INC SR UNSECURED 08/36 5.45",
+          "isin": "US02079KCS42"
+        },
+        {
+          "years": 13.97,
+          "gspread_bp": 77.4,
+          "name": "ALPHABET INC SR UNSECURED 08/40 1.9",
+          "isin": "US02079KAE73"
+        },
+        {
+          "years": 19.22,
+          "gspread_bp": 93.3,
+          "name": "ALPHABET INC SR UNSECURED 11/45 5.35",
+          "isin": "US02079KAZ03"
+        },
+        {
+          "years": 19.47,
+          "gspread_bp": 93.8,
+          "name": "ALPHABET INC SR UNSECURED 02/46 5.5",
+          "isin": "US02079KBN63"
+        },
+        {
+          "years": 19.97,
+          "gspread_bp": 99.5,
+          "name": "ALPHABET INC SR UNSECURED 08/46 6.25",
+          "isin": "US02079KCT25"
+        },
+        {
+          "years": 23.97,
+          "gspread_bp": 79.0,
+          "name": "ALPHABET INC SR UNSECURED 08/50 2.05",
+          "isin": "US02079KAF49"
+        },
+        {
+          "years": 28.72,
+          "gspread_bp": 105.0,
+          "name": "ALPHABET INC SR UNSECURED 05/55 5.25",
+          "isin": "US02079KAM99"
+        },
+        {
+          "years": 29.22,
+          "gspread_bp": 108.0,
+          "name": "ALPHABET INC SR UNSECURED 11/55 5.45",
+          "isin": "US02079KBA43"
+        },
+        {
+          "years": 29.47,
+          "gspread_bp": 106.1,
+          "name": "ALPHABET INC SR UNSECURED 02/56 5.65",
+          "isin": "US02079KBP12"
+        },
+        {
+          "years": 29.97,
+          "gspread_bp": 109.6,
+          "name": "ALPHABET INC SR UNSECURED 08/56 6.375",
+          "isin": "US02079KCU97"
+        },
+        {
+          "years": 33.97,
+          "gspread_bp": 77.6,
+          "name": "ALPHABET INC SR UNSECURED 08/60 2.25",
+          "isin": "US02079KAG22"
+        },
+        {
+          "years": 38.72,
+          "gspread_bp": 119.5,
+          "name": "ALPHABET INC SR UNSECURED 05/65 5.3",
+          "isin": "US02079KAN72"
+        },
+        {
+          "years": 39.47,
+          "gspread_bp": 125.5,
+          "name": "ALPHABET INC SR UNSECURED 02/66 5.75",
+          "isin": "US02079KBQ94"
+        },
+        {
+          "years": 39.97,
+          "gspread_bp": 127.5,
+          "name": "ALPHABET INC SR UNSECURED 08/66 6.5",
+          "isin": "US02079KCV70"
+        },
+        {
+          "years": 49.22,
+          "gspread_bp": 131.6,
+          "name": "ALPHABET INC SR UNSECURED 11/75 5.7",
+          "isin": "US02079KBB26"
+        }
+      ],
+      "shape_points_used": 28,
+      "issuer": "GOOGL",
+      "name": "Alphabet",
+      "rung": 2,
+      "note": null
+    },
+    "ETR": {
+      "n_bonds": 41,
+      "bucket_monotonic": true,
+      "bucket_breaks": [],
+      "n_excluded_option": 2,
+      "thin_curve": false,
+      "tenor_span_years": 29.04,
+      "tenor_min_years": 1.02,
+      "tenor_max_years": 30.06,
+      "buckets": {
+        "2-5y": {
+          "label": "2–5Y",
+          "mean_bp": 53.0,
+          "n": 5
+        },
+        "5-10y": {
+          "label": "5–10Y",
+          "mean_bp": 76.7,
+          "n": 13
+        },
+        "10-20y": {
+          "label": "10–20Y",
+          "mean_bp": 92.4,
+          "n": 2
+        },
+        "20y+": {
+          "label": "20Y+",
+          "mean_bp": 93.2,
+          "n": 18
+        }
+      },
+      "constant_maturity_bp": {
+        "5y": 61.3,
+        "10y": 88.4,
+        "30y": 95.2
+      },
+      "slope_bp": 40.7,
+      "curve_inverted": false,
+      "negative_segment": "3.80Y 55bp → 4.30Y 39bp（−16bp）",
+      "quality": "ok",
+      "points": [
+        {
+          "years": 1.02,
+          "gspread_bp": 14.6,
+          "name": "ENTERGY LOUISIANA LLC COLLATERAL T 09/27 3.12",
+          "isin": "US29364WAZ14"
+        },
+        {
+          "years": 1.77,
+          "gspread_bp": 32.2,
+          "name": "ENTERGY ARKANSAS LLC 1ST MORTGAGE 06/28 4",
+          "isin": "US29364DAV29"
+        },
+        {
+          "years": 1.77,
+          "gspread_bp": 19.5,
+          "name": "ENTERGY MISSISSIPPI LLC 1ST MORTGAGE 06/28 2.85",
+          "isin": "US29364NAT54"
+        },
+        {
+          "years": 3.8,
+          "gspread_bp": 54.8,
+          "name": "ENTERGY CORP SR UNSECURED 06/30 2.8",
+          "isin": "US29364GAL77"
+        },
+        {
+          "years": 4.3,
+          "gspread_bp": 39.1,
+          "name": "ENTERGY LOUISIANA LLC 1ST MORTGAGE 12/30 1.6",
+          "isin": "US29364WBE75"
+        },
+        {
+          "years": 4.55,
+          "gspread_bp": 60.9,
+          "name": "ENTERGY TEXAS INC 1ST MORTGAGE 03/31 1.75",
+          "isin": "US29365TAK07"
+        },
+        {
+          "years": 4.76,
+          "gspread_bp": 47.0,
+          "name": "ENTERGY LOUISIANA LLC COLLATERAL T 06/31 3.05",
+          "isin": "US29364WAX65"
+        },
+        {
+          "years": 4.8,
+          "gspread_bp": 63.3,
+          "name": "ENTERGY CORP SR UNSECURED 06/31 2.4",
+          "isin": "US29364GAP81"
+        },
+        {
+          "years": 5.8,
+          "gspread_bp": 53.5,
+          "name": "ENTERGY LOUISIANA LLC 1ST MORTGAGE 06/32 2.35",
+          "isin": "US29364WBH07"
+        },
+        {
+          "years": 6.39,
+          "gspread_bp": 69.7,
+          "name": "ENTERGY ARKANSAS LLC 1ST MORTGAGE 01/33 5.15",
+          "isin": "US29366MAD02"
+        },
+        {
+          "years": 6.55,
+          "gspread_bp": 72.5,
+          "name": "ENTERGY LOUISIANA LLC COLLATERAL T 03/33 4",
+          "isin": "US29364WBA53"
+        },
+        {
+          "years": 7.02,
+          "gspread_bp": 74.9,
+          "name": "ENTERGY MISSISSIPPI LLC 1ST MORTGAGE 09/33 5",
+          "isin": "US29366WAD83"
+        },
+        {
+          "years": 7.06,
+          "gspread_bp": 70.0,
+          "name": "ENTERGY ARKANSAS LLC 1ST MORTGAGE 09/33 5.3",
+          "isin": "US29366MAE84"
+        },
+        {
+          "years": 7.55,
+          "gspread_bp": 70.8,
+          "name": "ENTERGY LOUISIANA LLC 1ST MORTGAGE 03/34 5.35",
+          "isin": "US29364WBM91"
+        },
+        {
+          "years": 7.76,
+          "gspread_bp": 72.7,
+          "name": "ENTERGY ARKANSAS LLC 1ST MORTGAGE 06/34 5.45",
+          "isin": "US29366MAF59"
+        },
+        {
+          "years": 8.05,
+          "gspread_bp": 74.9,
+          "name": "ENTERGY LOUISIANA LLC 1ST MORTGAGE 09/34 5.15",
+          "isin": "US29364WBP23"
+        },
+        {
+          "years": 8.64,
+          "gspread_bp": 87.3,
+          "name": "ENTERGY TEXAS INC 1ST MORTGAGE 04/35 5.25",
+          "isin": "US29365TAQ76"
+        },
+        {
+          "years": 9.39,
+          "gspread_bp": 82.6,
+          "name": "ENTERGY ARKANSAS LLC 1ST MORTGAGE 01/36 4.95",
+          "isin": "US29366MAH16"
+        },
+        {
+          "years": 9.64,
+          "gspread_bp": 87.1,
+          "name": "ENTERGY LOUISIANA LLC 1ST MORTGAGE 04/36 4.9",
+          "isin": "US29364WBR88"
+        },
+        {
+          "years": 9.64,
+          "gspread_bp": 92.1,
+          "name": "ENTERGY MISSISSIPPI LLC 1ST MORTGAGE 04/36 5.05",
+          "isin": "US29366WAH97"
+        },
+        {
+          "years": 9.8,
+          "gspread_bp": 88.7,
+          "name": "ENTERGY TEXAS INC 1ST MORTGAGE 06/36 5.2",
+          "isin": "US29365TAR59"
+        },
+        {
+          "years": 10.06,
+          "gspread_bp": 88.3,
+          "name": "ENTERGY LOUISIANA LLC COLLATERAL T 09/36 5.5",
+          "isin": "US29364WBT45"
+        },
+        {
+          "years": 12.59,
+          "gspread_bp": 96.6,
+          "name": "ENTERGY TEXAS INC 1ST MORTGAGE 03/39 4.5",
+          "isin": "US29365TAH77"
+        },
+        {
+          "years": 22.02,
+          "gspread_bp": 93.2,
+          "name": "ENTERGY LOUISIANA LLC COLLATERAL T 09/48 4.2",
+          "isin": "US29364WBB37"
+        },
+        {
+          "years": 22.6,
+          "gspread_bp": 88.9,
+          "name": "ENTERGY ARKANSAS LLC 1ST MORTGAGE 04/49 4.2",
+          "isin": "US29366MAA62"
+        },
+        {
+          "years": 22.77,
+          "gspread_bp": 91.1,
+          "name": "ENTERGY MISSISSIPPI LLC 1ST MORTGAGE 06/49 3.85",
+          "isin": "US29366WAA45"
+        },
+        {
+          "years": 23.1,
+          "gspread_bp": 89.9,
+          "name": "ENTERGY TEXAS INC 1ST MORTGAGE 09/49 3.55",
+          "isin": "US29365TAJ34"
+        },
+        {
+          "years": 23.6,
+          "gspread_bp": 92.7,
+          "name": "ENTERGY LOUISIANA LLC COLLATERAL T 04/50 4.2",
+          "isin": "US29364WBC10"
+        },
+        {
+          "years": 24.76,
+          "gspread_bp": 88.7,
+          "name": "ENTERGY MISSISSIPPI LLC 1ST MORTGAGE 06/51 3.5",
+          "isin": "US29366WAB28"
+        },
+        {
+          "years": 26.06,
+          "gspread_bp": 96.3,
+          "name": "ENTERGY TEXAS INC 1ST MORTGAGE 09/52 5",
+          "isin": "US29365TAM62"
+        },
+        {
+          "years": 26.06,
+          "gspread_bp": 86.7,
+          "name": "ENTERGY LOUISIANA LLC 1ST MORTGAGE 09/52 4.75",
+          "isin": "US29364WBL19"
+        },
+        {
+          "years": 27.02,
+          "gspread_bp": 93.2,
+          "name": "ENTERGY TEXAS INC 1ST MORTGAGE 09/53 5.8",
+          "isin": "US29365TAN46"
+        },
+        {
+          "years": 27.55,
+          "gspread_bp": 94.7,
+          "name": "ENTERGY LOUISIANA LLC 1ST MORTGAGE 03/54 5.7",
+          "isin": "US29364WBN74"
+        },
+        {
+          "years": 27.76,
+          "gspread_bp": 98.9,
+          "name": "ENTERGY MISSISSIPPI LLC 1ST MORTGAGE 06/54 5.85",
+          "isin": "US29366WAE66"
+        },
+        {
+          "years": 27.76,
+          "gspread_bp": 93.2,
+          "name": "ENTERGY ARKANSAS LLC 1ST MORTGAGE 06/54 5.75",
+          "isin": "US29366MAG33"
+        },
+        {
+          "years": 28.05,
+          "gspread_bp": 96.1,
+          "name": "ENTERGY TEXAS INC 1ST MORTGAGE 09/54 5.55",
+          "isin": "US29365TAP93"
+        },
+        {
+          "years": 28.55,
+          "gspread_bp": 96.3,
+          "name": "ENTERGY LOUISIANA LLC 1ST MORTGAGE 03/55 5.8",
+          "isin": "US29364WBQ06"
+        },
+        {
+          "years": 28.64,
+          "gspread_bp": 95.6,
+          "name": "ENTERGY MISSISSIPPI LLC 1ST MORTGAGE 04/55 5.8",
+          "isin": "US29366WAG15"
+        },
+        {
+          "years": 29.39,
+          "gspread_bp": 93.4,
+          "name": "ENTERGY ARKANSAS LLC 1ST MORTGAGE 01/56 5.75",
+          "isin": "US29366MAJ71"
+        },
+        {
+          "years": 29.64,
+          "gspread_bp": 94.0,
+          "name": "ENTERGY LOUISIANA LLC 1ST MORTGAGE 04/56 5.65",
+          "isin": "US29364WBS61"
+        },
+        {
+          "years": 30.06,
+          "gspread_bp": 95.4,
+          "name": "ENTERGY LOUISIANA LLC COLLATERAL T 09/56 6.2",
+          "isin": "US29364WBU18"
+        }
+      ],
+      "shape_points_used": 38,
+      "issuer": "ETR",
+      "name": "Entergy",
+      "rung": 3,
+      "note": null
+    },
+    "D": {
+      "n_bonds": 25,
+      "bucket_monotonic": false,
+      "bucket_breaks": [
+        "10-20y 102bp → 20y+ 95bp"
+      ],
+      "n_excluded_option": 6,
+      "thin_curve": false,
+      "tenor_span_years": 37.05,
+      "tenor_min_years": 1.72,
+      "tenor_max_years": 38.77,
+      "buckets": {
+        "2-5y": {
+          "label": "2–5Y",
+          "mean_bp": 64.6,
+          "n": 2
+        },
+        "5-10y": {
+          "label": "5–10Y",
+          "mean_bp": 79.2,
+          "n": 10
+        },
+        "10-20y": {
+          "label": "10–20Y",
+          "mean_bp": 101.8,
+          "n": 8
+        },
+        "20y+": {
+          "label": "20Y+",
+          "mean_bp": 94.8,
+          "n": 3
+        }
+      },
+      "constant_maturity_bp": {
+        "5y": 65.7,
+        "10y": 101.2,
+        "30y": 87.1
+      },
+      "slope_bp": 29.5,
+      "curve_inverted": false,
+      "negative_segment": "16.05Y 116bp → 16.80Y 88bp（−27bp）",
+      "quality": "ok",
+      "points": [
+        {
+          "years": 1.72,
+          "gspread_bp": 51.7,
+          "name": "DOMINION ENERGY INC SR UNSECURED 05/28 4.6",
+          "isin": "US25746UDY29"
+        },
+        {
+          "years": 1.77,
+          "gspread_bp": 45.2,
+          "name": "DOMINION ENERGY INC SR UNSECURED 06/28 4.25",
+          "isin": "US25746UCY38"
+        },
+        {
+          "years": 3.8,
+          "gspread_bp": 61.0,
+          "name": "DOMINION ENERGY INC SR UNSECURED 06/30 5",
+          "isin": "US25746UDW62"
+        },
+        {
+          "years": 4.97,
+          "gspread_bp": 68.2,
+          "name": "DOMINION ENERGY INC SR UNSECURED 08/31 2.25",
+          "isin": "US25746UDL08"
+        },
+        {
+          "years": 5.26,
+          "gspread_bp": 44.4,
+          "name": "DOMINION ENERGY SOUTH 1ST MORTGAGE 12/31 2.3",
+          "isin": "US25731VAA26"
+        },
+        {
+          "years": 5.43,
+          "gspread_bp": 59.9,
+          "name": "DOMINION ENERGY SOUTH 1ST MORTGAGE 02/32 6.625",
+          "isin": "US837004BV11"
+        },
+        {
+          "years": 5.97,
+          "gspread_bp": 77.2,
+          "name": "DOMINION ENERGY INC SR UNSECURED 08/32 4.35",
+          "isin": "US25746UDP12"
+        },
+        {
+          "years": 6.55,
+          "gspread_bp": 81.8,
+          "name": "DOMINION ENERGY INC SR UNSECURED 03/33 6.3",
+          "isin": "US25746UAN90"
+        },
+        {
+          "years": 6.72,
+          "gspread_bp": 68.5,
+          "name": "DOMINION ENERGY SOUTH 1ST MORTGAGE 05/33 5.3",
+          "isin": "US837004BX76"
+        },
+        {
+          "years": 6.93,
+          "gspread_bp": 84.2,
+          "name": "DOMINION ENERGY INC SR UNSECURED 08/33 5.25",
+          "isin": "US257469AJ58"
+        },
+        {
+          "years": 8.39,
+          "gspread_bp": 76.9,
+          "name": "DOMINION ENERGY SOUTH 1ST MORTGAGE 01/35 5.3",
+          "isin": "US25731VAC81"
+        },
+        {
+          "years": 8.55,
+          "gspread_bp": 99.5,
+          "name": "DOMINION ENERGY INC SR UNSECURED 03/35 5.45",
+          "isin": "US25746UDX46"
+        },
+        {
+          "years": 8.8,
+          "gspread_bp": 96.8,
+          "name": "DOMINION ENERGY INC SR UNSECURED 06/35 5.95",
+          "isin": "US25746UAV17"
+        },
+        {
+          "years": 9.8,
+          "gspread_bp": 103.2,
+          "name": "DOMINION ENERGY INC SR UNSECURED 06/36 5.35",
+          "isin": "US25746UEB17"
+        },
+        {
+          "years": 11.39,
+          "gspread_bp": 87.0,
+          "name": "DOMINION ENERGY SOUTH 1ST MORTGAGE 01/38 6.05",
+          "isin": "US837004CB48"
+        },
+        {
+          "years": 11.8,
+          "gspread_bp": 108.1,
+          "name": "DOMINION ENERGY INC SR UNSECURED 06/38 7",
+          "isin": "US25746UBD00"
+        },
+        {
+          "years": 14.44,
+          "gspread_bp": 85.2,
+          "name": "DOMINION ENERGY SOUTH 1ST MORTGAGE 02/41 5.45",
+          "isin": "US837004CE86"
+        },
+        {
+          "years": 14.64,
+          "gspread_bp": 112.5,
+          "name": "DOMINION ENERGY INC SR UNSECURED 04/41 3.3",
+          "isin": "US25746UDK25"
+        },
+        {
+          "years": 14.93,
+          "gspread_bp": 111.3,
+          "name": "DOMINION ENERGY INC SR UNSECURED 08/41 4.9",
+          "isin": "US25746UBM09"
+        },
+        {
+          "years": 16.05,
+          "gspread_bp": 115.5,
+          "name": "DOMINION ENERGY INC SR UNSECURED 09/42 4.05",
+          "isin": "US25746UBQ13"
+        },
+        {
+          "years": 16.8,
+          "gspread_bp": 88.2,
+          "name": "DOMINION ENERGY SOUTH 1ST MORTGAGE 06/43 4.6",
+          "isin": "US837004CG35"
+        },
+        {
+          "years": 18.27,
+          "gspread_bp": 106.8,
+          "name": "DOMINION ENERGY INC SR UNSECURED 12/44 4.7",
+          "isin": "US25746UCC18"
+        },
+        {
+          "years": 22.55,
+          "gspread_bp": 108.0,
+          "name": "DOMINION ENERGY INC SR UNSECURED 03/49 4.6",
+          "isin": "US25746UCZ03"
+        },
+        {
+          "years": 27.14,
+          "gspread_bp": 86.0,
+          "name": "DOMINION ENERGY SOUTH 1ST MORTGAGE 10/53 6.25",
+          "isin": "US25731VAB09"
+        },
+        {
+          "years": 38.77,
+          "gspread_bp": 90.5,
+          "name": "DOMINION ENERGY SOUTH 1ST MORTGAGE 06/65 5.1",
+          "isin": "US837004CJ73"
+        }
+      ],
+      "shape_points_used": 23,
+      "issuer": "D",
+      "name": "Dominion Energy",
+      "rung": 3,
+      "note": null
+    },
+    "AEP": {
+      "n_bonds": 39,
+      "bucket_monotonic": true,
+      "bucket_breaks": [],
+      "n_excluded_option": 4,
+      "thin_curve": false,
+      "tenor_span_years": 28.34,
+      "tenor_min_years": 1.22,
+      "tenor_max_years": 29.55,
+      "buckets": {
+        "2-5y": {
+          "label": "2–5Y",
+          "mean_bp": 55.6,
+          "n": 8
+        },
+        "5-10y": {
+          "label": "5–10Y",
+          "mean_bp": 84.1,
+          "n": 10
+        },
+        "10-20y": {
+          "label": "10–20Y",
+          "mean_bp": 96.5,
+          "n": 4
+        },
+        "20y+": {
+          "label": "20Y+",
+          "mean_bp": 99.6,
+          "n": 14
+        }
+      },
+      "constant_maturity_bp": {
+        "5y": 72.8,
+        "10y": 94.2,
+        "30y": 91.5
+      },
+      "slope_bp": 47.1,
+      "curve_inverted": false,
+      "negative_segment": "18.77Y 106bp → 19.55Y 85bp（−21bp）",
+      "quality": "ok",
+      "points": [
+        {
+          "years": 1.22,
+          "gspread_bp": 74.9,
+          "name": "AMERICAN ELECTRIC POWER SR UNSECURED 11/27 3.2",
+          "isin": "US025537AJ08"
+        },
+        {
+          "years": 1.72,
+          "gspread_bp": 49.4,
+          "name": "INDIANA MICHIGAN POWER SR UNSECURED 05/28 3.85",
+          "isin": "US454889AS52"
+        },
+        {
+          "years": 1.77,
+          "gspread_bp": 49.6,
+          "name": "AEP TEXAS INC SR UNSECURED 06/28 3.95",
+          "isin": "US00108WAH34"
+        },
+        {
+          "years": 2.27,
+          "gspread_bp": 44.4,
+          "name": "AMERICAN ELECTRIC POWER SR UNSECURED 12/28 4.3",
+          "isin": "US025537AM37"
+        },
+        {
+          "years": 2.39,
+          "gspread_bp": 52.0,
+          "name": "AMERICAN ELECTRIC POWER SR UNSECURED 01/29 5.2",
+          "isin": "US025537AY74"
+        },
+        {
+          "years": 2.72,
+          "gspread_bp": 52.5,
+          "name": "AEP TEXAS INC SR UNSECURED 05/29 5.45",
+          "isin": "US00108WAS98"
+        },
+        {
+          "years": 3.51,
+          "gspread_bp": 66.3,
+          "name": "AMERICAN ELECTRIC POWER SR UNSECURED 03/30 2.3",
+          "isin": "US025537AN10"
+        },
+        {
+          "years": 3.6,
+          "gspread_bp": 53.4,
+          "name": "OHIO POWER COMPANY SR UNSECURED 04/30 2.6",
+          "isin": "US677415CS83"
+        },
+        {
+          "years": 3.85,
+          "gspread_bp": 51.2,
+          "name": "AEP TEXAS INC SR UNSECURED 07/30 2.1",
+          "isin": "US00108WAM29"
+        },
+        {
+          "years": 4.39,
+          "gspread_bp": 56.3,
+          "name": "OHIO POWER COMPANY SR UNSECURED 01/31 1.625",
+          "isin": "US677415CT66"
+        },
+        {
+          "years": 4.6,
+          "gspread_bp": 68.7,
+          "name": "APPALACHIAN POWER CO SR UNSECURED 04/31 2.7",
+          "isin": "US037735CZ84"
+        },
+        {
+          "years": 5.72,
+          "gspread_bp": 80.1,
+          "name": "AEP TEXAS INC SR UNSECURED 05/32 4.7",
+          "isin": "US00108WAP59"
+        },
+        {
+          "years": 5.93,
+          "gspread_bp": 68.3,
+          "name": "APPALACHIAN POWER CO SR UNSECURED 08/32 4.5",
+          "isin": "US037735DA25"
+        },
+        {
+          "years": 6.18,
+          "gspread_bp": 73.9,
+          "name": "AMERICAN ELECTRIC POWER SR UNSECURED 11/32 5.95",
+          "isin": "US025537AW19"
+        },
+        {
+          "years": 6.51,
+          "gspread_bp": 74.1,
+          "name": "AMERICAN ELECTRIC POWER SR UNSECURED 03/33 5.625",
+          "isin": "US025537AX91"
+        },
+        {
+          "years": 6.77,
+          "gspread_bp": 95.1,
+          "name": "AEP TEXAS INC SR UNSECURED 06/33 5.4",
+          "isin": "US00108WAR16"
+        },
+        {
+          "years": 6.77,
+          "gspread_bp": 79.4,
+          "name": "OHIO POWER COMPANY SR UNSECURED 06/33 5",
+          "isin": "US677415CV13"
+        },
+        {
+          "years": 7.6,
+          "gspread_bp": 90.1,
+          "name": "APPALACHIAN POWER CO SR UNSECURED 04/34 5.65",
+          "isin": "US037735DB08"
+        },
+        {
+          "years": 7.72,
+          "gspread_bp": 93.6,
+          "name": "AEP TEXAS INC SR UNSECURED 05/34 5.7",
+          "isin": "US00108WAT71"
+        },
+        {
+          "years": 7.76,
+          "gspread_bp": 86.5,
+          "name": "OHIO POWER COMPANY SR UNSECURED 06/34 5.65",
+          "isin": "US677415CW95"
+        },
+        {
+          "years": 9.64,
+          "gspread_bp": 99.7,
+          "name": "AEP TEXAS INC SR UNSECURED 04/36 5.2",
+          "isin": "US00108WAV28"
+        },
+        {
+          "years": 10.55,
+          "gspread_bp": 85.9,
+          "name": "INDIANA MICHIGAN POWER SR UNSECURED 03/37 6.05",
+          "isin": "US454889AM82"
+        },
+        {
+          "years": 11.6,
+          "gspread_bp": 109.3,
+          "name": "APPALACHIAN POWER CO SR UNSECURED 04/38 7",
+          "isin": "US037735CM71"
+        },
+        {
+          "years": 18.77,
+          "gspread_bp": 105.9,
+          "name": "APPALACHIAN POWER CO SR UNSECURED 06/45 4.45",
+          "isin": "US037735CV70"
+        },
+        {
+          "years": 19.55,
+          "gspread_bp": 84.9,
+          "name": "INDIANA MICHIGAN POWER SR UNSECURED 03/46 4.55",
+          "isin": "US454889AQ96"
+        },
+        {
+          "years": 20.85,
+          "gspread_bp": 84.4,
+          "name": "INDIANA MICHIGAN POWER SR UNSECURED 07/47 3.75",
+          "isin": "US454889AR79"
+        },
+        {
+          "years": 21.1,
+          "gspread_bp": 102.8,
+          "name": "AEP TEXAS INC SR UNSECURED 10/47 3.8",
+          "isin": "US00108WAF77"
+        },
+        {
+          "years": 21.6,
+          "gspread_bp": 101.7,
+          "name": "OHIO POWER COMPANY SR UNSECURED 04/48 4.15",
+          "isin": "US677415CQ28"
+        },
+        {
+          "years": 21.97,
+          "gspread_bp": 88.0,
+          "name": "INDIANA MICHIGAN POWER SR UNSECURED 08/48 4.25",
+          "isin": "US454889AT36"
+        },
+        {
+          "years": 22.51,
+          "gspread_bp": 102.2,
+          "name": "APPALACHIAN POWER CO SR UNSECURED 03/49 4.5",
+          "isin": "US037735CX37"
+        },
+        {
+          "years": 22.68,
+          "gspread_bp": 109.1,
+          "name": "AEP TEXAS INC SR UNSECURED 05/49 4.15",
+          "isin": "US00108WAJ99"
+        },
+        {
+          "years": 22.77,
+          "gspread_bp": 99.6,
+          "name": "OHIO POWER COMPANY SR UNSECURED 06/49 4",
+          "isin": "US677415CR01"
+        },
+        {
+          "years": 23.39,
+          "gspread_bp": 106.7,
+          "name": "AEP TEXAS INC SR UNSECURED 01/50 3.45",
+          "isin": "US00108WAK62"
+        },
+        {
+          "years": 23.68,
+          "gspread_bp": 105.3,
+          "name": "APPALACHIAN POWER CO SR UNSECURED 05/50 3.7",
+          "isin": "US037735CY10"
+        },
+        {
+          "years": 24.68,
+          "gspread_bp": 91.7,
+          "name": "INDIANA MICHIGAN POWER SR UNSECURED 05/51 3.25",
+          "isin": "US454889AU09"
+        },
+        {
+          "years": 25.72,
+          "gspread_bp": 110.7,
+          "name": "AEP TEXAS INC SR UNSECURED 05/52 5.25",
+          "isin": "US00108WAQ33"
+        },
+        {
+          "years": 26.6,
+          "gspread_bp": 92.8,
+          "name": "INDIANA MICHIGAN POWER SR UNSECURED 04/53 5.625",
+          "isin": "US454889AV81"
+        },
+        {
+          "years": 29.14,
+          "gspread_bp": 108.6,
+          "name": "AEP TEXAS INC SR UNSECURED 10/55 5.85",
+          "isin": "US00108WAU45"
+        },
+        {
+          "years": 29.55,
+          "gspread_bp": 91.5,
+          "name": "INDIANA MICHIGAN POWER SR UNSECURED 03/56 5.6",
+          "isin": "US454889AW64"
+        }
+      ],
+      "shape_points_used": 36,
+      "issuer": "AEP",
+      "name": "American Electric Power",
+      "rung": 3,
+      "note": null
+    },
+    "DLR": {
+      "n_bonds": 4,
+      "bucket_monotonic": true,
+      "bucket_breaks": [],
+      "n_excluded_option": 0,
+      "thin_curve": false,
+      "tenor_span_years": 1.88,
+      "tenor_min_years": 0.97,
+      "tenor_max_years": 2.85,
+      "buckets": {
+        "2-5y": {
+          "label": "2–5Y",
+          "mean_bp": 54.8,
+          "n": 1
+        },
+        "5-10y": {
+          "label": "5–10Y",
+          "mean_bp": null,
+          "n": 0
+        },
+        "10-20y": {
+          "label": "10–20Y",
+          "mean_bp": null,
+          "n": 0
+        },
+        "20y+": {
+          "label": "20Y+",
+          "mean_bp": null,
+          "n": 0
+        }
+      },
+      "constant_maturity_bp": {
+        "5y": 54.8,
+        "10y": null,
+        "30y": null
+      },
+      "slope_bp": null,
+      "curve_inverted": false,
+      "negative_segment": null,
+      "quality": "ok",
+      "points": [
+        {
+          "years": 0.97,
+          "gspread_bp": 42.4,
+          "name": "DIGITAL REALTY TRUST LP COMPANY GUAR 08/27 3.7",
+          "isin": "US25389JAR77"
+        },
+        {
+          "years": 1.39,
+          "gspread_bp": 71.3,
+          "name": "DIGITAL REALTY TRUST LP COMPANY GUAR 01/28 5.55",
+          "isin": "US25389JAV89"
+        },
+        {
+          "years": 1.89,
+          "gspread_bp": 53.5,
+          "name": "DIGITAL REALTY TRUST LP COMPANY GUAR 07/28 4.45",
+          "isin": "US25389JAT34"
+        },
+        {
+          "years": 2.85,
+          "gspread_bp": 54.8,
+          "name": "DIGITAL REALTY TRUST LP COMPANY GUAR 07/29 3.6",
+          "isin": "US25389JAU07"
+        }
+      ],
+      "shape_points_used": 1,
+      "issuer": "DLR",
+      "name": "Digital Realty",
+      "rung": 5,
+      "note": "样本内仅 3–5 只，强制 thin_curve，不许拟合曲线"
+    },
+    "CRWV": {
+      "n_bonds": 4,
+      "bucket_monotonic": true,
+      "bucket_breaks": [],
+      "n_excluded_option": 0,
+      "thin_curve": false,
+      "tenor_span_years": 2.12,
+      "tenor_min_years": 3.76,
+      "tenor_max_years": 5.89,
+      "buckets": {
+        "2-5y": {
+          "label": "2–5Y",
+          "mean_bp": 712.2,
+          "n": 2
+        },
+        "5-10y": {
+          "label": "5–10Y",
+          "mean_bp": 776.0,
+          "n": 2
+        },
+        "10-20y": {
+          "label": "10–20Y",
+          "mean_bp": null,
+          "n": 0
+        },
+        "20y+": {
+          "label": "20Y+",
+          "mean_bp": null,
+          "n": 0
+        }
+      },
+      "constant_maturity_bp": {
+        "5y": 781.4,
+        "10y": null,
+        "30y": null
+      },
+      "slope_bp": 70.9,
+      "curve_inverted": false,
+      "negative_segment": "5.10Y 790bp → 5.89Y 762bp（−28bp）",
+      "quality": "ok",
+      "points": [
+        {
+          "years": 3.76,
+          "gspread_bp": 691.4,
+          "name": "COREWEAVE INC COMPANY GUAR 144A 06/30 9.25",
+          "isin": "US21873SAB43"
+        },
+        {
+          "years": 4.44,
+          "gspread_bp": 733.0,
+          "name": "COREWEAVE INC COMPANY GUAR 144A 02/31 9",
+          "isin": "US21873SAC26"
+        },
+        {
+          "years": 5.1,
+          "gspread_bp": 789.8,
+          "name": "COREWEAVE INC COMPANY GUAR 144A 10/31 9.75",
+          "isin": "US21873SAG30"
+        },
+        {
+          "years": 5.89,
+          "gspread_bp": 762.3,
+          "name": "COREWEAVE INC COMPANY GUAR 144A 07/32 9.625",
+          "isin": "US21873SAK42"
+        }
+      ],
+      "shape_points_used": 4,
+      "issuer": "CRWV",
+      "name": "CoreWeave",
+      "rung": 7,
+      "note": null
+    }
+  },
+  "term_split": [
+    {
+      "pair": "META-GOOGL",
+      "short_tenor": 5,
+      "long_tenor": 30,
+      "short_gap_bp": 8.9,
+      "long_gap_bp": 67.0,
+      "split_bp": 58.1,
+      "quality": "ok"
+    },
+    {
+      "pair": "ORCL-GOOGL",
+      "short_tenor": 5,
+      "long_tenor": 30,
+      "short_gap_bp": 115.1,
+      "long_gap_bp": 145.1,
+      "split_bp": 30.0,
+      "quality": "ok"
+    },
+    {
+      "pair": "CRWV-ORCL",
+      "short_tenor": 5,
+      "long_tenor": 30,
+      "short_gap_bp": 608.9,
+      "long_gap_bp": null,
+      "split_bp": null,
+      "quality": "regime_na"
+    }
+  ],
+  "attribution": [
+    {
+      "issuer": "MSFT",
+      "n_points": 1,
+      "windows": {
+        "5d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        },
+        "20d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        }
+      },
+      "quality": "insufficient_history",
+      "segment": "ig"
+    },
+    {
+      "issuer": "EQIX",
+      "n_points": 1,
+      "windows": {
+        "5d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        },
+        "20d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        }
+      },
+      "quality": "insufficient_history",
+      "segment": "ig"
+    },
+    {
+      "issuer": "AMZN",
+      "n_points": 1,
+      "windows": {
+        "5d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        },
+        "20d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        }
+      },
+      "quality": "insufficient_history",
+      "segment": "ig"
+    },
+    {
+      "issuer": "META",
+      "n_points": 1,
+      "windows": {
+        "5d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        },
+        "20d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        }
+      },
+      "quality": "insufficient_history",
+      "segment": "ig"
+    },
+    {
+      "issuer": "ORCL",
+      "n_points": 1,
+      "windows": {
+        "5d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        },
+        "20d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        }
+      },
+      "quality": "insufficient_history",
+      "segment": "ig"
+    },
+    {
+      "issuer": "GOOGL",
+      "n_points": 1,
+      "windows": {
+        "5d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        },
+        "20d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        }
+      },
+      "quality": "insufficient_history",
+      "segment": "ig"
+    },
+    {
+      "issuer": "ETR",
+      "n_points": 1,
+      "windows": {
+        "5d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        },
+        "20d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        }
+      },
+      "quality": "insufficient_history",
+      "segment": "ig"
+    },
+    {
+      "issuer": "D",
+      "n_points": 1,
+      "windows": {
+        "5d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        },
+        "20d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        }
+      },
+      "quality": "insufficient_history",
+      "segment": "ig"
+    },
+    {
+      "issuer": "AEP",
+      "n_points": 1,
+      "windows": {
+        "5d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        },
+        "20d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        }
+      },
+      "quality": "insufficient_history",
+      "segment": "ig"
+    },
+    {
+      "issuer": "DLR",
+      "n_points": 1,
+      "windows": {
+        "5d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        },
+        "20d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        }
+      },
+      "quality": "insufficient_history",
+      "segment": "ig"
+    },
+    {
+      "issuer": "CRWV",
+      "n_points": 1,
+      "windows": {
+        "5d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        },
+        "20d": {
+          "value_bp": null,
+          "quality": "insufficient_history"
+        }
+      },
+      "quality": "insufficient_history",
+      "segment": "hy"
+    }
+  ],
+  "convertibles": [
+    {
+      "issuer": "CRWV",
+      "isin": "US21873SAD09",
+      "name": "COREWEAVE INC COMPANY GUAR 144A 12/31 1.75",
+      "coupon": 1.75,
+      "maturity": "2031-12-01",
+      "years": 5.26,
+      "price": 104.6,
+      "deep_itm": false,
+      "near_floor": true,
+      "credit_extractable": false,
+      "gspread_bp": null,
+      "raw_gspread_bp": -347.6,
+      "straight_curve_ref_bp": 784.0,
+      "option_value_bp": 1131.6,
+      "option_value_quality": "ok",
+      "parity": null,
+      "parity_quality": "paywalled",
+      "reading": "价格贴债底但期权价值仍占主导，信用信息被稀释"
+    },
+    {
+      "issuer": "CRWV",
+      "isin": "US21873SAH13",
+      "name": "COREWEAVE INC COMPANY GUAR 144A 10/32 1.75",
+      "coupon": 1.75,
+      "maturity": "2032-10-01",
+      "years": 6.1,
+      "price": 96.95,
+      "deep_itm": false,
+      "near_floor": true,
+      "credit_extractable": false,
+      "gspread_bp": null,
+      "raw_gspread_bp": -212.4,
+      "straight_curve_ref_bp": 762.3,
+      "option_value_bp": 974.7,
+      "option_value_quality": "ok",
+      "parity": null,
+      "parity_quality": "paywalled",
+      "reading": "价格贴债底但期权价值仍占主导，信用信息被稀释"
+    },
+    {
+      "issuer": "DLR",
+      "isin": "US25389JAX46",
+      "name": "DIGITAL REALTY TRUST LP COMPANY GUAR 144A 11/29 1.875",
+      "coupon": 1.875,
+      "maturity": "2029-11-15",
+      "years": 3.22,
+      "price": 109.11,
+      "deep_itm": false,
+      "near_floor": true,
+      "credit_extractable": false,
+      "gspread_bp": null,
+      "raw_gspread_bp": -536.3,
+      "straight_curve_ref_bp": 54.8,
+      "option_value_bp": 591.1,
+      "option_value_quality": "ok",
+      "parity": null,
+      "parity_quality": "paywalled",
+      "reading": "价格贴债底但期权价值仍占主导，信用信息被稀释"
+    },
+    {
+      "issuer": "NBIS",
+      "isin": "US63954QAD88",
+      "name": "NEBIUS GROUP NV SR UNSECURED 06/31 3",
+      "coupon": 3.0,
+      "maturity": "2031-06-05",
+      "years": 4.77,
+      "price": 418.89,
+      "deep_itm": true,
+      "near_floor": false,
+      "credit_extractable": false,
+      "gspread_bp": null,
+      "raw_gspread_bp": -2956.2,
+      "straight_curve_ref_bp": null,
+      "option_value_bp": null,
+      "option_value_quality": "no_straight_curve",
+      "parity": null,
+      "parity_quality": "paywalled",
+      "reading": "深度价内，delta 接近 1，价格变动是股票信息，信用不可提取"
+    },
+    {
+      "issuer": "NBIS",
+      "isin": "US63954QAB23",
+      "name": "NEBIUS GROUP NV SR UNSECURED 06/29 2",
+      "coupon": 2.0,
+      "maturity": "2029-06-05",
+      "years": 2.78,
+      "price": 416.11,
+      "deep_itm": true,
+      "near_floor": false,
+      "credit_extractable": false,
+      "gspread_bp": null,
+      "raw_gspread_bp": -4559.3,
+      "straight_curve_ref_bp": null,
+      "option_value_bp": null,
+      "option_value_quality": "no_straight_curve",
+      "parity": null,
+      "parity_quality": "paywalled",
+      "reading": "深度价内，delta 接近 1，价格变动是股票信息，信用不可提取"
+    },
+    {
+      "issuer": "NBIS",
+      "isin": "US63954QAE61",
+      "name": "NEBIUS GROUP NV SR UNSECURED 144A 09/30 1",
+      "coupon": 1.0,
+      "maturity": "2030-09-15",
+      "years": 4.05,
+      "price": 174.43,
+      "deep_itm": true,
+      "near_floor": false,
+      "credit_extractable": false,
+      "gspread_bp": null,
+      "raw_gspread_bp": -1699.9,
+      "straight_curve_ref_bp": null,
+      "option_value_bp": null,
+      "option_value_quality": "no_straight_curve",
+      "parity": null,
+      "parity_quality": "paywalled",
+      "reading": "深度价内，delta 接近 1，价格变动是股票信息，信用不可提取"
+    },
+    {
+      "issuer": "NBIS",
+      "isin": "US63954QAF37",
+      "name": "NEBIUS GROUP NV SR UNSECURED 144A 09/32 2.75",
+      "coupon": 2.75,
+      "maturity": "2032-09-15",
+      "years": 6.06,
+      "price": 170.75,
+      "deep_itm": true,
+      "near_floor": false,
+      "credit_extractable": false,
+      "gspread_bp": null,
+      "raw_gspread_bp": -1107.0,
+      "straight_curve_ref_bp": null,
+      "option_value_bp": null,
+      "option_value_quality": "no_straight_curve",
+      "parity": null,
+      "parity_quality": "paywalled",
+      "reading": "深度价内，delta 接近 1，价格变动是股票信息，信用不可提取"
+    },
+    {
+      "issuer": "NBIS",
+      "isin": "US63954QAL05",
+      "name": "NEBIUS GROUP NV SR UNSECURED 144A 03/33 2.625",
+      "coupon": 2.625,
+      "maturity": "2033-03-15",
+      "years": 6.55,
+      "price": 139.88,
+      "deep_itm": true,
+      "near_floor": false,
+      "credit_extractable": false,
+      "gspread_bp": null,
+      "raw_gspread_bp": -735.5,
+      "straight_curve_ref_bp": null,
+      "option_value_bp": null,
+      "option_value_quality": "no_straight_curve",
+      "parity": null,
+      "parity_quality": "paywalled",
+      "reading": "深度价内，delta 接近 1，价格变动是股票信息，信用不可提取"
+    },
+    {
+      "issuer": "NBIS",
+      "isin": "US63954QAJ58",
+      "name": "NEBIUS GROUP NV SR UNSECURED 144A 03/31 1.25",
+      "coupon": 1.25,
+      "maturity": "2031-03-15",
+      "years": 4.55,
+      "price": 139.53,
+      "deep_itm": true,
+      "near_floor": false,
+      "credit_extractable": false,
+      "gspread_bp": null,
+      "raw_gspread_bp": -1055.3,
+      "straight_curve_ref_bp": null,
+      "option_value_bp": null,
+      "option_value_quality": "no_straight_curve",
+      "parity": null,
+      "parity_quality": "paywalled",
+      "reading": "深度价内，delta 接近 1，价格变动是股票信息，信用不可提取"
+    },
+    {
+      "issuer": "NBIS",
+      "isin": "US63954QAN60",
+      "name": "NEBIUS GROUP NV SR UNSECURED 144A 02/30 0.5",
+      "coupon": 0.5,
+      "maturity": "2030-02-15",
+      "years": 3.47,
+      "price": 100.88,
+      "deep_itm": false,
+      "near_floor": true,
+      "credit_extractable": false,
+      "gspread_bp": null,
+      "raw_gspread_bp": -402.6,
+      "straight_curve_ref_bp": null,
+      "option_value_bp": null,
+      "option_value_quality": "no_straight_curve",
+      "parity": null,
+      "parity_quality": "paywalled",
+      "reading": "价格贴债底但期权价值仍占主导，信用信息被稀释"
+    },
+    {
+      "issuer": "NBIS",
+      "isin": "US63954QAQ91",
+      "name": "NEBIUS GROUP NV SR UNSECURED 144A 02/34 4.5",
+      "coupon": 4.5,
+      "maturity": "2034-02-15",
+      "years": 7.47,
+      "price": 99.02,
+      "deep_itm": false,
+      "near_floor": true,
+      "credit_extractable": false,
+      "gspread_bp": null,
+      "raw_gspread_bp": 15.1,
+      "straight_curve_ref_bp": null,
+      "option_value_bp": null,
+      "option_value_quality": "no_straight_curve",
+      "parity": null,
+      "parity_quality": "paywalled",
+      "reading": "价格贴债底但期权价值仍占主导，信用信息被稀释"
+    }
+  ],
+  "gpu_secured": {},
+  "spv": [
+    {
+      "id": "beignet",
+      "legal_name": "Beignet Investor LLC",
+      "tenant": "META",
+      "sponsor": "OSNL",
+      "notes_outstanding_usd_mn": 27293.849,
+      "coupon_pct": 6.581,
+      "maturity": "2049-05-30",
+      "tenor_years": 22.8,
+      "disclosure_date": "2025-10-21",
+      "disclosed_in": "0001944366-25-000126",
+      "quality": "disclosure_once",
+      "tenant_matched_spread_bp": 165.2,
+      "tenant_matched_yield_pct": 6.825,
+      "coupon_vs_tenant_bp": 24.4,
+      "tenant_sample_n": 4,
+      "portfolio_proxy": {
+        "line": "net lease data centers",
+        "investments": 8,
+        "properties": 15,
+        "fv_usd_mn": 951.121,
+        "asof": "2025-12-31"
+      }
+    }
+  ],
+  "events": [
+    {
+      "subject": "EQIX",
+      "rule_id": "curve_non_monotonic",
+      "criterion": "判据3·曲线形状",
+      "observed": null,
+      "threshold": null,
+      "unit": "bp",
+      "detail": "曲线整体未倒挂，但分桶不单调：5-10y 109bp → 20y+ 103bp"
+    },
+    {
+      "subject": "D",
+      "rule_id": "curve_non_monotonic",
+      "criterion": "判据3·曲线形状",
+      "observed": null,
+      "threshold": null,
+      "unit": "bp",
+      "detail": "曲线整体未倒挂，但分桶不单调：10-20y 102bp → 20y+ 95bp"
+    },
+    {
+      "subject": "SPV:beignet",
+      "rule_id": "spv_tenant_carry",
+      "criterion": "SPV·租户锚",
+      "observed": 24.4,
+      "threshold": 0,
+      "unit": "bp",
+      "detail": "票息 6.581% vs 租户 META 同期限 6.825%，低 24bp"
+    }
+  ],
+  "events_mode": "record_only",
+  "quality_summary": {
+    "thin_curve_issuers": [],
+    "stale_prices": 0,
+    "option_biased": 12,
+    "instruments_total": 319,
+    "instruments_priced": 319
+  },
+  "source_health": [
+    {
+      "source": "spdr",
+      "status": "ok",
+      "detail": "319 只债有利差，319 只在库"
+    },
+    {
+      "source": "fred",
+      "status": "ok",
+      "detail": "国债曲线锚 2026-08-26，指数 OAS 锚 2026-08-26"
+    },
+    {
+      "source": "sec",
+      "status": "empty",
+      "detail": "0 条抵押品/债务事实"
+    },
+    {
+      "source": "spv_ledger",
+      "status": "ok",
+      "detail": "1 个 SPV（一次性条款，非序列）"
+    }
+  ]
+}

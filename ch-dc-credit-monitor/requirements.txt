@@ -1,0 +1,4 @@
+PyYAML
+requests
+openpyxl
+psycopg2-binary

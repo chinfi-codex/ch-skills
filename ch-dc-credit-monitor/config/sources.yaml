@@ -1,0 +1,88 @@
+# 数据源 —— 端点、口径、限频。全部免费无密钥，2026-08-26 逐个 curl 实测。
+#
+# 口径一旦改（比如换一组 ETF），发行人层的样本集合就变了，跨日序列不可比。
+# 所以采集时把 ETF 集合哈希成 basket_fingerprint 存进 run 表，
+# 指纹变了的两段序列不许直接相减。
+
+schema_version: 1
+
+defaults:
+  timeout_seconds: 45
+  retries: 3
+  backoff_base_seconds: 2
+
+sources:
+  spdr:
+    enabled: true
+    priority: P0
+    role: price_source
+    # 为什么不是 iShares：LQD/HYG 的 ajax 端点被 Akamai 拦。响应头写着
+    # content-type: text/csv 和 content-disposition: attachment，body 却是完整
+    # 产品页 HTML；加 Referer、加 cookie jar 两段式都无效。不要再试。
+    base_url: "https://www.ssga.com/us/en/intermediary/library-content/products/fund-data/etfs/us"
+    path_template: "holdings-daily-us-en-{ticker}.xlsx"
+    user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    referer: "https://www.ssga.com/"
+    # 六只覆盖了全部三个体制。去重后约 324 只工具。
+    baskets:
+      - {ticker: spbo, segment: ig,          label: "IG 综合"}
+      - {ticker: spib, segment: ig,          label: "IG 中期"}
+      - {ticker: splb, segment: ig,          label: "IG 长期"}
+      - {ticker: sphy, segment: hy,          label: "HY 组合"}
+      - {ticker: jnk,  segment: hy,          label: "HY 综合"}
+      - {ticker: cwb,  segment: convertible, label: "可转债"}
+    # 持仓表没有价格列，价格是导出来的：clean_price = Market Value / Par × 100。
+    # 表头在第 5 行（1-indexed），数据从第 6 行开始。
+    header_row: 5
+    columns: [name, identifier, sedol, weight, coupon, par_value, market_value,
+              currency, maturity]
+
+  fred:
+    enabled: true
+    priority: P0
+    role: benchmark
+    # keyless CSV，不需要 API key。
+    base_url: "https://fred.stlouisfed.org/graph/fredgraph.csv"
+    treasury_series:
+      1: DGS1
+      2: DGS2
+      3: DGS3
+      5: DGS5
+      7: DGS7
+      10: DGS10
+      20: DGS20
+      30: DGS30
+    index_series:
+      ig: BAMLC0A0CM        # ICE BofA US Corporate OAS，单位是 %，要 ×100
+      hy: BAMLH0A0HYM2      # ICE BofA US High Yield OAS
+
+  sec:
+    enabled: true
+    priority: P1
+    role: fundamentals_and_collateral
+    # SEC 不在乎你声称是什么浏览器，它在乎你留联系方式。通用浏览器 UA 会 403，
+    # 这跟 Yahoo 的边缘分类器规则正好相反。
+    user_agent_template: "ch-dc-credit-monitor research {contact}"
+    contact_env: SEC_CONTACT_EMAIL
+    rate_limit_per_second: 8
+    endpoints:
+      submissions: "https://data.sec.gov/submissions/CIK{cik}.json"
+      companyfacts: "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+      filing_summary: "https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession}/FilingSummary.xml"
+      r_file: "https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession}/{rfile}"
+      full_text: "https://efts.sec.gov/LATEST/search-index"
+    # 工具级债务事实**不在 companyfacts 里**（那里只有合计 LongTermDebt）。
+    # 必须走 FilingSummary.xml → R{n}.htm，按 ShortName 匹配。
+    debt_report_patterns:
+      - "Schedule of Total Debt Obligations"
+      - "Delayed Draw Term Loans"
+
+# 已知存在但没有免费源的东西。建空列会让面板长期挂着永远是 NULL 的格子，
+# 所以它们根本不建列，只在这里备案。
+not_available:
+  - id: cds
+    why: "Markit/ICE 授权数据。api.finra.org 匿名可访问但只有 OTC 股票数据集"
+  - id: trace_prints
+    why: "FINRA API 的固定收益 group 全部 404，逐 CUSIP 日度价格无免费路径"
+  - id: new_issue_pricing
+    why: "一级市场指引→定价、认购倍数无免费结构化源。走人工录入，见 SKILL.md"

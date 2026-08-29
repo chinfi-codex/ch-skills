@@ -60,6 +60,53 @@ def test_disclosure_once_refuses_timeseries():
     assert renderer.refuses_timeseries(None) is False
 
 
+def test_compact_html_prioritizes_watchlist_and_groups_hyperscalers():
+    """精简页先看异动；超大厂合成一个类别指数并逐行展开成员。"""
+    ev = {
+        "asof": "2026-08-27",
+        "dials": [
+            {"group": "梯级", "name": "档1", "rung": 1, "value": 38.3,
+             "anchor": 39, "d1": -2.2, "d7": None, "d30": None},
+            {"group": "梯级", "name": "档2", "rung": 2, "value": 68.3,
+             "anchor": 68, "d1": -1.8, "d7": None, "d30": None},
+            {"group": "梯级", "name": "档4", "rung": 4, "value": 92.9,
+             "anchor": 97, "d1": -3.7, "d7": None, "d30": None},
+            {"group": "梯级", "name": "档6", "rung": 6, "value": 198.4,
+             "anchor": 205, "d1": -5.3, "d7": None, "d30": None},
+        ],
+        "ladder": [
+            {"rung": 1, "members": ["MSFT"], "readings_5_10y": {"MSFT": 38.3}},
+            {"rung": 2, "members": ["AMZN", "GOOGL"],
+             "readings_5_10y": {"AMZN": 67.9, "GOOGL": 68.7}},
+            {"rung": 4, "members": ["META"], "readings_5_10y": {"META": 92.9}},
+            {"rung": 6, "members": ["ORCL"], "readings_5_10y": {"ORCL": 198.4}},
+        ],
+        "issuers": {
+            "MSFT": {"buckets": {"5-10y": {"mean_bp": 38.3, "n": 1}}},
+            "AMZN": {"buckets": {"5-10y": {"mean_bp": 67.9, "n": 8}}},
+            "GOOGL": {"buckets": {"5-10y": {"mean_bp": 68.7, "n": 6}}},
+            "META": {"buckets": {"5-10y": {"mean_bp": 92.9, "n": 7}}},
+            "ORCL": {"buckets": {"5-10y": {"mean_bp": 198.4, "n": 12}}},
+        },
+    }
+    page = renderer.build_compact_html(ev, {})
+    assert page.index("今天值得看的") < page.index("核心刻度")
+    assert "超大厂指数" in page
+    assert "档1指数" not in page and "档6指数" not in page
+    assert page.count('class="category-member"') == 5
+    assert "+0.3" in page
+    assert "AMZN" in page and "8 只样本" in page
+    assert "GOOGL" in page and "6 只样本" in page
+
+
+def test_compact_html_omits_daily_status_and_caveat_block():
+    """用户指定删除的日频底部状态/口径段不应再进入精简 HTML。"""
+    page = renderer.build_compact_html({"asof": "2026-08-27"}, {})
+    for removed in ("持仓 As of", "国债曲线", "只有利差", "降级源：",
+                    "G-spread 不是 OAS", "需要时用"):
+        assert removed not in page
+
+
 # --- 4. alpha 分解必须闭合 -------------------------------------------------
 def _series(pairs):
     return [{"date": d, "value": v} for d, v in pairs]

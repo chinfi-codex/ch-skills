@@ -40,6 +40,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -785,10 +786,19 @@ COMPACT_CSS = """
 .dial-table tr.grp td { border-top: none; padding: 14px 10px 2px;
                         font-size: 11px; color: var(--ink-4); letter-spacing: .04em; }
 .dial-table tr.grp:first-child td { padding-top: 2px; }
+.dial-table tr.category-index td { background: var(--surface-2); }
+.dial-table tr.category-index td:first-child { border-left: 3px solid var(--category-color); }
+.dial-table tr.category-member td { padding-top: 5px; padding-bottom: 5px;
+                                    color: var(--ink-3); }
+.dial-table tr.category-member td:first-child { padding-left: 25px; }
 .dial-name { display: flex; align-items: baseline; gap: 8px; }
 .dial-name b { font-weight: 600; font-size: 13px; color: var(--ink-1); }
 .dial-name .sub { font-size: 11px; color: var(--ink-4); font-weight: 400;
                   white-space: normal; }
+.category-member .dial-name b { font-family: var(--font-mono); font-size: 12px;
+                                font-weight: 600; color: var(--ink-2); }
+.category-member .dial-name:before { content: "\u2514"; color: var(--ink-4); margin-right: 1px; }
+.category-member .dial-val { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
 .dial-val { font-family: var(--font-mono); font-size: 15px; font-weight: 700;
             color: var(--ink-1); }
 .dial-d { font-family: var(--font-mono); font-size: 12.5px; }
@@ -804,9 +814,6 @@ COMPACT_CSS = """
                    width: 5px; height: 5px; border-radius: 50%; background: var(--clay); }
 .watch li .tag { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-4);
                  margin-right: 6px; }
-.statusbar { display: flex; gap: 18px; flex-wrap: wrap; font-size: 11.5px;
-             color: var(--ink-4); font-family: var(--font-mono); }
-.caveat { font-size: 11.5px; color: var(--ink-4); line-height: 1.7; margin-top: 10px; }
 @media (max-width: 760px) {
   .bar-cell, .dial-table th.opt, .dial-table td.opt { display: none; }
 }
@@ -820,20 +827,100 @@ def _delta_cell(value: Optional[float], css: str = "dial-d") -> str:
     return f'<td class="{css} {cls}">{value:+,.1f}</td>'
 
 
+_COMPACT_CATEGORIES = (
+    {"name": "超大厂指数", "rungs": (1, 2, 4, 6), "colour": RUNG_COLORS[2]},
+    {"name": "受监管公用事业指数", "rungs": (3,), "colour": RUNG_COLORS[3]},
+    {"name": "数据中心 REIT 指数", "rungs": (5,), "colour": RUNG_COLORS[5]},
+    {"name": "纯算力商指数", "rungs": (7,), "colour": RUNG_COLORS[7]},
+)
+
+
+def _compact_category_dials(ev: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """把七档折叠为四个展示类别，但不改变证据包里的底层档位。
+
+    类别指数取成员加权后的档位指数中位数：一个档有两个成员，它的档位指数就在
+    类别中占两个位置。历史变化也用同一权重从各档指数反推，确保口径一致。
+    """
+    rung_dials = {int(d["rung"]): d for d in (ev.get("dials") or [])
+                  if d.get("group") == "梯级" and d.get("rung") is not None}
+    ladder = {int(r["rung"]): r for r in (ev.get("ladder") or [])
+              if r.get("rung") is not None}
+    issuers = ev.get("issuers") or {}
+    out: List[Dict[str, Any]] = []
+
+    for spec in _COMPACT_CATEGORIES:
+        selected = [(rung, rung_dials[rung]) for rung in spec["rungs"]
+                    if rung in rung_dials]
+        if not selected:
+            continue
+
+        weighted_values: List[float] = []
+        weighted_anchors: List[float] = []
+        members: List[Dict[str, Any]] = []
+        for rung, dial in selected:
+            rung_block = ladder.get(rung, {})
+            rung_members = rung_block.get("members") or []
+            weight = max(len(rung_members), 1)
+            if dial.get("value") is not None:
+                weighted_values.extend([float(dial["value"])] * weight)
+            if dial.get("anchor") is not None:
+                weighted_anchors.extend([float(dial["anchor"])] * weight)
+            readings = rung_block.get("readings_5_10y") or {}
+            for issuer in rung_members or list(readings):
+                bucket = ((issuers.get(issuer) or {}).get("buckets") or {}).get("5-10y") or {}
+                members.append({
+                    "issuer": issuer,
+                    "value": readings.get(issuer),
+                    "sample_n": bucket.get("n"),
+                })
+
+        value = round(float(median(weighted_values)), 1) if weighted_values else None
+        anchor = round(float(median(weighted_anchors)), 1) if weighted_anchors else None
+
+        changes: Dict[str, Optional[float]] = {}
+        for field in ("d1", "d7", "d30"):
+            prior: List[float] = []
+            complete = value is not None
+            for rung, dial in selected:
+                rung_members = ladder.get(rung, {}).get("members") or []
+                weight = max(len(rung_members), 1)
+                if dial.get("value") is None or dial.get(field) is None:
+                    complete = False
+                    break
+                prior.extend([float(dial["value"]) - float(dial[field])] * weight)
+            changes[field] = (round(value - float(median(prior)), 1)
+                              if complete and prior else None)
+
+        out.append({
+            "group": "类别指数",
+            "name": spec["name"],
+            "note": f"{len(members)} 家 · 成员加权档位中位数",
+            "value": value,
+            "anchor": anchor,
+            "vs_anchor": (round(value - anchor, 1)
+                          if value is not None and anchor is not None else None),
+            "d1": changes["d1"], "d7": changes["d7"], "d30": changes["d30"],
+            "colour": spec["colour"],
+            "members": members,
+        })
+    return out
+
+
 def render_dials(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     """核心刻度 —— 精简页的主体，也是唯一的一张表。
 
     选择标准只有一条：这个数每天看一眼值不值得。水平值本身信息量很低，
     驱动判断的是它相对昨天、上周、以及相对锚点的位移。
     """
-    dials = ev.get("dials") or []
-    if not dials:
+    raw_dials = ev.get("dials") or []
+    if not raw_dials:
         return ('<section class="panel stack"><div class="empty">'
                 '暂无数据：证据包里没有 dials 段，先跑一次 metrics.py。</div></section>')
 
-    ladder_vals = [d["value"] for d in dials
-                   if d["group"] == "梯级" and d["value"] is not None]
-    hi = max(ladder_vals) if ladder_vals else 1.0
+    category_dials = _compact_category_dials(ev)
+    dials = category_dials + [d for d in raw_dials if d.get("group") != "梯级"]
+    category_vals = [d["value"] for d in category_dials if d["value"] is not None]
+    hi = max(category_vals) if category_vals else 1.0
 
     rows: List[str] = []
     last_group = None
@@ -842,19 +929,24 @@ def render_dials(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
             rows.append(f'<tr class="grp"><td colspan="7">{esc(d["group"])}</td></tr>')
             last_group = d["group"]
         value = d["value"]
-        # 只有梯级那组画条：跨档距离和结构量的量纲不同，同尺画会误导。
+        # 只有类别指数画条：跨档距离和结构量的量纲不同，同尺画会误导。
         # 对数基准从 20bp 起算而不是从 1——从 1 起算会把 40bp 画成满格的 55%，
-        # 七档看起来一样长，条形就白画了。
+        # 各类别看起来一样长，条形就白画了。
         bar = ""
-        if d["group"] == "梯级" and value is not None and hi > _BAR_FLOOR_BP:
+        if d["group"] == "类别指数" and value is not None and hi > _BAR_FLOOR_BP:
             span = math.log10(hi) - math.log10(_BAR_FLOOR_BP)
             frac = (math.log10(max(value, _BAR_FLOOR_BP))
                     - math.log10(_BAR_FLOOR_BP)) / span
-            colour = RUNG_COLORS.get(d.get("rung"), "var(--clay)")
+            colour = d.get("colour") or "var(--clay)"
             bar = (f'<div class="bar"><i style="width:{max(3, frac*100):.0f}%;'
                    f'background:{colour}"></i></div>')
+        row_class = "category-index" if d["group"] == "类别指数" else ""
+        row_style = (f' style="--category-color:{d.get("colour") or "var(--clay)"}"'
+                     if row_class else "")
+        class_attr = f' class="{row_class}"' if row_class else ""
         rows.append(
-            f'<tr><td><div class="dial-name"><b>{esc(d["name"])}</b>'
+            f'<tr{class_attr}{row_style}><td><div class="dial-name">'
+            f'<b>{esc(d["name"])}</b>'
             f'<span class="sub">{esc(d.get("note") or "")}</span></div></td>'
             f'<td class="bar-cell opt">{bar}</td>'
             f'<td class="dial-val">{"—" if value is None else f"{value:,.0f}"}</td>'
@@ -862,13 +954,31 @@ def render_dials(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
             + _delta_cell(d.get("d30"))
             + _delta_cell(d.get("vs_anchor")) + '</tr>')
 
-    have_deltas = any(d.get("d1") is not None for d in dials)
-    hint = ("单位 bp" if have_deltas else
-            "单位 bp · 序列只有 1 天，三档变化全部不出数——这是正确状态，不是故障")
+        # 类别指数下面逐行展开成员，让读者能看出指数由谁构成，以及缺数落在哪。
+        if row_class:
+            for member in d.get("members") or []:
+                issuer = member["issuer"]
+                child_value = member.get("value")
+                sample_n = member.get("sample_n")
+                sample_note = ("5–10Y" if sample_n is None else
+                               "5–10Y · 暂无样本" if sample_n == 0 else
+                               f"5–10Y · {sample_n} 只样本")
+                rows.append(
+                    '<tr class="category-member">'
+                    f'<td><div class="dial-name"><b>{esc(issuer)}</b>'
+                    f'<span class="sub">{esc(sample_note)}</span></div></td>'
+                    '<td class="bar-cell opt"></td>'
+                    f'<td class="dial-val">{"—" if child_value is None else f"{child_value:,.0f}"}</td>'
+                    '<td class="dial-d na">—</td><td class="dial-d na">—</td>'
+                    '<td class="dial-d na">—</td><td class="dial-d na">—</td></tr>')
+
+    have_deltas = any(d.get("d1") is not None for d in category_dials)
+    hint = ("单位 bp · 指数看变化，子项列当前 5–10Y 读数" if have_deltas else
+            "单位 bp · 序列只有 1 天，指数变化不出数；子项列当前 5–10Y 读数")
     return f"""<section class="panel stack">
   <div class="sec-head"><strong>核心刻度</strong><span class="sec-hint">{esc(hint)}</span></div>
   <table class="dial-table">
-    <thead><tr><th>刻度</th><th class="opt"></th><th>当前</th>
+    <thead><tr><th>指数 / 子项</th><th class="opt"></th><th>当前</th>
       <th>1D</th><th>1W</th><th>1M</th><th>vs 锚点</th></tr></thead>
     <tbody>{"".join(rows)}</tbody>
   </table>
@@ -942,30 +1052,6 @@ def render_compact_verdict(verdict: Dict[str, Any]) -> str:
 </section>"""
 
 
-def render_statusbar(ev: Dict[str, Any]) -> str:
-    a = ev.get("anchors") or {}
-    q = ev.get("quality_summary") or {}
-    lag = a.get("curve_lag_days")
-    idx = a.get("index_oas_bp") or {}
-    health = ev.get("source_health") or []
-    bad = [h["source"] for h in health if h.get("status") not in ("ok",)]
-    return f"""<section class="panel">
-  <div class="statusbar">
-    <span>持仓 As of {esc(a.get("holdings_asof"))}</span>
-    <span>国债曲线 {esc(a.get("treasury_curve"))}{f"（滞后 {lag} 天）" if lag else "（同日）"}</span>
-    <span>IG {bp(idx.get("ig"))} · HY {bp(idx.get("hy"))}</span>
-    <span>{q.get("instruments_priced")}/{q.get("instruments_total")} 只有利差</span>
-    <span>stale {q.get("stale_prices")} · 含权剔除 {q.get("option_biased")}</span>
-    {f'<span class="bad">降级源：{esc("、".join(bad))}</span>' if bad else '<span class="ok">数据源全绿</span>'}
-  </div>
-  <div class="caveat">G-spread 不是 OAS，含权券已剔除；ETF 持仓价是基金管理人的估值不是成交价；
-  样本是各发行人在指数内的子集，不是全部存量债；SPV 组合级数字含多项投资不是单体；
-  CDS 与逐笔 TRACE 无免费源，本监控不覆盖。
-  <b>明细（逐只债、发行人曲线、转债与抵押品）在证据包与报告正文里，不上日频页；
-  需要时用 <code>--full</code> 渲染完整版。</b></div>
-</section>"""
-
-
 def build_compact_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
     theme = THEME_CSS.read_text(encoding="utf-8") if THEME_CSS.exists() else ""
     asof = ev.get("asof", "—")
@@ -990,9 +1076,8 @@ def build_compact_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
     <div class="stamp">观测日 {esc(asof)}<br>UTC {esc(stamp)}</div>
   </header>
   {render_compact_verdict(verdict)}
-  {render_dials(ev, notes)}
   {render_watchlist(ev, verdict)}
-  {render_statusbar(ev)}
+  {render_dials(ev, notes)}
 </main>
 </body>
 </html>"""

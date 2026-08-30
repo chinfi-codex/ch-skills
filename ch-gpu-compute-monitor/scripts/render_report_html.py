@@ -31,7 +31,7 @@ import json
 import math
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -164,23 +164,56 @@ def pct(value: Optional[float], digits: int = 1) -> str:
 # ---------------------------------------------------------------------------
 # 输入
 # ---------------------------------------------------------------------------
-def read_verdict(md_path: Optional[Path]) -> Dict[str, Any]:
-    """从报告 Markdown 的 frontmatter 里取模型写的判断块。
-
-    取不到就返回空——仪表盘会把判断区显示成「未提供」，而不是自己编一个。
-    """
+def read_report_meta(md_path: Optional[Path]) -> Dict[str, Any]:
+    """读取报告 Markdown 的 frontmatter；缺失或格式不对时返回空。"""
     if md_path is None or not md_path.exists():
         return {}
     match = FRONTMATTER_RE.match(md_path.read_text(encoding="utf-8"))
     if not match:
         return {}
-    meta = yaml.safe_load(match.group(1)) or {}
-    return meta.get("verdict") or {}
+    return yaml.safe_load(match.group(1)) or {}
 
 
-def find_evidence(evidence_arg: Optional[str], md_path: Optional[Path]) -> Path:
+def read_verdict(md_path: Optional[Path]) -> Dict[str, Any]:
+    """从报告 Markdown 的 frontmatter 里取模型写的判断块。
+
+    取不到就返回空——仪表盘会把判断区显示成「未提供」，而不是自己编一个。
+    """
+    return read_report_meta(md_path).get("verdict") or {}
+
+
+def iso_date(value: Any) -> Optional[str]:
+    """把 YAML date 或 YYYY-MM-DD 字符串归一化；非法值不冒充日期。"""
+    if isinstance(value, (date, datetime)):
+        return value.date().isoformat() if isinstance(value, datetime) else value.isoformat()
+    text = str(value or "").strip()
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError:
+        return None
+
+
+def resolve_report_date(meta: Dict[str, Any], override: Optional[str] = None) -> str:
+    """报告日默认取本次执行的本地日历日，不从 evidence.asof 推导。"""
+    if override:
+        parsed = iso_date(override)
+        if not parsed:
+            raise SystemExit("error: --report-date 必须是 YYYY-MM-DD")
+        return parsed
+    return iso_date(meta.get("date")) or date.today().isoformat()
+
+
+def find_evidence(evidence_arg: Optional[str], md_path: Optional[Path],
+                  meta: Optional[Dict[str, Any]] = None) -> Path:
     if evidence_arg:
         return Path(evidence_arg)
+    # 报告文件名现在按执行日命名，可能与数据截止日不同；优先用 frontmatter
+    # 的 data_asof 找证据，不能再默认拿报告日期冒充观测日期。
+    data_asof = iso_date((meta or {}).get("data_asof"))
+    if data_asof:
+        guess = SKILL_ROOT / "evidence" / f"gpu-{data_asof}.json"
+        if guess.exists():
+            return guess
     if md_path is not None:
         found = DATE_RE.search(md_path.name)
         if found:
@@ -1137,9 +1170,11 @@ def render_sources(ev: Dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
+def build_html(ev: Dict[str, Any], verdict: Dict[str, Any],
+               report_date: Optional[str] = None) -> str:
     theme = THEME_CSS.read_text(encoding="utf-8") if THEME_CSS.exists() else ""
     asof = ev.get("asof", "—")
+    report_date = report_date or date.today().isoformat()
     window = ev.get("window_days", 90)
     health = ev.get("source_health") or []
     ok = sum(1 for h in health if h.get("status") in ("ok", "empty"))
@@ -1152,7 +1187,7 @@ def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GPU 算力价格与供给监控 · {esc(asof)}</title>
+<title>GPU 算力价格与供给监控 · {esc(report_date)}</title>
 <style>{theme}{LAYOUT_CSS}</style>
 </head>
 <body>
@@ -1163,7 +1198,7 @@ def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
       <h1>GPU Compute Price &amp; Supply Monitor</h1>
       <div class="sub">成交价 × 标准报价 × 可用供给 × 推理 token 量价 → 算力供需与下游需求的边际变化</div>
     </div>
-    <div class="stamp">观测日 {esc(asof)} · 数据源 {ok}/{len(health)} · UTC {esc(stamp)}</div>
+    <div class="stamp">报告日 {esc(report_date)} · 数据截止 {esc(asof)} · 数据源 {ok}/{len(health)} · UTC {esc(stamp)}</div>
   </header>
   {render_verdict(verdict, models)}
   <div class="stack">{render_price_panel(ev, notes)}</div>
@@ -1181,23 +1216,28 @@ def main() -> int:
         description="Render the GPU compute price & supply dashboard.")
     parser.add_argument("--evidence", default=None, help="metrics.py 产出的证据包")
     parser.add_argument("--input", default=None,
-                        help="报告 Markdown；只用来读 frontmatter 里的 verdict 判断块")
+                        help="报告 Markdown；读取 frontmatter 的 date/data_asof/verdict")
+    parser.add_argument("--report-date", default=None,
+                        help="报告执行日 YYYY-MM-DD；默认读 frontmatter.date，再退回本地今天")
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
     md_path = Path(args.input) if args.input else None
-    evidence_path = find_evidence(args.evidence, md_path)
+    meta = read_report_meta(md_path)
+    report_date = resolve_report_date(meta, args.report_date)
+    evidence_path = find_evidence(args.evidence, md_path, meta)
     ev = json.loads(evidence_path.read_text(encoding="utf-8"))
-    verdict = read_verdict(md_path)
+    verdict = meta.get("verdict") or {}
 
     output = Path(args.output) if args.output else (
-        SKILL_ROOT / "reports" / f"gpu-{ev.get('asof', 'latest')}.html")
+        SKILL_ROOT / "reports" / f"gpu-{report_date}.html")
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(build_html(ev, verdict), encoding="utf-8")
+    output.write_text(build_html(ev, verdict, report_date), encoding="utf-8")
 
     print(json.dumps({
         "output": str(output),
         "evidence": str(evidence_path),
+        "report_date": report_date,
         "asof": ev.get("asof"),
         "verdict_present": bool(verdict.get("headline")),
         "panel_notes": [k for k in PANEL_KEYS if (verdict.get("panels") or {}).get(k)],

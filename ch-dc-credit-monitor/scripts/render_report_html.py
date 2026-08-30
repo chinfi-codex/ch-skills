@@ -38,7 +38,7 @@ import json
 import math
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from statistics import median
 from typing import Any, Dict, List, Optional
@@ -188,23 +188,56 @@ def signed(value: Optional[float], digits: int = 1, unit: str = "bp") -> str:
 # ---------------------------------------------------------------------------
 # 输入
 # ---------------------------------------------------------------------------
-def read_verdict(md_path: Optional[Path]) -> Dict[str, Any]:
-    """从报告 Markdown 的 frontmatter 里取模型写的判断块。
-
-    取不到就返回空——仪表盘会把判断区显示成「未提供」，而不是自己编一个。
-    """
+def read_report_meta(md_path: Optional[Path]) -> Dict[str, Any]:
+    """读取报告 Markdown 的 frontmatter；缺失或格式不对时返回空。"""
     if md_path is None or not md_path.exists():
         return {}
     match = FRONTMATTER_RE.match(md_path.read_text(encoding="utf-8"))
     if not match:
         return {}
-    meta = yaml.safe_load(match.group(1)) or {}
-    return meta.get("verdict") or {}
+    return yaml.safe_load(match.group(1)) or {}
 
 
-def find_evidence(evidence_arg: Optional[str], md_path: Optional[Path]) -> Path:
+def read_verdict(md_path: Optional[Path]) -> Dict[str, Any]:
+    """从报告 Markdown 的 frontmatter 里取模型写的判断块。
+
+    取不到就返回空——仪表盘会把判断区显示成「未提供」，而不是自己编一个。
+    """
+    return read_report_meta(md_path).get("verdict") or {}
+
+
+def iso_date(value: Any) -> Optional[str]:
+    """把 YAML date 或 YYYY-MM-DD 字符串归一化；非法值不冒充日期。"""
+    if isinstance(value, (date, datetime)):
+        return value.date().isoformat() if isinstance(value, datetime) else value.isoformat()
+    text = str(value or "").strip()
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError:
+        return None
+
+
+def resolve_report_date(meta: Dict[str, Any], override: Optional[str] = None) -> str:
+    """报告日默认取本次执行的本地日历日，不从 evidence.asof 推导。"""
+    if override:
+        parsed = iso_date(override)
+        if not parsed:
+            raise SystemExit("error: --report-date 必须是 YYYY-MM-DD")
+        return parsed
+    return iso_date(meta.get("date")) or date.today().isoformat()
+
+
+def find_evidence(evidence_arg: Optional[str], md_path: Optional[Path],
+                  meta: Optional[Dict[str, Any]] = None) -> Path:
     if evidence_arg:
         return Path(evidence_arg)
+    # 报告文件名现在按执行日命名，可能与数据截止日不同；优先用 frontmatter
+    # 的 data_asof 找证据，不能再默认拿报告日期冒充观测日期。
+    data_asof = iso_date((meta or {}).get("data_asof"))
+    if data_asof:
+        guess = SKILL_ROOT / "evidence" / f"dc-{data_asof}.json"
+        if guess.exists():
+            return guess
     if md_path is not None:
         found = DATE_RE.search(md_path.name)
         if found:
@@ -1052,9 +1085,11 @@ def render_compact_verdict(verdict: Dict[str, Any]) -> str:
 </section>"""
 
 
-def build_compact_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
+def build_compact_html(ev: Dict[str, Any], verdict: Dict[str, Any],
+                       report_date: Optional[str] = None) -> str:
     theme = THEME_CSS.read_text(encoding="utf-8") if THEME_CSS.exists() else ""
     asof = ev.get("asof", "—")
+    report_date = report_date or date.today().isoformat()
     stamp = (ev.get("generated_at") or
              datetime.now(timezone.utc).isoformat())[:16].replace("T", " ")
     notes = verdict.get("panels") or {}
@@ -1063,7 +1098,7 @@ def build_compact_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>数据中心信用监控 · {esc(asof)}</title>
+<title>数据中心信用监控 · {esc(report_date)}</title>
 <style>{theme}{LAYOUT_CSS}{COMPACT_CSS}</style>
 </head>
 <body>
@@ -1073,7 +1108,7 @@ def build_compact_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
       <div class="eyebrow">AI 基建信用 · 日频追踪</div>
       <h1>Data Center Credit Monitor</h1>
     </div>
-    <div class="stamp">观测日 {esc(asof)}<br>UTC {esc(stamp)}</div>
+    <div class="stamp">报告日 {esc(report_date)} · 数据截止 {esc(asof)}<br>UTC {esc(stamp)}</div>
   </header>
   {render_compact_verdict(verdict)}
   {render_watchlist(ev, verdict)}
@@ -1084,9 +1119,11 @@ def build_compact_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
 
 
 
-def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
+def build_html(ev: Dict[str, Any], verdict: Dict[str, Any],
+               report_date: Optional[str] = None) -> str:
     theme = THEME_CSS.read_text(encoding="utf-8") if THEME_CSS.exists() else ""
     asof = ev.get("asof", "—")
+    report_date = report_date or date.today().isoformat()
     window = ev.get("window_days", 90)
     health = ev.get("source_health") or []
     ok = sum(1 for h in health if h.get("status") in ("ok", "empty"))
@@ -1098,7 +1135,7 @@ def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>数据中心信用监控 · {esc(asof)}</title>
+<title>数据中心信用监控 · {esc(report_date)}</title>
 <style>{theme}{LAYOUT_CSS}</style>
 </head>
 <body>
@@ -1109,7 +1146,7 @@ def build_html(ev: Dict[str, Any], verdict: Dict[str, Any]) -> str:
       <h1>Data Center Credit Monitor</h1>
       <div class="sub">信用梯级 × 曲线形状 × 跨档距离 × 抵押品 → AI 基建融资成本的边际变化</div>
     </div>
-    <div class="stamp">观测日 {esc(asof)} · 数据源 {ok}/{len(health)}<br>UTC {esc(stamp)}</div>
+    <div class="stamp">报告日 {esc(report_date)} · 数据截止 {esc(asof)} · 数据源 {ok}/{len(health)}<br>UTC {esc(stamp)}</div>
   </header>
   {render_verdict(verdict, ev)}
   <div class="stack">{render_ladder(ev, notes)}</div>
@@ -1127,7 +1164,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="渲染数据中心信用监控 Dashboard。")
     parser.add_argument("--evidence", default=None, help="metrics.py 产出的证据包")
     parser.add_argument("--input", default=None,
-                        help="报告 Markdown；只用来读 frontmatter 里的 verdict 判断块")
+                        help="报告 Markdown；读取 frontmatter 的 date/data_asof/verdict")
+    parser.add_argument("--report-date", default=None,
+                        help="报告执行日 YYYY-MM-DD；默认读 frontmatter.date，再退回本地今天")
     parser.add_argument("--output", default=None)
     parser.add_argument("--full", action="store_true",
                         help="渲染完整明细版（逐只债、发行人曲线表、转债与抵押品）。"
@@ -1135,21 +1174,25 @@ def main() -> int:
     args = parser.parse_args()
 
     md_path = Path(args.input) if args.input else None
-    evidence_path = find_evidence(args.evidence, md_path)
+    meta = read_report_meta(md_path)
+    report_date = resolve_report_date(meta, args.report_date)
+    evidence_path = find_evidence(args.evidence, md_path, meta)
     ev = json.loads(evidence_path.read_text(encoding="utf-8"))
-    verdict = read_verdict(md_path)
+    verdict = meta.get("verdict") or {}
 
     suffix = "-full" if args.full else ""
     output = Path(args.output) if args.output else (
-        SKILL_ROOT / "reports" / f"dc-{ev.get('asof', 'latest')}{suffix}.html")
+        SKILL_ROOT / "reports" / f"dc-{report_date}{suffix}.html")
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text((build_html if args.full else build_compact_html)(ev, verdict),
+    output.write_text((build_html if args.full else build_compact_html)(
+                      ev, verdict, report_date),
                       encoding="utf-8")
 
     print(json.dumps({
         "output": str(output),
         "mode": "full" if args.full else "compact",
         "evidence": str(evidence_path),
+        "report_date": report_date,
         "asof": ev.get("asof"),
         "verdict_present": bool(verdict.get("headline")),
         "panel_notes": [k for k in PANEL_KEYS if (verdict.get("panels") or {}).get(k)],

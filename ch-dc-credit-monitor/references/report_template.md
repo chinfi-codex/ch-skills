@@ -1,6 +1,7 @@
 # 报告模板与 verdict 契约
 
-报告写到 `reports/dc-<date>.md`。**frontmatter 的 `verdict` 块是仪表盘唯一认的判断契约**，
+报告写到 `reports/dc-<report_date>.md`。`report_date` 是开始生成报告时的本地执行日期，
+不从观测日期或锚定日期推导。**frontmatter 的 `verdict` 块是仪表盘唯一认的判断契约**，
 必须填；正文写仪表盘表达不了的推理，不要重抄梯级表——那是仪表盘的活。
 
 不传 `--input` 也能出图，判断区会显示「报告未提供整体判断」、面板说明整行不出现——
@@ -10,7 +11,8 @@
 
 ```yaml
 ---
-date: 2026-08-26
+date: 2026-08-30              # 报告生成的执行日；决定文件名、页面标题与报告标题
+data_asof: 2026-08-27         # evidence.asof；只表示本报告读取的数据截止日
 verdict:
   # 体系状态机的档。没到能定档的条件就写「未定档」并说明缺什么。
   regime_state: "R0 正常（暂定）"
@@ -44,6 +46,10 @@ verdict:
     structure: "……"     # 仅 --full
 ---
 ```
+
+`date` 与 `data_asof` 是两套日期，不能混用。即使 ETF 持仓、国债曲线或其它证据只更新到
+T-1，也不能因此把报告日期退回 T-1。各数据源的真实锚定日继续以 evidence 的 `anchors`
+为准，并在正文说明相对报告日的滞后。
 
 `badge_tone` / `tone` 的取值语义：`widening` 走宽（红）、`tightening` 收窄（绿）、
 `watch` 观察（琥珀）、`unknown` 数据不足（灰）。**颜色只是辅助，文字始终在场。**

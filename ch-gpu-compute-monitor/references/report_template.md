@@ -23,7 +23,8 @@
 
 ```yaml
 ---
-date: 2026-08-25
+date: 2026-08-30              # 报告生成的执行日；用本地日历日，不从观测日/锚定日推导
+data_asof: 2026-08-29         # evidence.asof；只表示本报告读取的数据截止日
 window_days: 90
 schema: gpu-compute-monitor/report/1.2
 
@@ -57,6 +58,11 @@ verdict:
 ---
 ```
 
+`date` 与 `data_asof` 是两套日期，不能混用。`date` 决定 Markdown/HTML 文件名、页面标题
+和报告标题，始终取开始生成报告时的本地执行日期；即使最新成交价只结算到 T-1，也不能
+因此把报告日期退回 T-1。`data_asof` 原样抄 evidence 的 `asof`，而各面板的真实最新数据
+继续以 `anchor_date` 为准，并注明滞后天数。
+
 **每条 ≤100 字。** 超了渲染器会在输出摘要的 `panel_notes_over_limit` 里点名，
 但不会截断——截断会把话拦腰砍断，还不如让你自己改短。
 
@@ -76,7 +82,7 @@ verdict:
 ## 正文结构
 
 ```markdown
-# GPU 算力价格与供给监控 · 2026-08-25
+# GPU 算力价格与供给监控 · 2026-08-30
 
 ## 市场判断与供需拐点
 整体结论展开讲。frontmatter 的 summary 是压缩版，这里是完整版：

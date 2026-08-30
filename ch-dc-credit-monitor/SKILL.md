@@ -104,10 +104,16 @@ SPV 的信用不是独立变量，是「租户信用 × 结构增信 × 抵押�
 4. **判断**：按 `references/credit_framework.md` 的五个判据逐条过，再按 §五 的裁决
    规则处理三层冲突，最后按 §四 的状态机定档（或明说为什么定不了）。
    **每条判断都要跟一个证伪条件。**
-5. **写报告**：按 `references/report_template.md` 的七节写到 `reports/dc-<date>.md`。
+5. **写报告**：按 `references/report_template.md` 的七节写到
+   `reports/dc-<report_date>.md`。`report_date` 固定取开始生成报告时的本地执行日期，
+   不从 `asof_date`、`evidence.asof` 或任一锚定日推导；frontmatter 的 `date`
+   与正文标题也用这个执行日期。另写 `data_asof: <evidence.asof>` 保留数据截止日，
+   各源真实最新数据仍按 `anchors` 解释。
    **frontmatter 的 `verdict` 块是仪表盘唯一认的判断契约**，必须填。
-6. **出仪表盘**：`python scripts/render_report_html.py --evidence evidence/dc-<date>.json
-   --input reports/dc-<date>.md`。默认出日频精简页；要查明细加 `--full`。
+6. **出仪表盘**：`python scripts/render_report_html.py
+   --evidence evidence/dc-<data_asof>.json --input reports/dc-<report_date>.md`。
+   默认输出 `reports/dc-<report_date>.html`；要查明细加 `--full`，输出
+   `reports/dc-<report_date>-full.html`。两版页头都并列显示报告日与数据截止日。
 
 补录 SPV 台账时编辑 `config/universe.yaml` 的 `spv` 段（每条必须带 `disclosed_in`
 与 `disclosure_date`），再重跑 collect 与 metrics。**动手前先读
@@ -140,6 +146,7 @@ python scripts/metrics.py --asof 2026-08-26 --window 90
 python scripts/render_report_html.py --evidence evidence/dc-2026-08-26.json          # 精简页（默认）
 python scripts/render_report_html.py --evidence … --input reports/dc-2026-08-26.md   # 带模型判断
 python scripts/render_report_html.py --evidence … --full                             # 完整明细版
+python scripts/render_report_html.py --evidence … --report-date 2026-08-30            # 显式指定报告执行日
 ```
 
 **默认输出精简页，这是日频追踪该有的形态。** 三块：判断区、今天值得看的、
@@ -156,7 +163,10 @@ python scripts/render_report_html.py --evidence … --full                      
 
 明细（逐只债、11×12 发行人曲线表、转债逐只、GPU 工具级债务、SPV 卡片）属于
 **查证深度不是日频信息**，留在证据包与报告正文里；需要时 `--full` 渲染完整版
-（含对数纵轴的信用曲线全景图），输出到 `dc-<date>-full.html`，不覆盖日频页。
+（含对数纵轴的信用曲线全景图），输出到 `dc-<report_date>-full.html`，不覆盖日频页。
+
+报告日期来自 frontmatter 的 `date`，未传报告或未写 `date` 时才退回本地执行日；
+它不读取 evidence 的观测日期来命名产物。`data_asof` 只用于定位证据包与展示数据截止日。
 
 自包含单页无外部依赖，claude 主题暖色纸面。**证据全部由脚本从 evidence 渲染，
 判断全部来自 `--input` 报告 frontmatter 的 `verdict` 块**；不传 `--input` 也能出图，
@@ -220,7 +230,8 @@ python scripts/render_report_html.py --evidence … --full                      
 
 **输入**：「出一份今天的数据中心信用日报」
 
-**做法**：`collect.py --with-sec` → `metrics.py` → 读证据 → 写 `reports/dc-<date>.md`
+**做法**：`collect.py --with-sec` → `metrics.py` → 读证据 → 写
+`reports/dc-<report_date>.md`（另记 `data_asof`）
 → `render_report_html.py`。
 
 **冷启动第一天的正确产出**（2026-08-26 真实运行结果）：

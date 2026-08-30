@@ -107,6 +107,22 @@ def test_compact_html_omits_daily_status_and_caveat_block():
         assert removed not in page
 
 
+def test_report_date_is_separate_from_evidence_asof_in_both_views():
+    """精简页与完整版都用执行日做报告日，观测日只作为数据截止日。"""
+    ev = {"asof": "2026-08-27", "window_days": 90,
+          "source_health": [], "models": {}}
+    report_date = renderer.resolve_report_date(
+        {"date": "2026-08-30", "data_asof": "2026-08-27"})
+
+    compact = renderer.build_compact_html(ev, {}, report_date)
+    full = renderer.build_html(ev, {}, report_date)
+
+    assert report_date == "2026-08-30"
+    for page in (compact, full):
+        assert "数据中心信用监控 · 2026-08-30" in page
+        assert "报告日 2026-08-30 · 数据截止 2026-08-27" in page
+
+
 # --- 4. alpha 分解必须闭合 -------------------------------------------------
 def _series(pairs):
     return [{"date": d, "value": v} for d, v in pairs]

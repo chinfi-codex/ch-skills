@@ -58,8 +58,10 @@ def main() -> int:
         "issuers": len(evidence["issuers"]),
         "events": len(evidence["events"]),
         "quality": evidence["quality_summary"],
-        "next_step": ("读证据 → 写 reports/dc-%s.md（含 verdict 块）→ "
-                      "render_report_html.py --input 那份报告" % evidence["asof"]),
+        "next_step": ("读证据 → 按生成报告时的本地执行日写 "
+                      "reports/dc-<report_date>.md（frontmatter 另记 "
+                      f"data_asof: {evidence['asof']}）→ render_report_html.py "
+                      "--evidence 当前证据 --input 那份报告"),
     })
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0

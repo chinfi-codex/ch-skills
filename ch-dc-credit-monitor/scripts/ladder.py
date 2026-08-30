@@ -25,8 +25,37 @@ def _bucket(issuer_block: Dict[str, Any], bucket: str) -> Optional[float]:
 
 def build_rungs(curves: Dict[str, Dict[str, Any]],
                 issuers_cfg: Dict[str, Any],
-                rungs_cfg: Dict[Any, Any]) -> List[Dict[str, Any]]:
-    """把发行人按档位摊开，每档给一个代表读数（5–10Y 桶均值的中位数）。"""
+                rungs_cfg: Dict[Any, Any],
+                *,
+                index_oas_bp: Optional[Dict[str, float]] = None,
+                anchor_index_oas_bp: Optional[Dict[str, float]] = None,
+                default_bench: str = "ig") -> List[Dict[str, Any]]:
+    """把发行人按档位摊开，每档给一个代表读数（5–10Y 桶均值的中位数）。
+
+    每档同时给**两个口径的锚点漂移**，因为它们回答的不是同一个问题：
+
+    * `drift_vs_anchor_bp` 是 G-spread 口径。G-spread 只剥了利率 beta
+      （它的定义式就是收益率减插值国债），信用市场 beta 还在里面。IG 指数 OAS
+      从 81 走到 95，七个档的这一列会集体 +14bp，读起来像「AI 信用全面恶化」，
+      其实是整个投资级市场在走宽。
+    * `drift_vs_anchor_excess_bp` 是超额口径：先减掉对应指数 OAS 再跟锚点比，
+      等价于 `G-spread 口径漂移 − 指数 OAS 自身的漂移`。**它才是「这一档相对
+      市场额外走了多少」。**
+
+    两个都留着是有意的：前者回答「现在的绝对补偿是多少」，后者回答「这是不是
+    AI 自己的事」。**只看后者会漏掉整体走宽本身就是风险这件事。**
+
+    `index_oas_bp` 是当日指数 OAS（{"ig": 81.0, "hy": 270.0}），
+    `anchor_index_oas_bp` 是锚点那天的同一组数。缺任何一个，超额口径出 None
+    并在 `excess_quality` 里说明缺在哪，**不拿别的日期顶替**——用错日期的指数值
+    算出来的「超额漂移」比没有更坏。
+
+    档位对哪条指数：`rungs_cfg[rung]["bench"]`，缺省 ig。纯算力商挂 hy，
+    这跟 attribution 里市场 beta 的分段口径必须一致。
+    """
+    index_oas_bp = index_oas_bp or {}
+    anchor_index_oas_bp = anchor_index_oas_bp or {}
+
     grouped: Dict[int, List[str]] = {}
     for key, meta in issuers_cfg.items():
         rung = meta.get("rung")
@@ -40,17 +69,45 @@ def build_rungs(curves: Dict[str, Dict[str, Any]],
         readings = {m: _bucket(curves.get(m, {}), "5-10y") for m in members}
         live = [v for v in readings.values() if v is not None]
         meta = rungs_cfg.get(rung) or rungs_cfg.get(str(rung)) or {}
+        median = round(statistics.median(live), 1) if live else None
+        anchor = meta.get("anchor_5_10y")
+
+        bench = meta.get("bench") or default_bench
+        bench_bp = index_oas_bp.get(bench)
+        anchor_bench_bp = anchor_index_oas_bp.get(bench)
+        excess = (None if median is None or bench_bp is None
+                  else round(median - bench_bp, 1))
+        anchor_excess = (None if anchor is None or anchor_bench_bp is None
+                         else round(anchor - anchor_bench_bp, 1))
+        if median is None:
+            excess_quality = "no_reading"
+        elif bench_bp is None:
+            excess_quality = "no_index_oas"
+        elif anchor is None or anchor_bench_bp is None:
+            excess_quality = "no_anchor_index_oas"
+        else:
+            excess_quality = "ok"
+
         out.append({
             "rung": rung,
             "name": meta.get("name", f"档 {rung}"),
             "role": meta.get("role"),
-            "anchor_5_10y": meta.get("anchor_5_10y"),
+            "anchor_5_10y": anchor,
             "members": members,
             "readings_5_10y": readings,
-            "median_5_10y": round(statistics.median(live), 1) if live else None,
-            "drift_vs_anchor_bp": (
-                round(statistics.median(live) - meta["anchor_5_10y"], 1)
-                if live and meta.get("anchor_5_10y") is not None else None),
+            "median_5_10y": median,
+            "drift_vs_anchor_bp": (None if median is None or anchor is None
+                                   else round(median - anchor, 1)),
+            # 超额口径：剔掉对应指数 OAS 之后的水平、锚点与漂移。
+            "bench": bench,
+            "bench_bp": bench_bp,
+            "anchor_bench_bp": anchor_bench_bp,
+            "excess_5_10y": excess,
+            "anchor_excess_5_10y": anchor_excess,
+            "drift_vs_anchor_excess_bp": (
+                None if excess is None or anchor_excess is None
+                else round(excess - anchor_excess, 1)),
+            "excess_quality": excess_quality,
         })
     return out
 

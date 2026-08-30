@@ -1,6 +1,6 @@
 {
   "asof": "2026-08-27",
-  "generated_at": "2026-08-29T01:05:47.373810+00:00",
+  "generated_at": "2026-08-30T01:11:14.244491+00:00",
   "window_days": 90,
   "anchors": {
     "holdings_asof": "2026-08-27",
@@ -8,9 +8,16 @@
     "index_oas": "2026-08-27",
     "curve_lag_days": 0,
     "index_oas_bp": {
-      "ig": 79.0,
-      "hy": 263.0
-    }
+      "hy": 263.0,
+      "ig": 79.0
+    },
+    "anchor_asof": "2026-08-25",
+    "anchor_index_oas_day": "2026-08-25",
+    "anchor_index_oas_bp": {
+      "hy": 270.0,
+      "ig": 81.0
+    },
+    "benchmark_source": "库 63 天 + FRED 实时 84 天"
   },
   "dials": [
     {
@@ -21,6 +28,11 @@
       "unit": "bp",
       "anchor": 39,
       "vs_anchor": -0.7,
+      "bench": "ig",
+      "excess": -40.7,
+      "anchor_excess": -42.0,
+      "vs_anchor_excess": 1.3,
+      "excess_quality": "ok",
       "d1": -2.2,
       "d7": null,
       "d30": null,
@@ -35,6 +47,11 @@
       "unit": "bp",
       "anchor": 68,
       "vs_anchor": 0.3,
+      "bench": "ig",
+      "excess": -10.7,
+      "anchor_excess": -13.0,
+      "vs_anchor_excess": 2.3,
+      "excess_quality": "ok",
       "d1": -1.8,
       "d7": null,
       "d30": null,
@@ -49,6 +66,11 @@
       "unit": "bp",
       "anchor": 78,
       "vs_anchor": -0.6,
+      "bench": "ig",
+      "excess": -1.6,
+      "anchor_excess": -3.0,
+      "vs_anchor_excess": 1.4,
+      "excess_quality": "ok",
       "d1": -1.8,
       "d7": null,
       "d30": null,
@@ -63,6 +85,11 @@
       "unit": "bp",
       "anchor": 97,
       "vs_anchor": -4.1,
+      "bench": "ig",
+      "excess": 13.9,
+      "anchor_excess": 16.0,
+      "vs_anchor_excess": -2.1,
+      "excess_quality": "ok",
       "d1": -3.7,
       "d7": null,
       "d30": null,
@@ -77,6 +104,11 @@
       "unit": "bp",
       "anchor": 107,
       "vs_anchor": 0.3,
+      "bench": "ig",
+      "excess": 28.3,
+      "anchor_excess": 26.0,
+      "vs_anchor_excess": 2.3,
+      "excess_quality": "ok",
       "d1": -2.1,
       "d7": null,
       "d30": null,
@@ -91,6 +123,11 @@
       "unit": "bp",
       "anchor": 205,
       "vs_anchor": -6.6,
+      "bench": "ig",
+      "excess": 119.4,
+      "anchor_excess": 124.0,
+      "vs_anchor_excess": -4.6,
+      "excess_quality": "ok",
       "d1": -5.3,
       "d7": null,
       "d30": null,
@@ -105,6 +142,11 @@
       "unit": "bp",
       "anchor": 775,
       "vs_anchor": -9.3,
+      "bench": "hy",
+      "excess": 502.7,
+      "anchor_excess": 505.0,
+      "vs_anchor_excess": -2.3,
+      "excess_quality": "ok",
       "d1": -10.3,
       "d7": null,
       "d30": null,
@@ -119,6 +161,11 @@
       "unit": "bp",
       "anchor": 28,
       "vs_anchor": -3.8,
+      "bench": null,
+      "excess": null,
+      "anchor_excess": null,
+      "vs_anchor_excess": null,
+      "excess_quality": null,
       "d1": -2.2,
       "d7": null,
       "d30": null,
@@ -133,6 +180,11 @@
       "unit": "bp",
       "anchor": 136,
       "vs_anchor": -6.3,
+      "bench": null,
+      "excess": null,
+      "anchor_excess": null,
+      "vs_anchor_excess": null,
+      "excess_quality": null,
       "d1": -3.8,
       "d7": null,
       "d30": null,
@@ -147,6 +199,11 @@
       "unit": "bp",
       "anchor": 570,
       "vs_anchor": -2.7,
+      "bench": null,
+      "excess": null,
+      "anchor_excess": null,
+      "vs_anchor_excess": null,
+      "excess_quality": null,
       "d1": -5.0,
       "d7": null,
       "d30": null,
@@ -161,6 +218,11 @@
       "unit": "bp",
       "anchor": -3,
       "vs_anchor": 1.4,
+      "bench": null,
+      "excess": null,
+      "anchor_excess": null,
+      "vs_anchor_excess": null,
+      "excess_quality": null,
       "d1": -0.8,
       "d7": null,
       "d30": null,
@@ -175,6 +237,11 @@
       "unit": "bp",
       "anchor": null,
       "vs_anchor": null,
+      "bench": null,
+      "excess": null,
+      "anchor_excess": null,
+      "vs_anchor_excess": null,
+      "excess_quality": null,
       "d1": -2.8,
       "d7": null,
       "d30": null,
@@ -189,11 +256,262 @@
       "unit": "bp",
       "anchor": null,
       "vs_anchor": null,
+      "bench": null,
+      "excess": null,
+      "anchor_excess": null,
+      "vs_anchor_excess": null,
+      "excess_quality": null,
       "d1": -1.8,
       "d7": null,
       "d30": null,
       "note": "票息 6.581% vs 租户同期限 6.807%；正数=SPV 更便宜，补偿偏薄",
       "quality": "ok"
+    }
+  ],
+  "member_charts": [
+    {
+      "issuer": "MSFT",
+      "name": "Microsoft",
+      "rung": 1,
+      "value": 38.3,
+      "anchor": 39,
+      "drift_vs_anchor_bp": -0.7,
+      "sample_n": 1,
+      "window_days": 200,
+      "series_days": 2,
+      "min_points_for_line": 10,
+      "series": [
+        [
+          "2026-08-26",
+          40.5
+        ],
+        [
+          "2026-08-27",
+          38.3
+        ]
+      ],
+      "quality": "insufficient_series"
+    },
+    {
+      "issuer": "AMZN",
+      "name": "Amazon.com",
+      "rung": 2,
+      "value": 67.9,
+      "anchor": 68,
+      "drift_vs_anchor_bp": -0.1,
+      "sample_n": 8,
+      "window_days": 200,
+      "series_days": 2,
+      "min_points_for_line": 10,
+      "series": [
+        [
+          "2026-08-26",
+          69.9
+        ],
+        [
+          "2026-08-27",
+          67.9
+        ]
+      ],
+      "quality": "insufficient_series"
+    },
+    {
+      "issuer": "GOOGL",
+      "name": "Alphabet",
+      "rung": 2,
+      "value": 68.7,
+      "anchor": 69,
+      "drift_vs_anchor_bp": -0.3,
+      "sample_n": 6,
+      "window_days": 200,
+      "series_days": 2,
+      "min_points_for_line": 10,
+      "series": [
+        [
+          "2026-08-26",
+          70.2
+        ],
+        [
+          "2026-08-27",
+          68.7
+        ]
+      ],
+      "quality": "insufficient_series"
+    },
+    {
+      "issuer": "AEP",
+      "name": "American Electric Power",
+      "rung": 3,
+      "value": 82.0,
+      "anchor": 82,
+      "drift_vs_anchor_bp": 0.0,
+      "sample_n": 10,
+      "window_days": 200,
+      "series_days": 2,
+      "min_points_for_line": 10,
+      "series": [
+        [
+          "2026-08-26",
+          84.1
+        ],
+        [
+          "2026-08-27",
+          82.0
+        ]
+      ],
+      "quality": "insufficient_series"
+    },
+    {
+      "issuer": "D",
+      "name": "Dominion Energy",
+      "rung": 3,
+      "value": 77.4,
+      "anchor": 77,
+      "drift_vs_anchor_bp": 0.4,
+      "sample_n": 10,
+      "window_days": 200,
+      "series_days": 2,
+      "min_points_for_line": 10,
+      "series": [
+        [
+          "2026-08-26",
+          79.2
+        ],
+        [
+          "2026-08-27",
+          77.4
+        ]
+      ],
+      "quality": "insufficient_series"
+    },
+    {
+      "issuer": "ETR",
+      "name": "Entergy",
+      "rung": 3,
+      "value": 74.2,
+      "anchor": 74,
+      "drift_vs_anchor_bp": 0.2,
+      "sample_n": 13,
+      "window_days": 200,
+      "series_days": 2,
+      "min_points_for_line": 10,
+      "series": [
+        [
+          "2026-08-26",
+          76.7
+        ],
+        [
+          "2026-08-27",
+          74.2
+        ]
+      ],
+      "quality": "insufficient_series"
+    },
+    {
+      "issuer": "META",
+      "name": "Meta Platforms",
+      "rung": 4,
+      "value": 92.9,
+      "anchor": 97,
+      "drift_vs_anchor_bp": -4.1,
+      "sample_n": 7,
+      "window_days": 200,
+      "series_days": 2,
+      "min_points_for_line": 10,
+      "series": [
+        [
+          "2026-08-26",
+          96.6
+        ],
+        [
+          "2026-08-27",
+          92.9
+        ]
+      ],
+      "quality": "insufficient_series"
+    },
+    {
+      "issuer": "DLR",
+      "name": "Digital Realty",
+      "rung": 5,
+      "value": null,
+      "anchor": null,
+      "drift_vs_anchor_bp": null,
+      "sample_n": 0,
+      "window_days": 200,
+      "series_days": 0,
+      "min_points_for_line": 10,
+      "series": [],
+      "quality": "no_reading"
+    },
+    {
+      "issuer": "EQIX",
+      "name": "Equinix",
+      "rung": 5,
+      "value": 107.3,
+      "anchor": 107,
+      "drift_vs_anchor_bp": 0.3,
+      "sample_n": 5,
+      "window_days": 200,
+      "series_days": 2,
+      "min_points_for_line": 10,
+      "series": [
+        [
+          "2026-08-26",
+          109.4
+        ],
+        [
+          "2026-08-27",
+          107.3
+        ]
+      ],
+      "quality": "insufficient_series"
+    },
+    {
+      "issuer": "ORCL",
+      "name": "Oracle",
+      "rung": 6,
+      "value": 198.4,
+      "anchor": 205,
+      "drift_vs_anchor_bp": -6.6,
+      "sample_n": 12,
+      "window_days": 200,
+      "series_days": 2,
+      "min_points_for_line": 10,
+      "series": [
+        [
+          "2026-08-26",
+          203.7
+        ],
+        [
+          "2026-08-27",
+          198.4
+        ]
+      ],
+      "quality": "insufficient_series"
+    },
+    {
+      "issuer": "CRWV",
+      "name": "CoreWeave",
+      "rung": 7,
+      "value": 765.7,
+      "anchor": 775,
+      "drift_vs_anchor_bp": -9.3,
+      "sample_n": 2,
+      "window_days": 200,
+      "series_days": 2,
+      "min_points_for_line": 10,
+      "series": [
+        [
+          "2026-08-26",
+          776.0
+        ],
+        [
+          "2026-08-27",
+          765.7
+        ]
+      ],
+      "quality": "insufficient_series"
     }
   ],
   "ladder": [
@@ -209,7 +527,14 @@
         "MSFT": 38.3
       },
       "median_5_10y": 38.3,
-      "drift_vs_anchor_bp": -0.7
+      "drift_vs_anchor_bp": -0.7,
+      "bench": "ig",
+      "bench_bp": 79.0,
+      "anchor_bench_bp": 81.0,
+      "excess_5_10y": -40.7,
+      "anchor_excess_5_10y": -42.0,
+      "drift_vs_anchor_excess_bp": 1.3,
+      "excess_quality": "ok"
     },
     {
       "rung": 2,
@@ -225,7 +550,14 @@
         "GOOGL": 68.7
       },
       "median_5_10y": 68.3,
-      "drift_vs_anchor_bp": 0.3
+      "drift_vs_anchor_bp": 0.3,
+      "bench": "ig",
+      "bench_bp": 79.0,
+      "anchor_bench_bp": 81.0,
+      "excess_5_10y": -10.7,
+      "anchor_excess_5_10y": -13.0,
+      "drift_vs_anchor_excess_bp": 2.3,
+      "excess_quality": "ok"
     },
     {
       "rung": 3,
@@ -243,7 +575,14 @@
         "ETR": 74.2
       },
       "median_5_10y": 77.4,
-      "drift_vs_anchor_bp": -0.6
+      "drift_vs_anchor_bp": -0.6,
+      "bench": "ig",
+      "bench_bp": 79.0,
+      "anchor_bench_bp": 81.0,
+      "excess_5_10y": -1.6,
+      "anchor_excess_5_10y": -3.0,
+      "drift_vs_anchor_excess_bp": 1.4,
+      "excess_quality": "ok"
     },
     {
       "rung": 4,
@@ -257,7 +596,14 @@
         "META": 92.9
       },
       "median_5_10y": 92.9,
-      "drift_vs_anchor_bp": -4.1
+      "drift_vs_anchor_bp": -4.1,
+      "bench": "ig",
+      "bench_bp": 79.0,
+      "anchor_bench_bp": 81.0,
+      "excess_5_10y": 13.9,
+      "anchor_excess_5_10y": 16.0,
+      "drift_vs_anchor_excess_bp": -2.1,
+      "excess_quality": "ok"
     },
     {
       "rung": 5,
@@ -273,7 +619,14 @@
         "EQIX": 107.3
       },
       "median_5_10y": 107.3,
-      "drift_vs_anchor_bp": 0.3
+      "drift_vs_anchor_bp": 0.3,
+      "bench": "ig",
+      "bench_bp": 79.0,
+      "anchor_bench_bp": 81.0,
+      "excess_5_10y": 28.3,
+      "anchor_excess_5_10y": 26.0,
+      "drift_vs_anchor_excess_bp": 2.3,
+      "excess_quality": "ok"
     },
     {
       "rung": 6,
@@ -287,7 +640,14 @@
         "ORCL": 198.4
       },
       "median_5_10y": 198.4,
-      "drift_vs_anchor_bp": -6.6
+      "drift_vs_anchor_bp": -6.6,
+      "bench": "ig",
+      "bench_bp": 79.0,
+      "anchor_bench_bp": 81.0,
+      "excess_5_10y": 119.4,
+      "anchor_excess_5_10y": 124.0,
+      "drift_vs_anchor_excess_bp": -4.6,
+      "excess_quality": "ok"
     },
     {
       "rung": 7,
@@ -301,7 +661,14 @@
         "CRWV": 765.7
       },
       "median_5_10y": 765.7,
-      "drift_vs_anchor_bp": -9.3
+      "drift_vs_anchor_bp": -9.3,
+      "bench": "hy",
+      "bench_bp": 263.0,
+      "anchor_bench_bp": 270.0,
+      "excess_5_10y": 502.7,
+      "anchor_excess_5_10y": 505.0,
+      "drift_vs_anchor_excess_bp": -2.3,
+      "excess_quality": "ok"
     }
   ],
   "gaps": [
@@ -3337,7 +3704,7 @@
     {
       "source": "fred",
       "status": "ok",
-      "detail": "国债曲线锚 2026-08-27，指数 OAS 锚 2026-08-27"
+      "detail": "国债曲线锚 2026-08-27，指数 OAS 锚 2026-08-27；库 63 天 + FRED 实时 84 天；校准锚点 2026-08-25 的指数 OAS 取自 2026-08-25"
     },
     {
       "source": "sec",

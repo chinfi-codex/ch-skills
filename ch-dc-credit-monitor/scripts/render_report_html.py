@@ -498,6 +498,8 @@ def render_ladder(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
             f'<td class="num">{bp(r.get("median_5_10y"))}</td>'
             f'<td class="num">{bp(r.get("anchor_5_10y"))}</td>'
             f'<td class="num">{signed(r.get("drift_vs_anchor_bp"))}</td>'
+            f'<td class="num">{signed(r.get("drift_vs_anchor_excess_bp"))}</td>'
+            f'<td class="dim">{esc(r.get("bench") or "")}</td>'
             f'<td class="dim">{esc(readings)}</td>'
             f'<td class="dim">{esc(r.get("role") or "")}</td></tr>')
 
@@ -510,11 +512,14 @@ def render_ladder(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     <span class="sec-hint">{esc(disp_line)}</span></div>
   <div class="lead">单看「ORCL 205bp」读不出任何东西。有意义的是它在梯级里的位置，
   以及这个位置在移动。离散度扩张 + 弱档走宽是质量分层，压缩 + 全档同向走宽才是体系性，
-  压缩 + 全档同向收窄是追逐收益——<strong>三种读法完全不同，判别留给模型</strong>。</div>
+  压缩 + 全档同向收窄是追逐收益——<strong>三种读法完全不同，判别留给模型</strong>。
+  两列漂移要一起看：<strong>漂移</strong>是 G-spread 口径，只剥了利率 beta，整个 IG 市场
+  走宽会让七档集体同向移动；<strong>剔市场</strong>再减掉该档对应的指数 OAS，剩下的才是
+  这一档自己额外走的部分。<strong>只看后一列会漏掉「整体走宽本身就是风险」</strong>。</div>
   {ladder_chart(rungs)}
   <div class="scroll"><table><thead><tr>
     <th>档</th><th>名称</th><th>5–10Y 中位</th><th>锚点</th><th>漂移</th>
-    <th>成员读数</th><th>它在框架里的角色</th>
+    <th>剔市场</th><th>基准</th><th>成员读数</th><th>它在框架里的角色</th>
   </tr></thead><tbody>{"".join(rows)}</tbody></table></div>
   {panel_note(notes, "ladder")}
 </section>"""
@@ -810,6 +815,10 @@ def render_sources(ev: Dict[str, Any]) -> str:
 _BAR_FLOOR_BP = 20.0
 
 COMPACT_CSS = """
+/* 表比视口窄不了：名称列 + 当前 + 五档变化，最小内容宽度就有 500px 出头。
+   让它在自己的容器里横向滚动，而不是把整个页面推宽——页面横向滚动之后
+   顶部判断区和异动列表也会跟着跑偏。 */
+.dial-scroll { overflow-x: auto; }
 .dial-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 4px; }
 .dial-table th { font-size: 11px; color: var(--ink-4); font-weight: 500;
                  text-align: right; padding: 6px 10px; white-space: nowrap; }
@@ -835,9 +844,25 @@ COMPACT_CSS = """
 .dial-val { font-family: var(--font-mono); font-size: 15px; font-weight: 700;
             color: var(--ink-1); }
 .dial-d { font-family: var(--font-mono); font-size: 12.5px; }
-.bar-cell { width: 120px; }
-.bar { height: 5px; background: var(--line-2); border-radius: 3px; overflow: hidden; }
+.bar { height: 5px; background: var(--line-2); border-radius: 3px; overflow: hidden;
+       max-width: 300px; margin-top: 8px; }
 .bar > i { display: block; height: 100%; border-radius: 3px; }
+/* 类别指数与它的成分装在同一个盒子里：指数动了，往下一眼就能看到是谁在动。 */
+.cat { border: 1px solid var(--line-2); border-left: 3px solid var(--category-color);
+       border-radius: 10px; padding: 11px 13px 13px; margin-top: 10px; }
+.cat > .head { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.cat > .head b { font-size: 14px; font-weight: 600; color: var(--ink-1); }
+.cat > .head .sub { font-size: 11px; color: var(--ink-4); }
+/* 统计块给固定最小宽度，四个盒子的数字才会上下对齐——合并显示不该以
+   丢掉跨类别横向比较为代价。 */
+.catstats { display: flex; flex-wrap: wrap; gap: 8px 0; margin-top: 9px; }
+.catstats .st { min-width: 92px; }
+.catstats .st .k { display: block; font-size: 10.5px; color: var(--ink-4);
+                   letter-spacing: .02em; }
+.catstats .st .v { font-family: var(--font-mono); font-size: 17px; font-weight: 700;
+                   color: var(--ink-1); }
+.catstats .st.d .v { font-size: 13.5px; }
+.catstats .st .v.na { color: var(--ink-4); }
 .headline-row { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
 .headline-row .copy { flex: 1 1 420px; min-width: 320px; }
 .watch { margin-top: 4px; }
@@ -847,8 +872,30 @@ COMPACT_CSS = """
                    width: 5px; height: 5px; border-radius: 50%; background: var(--clay); }
 .watch li .tag { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-4);
                  margin-right: 6px; }
+/* 子项卡：一行两列。窄屏收成一列——两列挤到 160px 以下时曲线就没法读了。 */
+.mcards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px; margin-top: 8px; }
+.mgrp { margin-top: 16px; font-size: 11px; color: var(--ink-4); letter-spacing: .04em; }
+.mgrp:first-child { margin-top: 6px; }
+.mcard { border: 1px solid var(--line-2); border-left: 3px solid var(--category-color, var(--clay));
+         border-radius: 8px; padding: 10px 12px 8px; background: var(--surface-2); }
+.mcard .top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.mcard .who b { font-family: var(--font-mono); font-size: 13px; font-weight: 700;
+                color: var(--ink-1); }
+.mcard .who span { font-size: 11px; color: var(--ink-4); margin-left: 6px; }
+.mcard .now { font-family: var(--font-mono); font-size: 18px; font-weight: 700;
+              color: var(--ink-1); white-space: nowrap; }
+.mcard .now i { font-style: normal; font-size: 11px; color: var(--ink-4); margin-left: 3px; }
+.mcard .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px;
+               color: var(--ink-4); margin-top: 3px; }
+.mcard .meta .d { font-family: var(--font-mono); }
+.mcard .spark { display: block; width: 100%; height: auto; margin-top: 7px; }
+.mcard .nospark { margin-top: 7px; padding: 13px 10px; border: 1px dashed var(--line-2);
+                  border-radius: 6px; font-size: 11px; color: var(--ink-4);
+                  line-height: 1.6; text-align: center; }
 @media (max-width: 760px) {
-  .bar-cell, .dial-table th.opt, .dial-table td.opt { display: none; }
+  .mcards { grid-template-columns: 1fr; }
+  .catstats .st { min-width: 78px; }
 }
 """
 
@@ -889,6 +936,8 @@ def _compact_category_dials(ev: Dict[str, Any]) -> List[Dict[str, Any]]:
 
         weighted_values: List[float] = []
         weighted_anchors: List[float] = []
+        weighted_excess: List[float] = []
+        weighted_anchor_excess: List[float] = []
         members: List[Dict[str, Any]] = []
         for rung, dial in selected:
             rung_block = ladder.get(rung, {})
@@ -898,6 +947,13 @@ def _compact_category_dials(ev: Dict[str, Any]) -> List[Dict[str, Any]]:
                 weighted_values.extend([float(dial["value"])] * weight)
             if dial.get("anchor") is not None:
                 weighted_anchors.extend([float(dial["anchor"])] * weight)
+            # 超额口径用同一套权重聚合，否则两个数不同口径没法并排读。
+            # 一个类别里的档共用同一条指数（超大厂全是 ig、纯算力商是 hy），
+            # 所以这里的中位数与「先取中位再减指数」等价。
+            if dial.get("excess") is not None:
+                weighted_excess.extend([float(dial["excess"])] * weight)
+            if dial.get("anchor_excess") is not None:
+                weighted_anchor_excess.extend([float(dial["anchor_excess"])] * weight)
             readings = rung_block.get("readings_5_10y") or {}
             for issuer in rung_members or list(readings):
                 bucket = ((issuers.get(issuer) or {}).get("buckets") or {}).get("5-10y") or {}
@@ -909,6 +965,9 @@ def _compact_category_dials(ev: Dict[str, Any]) -> List[Dict[str, Any]]:
 
         value = round(float(median(weighted_values)), 1) if weighted_values else None
         anchor = round(float(median(weighted_anchors)), 1) if weighted_anchors else None
+        excess = round(float(median(weighted_excess)), 1) if weighted_excess else None
+        anchor_excess = (round(float(median(weighted_anchor_excess)), 1)
+                         if weighted_anchor_excess else None)
 
         changes: Dict[str, Optional[float]] = {}
         for field in ("d1", "d7", "d30"):
@@ -932,6 +991,11 @@ def _compact_category_dials(ev: Dict[str, Any]) -> List[Dict[str, Any]]:
             "anchor": anchor,
             "vs_anchor": (round(value - anchor, 1)
                           if value is not None and anchor is not None else None),
+            "excess": excess,
+            "vs_anchor_excess": (round(excess - anchor_excess, 1)
+                                 if excess is not None and anchor_excess is not None
+                                 else None),
+            "bench": next((d.get("bench") for _, d in selected if d.get("bench")), None),
             "d1": changes["d1"], "d7": changes["d7"], "d30": changes["d30"],
             "colour": spec["colour"],
             "members": members,
@@ -939,11 +1003,193 @@ def _compact_category_dials(ev: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+def member_spark(series: List[List[Any]], anchor: Optional[float], colour: str) -> str:
+    """子项的 5–10Y 曲线。线性刻度——单个发行人的量程窄，对数会把变化压平。
+
+    横轴按观测序号等距，不按日历：持仓文件周末不更新，按日历排会在每个周末留一段
+    空白，读起来像「利差不动」，其实是没数据。首尾日期标在轴下。
+
+    viewBox 的宽度按卡片实际宽度（两列布局下约 340px）取，不是随便挑一个大数：
+    SVG 里的字号是 viewBox 单位，viewBox 比容器宽多少，字就被缩小多少倍。
+    锚点标在左端、当前值标在右端，**两个标签各占一头就不会叠**——它们的纵坐标
+    经常只差一两个 bp，挤在同一侧必然重合。
+    """
+    points = [(str(d), float(v)) for d, v in series if v is not None]
+    if len(points) < 2:
+        return ""
+    W, H = 340.0, 86.0
+    L, R, T, B = 4.0, 34.0, 13.0, 13.0
+    values = [v for _, v in points]
+    lo, hi = min(values), max(values)
+    if anchor is not None:
+        lo, hi = min(lo, float(anchor)), max(hi, float(anchor))
+    pad = max((hi - lo) * 0.14, 0.8)
+    lo, hi = lo - pad, hi + pad
+
+    def x_of(i: int) -> float:
+        return L + (i / (len(points) - 1)) * (W - L - R)
+
+    def y_of(v: float) -> float:
+        return T + (hi - v) / (hi - lo) * (H - T - B)
+
+    parts: List[str] = []
+    if anchor is not None:
+        ay = y_of(float(anchor))
+        parts.append(f'<line x1="{L}" y1="{ay:.1f}" x2="{W-R+6:.1f}" y2="{ay:.1f}" '
+                     f'stroke="var(--ink-1)" stroke-width="1" stroke-dasharray="3 3" '
+                     f'opacity=".4"/>')
+        # 锚点线贴顶时把标签压到线下面，否则会被裁掉。
+        label_y = ay - 3.5 if ay - T > 11 else ay + 10
+        text = f"锚 {float(anchor):,.0f}"
+        # 曲线起点常常就在锚点附近，标签会被线穿过去。垫一块卡片底色的方块，
+        # 比把标签挪到图外省地方，也比加一条引导线干净。
+        w = 11.0 + 6.0 * (len(text) - 1)
+        parts.append(f'<rect x="{L:.1f}" y="{label_y-8:.1f}" width="{w:.1f}" height="10.5" '
+                     f'fill="var(--surface-2)" opacity=".9"/>')
+        parts.append(f'<text x="{L+1:.1f}" y="{label_y:.1f}" '
+                     f'style="fill:var(--ink-4);font-size:10px;'
+                     f'font-family:var(--font-mono)">{text}</text>')
+    path = " ".join(f'{"M" if i == 0 else "L"}{x_of(i):.1f} {y_of(v):.1f}'
+                    for i, (_, v) in enumerate(points))
+    parts.append(f'<path d="{path}" fill="none" stroke="{colour}" stroke-width="1.6" '
+                 f'stroke-linejoin="round" stroke-linecap="round"/>')
+    lx, ly = x_of(len(points) - 1), y_of(values[-1])
+    parts.append(f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="2.4" fill="{colour}"/>')
+    parts.append(f'<text x="{lx+5:.1f}" y="{ly+3.6:.1f}" '
+                 f'style="fill:var(--ink-1);font-size:11px;font-weight:700;'
+                 f'font-family:var(--font-mono)">{values[-1]:,.0f}</text>')
+    parts.append(f'<text x="{L}" y="{H-2:.1f}" style="fill:var(--ink-4);font-size:9px">'
+                 f'{esc(points[0][0])}</text>')
+    parts.append(f'<text x="{W-R:.1f}" y="{H-2:.1f}" text-anchor="end" '
+                 f'style="fill:var(--ink-4);font-size:9px">{esc(points[-1][0])}</text>')
+    return (f'<svg class="spark" viewBox="0 0 {W:.0f} {H:.0f}" role="img" '
+            f'aria-label="5–10Y 利差曲线">{"".join(parts)}</svg>')
+
+
+def _member_card(chart: Dict[str, Any], colour: str) -> str:
+    """一张子项卡：当前值、锚点与相对锚点的漂移，加一条曲线。
+
+    **点数不够就不画线**，写清楚差多少天以及为什么补不回来——价格层只有当日
+    快照，历史无法回补（见 sources.yaml 的 not_available）。留一个空图或者用两个点
+    连一条直线，都会让人以为看见了趋势。
+    """
+    value, anchor = chart.get("value"), chart.get("anchor")
+    drift = chart.get("drift_vs_anchor_bp")
+    n = chart.get("sample_n")
+    drift_cls = ("pct-up" if (drift or 0) > 0 else
+                 "pct-down" if (drift or 0) < 0 else "pct-flat")
+    meta = [f'档{chart.get("rung")}' if chart.get("rung") else "",
+            "暂无样本" if n == 0 else (f"{n} 只样本" if n else ""),
+            (f'锚点 {float(anchor):,.0f}bp' if anchor is not None else "无实测锚点")]
+    drift_html = (f'<span class="d {drift_cls}">{drift:+,.1f}bp</span>'
+                  if drift is not None else '<span class="d">漂移 —</span>')
+
+    # **点数够不够由证据包的 quality 说了算，渲染层不自己判断。**
+    # 直接把 series 丢给 member_spark 会绕过 min_points_for_line——两个点照样连出
+    # 一条线，正是这条守卫要拦的东西。
+    body = (member_spark(chart.get("series") or [], anchor, colour)
+            if chart.get("quality") == "ok" else "")
+    if not body:
+        # 缺数的理由每张卡都一样，写在小节抬头一次就够；卡上只留差多少天。
+        # 11 张卡各贴一段同样的话，读者会直接把整块跳过去。
+        need = chart.get("min_points_for_line")
+        days = chart.get("series_days") or 0
+        body = ('<div class="nospark">桶里没有样本，不出读数</div>'
+                if chart.get("quality") == "no_reading" else
+                f'<div class="nospark">序列 {days} 天 · 还差 {max(need - days, 0)} 天'
+                f'才够画线</div>')
+
+    return (f'<div class="mcard" style="--category-color:{colour}">'
+            f'<div class="top"><div class="who"><b>{esc(chart["issuer"])}</b>'
+            f'<span>{esc(chart.get("name") or "")}</span></div>'
+            f'<div class="now">{"—" if value is None else f"{value:,.0f}"}<i>bp</i></div></div>'
+            f'<div class="meta">{"".join(f"<span>{esc(m)}</span>" for m in meta if m)}'
+            f'{drift_html}</div>{body}</div>')
+
+
+def member_cards_grid(charts: Dict[str, Any], category: Dict[str, Any]) -> str:
+    """一个类别下的子项，一行两列。
+
+    子项不再占表里的一行——表那几列（1D/1W/1M/vs 锚点/剔市场）在子项上本来就全是
+    空的，那些变化量只在类别指数层算，留在表里纯属占位。卡片能放下当前值、锚点、
+    相对锚点的漂移和一条曲线，信息密度反而更高。
+    """
+    colour = category.get("colour") or "var(--clay)"
+    cards = [_member_card(charts[m["issuer"]], colour)
+             for m in (category.get("members") or []) if m["issuer"] in charts]
+    return f'<div class="mcards">{"".join(cards)}</div>' if cards else ""
+
+
+def member_chart_note(charts: Dict[str, Any]) -> str:
+    """曲线为什么是空的，整页说一次就够——11 张卡各贴一段同样的话没人会看。"""
+    if not charts:
+        return ""
+    sample = next(iter(charts.values()))
+    window, need = sample.get("window_days"), sample.get("min_points_for_line")
+    drawn = sum(1 for c in charts.values() if c.get("quality") == "ok")
+    short = sum(1 for c in charts.values() if c.get("quality") == "insufficient_series")
+    line = f'子项曲线取 5–10Y 桶均值，{window} 天窗口。'
+    if drawn == 0 and short:
+        line += ('现在一条都画不出来：价格层只有当日快照，历史补不回来'
+                 '（SPDR 端点没有归档，逐 CUSIP 历史价格也无免费源），'
+                 f'序列只能从开始采集那天往后攒，够 {need} 天才画线。'
+                 '虚线锚点与当前值不受影响，那两个数今天就成立。')
+    elif short:
+        line += f'其中 {short} 家序列还不足 {need} 天，不画线。'
+    return f'<div class="footnote">{esc(line)}</div>'
+
+
+def _stat(label: str, value: Optional[float], *, signed_fmt: bool = True,
+          big: bool = False) -> str:
+    if value is None:
+        text, cls = "—", "na"
+    elif signed_fmt:
+        text = f"{value:+,.1f}"
+        cls = "pct-up" if value > 0 else "pct-down" if value < 0 else "pct-flat"
+    else:
+        text, cls = f"{value:,.0f}", ""
+    return (f'<div class="st{"" if big else " d"}"><span class="k">{esc(label)}</span>'
+            f'<span class="v {cls}">{text}</span></div>')
+
+
+def _category_block(d: Dict[str, Any], cards: str, hi: float) -> str:
+    """一个类别指数连同它的子项曲线，装在同一个盒子里。
+
+    分开放过一版：指数在上面的表里、子项卡在页尾。读的时候得来回滚，
+    「这个指数由谁构成、是谁把它拉动的」这个问题反而变难了。合在一起之后
+    指标与成分同屏，指数动了直接往下看是哪家在动。
+
+    各类别的统计块用同样的最小宽度，所以四个盒子的数字仍然上下对齐，
+    跨类别横向比较没丢。
+    """
+    value = d["value"]
+    colour = d.get("colour") or "var(--clay)"
+    bar = ""
+    # 对数基准从 20bp 起算而不是从 1——从 1 起算会把 40bp 画成满格的 55%，
+    # 各类别看起来一样长，条形就白画了。
+    if value is not None and hi > _BAR_FLOOR_BP:
+        span = math.log10(hi) - math.log10(_BAR_FLOOR_BP)
+        frac = (math.log10(max(value, _BAR_FLOOR_BP)) - math.log10(_BAR_FLOOR_BP)) / span
+        bar = (f'<div class="bar"><i style="width:{max(3, frac*100):.0f}%;'
+               f'background:{colour}"></i></div>')
+    stats = (_stat("当前 bp", value, signed_fmt=False, big=True)
+             + _stat("1D", d.get("d1")) + _stat("1W", d.get("d7"))
+             + _stat("1M", d.get("d30")) + _stat("vs 锚点", d.get("vs_anchor"))
+             + _stat("剔市场", d.get("vs_anchor_excess")))
+    return (f'<div class="cat" style="--category-color:{colour}">'
+            f'<div class="head"><b>{esc(d["name"])}</b>'
+            f'<span class="sub">{esc(d.get("note") or "")}</span></div>'
+            f'{bar}<div class="catstats">{stats}</div>{cards}</div>')
+
+
 def render_dials(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
-    """核心刻度 —— 精简页的主体，也是唯一的一张表。
+    """核心刻度 —— 精简页的主体。
 
     选择标准只有一条：这个数每天看一眼值不值得。水平值本身信息量很低，
     驱动判断的是它相对昨天、上周、以及相对锚点的位移。
+
+    两种排版分工：**类别指数和它的成分是一个盒子**，因为读它们的时候是一件事；
+    跨档距离与结构量没有成分，留在下面那张表里横向对齐着比。
     """
     raw_dials = ev.get("dials") or []
     if not raw_dials:
@@ -951,70 +1197,66 @@ def render_dials(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
                 '暂无数据：证据包里没有 dials 段，先跑一次 metrics.py。</div></section>')
 
     category_dials = _compact_category_dials(ev)
-    dials = category_dials + [d for d in raw_dials if d.get("group") != "梯级"]
+    charts = {c["issuer"]: c for c in (ev.get("member_charts") or [])}
     category_vals = [d["value"] for d in category_dials if d["value"] is not None]
     hi = max(category_vals) if category_vals else 1.0
+    blocks = "".join(_category_block(d, member_cards_grid(charts, d), hi)
+                     for d in category_dials)
 
+    # 「剔市场」在这张表里恒为破折号：跨档距离是差的差，同段的指数 OAS 在减法里
+    # 自己抵掉了；离散度与 SPV 票息差本来就不是相对指数的量。给一个带解释的
+    # 破折号，而不是留白让人以为是缺数。
+    _NO_EXCESS_REASON = {
+        "跨档距离": "跨档距离是差的差，同段市场 beta 已自然对消，无需再剔",
+        "结构": "不是相对指数的水平量，剔市场无定义",
+    }
     rows: List[str] = []
     last_group = None
-    for d in dials:
+    for d in [x for x in raw_dials if x.get("group") != "梯级"]:
         if d["group"] != last_group:
             rows.append(f'<tr class="grp"><td colspan="7">{esc(d["group"])}</td></tr>')
             last_group = d["group"]
         value = d["value"]
-        # 只有类别指数画条：跨档距离和结构量的量纲不同，同尺画会误导。
-        # 对数基准从 20bp 起算而不是从 1——从 1 起算会把 40bp 画成满格的 55%，
-        # 各类别看起来一样长，条形就白画了。
-        bar = ""
-        if d["group"] == "类别指数" and value is not None and hi > _BAR_FLOOR_BP:
-            span = math.log10(hi) - math.log10(_BAR_FLOOR_BP)
-            frac = (math.log10(max(value, _BAR_FLOOR_BP))
-                    - math.log10(_BAR_FLOOR_BP)) / span
-            colour = d.get("colour") or "var(--clay)"
-            bar = (f'<div class="bar"><i style="width:{max(3, frac*100):.0f}%;'
-                   f'background:{colour}"></i></div>')
-        row_class = "category-index" if d["group"] == "类别指数" else ""
-        row_style = (f' style="--category-color:{d.get("colour") or "var(--clay)"}"'
-                     if row_class else "")
-        class_attr = f' class="{row_class}"' if row_class else ""
         rows.append(
-            f'<tr{class_attr}{row_style}><td><div class="dial-name">'
-            f'<b>{esc(d["name"])}</b>'
+            f'<tr><td><div class="dial-name"><b>{esc(d["name"])}</b>'
             f'<span class="sub">{esc(d.get("note") or "")}</span></div></td>'
-            f'<td class="bar-cell opt">{bar}</td>'
             f'<td class="dial-val">{"—" if value is None else f"{value:,.0f}"}</td>'
             + _delta_cell(d.get("d1")) + _delta_cell(d.get("d7"))
-            + _delta_cell(d.get("d30"))
-            + _delta_cell(d.get("vs_anchor")) + '</tr>')
-
-        # 类别指数下面逐行展开成员，让读者能看出指数由谁构成，以及缺数落在哪。
-        if row_class:
-            for member in d.get("members") or []:
-                issuer = member["issuer"]
-                child_value = member.get("value")
-                sample_n = member.get("sample_n")
-                sample_note = ("5–10Y" if sample_n is None else
-                               "5–10Y · 暂无样本" if sample_n == 0 else
-                               f"5–10Y · {sample_n} 只样本")
-                rows.append(
-                    '<tr class="category-member">'
-                    f'<td><div class="dial-name"><b>{esc(issuer)}</b>'
-                    f'<span class="sub">{esc(sample_note)}</span></div></td>'
-                    '<td class="bar-cell opt"></td>'
-                    f'<td class="dial-val">{"—" if child_value is None else f"{child_value:,.0f}"}</td>'
-                    '<td class="dial-d na">—</td><td class="dial-d na">—</td>'
-                    '<td class="dial-d na">—</td><td class="dial-d na">—</td></tr>')
+            + _delta_cell(d.get("d30")) + _delta_cell(d.get("vs_anchor"))
+            + f'<td class="dial-d na" title='
+              f'"{esc(_NO_EXCESS_REASON.get(d["group"], ""))}">—</td></tr>')
 
     have_deltas = any(d.get("d1") is not None for d in category_dials)
-    hint = ("单位 bp · 指数看变化，子项列当前 5–10Y 读数" if have_deltas else
-            "单位 bp · 序列只有 1 天，指数变化不出数；子项列当前 5–10Y 读数")
+    hint = ("单位 bp · 类别指数与它的成分同框" if have_deltas else
+            "单位 bp · 序列只有 1 天，指数变化不出数")
+
+    # 两个锚点口径必须写在旁边。G-spread 只剥了利率 beta，信用市场 beta 还在里面：
+    # IG 指数走宽 14bp，「vs 锚点」会集体 +14，看着像 AI 出事，其实是整个投资级
+    # 市场在动。「剔市场」把那部分也减掉。
+    anchors = ev.get("anchors") or {}
+    anchor_day = anchors.get("anchor_asof")
+    now_oas = anchors.get("index_oas_bp") or {}
+    then_oas = anchors.get("anchor_index_oas_bp") or {}
+    if then_oas:
+        oas_line = (f'IG 指数 OAS {bp(then_oas.get("ig"))} → {bp(now_oas.get("ig"))}、'
+                    f'HY {bp(then_oas.get("hy"))} → {bp(now_oas.get("hy"))}')
+    else:
+        oas_line = "锚点日的指数 OAS 缺失，剔市场不出数"
+    foot = (f'两个锚点口径不同：<b>vs 锚点</b>是 G-spread 相对 {esc(anchor_day or "锚点日")} '
+            f'的漂移，只剥了利率 beta；<b>剔市场</b>再减掉对应指数 OAS，'
+            f'剩下的才是这一档相对市场额外走的部分。同期 {esc(oas_line)}——'
+            f'两者的差就是这段市场 beta。')
+
     return f"""<section class="panel stack">
   <div class="sec-head"><strong>核心刻度</strong><span class="sec-hint">{esc(hint)}</span></div>
-  <table class="dial-table">
-    <thead><tr><th>指数 / 子项</th><th class="opt"></th><th>当前</th>
-      <th>1D</th><th>1W</th><th>1M</th><th>vs 锚点</th></tr></thead>
+  {blocks}
+  {member_chart_note(charts)}
+  <div class="dial-scroll"><table class="dial-table">
+    <thead><tr><th>跨档距离 / 结构</th><th>当前</th>
+      <th>1D</th><th>1W</th><th>1M</th><th>vs 锚点</th><th>剔市场</th></tr></thead>
     <tbody>{"".join(rows)}</tbody>
-  </table>
+  </table></div>
+  <div class="footnote">{foot}</div>
   {panel_note(notes, "ladder")}
 </section>"""
 

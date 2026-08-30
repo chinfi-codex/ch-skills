@@ -81,5 +81,15 @@ regime_states:
   T:  {name: "滞后定价（过渡态）",
        enter: "剪刀差扩大 且 alpha 为零——看起来像 R0，是最危险的伪装"}
 
+# 图表窗口 —— 与分析窗口 window_days 分开，故意的。
+# 趋势判据固定 90 天；子项曲线画 200 天只是为了看形状与位置，不参与任何判据，
+# 所以拉长它不会改变任何一条结论。
+chart:
+  member_series_days: 200
+  # 少于这么多点不画线。**两个点连起来是一条直线，读上去像趋势，其实什么都不是**——
+  # 这跟 disclosure_once 拒绝画时间序列是同一条纪律。
+  # 冷启动阶段子项卡会显式写「序列 N 天，不足以画线」，那是正确状态。
+  min_points_for_line: 10
+
 events:
   mode: record_only

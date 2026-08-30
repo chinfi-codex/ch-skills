@@ -34,6 +34,10 @@ from collectors import fred, sec, spdr                    # noqa: E402
 from collectors.base import load_config                   # noqa: E402
 
 
+# 每次采集顺手写回的基准层天数。幂等 upsert，重叠是有意的：FRED 会回溯修订。
+BENCH_PERSIST_DAYS = 30
+
+
 def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
@@ -68,12 +72,21 @@ def run(with_sec: bool = False, dry_run: bool = False) -> Dict[str, Any]:
     except Exception as exc:                              # noqa: BLE001
         bench = {"curve": {}, "index_oas_bp": {}, "latest": None}
         bench_status, bench_note = "failed", f"FRED 取不到：{exc}"
+    # 基准层要落库，不能只活在内存里。以前算完利差就扔，代价是判据 1 的市场 beta
+    # 每次都得重打一次 FRED，锚点日的指数 OAS 也无处可查。写最近 30 天而不是全量：
+    # 幂等 upsert 顺手吃掉 FRED 的回溯修订，又不用每天重写几百天。历史一次性回补
+    # 走 scripts/backfill.py。
+    bench_since = (dt.date.today() - dt.timedelta(days=BENCH_PERSIST_DAYS)).isoformat()
+    bench_rows = fred.benchmark_rows(bench, since=bench_since) if bench["curve"] else []
+    if bench_rows and not dry_run:
+        db.upsert_observations(bench_rows)
     summary["sources"]["fred"] = {"status": bench_status, "note": bench_note,
+                                  "persisted_rows": len(bench_rows),
                                   "seconds": round(time.monotonic() - t0, 1)}
     if not dry_run:
         db.record_run({"run_id": run_id, "source_id": "fred", "obs_date": None,
                        "started_at": started, "ended_at": _now(),
-                       "status": bench_status, "rows_written": len(bench["curve"]),
+                       "status": bench_status, "rows_written": len(bench_rows),
                        "basket_fingerprint": None, "note": bench_note})
 
     # --- 市场层：SPDR 持仓 → 价格 → 收益率 → 利差 ---------------------------

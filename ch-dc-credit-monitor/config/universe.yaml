@@ -5,39 +5,57 @@
 # **脚本不自动调整档位归属**——标尺本身会漂，重新分档是判断不是计算。
 #
 # 实测锚点 as-of 2026-08-25（G-spread，已剔含权），用来校准量级，不是阈值。
+#
+# 锚点日写成机器可读的 anchor_asof，不只是这行注释：超额口径的漂移
+# （剔掉指数 OAS 之后再跟锚点比）需要**锚点那一天**的指数 OAS，
+# 拿别的日期顶替算出来的数比没有更坏。
 
 schema_version: 1
 
+# 锚点是哪一天。改锚点 = 重新校准标尺，是判断不是计算，所以只能人工改这一行，
+# 改完必须同步下面所有 anchor_* 的实测值，否则两个口径会指向不同的日子。
+anchor_asof: "2026-08-25"
+
 # 每档的定义与它在框架里的角色。
+#
+# `bench` 是这一档的超额口径该减哪条指数 OAS。**必须与 attribution 里市场 beta
+# 的分段一致**（那边写死了 rung 7 → hy），否则同一个档的「剔市场」在两处含义不同。
 rungs:
   1:
     name: "AAA 超大厂"
     role: "梯级的地板。它走宽 = 整个 IG 市场在走宽，不是 AI 的事"
     anchor_5_10y: 39
+    bench: ig
   2:
     name: "主流超大厂"
     role: "对照组。META/ORCL 相对它的距离就是 AI 溢价的定义式"
     anchor_5_10y: 68
+    bench: ig
   3:
     name: "受监管公用事业"
     role: "反向证伪器。身上没有 AI 溢价（实测 74–82bp，贴着 IG 指数 81bp）"
     anchor_5_10y: 78
+    bench: ig
   4:
     name: "重 capex 超大厂"
     role: "AI 资本开支溢价的载体"
     anchor_5_10y: 97
+    bench: ig
   5:
     name: "数据中心 REIT"
     role: "纯 DC 资产的上市信用锚"
     anchor_5_10y: 107
+    bench: ig
   6:
     name: "单一押注超大厂"
     role: "没有其他业务兜底的超大厂"
     anchor_5_10y: 205
+    bench: ig
   7:
     name: "纯算力商"
     role: "连超大厂的信用外壳都没有；曲线倒挂是全监控优先级最高的单一事件"
     anchor_5_10y: 775
+    bench: hy
 
 # 跨档距离：方法论判据 2 盯的三个数，加一个反向证伪器。
 rung_gaps:
@@ -54,29 +72,36 @@ rung_gaps:
      label: "公用事业 AI 证伪器", detail: "公用事业中位 − IG 指数",
      means: "显著转正=AI 进了受监管电力定价，框架要重写"}
 
+# `anchor_5_10y` 是这家 2026-08-25 的实测 5–10Y（credit_framework §二那张表），
+# 与档位锚点同一天、同一口径（G-spread，剔含权）。子项卡拿它当基线画虚线。
+# **没有实测值的不填**——DLR 那天 5–10Y 桶里一只样本都没有，编一个锚点比不给更坏。
 issuers:
   MSFT:
     name: "Microsoft"
     cik: "0000789019"
     rung: 1
+    anchor_5_10y: 39
     regime: public_corp
     match: ["MICROSOFT"]
   AMZN:
     name: "Amazon.com"
     cik: "0001018724"
     rung: 2
+    anchor_5_10y: 68
     regime: public_corp
     match: ["AMAZON"]
   GOOGL:
     name: "Alphabet"
     cik: "0001652044"
     rung: 2
+    anchor_5_10y: 69
     regime: public_corp
     match: ["ALPHABET"]
   META:
     name: "Meta Platforms"
     cik: "0001326801"
     rung: 4
+    anchor_5_10y: 97
     regime: public_corp
     match: ["META PLATFORMS"]
     # Beignet 2049 的信用锚就是它的长端，见 spv 段。
@@ -84,6 +109,7 @@ issuers:
     name: "Oracle"
     cik: "0001341439"
     rung: 6
+    anchor_5_10y: 205
     regime: public_corp
     match: ["ORACLE"]
   DLR:
@@ -97,12 +123,14 @@ issuers:
     name: "Equinix"
     cik: "0001101239"
     rung: 5
+    anchor_5_10y: 107
     regime: public_corp
     match: ["EQUINIX"]
   D:
     name: "Dominion Energy"
     cik: "0000715957"
     rung: 3
+    anchor_5_10y: 77
     regime: public_corp
     # opco 一按揭债比母公司无担保债更贴近数据中心负荷的真实担保结构。
     match: ["DOMINION ENERGY", "VIRGINIA ELECTRIC"]
@@ -111,6 +139,7 @@ issuers:
     name: "American Electric Power"
     cik: "0000004904"
     rung: 3
+    anchor_5_10y: 82
     regime: public_corp
     match: ["AMERICAN ELECTRIC", "APPALACHIAN POWER", "OHIO POWER", "AEP TEXAS",
             "INDIANA MICHIGAN", "SOUTHWESTERN ELECTRIC", "PUBLIC SERVICE CO OF OK"]
@@ -118,12 +147,14 @@ issuers:
     name: "Entergy"
     cik: "0000065984"
     rung: 3
+    anchor_5_10y: 74
     regime: public_corp
     match: ["ENTERGY"]
   CRWV:
     name: "CoreWeave"
     cik: "0001769628"
     rung: 7
+    anchor_5_10y: 775
     regime: public_corp
     match: ["COREWEAVE"]
     gpu_secured: true          # 走 R-file 抽工具级债务与 VIE 抵押品

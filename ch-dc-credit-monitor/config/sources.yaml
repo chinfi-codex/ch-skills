@@ -84,5 +84,10 @@ not_available:
     why: "Markit/ICE 授权数据。api.finra.org 匿名可访问但只有 OTC 股票数据集"
   - id: trace_prints
     why: "FINRA API 的固定收益 group 全部 404，逐 CUSIP 日度价格无免费路径"
+  - id: spdr_historical_holdings
+    why: >-
+      端点只有当日快照。2026-08-30 实测：加 ?date=20260630 拿回的文件与不加参数的字节
+      完全相同（sha1 b291bf2621a5 / 377065 字节），日期参数被忽略；也没有 archive 路径。
+      所以发行人层的利差序列只能从开始采集那天往后长，回补见 scripts/backfill.py。不要再试
   - id: new_issue_pricing
     why: "一级市场指引→定价、认购倍数无免费结构化源。走人工录入，见 SKILL.md"

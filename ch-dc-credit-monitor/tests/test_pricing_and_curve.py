@@ -175,3 +175,34 @@ def _run() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(_run())
+
+
+def test_benchmark_rows_keep_the_unit_convention():
+    """基准层落库最容易抄错的就是单位：指数 OAS 在 FRED 是百分数，
+    fetch 时已经 ×100 成 bp；国债收益率保持 pct。写反了整条超额口径全错。"""
+    from collectors import fred as fred_mod
+
+    rows = fred_mod.benchmark_rows({
+        "curve": {"2026-08-25": {5: 4.35, 10: 4.64}},
+        "index_oas_bp": {"2026-08-25": {"ig": 81.0, "hy": 270.0}},
+    })
+    by_metric = {r["metric"]: r for r in rows}
+    assert by_metric["bench.ust_5y"]["unit"] == "pct"
+    assert by_metric["bench.ust_5y"]["value"] == 4.35
+    assert by_metric["bench.index_oas_ig"]["unit"] == "bp"
+    assert by_metric["bench.index_oas_ig"]["value"] == 81.0
+    assert by_metric["bench.ust_5y"]["instrument_key"] == fred_mod.UST_KEY
+    assert by_metric["bench.index_oas_ig"]["instrument_key"] == fred_mod.INDEX_KEY
+    # asof_date 与 obs_date 同为口径日：FRED 给的就是那一天的值，不存在采集滞后。
+    assert all(r["asof_date"] == r["obs_date"] for r in rows)
+
+
+def test_benchmark_rows_respect_the_since_cutoff():
+    """回补窗口之外的日期不该被写进来——否则 --days 200 实际写了 400 天。"""
+    from collectors import fred as fred_mod
+
+    rows = fred_mod.benchmark_rows({
+        "curve": {"2026-01-05": {5: 4.10}, "2026-08-25": {5: 4.35}},
+        "index_oas_bp": {},
+    }, since="2026-06-01")
+    assert {r["asof_date"] for r in rows} == {"2026-08-25"}

@@ -254,6 +254,31 @@ def price_history(instrument_key: str, limit: int = 10) -> List[Dict[str, Any]]:
         f"ORDER BY asof_date DESC LIMIT {int(limit)}", [instrument_key])
 
 
+def benchmark_history(since: str) -> Dict[str, Any]:
+    """读回落库的基准层，形状与 ``fred.fetch_benchmarks`` 完全一致。
+
+    有了它，判据 1 的市场 beta 与锚点日的指数 OAS 都变成查库，而不是每次
+    metrics 都重打一次 FRED——网络挂了不至于当天没有基准。
+    """
+    # LIKE 的通配符走参数而不是写进 SQL 字面量：psycopg2 会把裸 % 当成格式占位符。
+    rows = _query(
+        f"SELECT asof_date, metric, value FROM {OBSERVATION_TABLE} "
+        f"WHERE metric LIKE ? AND asof_date >= ? AND value IS NOT NULL "
+        f"ORDER BY asof_date", ["bench.%", since])
+    curve: Dict[str, Dict[int, float]] = {}
+    index: Dict[str, Dict[str, float]] = {}
+    for row in rows:
+        day, metric, value = str(row["asof_date"]), str(row["metric"]), float(row["value"])
+        if metric.startswith("bench.ust_"):
+            tenor = metric[len("bench.ust_"):].rstrip("y")
+            if tenor.isdigit():
+                curve.setdefault(day, {})[int(tenor)] = value
+        elif metric.startswith("bench.index_oas_"):
+            index.setdefault(day, {})[metric[len("bench.index_oas_"):]] = value
+    return {"curve": curve, "index_oas_bp": index,
+            "latest": max(curve) if curve else None}
+
+
 def runs_for(run_id: str) -> List[Dict[str, Any]]:
     return _query(f"SELECT * FROM {RUN_TABLE} WHERE run_id = ?", [run_id])
 

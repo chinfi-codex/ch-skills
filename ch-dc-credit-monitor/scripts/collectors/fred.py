@@ -81,3 +81,42 @@ def interpolate(curve_day: Dict[int, float], years: float) -> Optional[float]:
             w = 0.0 if span == 0 else (years - lo) / span
             return curve_day[lo] + (curve_day[hi] - curve_day[lo]) * w
     return None
+
+
+# 基准层落库的两个 instrument_key。基准不是某个发行人的债，但它必须像观测
+# 一样有序列可查——否则判据 1 的市场 beta 只能靠每次重新打 FRED 现算。
+UST_KEY = "BENCH:UST"
+INDEX_KEY = "BENCH:INDEX"
+
+
+def benchmark_rows(bench: Dict[str, Any], *, since: Optional[str] = None
+                   ) -> List[Dict[str, Any]]:
+    """把国债曲线与指数 OAS 摊成标准观测行。
+
+    基准层以前只活在内存里：collect 取完、算完利差就扔，metrics 每次重新打 FRED。
+    代价有两个——**判据 1 的市场 beta 依赖一次实时网络调用**，FRED 一挂当天就没有
+    beta；以及**锚点日的指数 OAS 无处可查**，而「剔掉市场 beta 的锚点漂移」正需要
+    锚点那天的指数值。落库之后这两件事都变成查表。
+
+    单位跟着指标层的约定：国债收益率 `pct`，指数 OAS `bp`（fetch 时已 ×100）。
+    """
+    rows: List[Dict[str, Any]] = []
+
+    def emit(day: str, key: str, metric: str, value: float, unit: str) -> None:
+        if since is not None and day < since:
+            return
+        rows.append({
+            "asof_date": day, "instrument_key": key, "metric": metric,
+            "value": round(float(value), 4), "value_text": None, "unit": unit,
+            "method": "collected", "source_id": "fred", "obs_date": day,
+            "staleness_days": 0, "quality": "ok", "raw_ref": "fredgraph.csv",
+        })
+
+    for day, tenors in (bench.get("curve") or {}).items():
+        for tenor, value in tenors.items():
+            emit(day, UST_KEY, f"bench.ust_{tenor}y", value, "pct")
+    for day, segments in (bench.get("index_oas_bp") or {}).items():
+        for segment, value in segments.items():
+            emit(day, INDEX_KEY, f"bench.index_oas_{segment}", value, "bp")
+    rows.sort(key=lambda r: (r["asof_date"], r["instrument_key"], r["metric"]))
+    return rows

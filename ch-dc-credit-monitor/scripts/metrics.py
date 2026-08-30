@@ -118,6 +118,55 @@ def _deltas(series: Dict[str, float], asof: str) -> Dict[str, Optional[float]]:
     return out
 
 
+def _member_charts(curves: Dict[str, Any], issuers_cfg: Dict[str, Any], asof: str,
+                   *, window_days: int, min_points: int) -> List[Dict[str, Any]]:
+    """子项（发行人）5–10Y 的曲线数据。**渲染用，不参与任何判据。**
+
+    序列取的是 `drv.bucket_5-10y`——发行人自己 5–10Y 桶的均值。这里刻意不用单只
+    ISIN 的历史：债券在曲线上往下滚，利差会自然收窄，跟踪单只债必然把 rolldown
+    混进重定价，读出来是一个系统性偏乐观的「利差在收窄」。
+
+    **点数不够就不画线。** 两个点连起来是一条直线，看上去像趋势，其实什么都不是；
+    这跟 `disclosure_once` 拒绝把一次性披露画成时间序列是同一条纪律。所以这里只
+    如实报 `series` 与 `series_days`，够不够画由 `quality` 说了算，渲染层照办。
+
+    价格层没有历史也补不回来（SPDR 只给当日快照，见 sources.yaml 的
+    not_available），所以冷启动阶段这里必然是 `insufficient_series`——
+    那是正确状态，不是故障。
+    """
+    out: List[Dict[str, Any]] = []
+    for issuer, block in curves.items():
+        meta = issuers_cfg.get(issuer) or {}
+        bucket = ((block.get("buckets") or {}).get("5-10y") or {})
+        value = bucket.get("mean_bp")
+        anchor = meta.get("anchor_5_10y")
+        series = sorted(_history(f"ISSUER:{issuer}", "drv.bucket_5-10y", asof,
+                                 lookback_days=window_days).items())
+        if value is None:
+            quality = "no_reading"
+        elif len(series) < min_points:
+            quality = "insufficient_series"
+        else:
+            quality = "ok"
+        out.append({
+            "issuer": issuer,
+            "name": meta.get("name", issuer),
+            "rung": meta.get("rung"),
+            "value": _round(value),
+            "anchor": anchor,
+            "drift_vs_anchor_bp": (None if value is None or anchor is None
+                                   else round(float(value) - float(anchor), 1)),
+            "sample_n": bucket.get("n"),
+            "window_days": window_days,
+            "series_days": len(series),
+            "min_points_for_line": min_points,
+            "series": [[d, round(float(v), 1)] for d, v in series],
+            "quality": quality,
+        })
+    out.sort(key=lambda m: (m["rung"] if m["rung"] is not None else 99, m["issuer"]))
+    return out
+
+
 def _build_dials(asof: str, rungs: List[Dict[str, Any]], gaps: List[Dict[str, Any]],
                  curves: Dict[str, Any], spv_blocks: List[Dict[str, Any]],
                  disp: Dict[str, Any], universe: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -131,13 +180,22 @@ def _build_dials(asof: str, rungs: List[Dict[str, Any]], gaps: List[Dict[str, An
     dials: List[Dict[str, Any]] = []
 
     def add(*, group, name, key, metric, value, anchor=None, note=None,
-            unit="bp", rung=None):
+            unit="bp", rung=None, excess=None, anchor_excess=None,
+            excess_quality=None, bench=None):
         d = _deltas(_history(key, metric, asof), asof)
         dials.append({
             "group": group, "name": name, "rung": rung, "value": _round(value),
             "unit": unit, "anchor": anchor,
             "vs_anchor": (None if value is None or anchor is None
                           else round(float(value) - float(anchor), 1)),
+            # 超额口径：同一个锚点漂移，但先减掉对应指数 OAS。两列并排看才读得出
+            # 「整个信用市场在走宽」和「这一档自己在走宽」的区别。
+            "bench": bench,
+            "excess": _round(excess),
+            "anchor_excess": anchor_excess,
+            "vs_anchor_excess": (None if excess is None or anchor_excess is None
+                                 else round(float(excess) - float(anchor_excess), 1)),
+            "excess_quality": excess_quality,
             "d1": d["1d"], "d7": d["1w"], "d30": d["1m"],
             "note": note,
             "quality": "ok" if value is not None else "regime_na",
@@ -147,7 +205,9 @@ def _build_dials(asof: str, rungs: List[Dict[str, Any]], gaps: List[Dict[str, An
         add(group="梯级", name=f"档{r['rung']} {r['name']}",
             key=f"RUNG:{r['rung']}", metric="drv.rung_median_5_10y",
             value=r.get("median_5_10y"), anchor=r.get("anchor_5_10y"),
-            note="、".join(r["members"]), rung=r["rung"])
+            note="、".join(r["members"]), rung=r["rung"],
+            excess=r.get("excess_5_10y"), anchor_excess=r.get("anchor_excess_5_10y"),
+            excess_quality=r.get("excess_quality"), bench=r.get("bench"))
     gap_meta = {g["id"]: g for g in universe.get("rung_gaps", [])}
     for g in gaps:
         cfg = gap_meta.get(g["id"], {})
@@ -195,15 +255,38 @@ def build(asof: Optional[str] = None, window_days: int = 90,
     quality_by_key = {str(r["instrument_key"]): str(r["quality"])
                       for r in spread_rows if str(r["asof_date"]) == asof}
 
-    # 指数 OAS：从任一条观测的 raw_ref 上拿不到，直接重取当天基准。
+    # 基准层：**先读库再用实时 FRED 覆盖**。库里的那份由 collect.py 每天写、
+    # backfill.py 一次性补满；实时的那份负责当天与 FRED 的回溯修订，重叠日期以它
+    # 为准。这个顺序让 FRED 挂掉的当天仍然有基准可用——判据 1 的市场 beta 不会
+    # 因为一次网络失败整段消失。
     from collectors import fred as fred_mod
+    anchor_asof = universe.get("anchor_asof")
+    bench_since = min(d for d in (since, anchor_asof) if d)
+    need_days = (dt.date.today() - dt.date.fromisoformat(bench_since)).days + 30
+    bench = db.benchmark_history(bench_since)
+    db_days = len(bench["curve"])
     try:
-        bench = fred_mod.fetch_benchmarks(sources_cfg, history_days=window_days + 60)
-    except Exception:                                     # noqa: BLE001
-        bench = {"curve": {}, "index_oas_bp": {}, "latest": None}
+        live = fred_mod.fetch_benchmarks(sources_cfg, history_days=need_days)
+        for day, tenors in live["curve"].items():
+            bench["curve"].setdefault(day, {}).update(tenors)
+        for day, segments in live["index_oas_bp"].items():
+            bench["index_oas_bp"].setdefault(day, {}).update(segments)
+        bench_note = f"库 {db_days} 天 + FRED 实时 {len(live['curve'])} 天"
+    except Exception as exc:                              # noqa: BLE001
+        bench_note = f"FRED 实时取不到（{exc}）；只用库里的 {db_days} 天"
+    bench["latest"] = max(bench["curve"]) if bench["curve"] else None
+
     index_anchor = pricing.nearest_curve_day(bench["index_oas_bp"], asof)
     index_oas = bench["index_oas_bp"].get(index_anchor or "", {})
     curve_anchor = pricing.nearest_curve_day(bench["curve"], asof)
+
+    # 锚点那一天的指数 OAS。超额口径的漂移是「今天的超额 − 锚点日的超额」，
+    # 所以这里必须是锚点当天的指数值，不能拿今天的顶替——顶替之后算出来的
+    # 就又是 G-spread 口径的漂移，白做一遍。锚点日碰上假期时向前找最近的有数日，
+    # 找不到（超过 5 天）整个超额口径出 None 而不是猜一个。
+    anchor_index_day = (pricing.nearest_curve_day(bench["index_oas_bp"], anchor_asof)
+                        if anchor_asof else None)
+    anchor_index_oas = bench["index_oas_bp"].get(anchor_index_day or "", {})
 
     # --- 发行人曲线 ---------------------------------------------------------
     cfg_curve = thresholds["curve"]
@@ -221,7 +304,9 @@ def build(asof: Optional[str] = None, window_days: int = 90,
         curves[issuer] = block
 
     # --- 梯级、跨档距离、离散度、长短端分化 ---------------------------------
-    rungs = ladder_mod.build_rungs(curves, universe["issuers"], universe["rungs"])
+    rungs = ladder_mod.build_rungs(curves, universe["issuers"], universe["rungs"],
+                                   index_oas_bp=index_oas,
+                                   anchor_index_oas_bp=anchor_index_oas)
     gaps = ladder_mod.rung_gaps(curves, universe["rung_gaps"],
                                 utility_members=universe["utility_median_members"],
                                 index_oas_bp=index_oas)
@@ -450,6 +535,8 @@ def build(asof: Optional[str] = None, window_days: int = 90,
             _emit(f"ISSUER:{issuer}", f"drv.bucket_{bucket}", cell.get("mean_bp"))
     for r in rungs:
         _emit(f"RUNG:{r['rung']}", "drv.rung_median_5_10y", r.get("median_5_10y"))
+        # 超额口径也要有自己的序列，否则「剔市场之后这一档的 1W 变化」永远算不出来。
+        _emit(f"RUNG:{r['rung']}", "drv.rung_excess_5_10y", r.get("excess_5_10y"))
     for g in gaps:
         _emit(f"GAP:{g['id']}", "drv.rung_gap_bp", g.get("observed_bp"))
     _emit("SYSTEM", "drv.dispersion_bp", disp.get("value"))
@@ -462,6 +549,13 @@ def build(asof: Optional[str] = None, window_days: int = 90,
     # --- 核心刻度：这才是日频追踪要看的东西 ---------------------------------
     dials = _build_dials(asof, rungs, gaps, curves, spv_blocks, disp, universe)
 
+    # 子项曲线。窗口与判据窗口分开：判据固定 90 天，曲线画 200 天只为看形状。
+    chart_cfg = thresholds.get("chart") or {}
+    member_charts = _member_charts(
+        curves, universe["issuers"], asof,
+        window_days=int(chart_cfg.get("member_series_days", 200)),
+        min_points=int(chart_cfg.get("min_points_for_line", 10)))
+
     # --- 数据源健康度 -------------------------------------------------------
     asof_lag = (dt.date.fromisoformat(asof) - dt.date.fromisoformat(curve_anchor)).days \
         if curve_anchor else None
@@ -472,7 +566,9 @@ def build(asof: Optional[str] = None, window_days: int = 90,
         {"source": "spdr", "status": "ok" if spreads else "empty",
          "detail": f"{len(spreads)} 只债有利差，{len(instruments)} 只在库"},
         {"source": "fred", "status": "ok" if curve_anchor else "empty",
-         "detail": f"国债曲线锚 {curve_anchor}，指数 OAS 锚 {index_anchor}"},
+         "detail": (f"国债曲线锚 {curve_anchor}，指数 OAS 锚 {index_anchor}；"
+                    f"{bench_note}；校准锚点 {anchor_asof} 的指数 OAS 取自 "
+                    f"{anchor_index_day or '缺'}")},
         {"source": "sec", "status": "ok" if gpu_secured else "empty",
          "detail": f"{sum(len(v) for v in gpu_secured.values())} 条抵押品/债务事实"},
         {"source": "spv_ledger", "status": "ok" if spv_blocks else "empty",
@@ -489,8 +585,16 @@ def build(asof: Optional[str] = None, window_days: int = 90,
             "index_oas": index_anchor,
             "curve_lag_days": asof_lag,
             "index_oas_bp": {k: _round(v) for k, v in index_oas.items()},
+            # 校准锚点：哪一天、那天的指数 OAS 是多少。超额口径的漂移全部相对它算，
+            # 所以它必须在证据包里可查，而不是只活在 universe.yaml 的注释里。
+            "anchor_asof": anchor_asof,
+            "anchor_index_oas_day": anchor_index_day,
+            "anchor_index_oas_bp": {k: _round(v) for k, v in anchor_index_oas.items()},
+            "benchmark_source": bench_note,
         },
         "dials": dials,
+        # 渲染用的曲线数据，**模型读证据时可以整段跳过**：里面全是点，没有判断。
+        "member_charts": member_charts,
         "ladder": rungs,
         "gaps": gaps,
         "dispersion": disp,

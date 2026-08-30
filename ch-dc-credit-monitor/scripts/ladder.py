@@ -59,7 +59,7 @@ def build_rungs(curves: Dict[str, Dict[str, Any]],
     grouped: Dict[int, List[str]] = {}
     for key, meta in issuers_cfg.items():
         rung = meta.get("rung")
-        if rung is None or key not in curves:
+        if rung is None:
             continue
         grouped.setdefault(int(rung), []).append(key)
 
@@ -116,6 +116,9 @@ def rung_gaps(curves: Dict[str, Dict[str, Any]],
               gaps_cfg: Sequence[Dict[str, Any]],
               *, utility_members: Sequence[str],
               index_oas_bp: Dict[str, float],
+              anchor_index_oas_bp: Optional[Dict[str, float]] = None,
+              issuers_cfg: Optional[Dict[str, Any]] = None,
+              rungs_cfg: Optional[Dict[Any, Any]] = None,
               tenor_bucket: str = "5-10y") -> List[Dict[str, Any]]:
     """跨档距离 —— 判据 2 盯的那几个数。
 
@@ -123,6 +126,10 @@ def rung_gaps(curves: Dict[str, Dict[str, Any]],
     它们俩的差是**反向证伪器**：显著转正说明 AI 故事进了受监管电力定价，
     框架要重写。
     """
+    anchor_index_oas_bp = anchor_index_oas_bp or {}
+    issuers_cfg = issuers_cfg or {}
+    rungs_cfg = rungs_cfg or {}
+
     def value_of(token: str) -> Optional[float]:
         if token == "UTIL_MEDIAN":
             vals = [_bucket(curves.get(m, {}), tenor_bucket) for m in utility_members]
@@ -134,11 +141,50 @@ def rung_gaps(curves: Dict[str, Dict[str, Any]],
             return index_oas_bp.get("hy")
         return _bucket(curves.get(token, {}), tenor_bucket)
 
+    def bench_of(token: str) -> Optional[str]:
+        if token in ("UTIL_MEDIAN", "IG_INDEX"):
+            return "ig"
+        if token == "HY_INDEX":
+            return "hy"
+        issuer = issuers_cfg.get(token) or {}
+        rung = issuer.get("rung")
+        rung_meta = rungs_cfg.get(rung) or rungs_cfg.get(str(rung)) or {}
+        return rung_meta.get("bench")
+
     out: List[Dict[str, Any]] = []
     for gap in gaps_cfg:
         a, b = value_of(gap["a"]), value_of(gap["b"])
         observed = None if (a is None or b is None) else round(a - b, 1)
         anchor = gap.get("anchor_bp")
+        bench_a, bench_b = bench_of(gap["a"]), bench_of(gap["b"])
+
+        # 同段 gap 里的指数 OAS 会在相减时自动抵掉；跨段 gap 不会。典型例子是
+        # CRWV(HY) − ORCL(IG)：HY−IG 基差即使只因市场变化，也会原样进入 raw gap。
+        # 所以只给跨段 gap 增加超额口径，避免重复展示同段完全相同的两列。
+        cross_bench = bool(bench_a and bench_b and bench_a != bench_b)
+        market_basis = (None if not cross_bench
+                        else (None if index_oas_bp.get(bench_a) is None
+                              or index_oas_bp.get(bench_b) is None
+                              else round(index_oas_bp[bench_a] - index_oas_bp[bench_b], 1)))
+        anchor_market_basis = (None if not cross_bench
+                               else (None if anchor_index_oas_bp.get(bench_a) is None
+                                     or anchor_index_oas_bp.get(bench_b) is None
+                                     else round(anchor_index_oas_bp[bench_a]
+                                                - anchor_index_oas_bp[bench_b], 1)))
+        excess = (None if observed is None or market_basis is None
+                  else round(observed - market_basis, 1))
+        anchor_excess = (None if anchor is None or anchor_market_basis is None
+                         else round(anchor - anchor_market_basis, 1))
+        if not cross_bench:
+            excess_quality = "same_bench_cancelled"
+        elif observed is None:
+            excess_quality = "regime_na"
+        elif market_basis is None:
+            excess_quality = "no_index_oas"
+        elif anchor_excess is None:
+            excess_quality = "no_anchor_index_oas"
+        else:
+            excess_quality = "ok"
         out.append({
             "id": gap["id"],
             "a": gap["a"], "b": gap["b"],
@@ -147,6 +193,14 @@ def rung_gaps(curves: Dict[str, Dict[str, Any]],
             "anchor_bp": anchor,
             "drift_bp": (None if observed is None or anchor is None
                          else round(observed - anchor, 1)),
+            "bench_a": bench_a, "bench_b": bench_b,
+            "market_basis_bp": market_basis,
+            "anchor_market_basis_bp": anchor_market_basis,
+            "observed_excess_bp": excess,
+            "anchor_excess_bp": anchor_excess,
+            "drift_excess_bp": (None if excess is None or anchor_excess is None
+                                else round(excess - anchor_excess, 1)),
+            "excess_quality": excess_quality,
             "means": gap.get("means"),
             "quality": "ok" if observed is not None else "regime_na",
         })

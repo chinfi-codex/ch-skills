@@ -173,10 +173,6 @@ def _run() -> int:
     return 1 if failures else 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(_run())
-
-
 def test_benchmark_rows_keep_the_unit_convention():
     """基准层落库最容易抄错的就是单位：指数 OAS 在 FRED 是百分数，
     fetch 时已经 ×100 成 bp；国债收益率保持 pct。写反了整条超额口径全错。"""
@@ -206,3 +202,7 @@ def test_benchmark_rows_respect_the_since_cutoff():
         "index_oas_bp": {},
     }, since="2026-06-01")
     assert {r["asof_date"] for r in rows} == {"2026-08-25"}
+
+
+if __name__ == "__main__":
+    raise SystemExit(_run())

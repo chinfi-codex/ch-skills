@@ -17,6 +17,7 @@ sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 import attribution                              # noqa: E402
 import ladder as ladder_mod                     # noqa: E402
+import metrics as metrics_mod                   # noqa: E402
 import render_report_html as renderer           # noqa: E402
 from collectors.base import fingerprint         # noqa: E402
 from collectors.spdr import _match_issuer, _parse_maturity   # noqa: E402
@@ -104,6 +105,46 @@ def test_pure_neocloud_benches_against_high_yield():
     assert crwv["excess_5_10y"] == 766.0 - 263.0
 
 
+def test_neocloud_attribution_uses_hy_market_beta():
+    """CRWV 完全跟随 HY 走宽时 alpha 必须为零；若误用 IG，会凭空多出 14bp。"""
+    series = metrics_mod._market_index_series(
+        {"2026-08-25": {"ig": 81.0, "hy": 270.0},
+         "2026-08-26": {"ig": 81.0, "hy": 284.0}},
+        "hy", "2026-08-25")
+    block = attribution.decompose(
+        "CRWV",
+        issuer_series=_series([("2026-08-25", 775.0), ("2026-08-26", 789.0)]),
+        peer_series={}, index_series=series,
+        start="2026-08-25", end="2026-08-26")
+    assert block["beta_market_bp"] == 14.0
+    assert block["alpha_bp"] == 0.0
+
+
+def test_cross_segment_gap_strips_hy_minus_ig_basis():
+    """CRWV(HY)−ORCL(IG) 不是同段的差；只有 HY 市场走宽时 raw gap 会动，
+    剔除 HY−IG 基差后的发行人超额 gap 应保持不变。"""
+    curves = {
+        "CRWV": {"buckets": {"5-10y": {"mean_bp": 789.0}}},
+        "ORCL": {"buckets": {"5-10y": {"mean_bp": 205.0}}},
+    }
+    gaps = ladder_mod.rung_gaps(
+        curves,
+        [{"id": "neocloud_premium", "a": "CRWV", "b": "ORCL",
+          "anchor_bp": 570.0}],
+        utility_members=[],
+        index_oas_bp={"ig": 81.0, "hy": 284.0},
+        anchor_index_oas_bp={"ig": 81.0, "hy": 270.0},
+        issuers_cfg={"CRWV": {"rung": 7}, "ORCL": {"rung": 6}},
+        rungs_cfg={6: {"bench": "ig"}, 7: {"bench": "hy"}})
+    gap = gaps[0]
+    assert gap["drift_bp"] == 14.0
+    assert gap["bench_a"] == "hy" and gap["bench_b"] == "ig"
+    assert gap["drift_excess_bp"] == 0.0
+    assert gap["excess_quality"] == "ok"
+    full_html = renderer.render_gaps({"gaps": gaps}, {})
+    assert "剔市场锚点" in full_html and "hy−ig 基差" in full_html
+
+
 def test_excess_basis_refuses_to_substitute_another_day():
     """锚点那天的指数 OAS 取不到就整列出 None。拿今天的顶替算出来的
     又是 G-spread 口径的漂移，白做一遍还看不出来。"""
@@ -119,6 +160,43 @@ def test_excess_basis_refuses_to_substitute_another_day():
                                       index_oas_bp={},
                                       anchor_index_oas_bp={"ig": 81.0, "hy": 270.0})
     assert all(r["excess_quality"] == "no_index_oas" for r in no_index)
+
+
+def test_member_charts_keep_an_issuer_with_no_curve_at_all():
+    """配置里的成员即使完全没有曲线，也要留一张 no_reading 卡说明数据缺口。"""
+    original_history = metrics_mod._history
+    metrics_mod._history = lambda *args, **kwargs: {}
+    try:
+        curves = {"MSFT": {"buckets": {"5-10y": {"mean_bp": 39.0, "n": 1}}}}
+        issuers = {
+            "MSFT": {"name": "Microsoft", "rung": 1, "anchor_5_10y": 39},
+            "MISSING": {"name": "Missing Co", "rung": 1, "anchor_5_10y": 39},
+        }
+        charts = metrics_mod._member_charts(
+            curves, issuers,
+            "2026-08-27", window_days=200, min_points=10)
+    finally:
+        metrics_mod._history = original_history
+    missing = next(c for c in charts if c["issuer"] == "MISSING")
+    assert len(charts) == 2
+    assert missing["value"] is None and missing["quality"] == "no_reading"
+
+    rungs = ladder_mod.build_rungs(
+        curves, issuers, {1: {"name": "AAA 超大厂", "anchor_5_10y": 39}},
+        index_oas_bp={"ig": 81.0}, anchor_index_oas_bp={"ig": 81.0})
+    assert rungs[0]["members"] == ["MISSING", "MSFT"]
+    assert rungs[0]["readings_5_10y"]["MISSING"] is None
+
+    page = renderer.render_dials({
+        "anchors": {}, "member_charts": charts, "issuers": curves,
+        "ladder": rungs,
+        "dials": [{"group": "梯级", "name": "档1", "rung": 1,
+                   "value": 39.0, "anchor": 39.0, "vs_anchor": 0.0,
+                   "excess": -42.0, "anchor_excess": -42.0,
+                   "vs_anchor_excess": 0.0,
+                   "d1": None, "d7": None, "d30": None}],
+    }, {})
+    assert "MISSING" in page and "桶里没有样本" in page
 
 
 def test_disclosure_once_refuses_timeseries():
@@ -252,6 +330,22 @@ def test_compact_html_carries_both_anchor_columns():
     # G-spread 口径 -9.3 里有 7bp 是整个 HY 市场，自己只走了 -2.3。
     assert "-9.3" in page and "-2.3" in page
     assert "2026-08-25" in page
+
+
+def test_compact_html_shows_excess_for_cross_segment_gap():
+    """跨段 gap 的剔市场列必须显示计算结果，不能再统一写成自然对消的破折号。"""
+    html = renderer.render_dials({
+        "anchors": {},
+        "dials": [{
+            "group": "跨档距离", "name": "纯算力商溢价",
+            "value": 584.0, "anchor": 570.0, "vs_anchor": 14.0,
+            "excess": 381.0, "anchor_excess": 381.0,
+            "vs_anchor_excess": 0.0, "excess_quality": "ok",
+            "d1": None, "d7": None, "d30": None,
+        }],
+    }, {})
+    assert "纯算力商溢价" in html
+    assert '<td class="dial-d pct-flat">+0.0</td>' in html
 
 
 def test_compact_html_omits_daily_status_and_caveat_block():

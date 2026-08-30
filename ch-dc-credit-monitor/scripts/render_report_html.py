@@ -576,10 +576,17 @@ def render_gaps(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     for g in ev.get("gaps") or []:
         drift = g.get("drift_bp")
         observed = g.get("observed_bp")
+        excess_line = ""
+        if g.get("drift_excess_bp") is not None:
+            excess_line = (
+                f'<div class="drift">剔市场锚点 {bp(g.get("anchor_excess_bp"))} · '
+                f'漂移 {signed(g.get("drift_excess_bp"))} '
+                f'（{esc(g.get("bench_a"))}−{esc(g.get("bench_b"))} 基差）</div>')
         cells.append(
             f'<div class="gap-cell"><div class="name">{esc(g["a"])} − {esc(g["b"])}</div>'
             f'<div class="val">{bp(observed)}</div>'
             f'<div class="drift">锚点 {bp(g.get("anchor_bp"))} · 漂移 {signed(drift)}</div>'
+            f'{excess_line}'
             f'<div class="means">{esc(g.get("means") or "")}</div></div>')
 
     ts_rows = []
@@ -942,7 +949,10 @@ def _compact_category_dials(ev: Dict[str, Any]) -> List[Dict[str, Any]]:
         for rung, dial in selected:
             rung_block = ladder.get(rung, {})
             rung_members = rung_block.get("members") or []
-            weight = max(len(rung_members), 1)
+            readings = rung_block.get("readings_5_10y") or {}
+            # 配置成员即使完全缺数也要显示卡片，但不能因此放大该档在类别指数里的权重。
+            weight = max(sum(1 for member in rung_members
+                             if readings.get(member) is not None), 1)
             if dial.get("value") is not None:
                 weighted_values.extend([float(dial["value"])] * weight)
             if dial.get("anchor") is not None:
@@ -954,7 +964,6 @@ def _compact_category_dials(ev: Dict[str, Any]) -> List[Dict[str, Any]]:
                 weighted_excess.extend([float(dial["excess"])] * weight)
             if dial.get("anchor_excess") is not None:
                 weighted_anchor_excess.extend([float(dial["anchor_excess"])] * weight)
-            readings = rung_block.get("readings_5_10y") or {}
             for issuer in rung_members or list(readings):
                 bucket = ((issuers.get(issuer) or {}).get("buckets") or {}).get("5-10y") or {}
                 members.append({
@@ -974,8 +983,11 @@ def _compact_category_dials(ev: Dict[str, Any]) -> List[Dict[str, Any]]:
             prior: List[float] = []
             complete = value is not None
             for rung, dial in selected:
-                rung_members = ladder.get(rung, {}).get("members") or []
-                weight = max(len(rung_members), 1)
+                rung_block = ladder.get(rung, {})
+                rung_members = rung_block.get("members") or []
+                readings = rung_block.get("readings_5_10y") or {}
+                weight = max(sum(1 for member in rung_members
+                                 if readings.get(member) is not None), 1)
                 if dial.get("value") is None or dial.get(field) is None:
                     complete = False
                     break
@@ -1203,13 +1215,24 @@ def render_dials(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
     blocks = "".join(_category_block(d, member_cards_grid(charts, d), hi)
                      for d in category_dials)
 
-    # 「剔市场」在这张表里恒为破折号：跨档距离是差的差，同段的指数 OAS 在减法里
-    # 自己抵掉了；离散度与 SPV 票息差本来就不是相对指数的量。给一个带解释的
-    # 破折号，而不是留白让人以为是缺数。
+    # 同段跨档距离里的指数 OAS 会自然抵掉；跨段距离（CRWV HY − ORCL IG）不会，
+    # 后者由证据包给出剔除 HY−IG 市场基差后的漂移。结构量仍然没有超额定义。
     _NO_EXCESS_REASON = {
         "跨档距离": "跨档距离是差的差，同段市场 beta 已自然对消，无需再剔",
         "结构": "不是相对指数的水平量，剔市场无定义",
     }
+
+    def no_excess_reason(dial: Dict[str, Any]) -> str:
+        if dial.get("group") != "跨档距离":
+            return _NO_EXCESS_REASON.get(dial.get("group"), "")
+        quality = dial.get("excess_quality")
+        if quality == "no_index_oas":
+            return "跨段距离缺当日指数 OAS，剔市场不出数"
+        if quality == "no_anchor_index_oas":
+            return "跨段距离缺锚点日指数 OAS，剔市场不出数"
+        if quality == "regime_na":
+            return "跨段距离缺一端读数，剔市场不出数"
+        return _NO_EXCESS_REASON["跨档距离"]
     rows: List[str] = []
     last_group = None
     for d in [x for x in raw_dials if x.get("group") != "梯级"]:
@@ -1223,8 +1246,11 @@ def render_dials(ev: Dict[str, Any], notes: Dict[str, Any]) -> str:
             f'<td class="dial-val">{"—" if value is None else f"{value:,.0f}"}</td>'
             + _delta_cell(d.get("d1")) + _delta_cell(d.get("d7"))
             + _delta_cell(d.get("d30")) + _delta_cell(d.get("vs_anchor"))
-            + f'<td class="dial-d na" title='
-              f'"{esc(_NO_EXCESS_REASON.get(d["group"], ""))}">—</td></tr>')
+            + (_delta_cell(d.get("vs_anchor_excess"))
+               if d.get("vs_anchor_excess") is not None else
+               f'<td class="dial-d na" title='
+               f'"{esc(no_excess_reason(d))}">—</td>')
+            + '</tr>')
 
     have_deltas = any(d.get("d1") is not None for d in category_dials)
     hint = ("单位 bp · 类别指数与它的成分同框" if have_deltas else

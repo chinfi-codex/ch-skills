@@ -118,6 +118,14 @@ def _deltas(series: Dict[str, float], asof: str) -> Dict[str, Optional[float]]:
     return out
 
 
+def _market_index_series(index_oas_by_day: Dict[str, Dict[str, float]],
+                         segment: str, since: str) -> List[Dict[str, Any]]:
+    """按发行人所属信用段取市场 beta 序列；档7必须用 HY，其余档用 IG。"""
+    return [{"date": day, "value": values[segment]}
+            for day, values in sorted(index_oas_by_day.items())
+            if day >= since and values.get(segment) is not None]
+
+
 def _member_charts(curves: Dict[str, Any], issuers_cfg: Dict[str, Any], asof: str,
                    *, window_days: int, min_points: int) -> List[Dict[str, Any]]:
     """子项（发行人）5–10Y 的曲线数据。**渲染用，不参与任何判据。**
@@ -135,8 +143,10 @@ def _member_charts(curves: Dict[str, Any], issuers_cfg: Dict[str, Any], asof: st
     那是正确状态，不是故障。
     """
     out: List[Dict[str, Any]] = []
-    for issuer, block in curves.items():
-        meta = issuers_cfg.get(issuer) or {}
+    # 以配置全集为准。完全没有价格/曲线的发行人也必须留下 no_reading 卡；
+    # 若只遍历 curves，它会从页面静默消失，读者反而看不见真正的数据缺口。
+    for issuer, meta in issuers_cfg.items():
+        block = curves.get(issuer) or {}
         bucket = ((block.get("buckets") or {}).get("5-10y") or {})
         value = bucket.get("mean_bp")
         anchor = meta.get("anchor_5_10y")
@@ -214,6 +224,11 @@ def _build_dials(asof: str, rungs: List[Dict[str, Any]], gaps: List[Dict[str, An
         add(group="跨档距离", name=cfg.get("label") or f"{g['a']} − {g['b']}",
             key=f"GAP:{g['id']}", metric="drv.rung_gap_bp",
             value=g.get("observed_bp"), anchor=g.get("anchor_bp"),
+            excess=g.get("observed_excess_bp"),
+            anchor_excess=g.get("anchor_excess_bp"),
+            excess_quality=g.get("excess_quality"),
+            bench=(f"{g.get('bench_a')}−{g.get('bench_b')}"
+                   if g.get("bench_a") and g.get("bench_b") else None),
             note=" · ".join(x for x in (cfg.get("detail"), g.get("means")) if x))
     add(group="结构", name="梯级离散度", key="SYSTEM", metric="drv.dispersion_bp",
         value=disp.get("value"),
@@ -309,7 +324,10 @@ def build(asof: Optional[str] = None, window_days: int = 90,
                                    anchor_index_oas_bp=anchor_index_oas)
     gaps = ladder_mod.rung_gaps(curves, universe["rung_gaps"],
                                 utility_members=universe["utility_median_members"],
-                                index_oas_bp=index_oas)
+                                index_oas_bp=index_oas,
+                                anchor_index_oas_bp=anchor_index_oas,
+                                issuers_cfg=universe["issuers"],
+                                rungs_cfg=universe["rungs"])
     disp = ladder_mod.dispersion(rungs)
     ts_cfg = thresholds["term_structure"]
     term_split = [ladder_mod.term_structure_split(curves, g["a"], g["b"],
@@ -319,20 +337,20 @@ def build(asof: Optional[str] = None, window_days: int = 90,
     # --- alpha 分解（判据 1）------------------------------------------------
     attr_cfg = thresholds["attribution"]
     cm_series = _series_by_issuer("drv.cm_spread_", since)
-    index_series = [{"date": d, "value": v.get("ig")}
-                    for d, v in sorted(bench["index_oas_bp"].items())
-                    if d >= since and v.get("ig") is not None]
     attributions: List[Dict[str, Any]] = []
     events: List[Dict[str, Any]] = []
     for issuer, block in curves.items():
         rung = block.get("rung")
         peers = {k: cm_series.get(k, []) for k, v in curves.items()
                  if v.get("rung") == rung and k != issuer}
+        rung_meta = (universe["rungs"].get(rung)
+                     or universe["rungs"].get(str(rung)) or {})
+        segment = rung_meta.get("bench") or "ig"
+        index_series = _market_index_series(bench["index_oas_bp"], segment, since)
         cum = attribution.cumulative(
             issuer, issuer_series=cm_series.get(issuer, []), peer_series=peers,
             index_series=index_series, windows=attr_cfg["cum_windows"],
             min_days=attr_cfg["min_days_for_alpha"])
-        segment = "hy" if rung == 7 else "ig"
         cum["segment"] = segment
         attributions.append(cum)
         events.extend(attribution.notable_events(

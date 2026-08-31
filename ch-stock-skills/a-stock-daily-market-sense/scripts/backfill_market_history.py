@@ -11,8 +11,9 @@
 
   1. **补历史行**：按 Tushare `daily` 聚合涨跌家数与成交额，涨跌停用 `stk_limit`
      的当日涨跌停价逐股比对收盘价判定（point-in-time，不依赖当前 ST 名单），
-     情绪值走 `market_panel.calc_market_sentiment` 同一套公式。已存在的行**不动
-     这些字段**，只补空缺日期。
+     情绪值走 `market_panel.calc_market_sentiment` 同一套公式。默认只补空缺日期，
+     已存在的行**不动这些字段**；`--recount` 会连已有行一起重算，用于口径修正后
+     回补历史（合并层只在新旧值不同时才落笔，没变的行不会被动到）。
   2. **统一融资列**：所有行（含已存在的）的 `margin_net_buy` 一律重取为
      `margin(前一交易日)` 的 Tushare 值，并把 `margin_data_date` 显式写上。
      顺带把同期 margin 明细写入 `stock_margin`，好让两张卡能算 bp 归一。
@@ -26,6 +27,8 @@
 用法：
   python scripts/backfill_market_history.py --start 20200601 --end 20260807 --dry-run
   python scripts/backfill_market_history.py --start 20200601 --end 20260807
+  # 分桶口径修正后回补历史（重算已有行的涨跌平/涨跌停/情绪值）
+  python scripts/backfill_market_history.py --start 20200601 --end 20260828 --recount
 """
 
 from __future__ import annotations
@@ -39,7 +42,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -101,8 +104,15 @@ def cached_frame(cache_dir: Path, kind: str, day: str, fetch) -> pd.DataFrame:
     return df
 
 
-def build_day_row(daily: pd.DataFrame, limits: pd.DataFrame, day: str) -> Optional[Dict]:
-    """一天的盘面聚合。涨跌停用当日涨跌停价精确比对，取不到才退回 ±9.8% 近似。"""
+def build_day_row(
+    daily: pd.DataFrame, limits: pd.DataFrame, day: str
+) -> Optional[Tuple[Dict, int]]:
+    """一天的盘面聚合，返回 (行, 涨跌幅取不到的家数)。
+
+    涨跌停用当日涨跌停价精确比对，取不到才退回 ±9.8% 近似；涨/跌/平三桶走
+    `market_panel.count_breadth_buckets`，平盘显式按 ``== 0`` 数，涨跌幅为空的
+    行（新股首日没有 pre_close）单列一档，既不算平盘也不写进这张表。
+    """
     if daily is None or daily.empty:
         return None
     df = daily.copy()
@@ -118,10 +128,7 @@ def build_day_row(daily: pd.DataFrame, limits: pd.DataFrame, day: str) -> Option
     else:
         limit_up = int((df["pct_chg"] >= 9.8).sum())
         limit_down = int((df["pct_chg"] <= -9.8).sum())
-    total = int(len(df))
-    up = int((df["pct_chg"] > 0).sum())
-    down = int((df["pct_chg"] < 0).sum())
-    flat = total - up - down
+    up, down, flat, unknown = market_panel.count_breadth_buckets(df["pct_chg"])
     sentiment = market_panel.calc_market_sentiment(up, down, flat, limit_up, limit_down)
     return {
         "日期": market_panel.format_history_date(day),
@@ -129,7 +136,7 @@ def build_day_row(daily: pd.DataFrame, limits: pd.DataFrame, day: str) -> Option
         "活跃度": round(sentiment, 2), "情绪值": round(sentiment, 2),
         # tushare daily.amount 单位千元，与 market_history.amount 口径一致
         "成交额": round(float(df["amount"].sum(skipna=True)), 3),
-    }
+    }, unknown
 
 
 def fetch_margin(pro, start: str, end: str) -> pd.DataFrame:
@@ -189,6 +196,8 @@ def main() -> int:
     ap.add_argument("--start", required=True, help="起始交易日 YYYYMMDD")
     ap.add_argument("--end", required=True, help="结束交易日 YYYYMMDD")
     ap.add_argument("--cache-dir", default=str(DEFAULT_CACHE), help="分日取数缓存目录，可断点续跑")
+    ap.add_argument("--recount", action="store_true",
+                    help="连已有行的涨跌平/涨跌停/情绪值一起重算（修分桶口径后回补历史用）")
     ap.add_argument("--dry-run", action="store_true", help="只报告将要发生什么，不写库")
     args = ap.parse_args()
 
@@ -208,7 +217,12 @@ def main() -> int:
         for v in (existing["日期"].tolist() if not existing.empty else [])
     }
     missing = [d for d in days if d not in existing_dates]
+    # --recount 把已有行也重新聚合一遍。合并层的 should_update_count /
+    # should_update_numeric 只在新旧值不同时才落笔，所以没变的行不会被动到。
+    targets = list(days) if args.recount else missing
     print(f"[plan] 已有 {len(existing_dates)} 行；需要新增 {len(missing)} 行；"
+          f"本轮聚合 {len(targets)} 天"
+          f"{'（含已有行重算）' if args.recount else ''}；"
           f"全部 {len(days)} 行的融资列都会按 Tushare T-1 重写", flush=True)
 
     margin = fetch_margin(pro, args.start, args.end)
@@ -237,15 +251,25 @@ def main() -> int:
         return build_day_row(daily, limits, day)
 
     new_rows: List[Dict] = []
-    if missing:
+    unknown_days: List[Tuple[str, int]] = []
+    if targets:
         t0 = time.time()
         with ThreadPoolExecutor(max_workers=8) as pool:
-            for i, row in enumerate(pool.map(fetch_one, missing)):
-                if row:
+            for i, (day, built) in enumerate(zip(targets, pool.map(fetch_one, targets))):
+                if built:
+                    row, unknown = built
                     new_rows.append(row)
+                    if unknown:
+                        unknown_days.append((day, unknown))
                 if (i + 1) % 100 == 0:
-                    print(f"[daily] {i + 1}/{len(missing)} {round(time.time() - t0)}s", flush=True)
+                    print(f"[daily] {i + 1}/{len(targets)} {round(time.time() - t0)}s", flush=True)
         print(f"[daily] 聚合出 {len(new_rows)} 行", flush=True)
+        if unknown_days:
+            total_unknown = sum(n for _, n in unknown_days)
+            print(f"[daily] {len(unknown_days)} 天存在涨跌幅取不到的股票（共 {total_unknown} 只，"
+                  f"多为新股首日无 pre_close），已排除出涨跌平三桶："
+                  f"{', '.join(f'{d}×{n}' for d, n in unknown_days[:8])}"
+                  f"{' …' if len(unknown_days) > 8 else ''}", flush=True)
 
     # 3) 合并 + 统一融资列
     frame = existing if not existing.empty else pd.DataFrame()

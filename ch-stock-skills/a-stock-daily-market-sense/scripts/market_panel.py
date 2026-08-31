@@ -825,9 +825,8 @@ def count_limit_hits(frame: pd.DataFrame) -> Tuple[int, int, str]:
 
 def build_market_temperature(panel: pd.DataFrame, index_summary: Dict[str, Optional[float]]) -> Dict[str, Any]:
     total = int(len(panel))
-    up = int((panel["pct_chg"] > 0).sum())
-    down = int((panel["pct_chg"] < 0).sum())
-    flat = total - up - down
+    up, down, flat, unknown = count_breadth_buckets(panel["pct_chg"])
+    graded = up + down + flat
     total_amount = float(panel["amount"].sum(skipna=True))
     up_amount = float(panel.loc[panel["pct_chg"] > 0, "amount"].sum(skipna=True))
     down_amount = float(panel.loc[panel["pct_chg"] < 0, "amount"].sum(skipna=True))
@@ -839,7 +838,10 @@ def build_market_temperature(panel: pd.DataFrame, index_summary: Dict[str, Optio
         "up_count": up,
         "down_count": down,
         "flat_count": flat,
-        "up_ratio": round(up / total, 4) if total else None,
+        # 涨跌幅取不到的股票（新股首日无 pre_close）既不算平盘也不进分母
+        "unknown_pct_chg_count": unknown,
+        "graded_count": graded,
+        "up_ratio": round(up / graded, 4) if graded else None,
         "median_pct_chg": round(float(panel["pct_chg"].median(skipna=True)), 2) if total else None,
         "up_gt_3_count": int((panel["pct_chg"] >= 3).sum()),
         "up_gt_5_count": int((panel["pct_chg"] >= 5).sum()),
@@ -1095,6 +1097,29 @@ def calc_market_sentiment(
     return float(max(0.0, min(100.0, sentiment)))
 
 
+def count_breadth_buckets(pct_chg: pd.Series) -> Tuple[int, int, int, int]:
+    """按涨跌幅符号分桶，返回 (涨, 跌, 平, 取不到涨跌幅)。
+
+    平盘必须显式按 ``== 0`` 数出来。三处调用方原先都写成
+    ``flat = total - up - down``，等于把涨跌幅为空的行静默算成平盘：北交所新股
+    上市首日没有 pre_close，Tushare 的 daily 就返回空涨跌幅，
+    ``pd.to_numeric(errors="coerce")`` 也会把任何脏值转成 NaN。实测 2020-06 以来
+    的 1517 个交易日里有 60 余天中招，偏差方向恒定——新股首日几乎必涨，却被记成
+    平盘，于是"少算一家上涨、多算一家平盘"。
+
+    NaN 单列一档往外报，且不进任何分母。下游（forward_odds、trend_state_card、
+    build_sentiment_trend）算占比一律用 ``上涨 + 下跌 + 平盘`` 当分母，把当天没有
+    可比基准的股票排除在外，正是这个分母该有的口径。
+    """
+    pct = pd.to_numeric(pct_chg, errors="coerce")
+    return (
+        int((pct > 0).sum()),
+        int((pct < 0).sum()),
+        int((pct == 0).sum()),
+        int(pct.isna().sum()),
+    )
+
+
 def compute_market_activity_from_daily(
     daily: pd.DataFrame, target_date: str, limit_flags: Optional[pd.DataFrame] = None
 ) -> Tuple[Dict[str, Any], List[str], Dict[str, Any]]:
@@ -1122,10 +1147,9 @@ def compute_market_activity_from_daily(
     day_df["pct_chg"] = pd.to_numeric(day_df["pct_chg"], errors="coerce")
     day_df["amount"] = pd.to_numeric(day_df["amount"], errors="coerce")
 
-    total = int(len(day_df))
-    up = int((day_df["pct_chg"] > 0).sum())
-    down = int((day_df["pct_chg"] < 0).sum())
-    flat = total - up - down
+    up, down, flat, unknown = count_breadth_buckets(day_df["pct_chg"])
+    detail["row_count"] = int(len(day_df))
+    detail["unknown_pct_chg_count"] = unknown
     flags_day = (
         limit_flags.loc[limit_flags["trade_date"].astype(str) == str(target_date)]
         if limit_flags is not None and not limit_flags.empty
@@ -1412,7 +1436,7 @@ def should_update_market_history_field(column: str, current_value: object, new_v
         return should_fill_turnover(current_value, new_value)
     if column == "全市场换手率":
         return should_fill_positive_numeric(current_value, new_value)
-    if column in {"情绪值", "融资净买入"}:
+    if column in {"情绪值", "活跃度", "融资净买入"}:
         return should_update_numeric(current_value, new_value)
     if column == "融资数据日":
         # 与融资净买入配对，新值非空即覆盖——两者不同步会让下游把 T-1 读数当成当日

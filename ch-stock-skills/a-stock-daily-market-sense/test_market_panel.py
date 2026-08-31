@@ -211,6 +211,51 @@ def test_compute_market_activity_from_daily():
     assert missing_detail["available"] is False
 
 
+def test_breadth_buckets_do_not_swallow_missing_pct_chg():
+    """涨跌幅取不到的行不能算成平盘——曾经 flat = total - up - down 就是这么错的。
+
+    新股上市首日没有 pre_close，Tushare 的 daily 返回空涨跌幅；新股首日几乎必涨，
+    被记成平盘就是恒定的"少算一家上涨、多算一家平盘"。
+    """
+    up, down, flat, unknown = mp.count_breadth_buckets(
+        pd.Series([3.0, -1.0, 0.0, None, float("nan"), "", "abc"])
+    )
+    assert (up, down, flat, unknown) == (1, 1, 1, 4)
+
+    daily = pd.DataFrame({
+        "trade_date": ["20260609"] * 4,
+        "pct_chg": [2.0, -1.0, 0.0, None],   # 第 4 行 = 上市首日无 pre_close
+        "amount": [100.0, 100.0, 100.0, 100.0],
+    })
+    row, _, detail = mp.compute_market_activity_from_daily(daily, "20260609")
+    assert row["上涨"] == 1 and row["下跌"] == 1 and row["平盘"] == 1
+    assert detail["unknown_pct_chg_count"] == 1
+    assert detail["row_count"] == 4
+    # 三桶之和是"有涨跌幅的家数"，不再等于当日行数
+    assert row["上涨"] + row["下跌"] + row["平盘"] == 3
+
+    temperature = mp.build_market_temperature(
+        pd.DataFrame({
+            "ts_code": ["A", "B", "C", "D"],
+            "pct_chg": [2.0, -1.0, 0.0, None],
+            "amount": [100.0, 100.0, 100.0, 100.0],
+        }),
+        {},
+    )
+    assert temperature["flat_count"] == 1
+    assert temperature["unknown_pct_chg_count"] == 1
+    assert temperature["stock_count"] == 4 and temperature["graded_count"] == 3
+    # up_ratio 的分母是有涨跌幅的家数，不是当日行数
+    assert temperature["up_ratio"] == round(1 / 3, 4)
+
+
+def test_activity_column_is_rewritten_alongside_sentiment():
+    """活跃度与情绪值是同一个量，回算时必须一起改写，否则两列会漂开。"""
+    assert mp.should_update_market_history_field("活跃度", 51.0, 51.02) is True
+    assert mp.should_update_market_history_field("情绪值", 51.0, 51.02) is True
+    assert mp.should_update_market_history_field("活跃度", 51.0, 51.0) is False
+
+
 # --------------------------------------------------------------------------- #
 # Board-rule limit detection
 # --------------------------------------------------------------------------- #

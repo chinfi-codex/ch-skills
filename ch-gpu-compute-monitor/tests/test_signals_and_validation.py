@@ -359,9 +359,9 @@ class TestCollectDryRun:
         source_cfg = {"enabled": True}
         result = type("Result", (), {
             # 形状要跟 CollectResult 保持一致：v1.1 起多了 tokens（需求端量价），
-            # v1.3 起多了 apps（调用方维度）
-            "prices": [], "supply": [], "tokens": [], "apps": [], "notes": [],
-            "unmapped": [], "raw_path": None,
+            # v1.3 起多了 apps（调用方维度），v1.4 起多了 history（周度厂商级）
+            "prices": [], "supply": [], "tokens": [], "apps": [], "history": [],
+            "notes": [], "unmapped": [], "raw_path": None,
         })()
         original_sources = collect.load_sources
         original_catalog = collect.load_catalog
@@ -382,6 +382,70 @@ class TestCollectDryRun:
             collect.run_one = original_run_one
             collect.validate.trailing_history = original_history
             sys.argv = original_argv
+
+
+class TestRunOneWeeklyHistory:
+    """openrouter 的周度厂商级历史只有 collect_history 一条写入路径。
+
+    它要是只在 backfill 里跑，一年结构史就会冻结在最后一次手动回填——
+    这正是 2026-08 实际发生过的停更。这里的回归保护是：日榜采集必须
+    顺手带回周度历史，且周度历史拉失败不拖垮日榜。
+    """
+
+    def test_openrouter_daily_collect_refreshes_weekly_history(self):
+        import collect
+        from collectors.base import CollectResult, CollectorError
+
+        weekly = CollectResult(source="openrouter")
+        weekly.history = [{"week_start": "2026-08-31", "author": "google"}]
+        weekly.notes = ["厂商级周度历史 52 周"]
+        calls = []
+        # API_COLLECTORS 在 import 时绑定了原函数引用，mock 必须换字典条目
+        original_daily = collect.API_COLLECTORS["openrouter"]
+        original_history = collect.openrouter.collect_history
+        try:
+            # 每次返回新对象：真实的 collect 每次调用都新建 CollectResult，
+            # 复用同一个实例会让第一次的 history 赋值污染第二次的断言。
+            collect.API_COLLECTORS["openrouter"] = (
+                lambda *a, **k: CollectResult(source="openrouter"))
+            collect.openrouter.collect_history = lambda cfg, defaults=None: (
+                calls.append(1) or weekly)
+            merged = collect.run_one("openrouter", {"enabled": True}, object(),
+                                     "2026-09-07", {}, 120)
+            assert merged.history == weekly.history
+            assert calls == [1]
+
+            def boom(cfg, defaults=None):
+                raise CollectorError("network down")
+
+            collect.openrouter.collect_history = boom
+            merged = collect.run_one("openrouter", {"enabled": True}, object(),
+                                     "2026-09-07", {}, 120)
+            assert merged.history == []
+            assert any("周度历史刷新失败" in n for n in merged.notes)
+        finally:
+            collect.API_COLLECTORS["openrouter"] = original_daily
+            collect.openrouter.collect_history = original_history
+
+    def test_other_sources_do_not_trigger_weekly_refresh(self):
+        import collect
+        from collectors.base import CollectResult
+
+        fake = CollectResult(source="vast")
+        calls = []
+        original_daily = collect.API_COLLECTORS["vast"]
+        original_history = collect.openrouter.collect_history
+        try:
+            collect.API_COLLECTORS["vast"] = lambda *a, **k: fake
+            collect.openrouter.collect_history = lambda cfg, defaults=None: (
+                calls.append(1) or fake)
+            merged = collect.run_one("vast", {"enabled": True}, object(),
+                                     "2026-09-07", {}, 120)
+            assert merged.history == []
+            assert calls == []
+        finally:
+            collect.API_COLLECTORS["vast"] = original_daily
+            collect.openrouter.collect_history = original_history
 
 
 def _run() -> int:

@@ -65,7 +65,18 @@ def run_one(name: str, cfg: Dict[str, Any], catalog, obs_date: str,
         raise CollectorError(f"未知数据源 {name}")
     if name == "ornn":
         return fn(cfg, catalog, obs_date, history_days=history_days, defaults=defaults)
-    return fn(cfg, catalog, obs_date, defaults=defaults)
+    result = fn(cfg, catalog, obs_date, defaults=defaults)
+    if name == "openrouter":
+        # 周度厂商级历史只有这一条真历史序列，而日榜不写它——不在这里重拉，
+        # 一年结构史就会冻结在最后一次 backfill。成本是一次请求 + 52 周全量
+        # 幂等 upsert；拉失败只记 note，不拖垮当天的日榜采集。
+        try:
+            weekly = openrouter.collect_history(cfg, defaults=defaults)
+            result.history = weekly.history
+            result.notes.extend(weekly.notes)
+        except CollectorError as exc:
+            result.notes.append(f"周度历史刷新失败（不影响日榜）：{exc}")
+    return result
 
 
 def main() -> int:
@@ -135,6 +146,8 @@ def main() -> int:
                 db_adapter.save_supply(result.supply)
                 db_adapter.save_tokens(result.tokens)
                 db_adapter.save_token_apps(result.apps)
+                if result.history:
+                    db_adapter.save_token_history(result.history)
             # 采成功但一行都没拿到，和"采到了"不是一回事：健康度面板要能区分。
             # 应用行不进这个判断：它是补强维度，只有它有数不算这次采集成功。
             status = "ok" if (result.prices or result.supply or result.tokens) else "empty"
@@ -142,6 +155,7 @@ def main() -> int:
                 "finished_at": utc_now_iso(), "status": status, "latency_ms": latency,
                 "price_rows": len(result.prices), "supply_rows": len(result.supply),
                 "token_rows": len(result.tokens), "app_rows": len(result.apps),
+                "token_history_rows": len(result.history),
                 "unmapped_ids": sorted(set(result.unmapped)) or None,
                 "error": None, "raw_path": result.raw_path,
             })
@@ -149,6 +163,7 @@ def main() -> int:
                 "status": status, "price_rows": len(result.prices),
                 "supply_rows": len(result.supply), "token_rows": len(result.tokens),
                 "app_rows": len(result.apps),
+                "token_history_rows": len(result.history),
                 "latency_ms": latency,
                 "unmapped": sorted(set(result.unmapped)), "notes": result.notes,
                 "suspicious": suspicious, "raw_path": result.raw_path,

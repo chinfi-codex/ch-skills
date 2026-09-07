@@ -215,7 +215,7 @@ SUPPLY_KEY = ["obs_date", "source", "gpu_model", "market_segment"]
 RUN_COLUMNS = [
     "run_id", "source", "obs_date", "started_at", "finished_at", "status",
     "attempts", "latency_ms", "price_rows", "supply_rows", "token_rows",
-    "app_rows", "unmapped_ids", "error", "raw_path",
+    "app_rows", "token_history_rows", "unmapped_ids", "error", "raw_path",
 ]
 RUN_KEY = ["run_id", "source"]
 
@@ -264,7 +264,8 @@ _JSON_COLUMNS = {"capacity_detail", "unmapped_ids", "categories"}
 # 查一遍现有列，缺哪个补哪个。ADD COLUMN IF NOT EXISTS 只有 PG 支持，
 # SQLite 没有，所以不能靠它。
 ADDED_COLUMNS = {
-    RUN_TABLE: {"token_rows": "integer", "app_rows": "integer"},
+    RUN_TABLE: {"token_rows": "integer", "app_rows": "integer",
+                "token_history_rows": "integer"},
 }
 
 

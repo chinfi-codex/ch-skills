@@ -18,6 +18,7 @@ targets:
   hermes:   "~/.hermes/skills"
   openclaw: "~/.openclaw/skills"
   workbuddy: "~/.workbuddy/skills"
+  zcode:    "~/.zcode/skills"
 
 # 重命名映射：源目录名 → 目标 skill 名
 # 键为相对于仓库根的路径，值为目标目录名

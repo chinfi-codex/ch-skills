@@ -65,8 +65,7 @@ SWING_SEC_ALIAS_JS = """
     sentiment_trend: "temp_macro",
     market_style: "temp_macro",
     m3_mainline: "industry_mainline",
-    /* 主线内关注个股表是 2.x 的进攻端核心清单，给它配 K 线（它才是「今天看谁」的
-       那张表）；趋势锚表(anchor_verify)用「趋势锚」列名识别，仍走自己的锚点。 */
+    /* 主线内关注个股表(并集清单)是 2.x 的进攻端核心清单，K 线挂给它。 */
     m3_leaders: "mainline_screening",
   };
   const base = window.__sec;
@@ -1117,9 +1116,9 @@ function formatMonth(value) {
 function readStockTable(tableWrap) {
   if (!tableWrap) return { names: [], rows: 0, hasStockColumn: false, present: false };
   const headers = Array.from(tableWrap.querySelectorAll("thead th")).map(c => normalizeStockName(c.textContent));
-  /* 列名候选：按"纯股名列"优先排序——「股票」「个股」是真正的股名列，「趋势锚」是
-     2.x 角色列（值可能是 ✔/— 而非股名），只作兜底。多列同时出现时取最靠前者。 */
-  const COLUMN_CANDIDATES = ["股票", "个股", "趋势锚"];
+  /* 列名候选：legacy 主线表用「股票」，2.x 主线内关注个股表用「个股」。
+     按纯股名列排序，任一命中即按该列取股名。 */
+  const COLUMN_CANDIDATES = ["股票", "个股"];
   let stockIndex = -1;
   for (const col of COLUMN_CANDIDATES) {
     const idx = headers.indexOf(col);
@@ -1930,15 +1929,15 @@ def build_job(args) -> RenderJob:
     )
     evidence = load_evidence(evidence_path)
     # 契约按章节指纹选型：legacy(1.5.0) 走 DMS_CONTRACT，产业趋势波段(2.x) 走
-    # INDUSTRY_SWING_CONTRACT。指纹逻辑单一归 dms_output_contract._select_contract 所有。
+    # INDUSTRY_SWING_CONTRACT。指纹逻辑单一归 dms_output_contract.select_contract 所有。
     # is_swing 贯穿后续所有图表锚点与装饰——2.x 报告章节键不同，图表锚定要随之重映射。
     from dms_output_contract import (
         INDUSTRY_SWING_CONTRACT,
-        _select_contract,
         discover_aux_payloads,
+        select_contract,
     )
 
-    active_contract = _select_contract(markdown_text, DMS_CONTRACT)
+    active_contract = select_contract(markdown_text, DMS_CONTRACT)
     is_swing = active_contract is INDUSTRY_SWING_CONTRACT
     # 与 finalize 门禁同口径：自动纳入同日 module_context 下的主题统计、交叉检查与
     # 宏观风险记分卡，保证表格数字（如油价/美债）在渲染期也能溯源。
@@ -1971,14 +1970,14 @@ def build_job(args) -> RenderJob:
     builder.add_ui_decoration(TREND_STATE_CARD_JS)
     # HeroDecoration 锚定「一句话盘面判断」节；2.x 排版对齐 legacy 体例后同样有该节。
     builder.add_decoration(HeroDecoration(
-            heading_prefix="一句话盘面判断",
-            collect_tags=("P",),
-            max_blocks=3,
-            stop_at_numbered=True,
-            number_units="%|pct|倍",
-            keyword_pattern=HERO_KEYWORDS,
-            stop_mode="any_heading",
-        ))
+        heading_prefix="一句话盘面判断",
+        collect_tags=("P",),
+        max_blocks=3,
+        stop_at_numbered=True,
+        number_units="%|pct|倍",
+        keyword_pattern=HERO_KEYWORDS,
+        stop_mode="any_heading",
+    ))
     if is_swing:
         # 产业趋势波段(2.x) 章节键 → 图表锚点重映射。报告没有的模块(m5 特征分组、
         # 弹性股网格)直接不声明；指数 K 线、市场温度、风格、状态时间线挂到对应新节。

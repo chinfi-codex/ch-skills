@@ -16,15 +16,36 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
-MACRO_MONITOR = (
-    Path.home() / ".zcode" / "skills" / "chstock-macro-monitor" / "scripts" / "macro_monitor.py"
-)
+
+
+def _macro_monitor_candidates() -> List[Path]:
+    """macro_monitor.py 的候选路径，按优先级：
+
+    1. 环境变量 MACRO_MONITOR_SCRIPT 显式指定；
+    2. 源仓库同级目录 ch-stock-skills/chstock-macro-monitor（开发态）；
+    3. 同步安装位置 ~/.zcode/skills/chstock-macro-monitor（生产态）。
+    """
+    override = os.environ.get("MACRO_MONITOR_SCRIPT")
+    if override:
+        return [Path(override)]
+    return [
+        SKILL_ROOT.parent / "chstock-macro-monitor" / "scripts" / "macro_monitor.py",
+        Path.home() / ".zcode" / "skills" / "chstock-macro-monitor" / "scripts" / "macro_monitor.py",
+    ]
+
+
+def _resolve_macro_monitor() -> Optional[Path]:
+    for candidate in _macro_monitor_candidates():
+        if candidate.exists():
+            return candidate
+    return None
 
 # 阈值全部为确定性地缘/流动性冲击信号，宁缺不伪造：
 # 单点绝对水平 + 可计算时的变化幅都给出，缺变化序列时只按绝对水平命中并在 note 说明。
@@ -71,10 +92,11 @@ def _load_macro(input_path: Optional[str]) -> Dict[str, Any]:
     if input_path:
         payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
     else:
-        if not MACRO_MONITOR.exists():
+        monitor = _resolve_macro_monitor()
+        if monitor is None:
             return {"sources": {"macro_monitor": "MISSING_SCRIPT"}, "data": {}}
         proc = subprocess.run(
-            [sys.executable, str(MACRO_MONITOR), "market"],
+            [sys.executable, str(monitor), "market"],
             capture_output=True, text=True, timeout=180,
         )
         if proc.returncode != 0:

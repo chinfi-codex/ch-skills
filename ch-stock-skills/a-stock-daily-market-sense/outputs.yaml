@@ -22,6 +22,10 @@ outputs:
         - '(?m)^(?:[-*]\s*)?(?:目标价|止损价)\s*(?:为|设为|看到|上看|下看|[:：])?\s*(?:人民币|[¥￥$])?\s*\d'
       sections:
         # 排版对齐 legacy 体例：## 一句话盘面判断 hero + # N. 一级章（渲染后 h2）+ ## N.M 小节。
+        # required:false 是刻意的：本 glob 同时服务 legacy(1.5.0) 与 2.x 两代报告，
+        # 章节必选性由 dms_output_contract.select_contract 按指纹选型后的契约硬判
+        # （INDUSTRY_SWING_CONTRACT 全部必选），这里只声明 2.x 骨架。
+        # 两处注册表必须同步演进：tests/test_industry_swing_contract.py 有漂移守护。
         - {key: hero_verdict, patterns: ['^一句话盘面判断$'], level: 2, required: false}
         - {key: pos_gate, patterns: ['环境与仓位总闸门'], level: 1, required: false}
         - {key: temp_macro, patterns: ['大盘温度与宏观'], level: 1, required: false}

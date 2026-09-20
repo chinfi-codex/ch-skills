@@ -50,7 +50,11 @@ capabilities:
     entry: scripts/macro_risk_scorecard.py
     terminal: false
     judgment: forbidden
-    effects: [stdout:json]
+    # 产物必须落 module_context_<日期>/：数字溯源门禁(dms_output_contract)的 aux
+    # 取数集按该路径发现宏观读数，写在别处会被判成编造。
+    effects: [stdout:json, "fs:reports/module_context_*/macro_risk_scorecard.json"]
+    receipt_outputs:
+      - reports/module_context_*/macro_risk_scorecard.json
 
   daily.compute-trend-state:
     kind: command

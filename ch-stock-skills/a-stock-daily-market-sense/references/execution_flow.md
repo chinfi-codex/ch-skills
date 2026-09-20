@@ -7,6 +7,15 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 
 ## 日报主流程
 
+0. **宏观风险记分卡（产业趋势波段第 1 章的数据源）**：走能力运行时跑 `daily.macro-risk-scorecard`，产物**必须落 `module_context_<日期>/macro_risk_scorecard.json`**——数字溯源门禁的 aux 取数集按该路径发现油价/美债/汇率读数，写在别处或只打 stdout，报告里的宏观数字会被判成编造而硬拦：
+
+   ```bash
+   python3 scripts/_shared/skill_runtime/runner.py --skill-root . run daily.macro-risk-scorecard -- \
+     --asof 20260429 --output reports/module_context_20260429/macro_risk_scorecard.json
+   ```
+
+   脚本确定性给出命中项与风险等级（低/中/高），不判断仓位；阈值依据与降级行为见 `references/methodology/macro_risk_framework.md`。宏观数据是抓取时点快照，引用时带 `data_caveat`。
+
 1. **确定交易日**：解析"今天/最近"或具体日期，默认只使用 D 及以前数据；只有用户明确要求后验时才允许 `--allow-future`。
 
 2. **生成证据包**：运行 `scripts/run_daily_panel.py`。脚本会直接调用数据管线，写出完整 evidence、个股 K 线展示数据（`kline_YYYYMMDD.json`）和模块级 JSON；同时调用两张机判卡并把结果注入完整 evidence 与 `module1_market_trend.json`：
@@ -18,7 +27,15 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 
 4. **统计并锁定模块 3 星级**：运行 `theme_group_stats.py` 生成 `module3_theme_stats.json`，再由模型严格按 Market Evidence Pack 与统计结果写回 `stars: 1/2/3`。星级锁定后，只对当日 ★★★ 主线强制尝试搜索，并按宿主能力选读知识库或产业链资料；★ 与 ★★ 方向都不搜索、不做产业推演、不进入 2.2。主 agent 将 Web 结果、可选的宿主知识证据与查询错误压缩成 `module3_enrichment_pack.json`。外部资料只用于解释催化、推演产业变量与挖掘细分线路，绝不回写或上调 2.1 星级。详细搜索、证据和评级纪律见 `references/methodology/catalyst_subline_mining.md`。
 
-5. **聚合成稿**：模块 3 第二阶段只读取 theme map、统计结果、enrichment pack、方法论与模板，完成 2.1 主线判定和 2.3 领导股与弹性股；仅当存在 ★★★ 主线时才在两者之间输出 2.2 催化与细分线路推演，没有 ★★★ 时整节省略。主 agent 再读取模块 1、3、4、5 输出、`assembled_checks.json` 与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和最终语气校准。搜索或知识查询失败不阻断日报，但要披露证据缺口并降低产业推演确定性。
+5. **聚合成稿（产业趋势波段 dms/2.x 结构）**：模块 3 第二阶段读取 theme map、统计结果、enrichment pack、方法论，完成主线判定与领导股；仅当存在 ★★★ 主线时才输出催化与细分线路推演，没有 ★★★ 时整节省略。主 agent 再读取模块 1、3、4、5 输出、`assembled_checks.json`、`macro_risk_scorecard.json` 与 `references/methodology/output_discipline.md`，按下述结构成稿：
+
+   - **`## 一句话盘面判断`**：环境 + 主线 + 风险三句收口（环境结论用档位语言，不用指令语言）。
+   - **1 环境与仓位总闸门**：1.1 宏观记分卡表（读 `macro_risk_framework.md`）、1.2 三机判卡读数、1.3 指数与风格、1.4 档位裁决（读 `position_matrix.md`：宏观只减不加、多轴冲突取保守）。
+   - **2 大盘温度与宏观**：叙事章，末尾 `==趋势判断==` 只写 A 股内部状态。
+   - **3 产业趋势主线总览**：主线表（星级/位置/拥挤度/领导股/波段状态）+ 星级判定证据 + 产业质地；无 ★★★ 时披露"催化推演省略"。
+   - **4 主线内关注个股（多维筛选·并集）**：趋势锚/特征组过滤/规模偏好三维并行取并集（读 `mainline_stock_screening.md` 与 `size_preference.md`），4.1 并集清单表（列名固定用「个股」，渲染器按它挂 K 线）+ 4.2–4.4 维度解读 + M3/M4 交叉见顶检查。
+   - **5 亏钱效应（爆量下跌）**、**6 仓位管理备忘**：档位映射、明日触发器表、纪律复核。
+   - 排版：frontmatter + 标题块 + `# N.` 一级章 + `## N.M` 小节 + 章间 `---` + 结尾数据来源行；各章定性段用 `==...==`。搜索或知识查询失败不阻断日报，但要披露证据缺口并降低产业推演确定性。
 
 6. **主线生命周期落库**：报告定稿后，把当日 2.1 主线判定沉淀进 PG 生命周期台账。先运行 `python3 scripts/theme_lifecycle.py context --asof YYYYMMDD` 取注册表、各主线近期状态与 watchlist；模型完成别名归一（当日临时主题名 → canonical theme_id）和生命周期状态判定（低位启动/在场候选/主线确认/高位分歧/退潮/修复/再聚焦/沉寂），写出 `reports/lifecycle_YYYYMMDD.json` 后运行 `python3 scripts/theme_lifecycle.py record --input reports/lifecycle_YYYYMMDD.json` 落库。脚本只做确定性校验（枚举、状态机转移合法性、theme_id 存在性），判断留给模型；输入格式、状态机与判定基准见 `references/theme_lifecycle.md`。
 
@@ -30,7 +47,7 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 
 主 agent 先生成模块级 JSON，然后按下列最小上下文分发。每个 subagent 只看自己的模块数据，不读取其他模块数据。
 
-**模块号 ≠ 章节号。** 2026-08 移除了原模块 2（成交额集中度与拥挤度）之后，报告章节重排成 1-4，但模块编号、JSON 文件名与契约键（`module3_*.json`、`m3_mainline` 等）保持原样不动——契约本来就按语义键匹配、匹配前先剥编号。对应关系固定为：模块 1 → 第 1 章盘面趋势、模块 3 → 第 2 章赚钱效应、模块 4 → 第 3 章亏钱效应、模块 5 → 第 4 章特征分组。
+**模块号 ≠ 章节号。** 模块编号、JSON 文件名与契约键（`module3_*.json`、`m3_mainline` 等）保持历史值不动——契约按语义键匹配、匹配前先剥编号。产业趋势波段（dms/2.x）的章节映射为：模块 1 → 第 1/2 章（环境闸门 + 温度宏观）、模块 3 → 第 3 章主线总览 + 第 4 章主线内关注个股、模块 4 → 第 5 章亏钱效应、模块 5 → 第 4 章特征组过滤维度（只取 `capacity_up` 与 `early_limit_up_1030` 两组做过滤器，明细不再单独成章）。HTML 渲染器把 legacy 图表锚点键（`index_trend`/`sentiment_trend`/`market_style`/`m3_mainline`/`m3_leaders`）经别名装饰落到 2.x 章节，hook 代码不改。
 
 | 模块 | JSON | 方法论 | 模板 |
 |---|---|---|---|

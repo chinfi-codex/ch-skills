@@ -422,12 +422,14 @@ def _validate_forward_axis(
     """
     card = evidence.get("forward_odds") or {}
     pulse = card.get("pulse") or {}
-    # 前瞻轴纪律语句所在章节随契约版本而变：legacy 在 1.1 情绪趋势，2.x 在环境与仓位总闸门。
-    body = ""
-    for key in ("pos_gate", "sentiment_trend", "temp_macro"):
-        if key in sections:
-            body = sections[key].body
-            break
+    # 前瞻轴纪律语句所在章节随契约版本而变：legacy 在 1.1 情绪趋势；2.x 的前瞻轴
+    # 读数在环境与仓位总闸门(1.2)或大盘温度与宏观都可能落地，取两章并集检查，
+    # 避免模型把「情绪脉冲」写进第 2 章时 R1 误报缺失。
+    body = "\n".join(
+        sections[key].body
+        for key in ("sentiment_trend", "pos_gate", "temp_macro")
+        if key in sections
+    )
     detail: Dict[str, Any] = {
         "card_available": bool(card.get("available")),
         "pulse_available": bool(pulse.get("available")),
@@ -880,9 +882,11 @@ def _paragraph_warnings(
     }
 
 
-# 产业趋势波段契约（dms/2.x）。章节重排为「环境闸门 → 温度宏观 → 产业主线 → 趋势锚
-# → 亏钱效应 → 仓位备忘」，与渲染器持有的 legacy(1.5.0) 契约并存——finalize-markdown
-# 用指纹自动选型；HTML 渲染器仍按 1.5.0，本契约不影响渲染层。
+# 产业趋势波段契约（dms/2.x）。章节重排为「一句话盘面判断 hero → 环境与仓位总闸门 →
+# 温度宏观 → 产业主线 → 主线内关注个股(三维并集) → 亏钱效应 → 仓位备忘」，与渲染器
+# 持有的 legacy(1.5.0) 契约并存——validate 阶段按章节指纹自动选型（select_contract）。
+# 注意：outputs.yaml 的 dms-markdown sections 是同一份章节的 YAML 侧声明，二者必须
+# 同步演进——tests/test_industry_swing_contract.py 有漂移守护。
 INDUSTRY_SWING_CONTRACT = SectionContract(
     version="dms/2.0.0-industry-swing",
     sections=[
@@ -907,11 +911,12 @@ INDUSTRY_SWING_CONTRACT = SectionContract(
 )
 
 
-def _select_contract(markdown_text: str, legacy: SectionContract) -> SectionContract:
+def select_contract(markdown_text: str, legacy: SectionContract) -> SectionContract:
     """按章节指纹在 legacy(1.5.0) 与 产业趋势波段(2.x) 之间选型。
 
     2.x 报告含「环境与仓位总闸门」「仓位管理备忘」这类独有章节；legacy 报告含
-    「情绪趋势」「特征分组」等旧章节。指纹命中谁就用谁，都不命中回退 legacy。
+    「情绪趋势」「特征分组」等旧章节。指纹命中谁就用谁，都不命中回退 legacy
+    （回退后按 legacy 必选节报错，错误信息会列出缺失的 legacy 章节）。
     """
     if re.search(r"环境与仓位总闸门|仓位管理备忘|产业趋势主线总览", markdown_text):
         return INDUSTRY_SWING_CONTRACT
@@ -941,7 +946,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # it prevents a second 1.5.0 declaration from drifting independently.
         from render_report_html import DMS_CONTRACT as LEGACY_CONTRACT
 
-        contract = _select_contract(args.input.read_text(encoding="utf-8"), LEGACY_CONTRACT)
+        contract = select_contract(args.input.read_text(encoding="utf-8"), LEGACY_CONTRACT)
         audit = validate_dms_content(
             args.input.read_text(encoding="utf-8"), evidence, contract, aux_payloads
         )

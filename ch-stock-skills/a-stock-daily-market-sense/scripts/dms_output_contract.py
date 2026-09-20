@@ -63,7 +63,14 @@ _NUMERIC_EVIDENCE_KEYS = {
 # module_context_<日期>/，M3/M4 交叉检查也一样。它们同样是脚本产物，却曾因为
 # 不在取数集里而被判成「编造」——2026-08-19 的 27.45%、5.43% 就是这么被从
 # 表格里赶进正文的。取数集按文件名前缀扩容，未知文件不自动纳入。
-_AUX_PROVENANCE_GLOBS = ("module3_theme_stats.json", "module3_theme_map.json", "assembled_checks.json")
+_AUX_PROVENANCE_GLOBS = (
+    "module3_theme_stats.json",
+    "module3_theme_map.json",
+    "assembled_checks.json",
+    # 产业趋势波段(2.x)：宏观风险记分卡的油价/美债/汇率读数与 evidence 同等可信，
+    # 由 daily.macro-risk-scorecard 写入 module_context_<日期>/。
+    "macro_risk_scorecard.json",
+)
 # 模型自建分组的派生聚合列：3.1 的风险类型是模型当场分的组，模板要求填组内
 # 中位数，而偶数样本的中位数按定义要取中间两值的平均——这个数 evidence 里本来
 # 就不会有。硬判会逼出「3.85 / 4.25」这种并列写法，所以只在这一节降为软告警。
@@ -125,9 +132,19 @@ def validate_dms_content(
     warnings: List[Dict[str, Any]] = []
     degraded: List[Dict[str, Any]] = []
 
-    rated_themes = _rated_theme_count(sections["m3_mainline"].body)
-    three_star = _rated_theme_count(sections["m3_mainline"].body, cell_pattern=r"★★★")
-    dynamic_titles = _validate_dynamic_catalyst(sections, three_star, problems)
+    # 产业趋势波段契约（dms/2.x）重排了章节，没有 m3_mainline / m5_* 等旧键；
+    # 它们的硬编码校验（星级、催化动态节、模块5 高亮）只适用于 legacy(1.5.0) 契约。
+    # 全版本通用纪律——禁用交易指令、前瞻轴不得写成预测、表格数值溯源、段落数字限流——
+    # 不随章节结构调整，对所有契约版本生效。
+    legacy = contract.version.startswith("dms/1.")
+    if legacy:
+        rated_themes = _rated_theme_count(sections["m3_mainline"].body)
+        three_star = _rated_theme_count(sections["m3_mainline"].body, cell_pattern=r"★★★")
+        dynamic_titles = _validate_dynamic_catalyst(sections, three_star, problems)
+    else:
+        rated_themes = 0
+        three_star = 0
+        dynamic_titles = []
 
     for spec in contract.sections:
         section = sections.get(spec.key)
@@ -405,7 +422,12 @@ def _validate_forward_axis(
     """
     card = evidence.get("forward_odds") or {}
     pulse = card.get("pulse") or {}
-    body = sections["sentiment_trend"].body if "sentiment_trend" in sections else ""
+    # 前瞻轴纪律语句所在章节随契约版本而变：legacy 在 1.1 情绪趋势，2.x 在环境与仓位总闸门。
+    body = ""
+    for key in ("pos_gate", "sentiment_trend", "temp_macro"):
+        if key in sections:
+            body = sections[key].body
+            break
     detail: Dict[str, Any] = {
         "card_available": bool(card.get("available")),
         "pulse_available": bool(pulse.get("available")),
@@ -534,18 +556,23 @@ def _validate_highlights(
     }
     detail: Dict[str, bool] = {}
     for key, label_pattern in rules.items():
+        if key not in sections:
+            # 2.x 契约没有这些旧键；缺失即跳过，不报错。
+            continue
         blocks = re.findall(r"==(.+?)==", sections[key].body, re.DOTALL)
         present = any(re.search(label_pattern, block, re.IGNORECASE) for block in blocks)
         detail[key] = present
         if not present:
             problems.append(f"[{key}] required highlighted judgment paragraph is missing")
-    m5_match = re.search(
-        r"(?ms)^#\s+4\.\s*特征分组分析\s*$.*?^==.*?一句话判断.*?==\s*$",
-        markdown_text,
-    )
-    detail["m5_verdict"] = bool(m5_match)
-    if not m5_match:
-        problems.append("[m5_verdict] required highlighted judgment paragraph is missing")
+    # 模块 5 特征分组的 ==一句话判断== 高亮仅适用于含该章的 legacy(1.5.0) 契约。
+    if "m5_overlap" in sections or "m5_capacity_up" in sections:
+        m5_match = re.search(
+            r"(?ms)^#\s+4\.\s*特征分组分析\s*$.*?^==.*?一句话判断.*?==\s*$",
+            markdown_text,
+        )
+        detail["m5_verdict"] = bool(m5_match)
+        if not m5_match:
+            problems.append("[m5_verdict] required highlighted judgment paragraph is missing")
     return detail
 
 
@@ -853,6 +880,40 @@ def _paragraph_warnings(
     }
 
 
+# 产业趋势波段契约（dms/2.x）。章节重排为「环境闸门 → 温度宏观 → 产业主线 → 趋势锚
+# → 亏钱效应 → 仓位备忘」，与渲染器持有的 legacy(1.5.0) 契约并存——finalize-markdown
+# 用指纹自动选型；HTML 渲染器仍按 1.5.0，本契约不影响渲染层。
+INDUSTRY_SWING_CONTRACT = SectionContract(
+    version="dms/2.0.0-industry-swing",
+    sections=[
+        SectionSpec("pos_gate", [r"环境与仓位总闸门"], level=3,
+                    source="methodology/position_matrix.md"),
+        SectionSpec("temp_macro", [r"大盘温度与宏观"], level=3,
+                    source="references/template/section1.md"),
+        SectionSpec("industry_mainline", [r"产业趋势主线总览"], level=3,
+                    source="references/template/section3.md"),
+        SectionSpec("anchor_verify", [r"标志性个股", "趋势锚"], level=3,
+                    source="references/template/section3.md"),
+        SectionSpec("m4_decline", [r"亏钱效应（爆量下跌）"], level=3,
+                    source="references/template/section4.md"),
+        SectionSpec("position_memo", [r"仓位管理备忘"], level=3,
+                    source="methodology/position_matrix.md"),
+    ],
+    order="strict",
+)
+
+
+def _select_contract(markdown_text: str, legacy: SectionContract) -> SectionContract:
+    """按章节指纹在 legacy(1.5.0) 与 产业趋势波段(2.x) 之间选型。
+
+    2.x 报告含「环境与仓位总闸门」「仓位管理备忘」这类独有章节；legacy 报告含
+    「情绪趋势」「特征分组」等旧章节。指纹命中谁就用谁，都不命中回退 legacy。
+    """
+    if re.search(r"环境与仓位总闸门|仓位管理备忘|产业趋势主线总览", markdown_text):
+        return INDUSTRY_SWING_CONTRACT
+    return legacy
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI adapter used by the compiled output gate."""
     parser = argparse.ArgumentParser(description="Validate a staged DMS Markdown report.")
@@ -872,12 +933,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         aux_payloads = discover_aux_payloads(args.evidence)
         for path in args.aux:
             aux_payloads.append((path.name, json.loads(path.read_text(encoding="utf-8"))))
-        # The renderer owns the one canonical SectionContract.  Importing it
-        # here prevents a second declaration from drifting independently.
-        from render_report_html import DMS_CONTRACT
+        # The renderer owns the canonical legacy(1.5.0) SectionContract.  Importing
+        # it prevents a second 1.5.0 declaration from drifting independently.
+        from render_report_html import DMS_CONTRACT as LEGACY_CONTRACT
 
+        contract = _select_contract(args.input.read_text(encoding="utf-8"), LEGACY_CONTRACT)
         audit = validate_dms_content(
-            args.input.read_text(encoding="utf-8"), evidence, DMS_CONTRACT, aux_payloads
+            args.input.read_text(encoding="utf-8"), evidence, contract, aux_payloads
         )
     except Exception as exc:  # noqa: BLE001 - deterministic validator boundary
         print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False))

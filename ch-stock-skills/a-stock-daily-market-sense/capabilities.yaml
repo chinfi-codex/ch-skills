@@ -45,6 +45,13 @@ capabilities:
     judgment: forbidden
     effects: [db:alpha_data.dms_forward_odds_stats, stdout:json]
 
+  daily.macro-risk-scorecard:
+    kind: command
+    entry: scripts/macro_risk_scorecard.py
+    terminal: false
+    judgment: forbidden
+    effects: [stdout:json]
+
   daily.compute-trend-state:
     kind: command
     entry: scripts/trend_state_card.py

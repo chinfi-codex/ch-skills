@@ -15,110 +15,53 @@
         "order": "strict",
         "sections": [
           {
-            "key": "hero_verdict",
+            "key": "pos_gate",
             "level": 2,
             "patterns": [
-              "^一句话盘面判断$"
-            ]
-          },
-          {
-            "key": "sentiment_trend",
-            "level": 2,
-            "patterns": [
-              "^情绪趋势$"
-            ]
-          },
-          {
-            "key": "index_trend",
-            "level": 2,
-            "patterns": [
-              "^指数趋势$"
-            ]
-          },
-          {
-            "key": "market_style",
-            "level": 2,
-            "patterns": [
-              "^市场风格$"
-            ]
-          },
-          {
-            "key": "m3_mainline",
-            "level": 2,
-            "patterns": [
-              "^主线判定$"
-            ]
-          },
-          {
-            "key": "m3_catalyst",
-            "level": 2,
-            "patterns": [
-              "^催化与细分线路推演$"
+              "环境与仓位总闸门"
             ],
             "required": false
           },
           {
-            "key": "m3_leaders",
+            "key": "temp_macro",
             "level": 2,
             "patterns": [
-              "主线领导股与弹性股"
-            ]
+              "大盘温度与宏观"
+            ],
+            "required": false
+          },
+          {
+            "key": "industry_mainline",
+            "level": 2,
+            "patterns": [
+              "产业趋势主线总览"
+            ],
+            "required": false
+          },
+          {
+            "key": "anchor_verify",
+            "level": 2,
+            "patterns": [
+              "标志性个股",
+              "趋势锚"
+            ],
+            "required": false
           },
           {
             "key": "m4_decline",
-            "level": 1,
-            "patterns": [
-              "^亏钱效应（爆量下跌）$"
-            ]
-          },
-          {
-            "key": "m4_risk_types",
             "level": 2,
             "patterns": [
-              "^风险类型归纳$"
-            ]
+              "亏钱效应（爆量下跌）"
+            ],
+            "required": false
           },
           {
-            "key": "m4_decline_details",
+            "key": "position_memo",
             "level": 2,
             "patterns": [
-              "^高强度爆量下跌(?:个股)?明细$"
-            ]
-          },
-          {
-            "key": "m5_capacity_up",
-            "level": 2,
-            "patterns": [
-              "^容量上涨明细$"
-            ]
-          },
-          {
-            "key": "m5_monthly_base",
-            "level": 2,
-            "patterns": [
-              "^(?:全市场)?月线平台突破明细$"
-            ]
-          },
-          {
-            "key": "m5_early_limit",
-            "level": 2,
-            "patterns": [
-              "^10:30 前涨停明细$"
-            ]
-          },
-          {
-            "key": "m5_discount_relaunch",
-            "level": 2,
-            "patterns": [
-              "^折扣启动明细$"
-            ]
-          },
-          {
-            "key": "m5_overlap",
-            "level": 2,
-            "patterns": [
-              "^交叉命中上涨归因$"
-            ]
+              "仓位管理备忘"
+            ],
+            "required": false
           }
         ]
       },
@@ -168,110 +111,53 @@
             "order": "strict",
             "sections": [
               {
-                "key": "hero_verdict",
+                "key": "pos_gate",
                 "level": 3,
                 "patterns": [
-                  "^一句话盘面判断$"
-                ]
-              },
-              {
-                "key": "sentiment_trend",
-                "level": 3,
-                "patterns": [
-                  "^情绪趋势$"
-                ]
-              },
-              {
-                "key": "index_trend",
-                "level": 3,
-                "patterns": [
-                  "^指数趋势$"
-                ]
-              },
-              {
-                "key": "market_style",
-                "level": 3,
-                "patterns": [
-                  "^市场风格$"
-                ]
-              },
-              {
-                "key": "m3_mainline",
-                "level": 3,
-                "patterns": [
-                  "^主线判定$"
-                ]
-              },
-              {
-                "key": "m3_catalyst",
-                "level": 3,
-                "patterns": [
-                  "^催化与细分线路推演$"
+                  "环境与仓位总闸门"
                 ],
                 "required": false
               },
               {
-                "key": "m3_leaders",
+                "key": "temp_macro",
                 "level": 3,
                 "patterns": [
-                  "主线领导股与弹性股"
-                ]
+                  "大盘温度与宏观"
+                ],
+                "required": false
+              },
+              {
+                "key": "industry_mainline",
+                "level": 3,
+                "patterns": [
+                  "产业趋势主线总览"
+                ],
+                "required": false
+              },
+              {
+                "key": "anchor_verify",
+                "level": 3,
+                "patterns": [
+                  "标志性个股",
+                  "趋势锚"
+                ],
+                "required": false
               },
               {
                 "key": "m4_decline",
-                "level": 2,
-                "patterns": [
-                  "^亏钱效应（爆量下跌）$"
-                ]
-              },
-              {
-                "key": "m4_risk_types",
                 "level": 3,
                 "patterns": [
-                  "^风险类型归纳$"
-                ]
+                  "亏钱效应（爆量下跌）"
+                ],
+                "required": false
               },
               {
-                "key": "m4_decline_details",
+                "key": "position_memo",
                 "level": 3,
                 "patterns": [
-                  "^高强度爆量下跌(?:个股)?明细$"
-                ]
-              },
-              {
-                "key": "m5_capacity_up",
-                "level": 3,
-                "patterns": [
-                  "^容量上涨明细$"
-                ]
-              },
-              {
-                "key": "m5_monthly_base",
-                "level": 3,
-                "patterns": [
-                  "^(?:全市场)?月线平台突破明细$"
-                ]
-              },
-              {
-                "key": "m5_early_limit",
-                "level": 3,
-                "patterns": [
-                  "^10:30 前涨停明细$"
-                ]
-              },
-              {
-                "key": "m5_discount_relaunch",
-                "level": 3,
-                "patterns": [
-                  "^折扣启动明细$"
-                ]
-              },
-              {
-                "key": "m5_overlap",
-                "level": 3,
-                "patterns": [
-                  "^交叉命中上涨归因$"
-                ]
+                  "仓位管理备忘"
+                ],
+                "required": false
               }
             ]
           },
@@ -331,114 +217,57 @@
         "order": "strict",
         "sections": [
           {
-            "key": "hero_verdict",
+            "key": "pos_gate",
             "level": 2,
             "patterns": [
-              "^一句话盘面判断$"
-            ]
-          },
-          {
-            "key": "sentiment_trend",
-            "level": 2,
-            "patterns": [
-              "^情绪趋势$"
-            ]
-          },
-          {
-            "key": "index_trend",
-            "level": 2,
-            "patterns": [
-              "^指数趋势$"
-            ]
-          },
-          {
-            "key": "market_style",
-            "level": 2,
-            "patterns": [
-              "^市场风格$"
-            ]
-          },
-          {
-            "key": "m3_mainline",
-            "level": 2,
-            "patterns": [
-              "^主线判定$"
-            ]
-          },
-          {
-            "key": "m3_catalyst",
-            "level": 2,
-            "patterns": [
-              "^催化与细分线路推演$"
+              "环境与仓位总闸门"
             ],
             "required": false
           },
           {
-            "key": "m3_leaders",
+            "key": "temp_macro",
             "level": 2,
             "patterns": [
-              "主线领导股与弹性股"
-            ]
+              "大盘温度与宏观"
+            ],
+            "required": false
+          },
+          {
+            "key": "industry_mainline",
+            "level": 2,
+            "patterns": [
+              "产业趋势主线总览"
+            ],
+            "required": false
+          },
+          {
+            "key": "anchor_verify",
+            "level": 2,
+            "patterns": [
+              "标志性个股",
+              "趋势锚"
+            ],
+            "required": false
           },
           {
             "key": "m4_decline",
-            "level": 1,
-            "patterns": [
-              "^亏钱效应（爆量下跌）$"
-            ]
-          },
-          {
-            "key": "m4_risk_types",
             "level": 2,
             "patterns": [
-              "^风险类型归纳$"
-            ]
+              "亏钱效应（爆量下跌）"
+            ],
+            "required": false
           },
           {
-            "key": "m4_decline_details",
+            "key": "position_memo",
             "level": 2,
             "patterns": [
-              "^高强度爆量下跌(?:个股)?明细$"
-            ]
-          },
-          {
-            "key": "m5_capacity_up",
-            "level": 2,
-            "patterns": [
-              "^容量上涨明细$"
-            ]
-          },
-          {
-            "key": "m5_monthly_base",
-            "level": 2,
-            "patterns": [
-              "^(?:全市场)?月线平台突破明细$"
-            ]
-          },
-          {
-            "key": "m5_early_limit",
-            "level": 2,
-            "patterns": [
-              "^10:30 前涨停明细$"
-            ]
-          },
-          {
-            "key": "m5_discount_relaunch",
-            "level": 2,
-            "patterns": [
-              "^折扣启动明细$"
-            ]
-          },
-          {
-            "key": "m5_overlap",
-            "level": 2,
-            "patterns": [
-              "^交叉命中上涨归因$"
-            ]
+              "仓位管理备忘"
+            ],
+            "required": false
           }
         ]
       },
-      "contract_version": "dms/1.5.0",
+      "contract_version": "dms/2.0.0-industry-swing",
       "features": [
         "evidence-backed"
       ],
@@ -477,110 +306,53 @@
             "order": "strict",
             "sections": [
               {
-                "key": "hero_verdict",
+                "key": "pos_gate",
                 "level": 2,
                 "patterns": [
-                  "^一句话盘面判断$"
-                ]
-              },
-              {
-                "key": "sentiment_trend",
-                "level": 2,
-                "patterns": [
-                  "^情绪趋势$"
-                ]
-              },
-              {
-                "key": "index_trend",
-                "level": 2,
-                "patterns": [
-                  "^指数趋势$"
-                ]
-              },
-              {
-                "key": "market_style",
-                "level": 2,
-                "patterns": [
-                  "^市场风格$"
-                ]
-              },
-              {
-                "key": "m3_mainline",
-                "level": 2,
-                "patterns": [
-                  "^主线判定$"
-                ]
-              },
-              {
-                "key": "m3_catalyst",
-                "level": 2,
-                "patterns": [
-                  "^催化与细分线路推演$"
+                  "环境与仓位总闸门"
                 ],
                 "required": false
               },
               {
-                "key": "m3_leaders",
+                "key": "temp_macro",
                 "level": 2,
                 "patterns": [
-                  "主线领导股与弹性股"
-                ]
+                  "大盘温度与宏观"
+                ],
+                "required": false
+              },
+              {
+                "key": "industry_mainline",
+                "level": 2,
+                "patterns": [
+                  "产业趋势主线总览"
+                ],
+                "required": false
+              },
+              {
+                "key": "anchor_verify",
+                "level": 2,
+                "patterns": [
+                  "标志性个股",
+                  "趋势锚"
+                ],
+                "required": false
               },
               {
                 "key": "m4_decline",
-                "level": 1,
-                "patterns": [
-                  "^亏钱效应（爆量下跌）$"
-                ]
-              },
-              {
-                "key": "m4_risk_types",
                 "level": 2,
                 "patterns": [
-                  "^风险类型归纳$"
-                ]
+                  "亏钱效应（爆量下跌）"
+                ],
+                "required": false
               },
               {
-                "key": "m4_decline_details",
+                "key": "position_memo",
                 "level": 2,
                 "patterns": [
-                  "^高强度爆量下跌(?:个股)?明细$"
-                ]
-              },
-              {
-                "key": "m5_capacity_up",
-                "level": 2,
-                "patterns": [
-                  "^容量上涨明细$"
-                ]
-              },
-              {
-                "key": "m5_monthly_base",
-                "level": 2,
-                "patterns": [
-                  "^(?:全市场)?月线平台突破明细$"
-                ]
-              },
-              {
-                "key": "m5_early_limit",
-                "level": 2,
-                "patterns": [
-                  "^10:30 前涨停明细$"
-                ]
-              },
-              {
-                "key": "m5_discount_relaunch",
-                "level": 2,
-                "patterns": [
-                  "^折扣启动明细$"
-                ]
-              },
-              {
-                "key": "m5_overlap",
-                "level": 2,
-                "patterns": [
-                  "^交叉命中上涨归因$"
-                ]
+                  "仓位管理备忘"
+                ],
+                "required": false
               }
             ]
           },
@@ -629,5 +401,5 @@
   },
   "schema_version": 1,
   "skill": "a-stock-daily-market-sense",
-  "source_sha256": "1b61e1021a5b7403130b420b73c5fd2bb06544cbec8bd9ea7c04d646fe9f9be1"
+  "source_sha256": "7180b99407f121c967d33879ea7f007a84b1102f6932811c011db579c63d67d6"
 }

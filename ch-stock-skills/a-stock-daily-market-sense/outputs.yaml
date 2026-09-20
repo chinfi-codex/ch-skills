@@ -6,32 +6,27 @@ outputs:
     type: markdown
     terminal_capability: report.finalize-markdown
     path_glob: reports/report_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].md
-    contract_version: dms/1.5.0
+    contract_version: dms/2.0.0-industry-swing
     gate_policy: hard
     features: [evidence-backed]
     contract: &dms_contract
       min_bytes: 1000
       order: strict
+      # 产业趋势波段契约（dms/2.x）：章节重排为 环境闸门→温度宏观→产业主线→趋势锚→亏钱效应→仓位备忘。
+      # 仓位红线措辞仍硬拦（见 forbidden_patterns）；但报告允许"研究仓位框架/档位适配"。
+      # 注：dms_output_contract.py 的硬编码校验仍按 1.5.0 章节键，2.x 完整契约校验为后续专项工程；
+      # 原型期 sections 全部 required:false，由 validate_dms_content 的 forbidden/数值证据校验兜底。
       forbidden_patterns:
         - '(?:建议读者|建议投资者|我们建议|操作建议|交易建议|可考虑|应当|应该|宜|请|务必)[^。；\n]{0,24}(?:买入|卖出|加仓|止损)'
         - '(?m)^(?:[-*]\s*)?(?:买入|卖出|加仓|止损)(?:[：:\s]|$)'
         - '(?m)^(?:[-*]\s*)?(?:目标价|止损价)\s*(?:为|设为|看到|上看|下看|[:：])?\s*(?:人民币|[¥￥$])?\s*\d'
       sections:
-        - {key: hero_verdict, patterns: ['^一句话盘面判断$'], level: 2}
-        - {key: sentiment_trend, patterns: ['^情绪趋势$'], level: 2}
-        - {key: index_trend, patterns: ['^指数趋势$'], level: 2}
-        - {key: market_style, patterns: ['^市场风格$'], level: 2}
-        - {key: m3_mainline, patterns: ['^主线判定$'], level: 2}
-        - {key: m3_catalyst, patterns: ['^催化与细分线路推演$'], level: 2, required: false}
-        - {key: m3_leaders, patterns: ['主线领导股与弹性股'], level: 2}
-        - {key: m4_decline, patterns: ['^亏钱效应（爆量下跌）$'], level: 1}
-        - {key: m4_risk_types, patterns: ['^风险类型归纳$'], level: 2}
-        - {key: m4_decline_details, patterns: ['^高强度爆量下跌(?:个股)?明细$'], level: 2}
-        - {key: m5_capacity_up, patterns: ['^容量上涨明细$'], level: 2}
-        - {key: m5_monthly_base, patterns: ['^(?:全市场)?月线平台突破明细$'], level: 2}
-        - {key: m5_early_limit, patterns: ['^10:30 前涨停明细$'], level: 2}
-        - {key: m5_discount_relaunch, patterns: ['^折扣启动明细$'], level: 2}
-        - {key: m5_overlap, patterns: ['^交叉命中上涨归因$'], level: 2}
+        - {key: pos_gate, patterns: ['环境与仓位总闸门'], level: 2, required: false}
+        - {key: temp_macro, patterns: ['大盘温度与宏观'], level: 2, required: false}
+        - {key: industry_mainline, patterns: ['产业趋势主线总览'], level: 2, required: false}
+        - {key: anchor_verify, patterns: ['标志性个股', '趋势锚'], level: 2, required: false}
+        - {key: m4_decline, patterns: ['亏钱效应（爆量下跌）'], level: 2, required: false}
+        - {key: position_memo, patterns: ['仓位管理备忘'], level: 2, required: false}
     validators:
       - id: command
         severity: hard

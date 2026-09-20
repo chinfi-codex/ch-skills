@@ -65,7 +65,9 @@ SWING_SEC_ALIAS_JS = """
     sentiment_trend: "temp_macro",
     market_style: "temp_macro",
     m3_mainline: "industry_mainline",
-    m3_leaders: "anchor_verify",
+    /* 主线内关注个股表是 2.x 的进攻端核心清单，给它配 K 线（它才是「今天看谁」的
+       那张表）；趋势锚表(anchor_verify)用「趋势锚」列名识别，仍走自己的锚点。 */
+    m3_leaders: "mainline_screening",
   };
   const base = window.__sec;
   function resolve(key) {
@@ -1115,8 +1117,9 @@ function formatMonth(value) {
 function readStockTable(tableWrap) {
   if (!tableWrap) return { names: [], rows: 0, hasStockColumn: false, present: false };
   const headers = Array.from(tableWrap.querySelectorAll("thead th")).map(c => normalizeStockName(c.textContent));
-  /* 列名候选：legacy 主线表用「股票」，2.x 趋势锚表用「趋势锚」。任一命中即按该列取股名。 */
-  const COLUMN_CANDIDATES = ["股票", "趋势锚"];
+  /* 列名候选：legacy 主线表用「股票」，2.x 趋势锚表用「趋势锚」、主线内关注个股表
+     用「个股」。任一命中即按该列取股名。 */
+  const COLUMN_CANDIDATES = ["股票", "趋势锚", "个股"];
   let stockIndex = -1;
   for (const col of COLUMN_CANDIDATES) {
     const idx = headers.indexOf(col);
@@ -1984,6 +1987,8 @@ def build_job(args) -> RenderJob:
         kline_expects = [
             HookExpectation(name="klines.index", target_sec="temp_macro", expect_count=3,
                             note="上证 / 创业板 / 科创50"),
+            HookExpectation(name="klines.m3_leaders", target_sec="mainline_screening",
+                            expect_from="table_rows", note="主线内关注个股表"),
         ]
         market_trend_expects = [
             HookExpectation(name="market-trends", target_sec="temp_macro", expect_count=5,

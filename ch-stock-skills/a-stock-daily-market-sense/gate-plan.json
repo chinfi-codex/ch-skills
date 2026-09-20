@@ -48,6 +48,14 @@
             "required": false
           },
           {
+            "key": "mainline_screening",
+            "level": 2,
+            "patterns": [
+              "主线内关注个股"
+            ],
+            "required": false
+          },
+          {
             "key": "m4_decline",
             "level": 2,
             "patterns": [
@@ -140,6 +148,14 @@
                 "patterns": [
                   "标志性个股",
                   "趋势锚"
+                ],
+                "required": false
+              },
+              {
+                "key": "mainline_screening",
+                "level": 3,
+                "patterns": [
+                  "主线内关注个股"
                 ],
                 "required": false
               },
@@ -250,6 +266,14 @@
             "required": false
           },
           {
+            "key": "mainline_screening",
+            "level": 2,
+            "patterns": [
+              "主线内关注个股"
+            ],
+            "required": false
+          },
+          {
             "key": "m4_decline",
             "level": 2,
             "patterns": [
@@ -339,6 +363,14 @@
                 "required": false
               },
               {
+                "key": "mainline_screening",
+                "level": 2,
+                "patterns": [
+                  "主线内关注个股"
+                ],
+                "required": false
+              },
+              {
                 "key": "m4_decline",
                 "level": 2,
                 "patterns": [
@@ -401,5 +433,5 @@
   },
   "schema_version": 1,
   "skill": "a-stock-daily-market-sense",
-  "source_sha256": "f9189492bae69de4b12022ebb685e644eb215349de938e94752b83e7960913a0"
+  "source_sha256": "2285165e7bfd4eea163b7e4fd9959d99adc38f72ec1fb08e6f6047836b3936d1"
 }

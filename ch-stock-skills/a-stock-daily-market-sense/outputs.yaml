@@ -25,6 +25,7 @@ outputs:
         - {key: temp_macro, patterns: ['大盘温度与宏观'], level: 2, required: false}
         - {key: industry_mainline, patterns: ['产业趋势主线总览'], level: 2, required: false}
         - {key: anchor_verify, patterns: ['标志性个股', '趋势锚'], level: 2, required: false}
+        - {key: mainline_screening, patterns: ['主线内关注个股'], level: 2, required: false}
         - {key: m4_decline, patterns: ['亏钱效应（爆量下跌）'], level: 2, required: false}
         - {key: position_memo, patterns: ['仓位管理备忘'], level: 2, required: false}
     validators:

@@ -1117,9 +1117,9 @@ function formatMonth(value) {
 function readStockTable(tableWrap) {
   if (!tableWrap) return { names: [], rows: 0, hasStockColumn: false, present: false };
   const headers = Array.from(tableWrap.querySelectorAll("thead th")).map(c => normalizeStockName(c.textContent));
-  /* 列名候选：legacy 主线表用「股票」，2.x 趋势锚表用「趋势锚」、主线内关注个股表
-     用「个股」。任一命中即按该列取股名。 */
-  const COLUMN_CANDIDATES = ["股票", "趋势锚", "个股"];
+  /* 列名候选：按"纯股名列"优先排序——「股票」「个股」是真正的股名列，「趋势锚」是
+     2.x 角色列（值可能是 ✔/— 而非股名），只作兜底。多列同时出现时取最靠前者。 */
+  const COLUMN_CANDIDATES = ["股票", "个股", "趋势锚"];
   let stockIndex = -1;
   for (const col of COLUMN_CANDIDATES) {
     const idx = headers.indexOf(col);

@@ -886,17 +886,21 @@ def _paragraph_warnings(
 INDUSTRY_SWING_CONTRACT = SectionContract(
     version="dms/2.0.0-industry-swing",
     sections=[
-        SectionSpec("pos_gate", [r"环境与仓位总闸门"], level=3,
+        # 排版对齐 legacy：frontmatter + 标题块 + ## 一句话盘面判断 hero；
+        # 章节用 # N.（渲染后 h2），小节 ## N.M（渲染后 h3，不入契约）。
+        SectionSpec("hero_verdict", [r"^一句话盘面判断$"], level=3,
+                    source="references/report_template.md:1"),
+        SectionSpec("pos_gate", [r"环境与仓位总闸门"], level=2,
                     source="methodology/position_matrix.md"),
-        SectionSpec("temp_macro", [r"大盘温度与宏观"], level=3,
+        SectionSpec("temp_macro", [r"大盘温度与宏观"], level=2,
                     source="references/template/section1.md"),
-        SectionSpec("industry_mainline", [r"产业趋势主线总览"], level=3,
+        SectionSpec("industry_mainline", [r"产业趋势主线总览"], level=2,
                     source="references/template/section3.md"),
-        SectionSpec("mainline_screening", [r"主线内关注个股"], level=3,
+        SectionSpec("mainline_screening", [r"主线内关注个股"], level=2,
                     source="methodology/mainline_stock_screening.md"),
-        SectionSpec("m4_decline", [r"亏钱效应（爆量下跌）"], level=3,
+        SectionSpec("m4_decline", [r"亏钱效应（爆量下跌）"], level=2,
                     source="references/template/section4.md"),
-        SectionSpec("position_memo", [r"仓位管理备忘"], level=3,
+        SectionSpec("position_memo", [r"仓位管理备忘"], level=2,
                     source="methodology/position_matrix.md"),
     ],
     order="strict",

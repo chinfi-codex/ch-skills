@@ -15,8 +15,16 @@
         "order": "strict",
         "sections": [
           {
-            "key": "pos_gate",
+            "key": "hero_verdict",
             "level": 2,
+            "patterns": [
+              "^一句话盘面判断$"
+            ],
+            "required": false
+          },
+          {
+            "key": "pos_gate",
+            "level": 1,
             "patterns": [
               "环境与仓位总闸门"
             ],
@@ -24,7 +32,7 @@
           },
           {
             "key": "temp_macro",
-            "level": 2,
+            "level": 1,
             "patterns": [
               "大盘温度与宏观"
             ],
@@ -32,7 +40,7 @@
           },
           {
             "key": "industry_mainline",
-            "level": 2,
+            "level": 1,
             "patterns": [
               "产业趋势主线总览"
             ],
@@ -40,7 +48,7 @@
           },
           {
             "key": "mainline_screening",
-            "level": 2,
+            "level": 1,
             "patterns": [
               "主线内关注个股"
             ],
@@ -48,7 +56,7 @@
           },
           {
             "key": "m4_decline",
-            "level": 2,
+            "level": 1,
             "patterns": [
               "亏钱效应（爆量下跌）"
             ],
@@ -56,7 +64,7 @@
           },
           {
             "key": "position_memo",
-            "level": 2,
+            "level": 1,
             "patterns": [
               "仓位管理备忘"
             ],
@@ -110,8 +118,16 @@
             "order": "strict",
             "sections": [
               {
-                "key": "pos_gate",
+                "key": "hero_verdict",
                 "level": 3,
+                "patterns": [
+                  "^一句话盘面判断$"
+                ],
+                "required": false
+              },
+              {
+                "key": "pos_gate",
+                "level": 2,
                 "patterns": [
                   "环境与仓位总闸门"
                 ],
@@ -119,7 +135,7 @@
               },
               {
                 "key": "temp_macro",
-                "level": 3,
+                "level": 2,
                 "patterns": [
                   "大盘温度与宏观"
                 ],
@@ -127,7 +143,7 @@
               },
               {
                 "key": "industry_mainline",
-                "level": 3,
+                "level": 2,
                 "patterns": [
                   "产业趋势主线总览"
                 ],
@@ -135,7 +151,7 @@
               },
               {
                 "key": "mainline_screening",
-                "level": 3,
+                "level": 2,
                 "patterns": [
                   "主线内关注个股"
                 ],
@@ -143,7 +159,7 @@
               },
               {
                 "key": "m4_decline",
-                "level": 3,
+                "level": 2,
                 "patterns": [
                   "亏钱效应（爆量下跌）"
                 ],
@@ -151,7 +167,7 @@
               },
               {
                 "key": "position_memo",
-                "level": 3,
+                "level": 2,
                 "patterns": [
                   "仓位管理备忘"
                 ],
@@ -215,8 +231,16 @@
         "order": "strict",
         "sections": [
           {
-            "key": "pos_gate",
+            "key": "hero_verdict",
             "level": 2,
+            "patterns": [
+              "^一句话盘面判断$"
+            ],
+            "required": false
+          },
+          {
+            "key": "pos_gate",
+            "level": 1,
             "patterns": [
               "环境与仓位总闸门"
             ],
@@ -224,7 +248,7 @@
           },
           {
             "key": "temp_macro",
-            "level": 2,
+            "level": 1,
             "patterns": [
               "大盘温度与宏观"
             ],
@@ -232,7 +256,7 @@
           },
           {
             "key": "industry_mainline",
-            "level": 2,
+            "level": 1,
             "patterns": [
               "产业趋势主线总览"
             ],
@@ -240,7 +264,7 @@
           },
           {
             "key": "mainline_screening",
-            "level": 2,
+            "level": 1,
             "patterns": [
               "主线内关注个股"
             ],
@@ -248,7 +272,7 @@
           },
           {
             "key": "m4_decline",
-            "level": 2,
+            "level": 1,
             "patterns": [
               "亏钱效应（爆量下跌）"
             ],
@@ -256,7 +280,7 @@
           },
           {
             "key": "position_memo",
-            "level": 2,
+            "level": 1,
             "patterns": [
               "仓位管理备忘"
             ],
@@ -303,8 +327,16 @@
             "order": "strict",
             "sections": [
               {
-                "key": "pos_gate",
+                "key": "hero_verdict",
                 "level": 2,
+                "patterns": [
+                  "^一句话盘面判断$"
+                ],
+                "required": false
+              },
+              {
+                "key": "pos_gate",
+                "level": 1,
                 "patterns": [
                   "环境与仓位总闸门"
                 ],
@@ -312,7 +344,7 @@
               },
               {
                 "key": "temp_macro",
-                "level": 2,
+                "level": 1,
                 "patterns": [
                   "大盘温度与宏观"
                 ],
@@ -320,7 +352,7 @@
               },
               {
                 "key": "industry_mainline",
-                "level": 2,
+                "level": 1,
                 "patterns": [
                   "产业趋势主线总览"
                 ],
@@ -328,7 +360,7 @@
               },
               {
                 "key": "mainline_screening",
-                "level": 2,
+                "level": 1,
                 "patterns": [
                   "主线内关注个股"
                 ],
@@ -336,7 +368,7 @@
               },
               {
                 "key": "m4_decline",
-                "level": 2,
+                "level": 1,
                 "patterns": [
                   "亏钱效应（爆量下跌）"
                 ],
@@ -344,7 +376,7 @@
               },
               {
                 "key": "position_memo",
-                "level": 2,
+                "level": 1,
                 "patterns": [
                   "仓位管理备忘"
                 ],
@@ -397,5 +429,5 @@
   },
   "schema_version": 1,
   "skill": "a-stock-daily-market-sense",
-  "source_sha256": "92d702bb978c7c90e678b311a58d2b5a2c5b34e889a10c895ae68705c7558bf8"
+  "source_sha256": "22b9468b1119858ca14c3e9d92074e214e66d09ddb2a12ac3601a4c63251fcaf"
 }

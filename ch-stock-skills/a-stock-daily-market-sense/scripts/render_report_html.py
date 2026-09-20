@@ -1969,10 +1969,8 @@ def build_job(args) -> RenderJob:
     if is_swing:
         builder.add_ui_decoration(SWING_SEC_ALIAS_JS)
     builder.add_ui_decoration(TREND_STATE_CARD_JS)
-    # HeroDecoration 锚定 legacy 的「一句话盘面判断」节；2.x 没有该节（收口进环境与
-    # 仓位总闸门），跳过以避免对不存在的章节硬挂。
-    if not is_swing:
-        builder.add_decoration(HeroDecoration(
+    # HeroDecoration 锚定「一句话盘面判断」节；2.x 排版对齐 legacy 体例后同样有该节。
+    builder.add_decoration(HeroDecoration(
             heading_prefix="一句话盘面判断",
             collect_tags=("P",),
             max_blocks=3,

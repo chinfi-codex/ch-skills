@@ -53,6 +53,40 @@ from dms_output_contract import validate_dms_content  # noqa: E402
 # 2026-08 pushed it straight back. Everything downstream addresses these
 # sections by key via ``window.__sec``, so neither move touches the charts.
 #
+# 产业趋势波段(2.x) 章节键 → legacy(1.5.0) 图表锚点键的别名。2.x 报告把「指数趋势」
+# 「情绪趋势」「市场风格」并进「大盘温度与宏观」，「主线判定」改名「产业趋势主线总览」。
+# 图表 hook 仍按 legacy 键查 window.__sec；这段装饰在 __sec 之上包一层别名解析，
+# 让 legacy 键透明落到 2.x 章节上，hook 代码一行不改。
+SWING_SEC_ALIAS_JS = """
+(function () {
+  if (!window.__sec) return;
+  const ALIAS = {
+    index_trend: "temp_macro",
+    sentiment_trend: "temp_macro",
+    market_style: "temp_macro",
+    m3_mainline: "industry_mainline",
+    m3_leaders: "anchor_verify",
+  };
+  const base = window.__sec;
+  function resolve(key) {
+    // 原名能查到就用原名（legacy 报告）；查不到再走别名（2.x 报告）。
+    if (base.head(key)) return key;
+    const mapped = ALIAS[key];
+    return (mapped && base.head(mapped)) ? mapped : key;
+  }
+  const wrapped = {};
+  ["head", "end", "blocks", "tail", "find", "contains"].forEach(function (fn) {
+    wrapped[fn] = function (key) {
+      const args = Array.prototype.slice.call(arguments);
+      args[0] = resolve(key);
+      return base[fn].apply(base, args);
+    };
+  });
+  window.__sec = wrapped;
+})();
+"""
+
+
 # Bump the version whenever references/template/section*.md changes structure.
 # --------------------------------------------------------------------------- #
 DMS_CONTRACT = SectionContract(
@@ -1081,7 +1115,13 @@ function formatMonth(value) {
 function readStockTable(tableWrap) {
   if (!tableWrap) return { names: [], rows: 0, hasStockColumn: false, present: false };
   const headers = Array.from(tableWrap.querySelectorAll("thead th")).map(c => normalizeStockName(c.textContent));
-  const stockIndex = headers.indexOf("股票");
+  /* 列名候选：legacy 主线表用「股票」，2.x 趋势锚表用「趋势锚」。任一命中即按该列取股名。 */
+  const COLUMN_CANDIDATES = ["股票", "趋势锚"];
+  let stockIndex = -1;
+  for (const col of COLUMN_CANDIDATES) {
+    const idx = headers.indexOf(col);
+    if (idx >= 0) { stockIndex = idx; break; }
+  }
   const rows = tableWrap.querySelectorAll("tbody tr").length;
   if (stockIndex < 0) return { names: [], rows: rows, hasStockColumn: false, present: true };
   const names = Array.from(tableWrap.querySelectorAll("tbody tr"))
@@ -1886,7 +1926,22 @@ def build_job(args) -> RenderJob:
         market_data_path,
     )
     evidence = load_evidence(evidence_path)
-    content_contract_audit = validate_dms_content(markdown_text, evidence, DMS_CONTRACT)
+    # 契约按章节指纹选型：legacy(1.5.0) 走 DMS_CONTRACT，产业趋势波段(2.x) 走
+    # INDUSTRY_SWING_CONTRACT。指纹逻辑单一归 dms_output_contract._select_contract 所有。
+    # is_swing 贯穿后续所有图表锚点与装饰——2.x 报告章节键不同，图表锚定要随之重映射。
+    from dms_output_contract import (
+        INDUSTRY_SWING_CONTRACT,
+        _select_contract,
+        discover_aux_payloads,
+    )
+
+    active_contract = _select_contract(markdown_text, DMS_CONTRACT)
+    is_swing = active_contract is INDUSTRY_SWING_CONTRACT
+    # 与 finalize 门禁同口径：自动纳入同日 module_context 下的主题统计、交叉检查与
+    # 宏观风险记分卡，保证表格数字（如油价/美债）在渲染期也能溯源。
+    content_contract_audit = validate_dms_content(
+        markdown_text, evidence, active_contract, discover_aux_payloads(evidence_path)
+    )
     index_kline_data = extract_index_kline_payload(evidence, evidence_path)
     stock_klines_raw = load_stock_klines(evidence, kline_path)
     stock_kline_source = kline_path if kline_path is not None and kline_path.exists() else evidence_path
@@ -1902,20 +1957,71 @@ def build_job(args) -> RenderJob:
         title=title,
         theme=args.theme,
         extra_css=MARKET_SENSE_EXTRA_CSS,
-        contract=DMS_CONTRACT,
+        contract=active_contract,
         contract_audit=content_contract_audit,
     )
     builder.add_decoration(PillDecoration(MARKET_SENSE_PILL_RULES))
+    # 2.x 报告先注入章节键别名装饰，再挂状态卡与图表——别名必须最先运行，
+    # 后续 hook 才能把 legacy 锚点键解析到 2.x 章节。
+    if is_swing:
+        builder.add_ui_decoration(SWING_SEC_ALIAS_JS)
     builder.add_ui_decoration(TREND_STATE_CARD_JS)
-    builder.add_decoration(HeroDecoration(
-        heading_prefix="一句话盘面判断",
-        collect_tags=("P",),
-        max_blocks=3,
-        stop_at_numbered=True,
-        number_units="%|pct|倍",
-        keyword_pattern=HERO_KEYWORDS,
-        stop_mode="any_heading",
-    ))
+    # HeroDecoration 锚定 legacy 的「一句话盘面判断」节；2.x 没有该节（收口进环境与
+    # 仓位总闸门），跳过以避免对不存在的章节硬挂。
+    if not is_swing:
+        builder.add_decoration(HeroDecoration(
+            heading_prefix="一句话盘面判断",
+            collect_tags=("P",),
+            max_blocks=3,
+            stop_at_numbered=True,
+            number_units="%|pct|倍",
+            keyword_pattern=HERO_KEYWORDS,
+            stop_mode="any_heading",
+        ))
+    if is_swing:
+        # 产业趋势波段(2.x) 章节键 → 图表锚点重映射。报告没有的模块(m5 特征分组、
+        # 弹性股网格)直接不声明；指数 K 线、市场温度、风格、状态时间线挂到对应新节。
+        kline_expects = [
+            HookExpectation(name="klines.index", target_sec="temp_macro", expect_count=3,
+                            note="上证 / 创业板 / 科创50"),
+        ]
+        market_trend_expects = [
+            HookExpectation(name="market-trends", target_sec="temp_macro", expect_count=5,
+                            note="成交额 / 活跃度 / 融资净买入 / 涨跌家数 / 涨跌停家数"),
+        ]
+        style_expects = [
+            HookExpectation(name="style-compare", target_sec="temp_macro", expect_min=1,
+                            note="规模轴 + 成长/价值/红利，任一轴缺数据记 no_payload"),
+        ]
+        state_timeline_expects = [
+            HookExpectation(name="state-timeline", target_sec="temp_macro", expect_count=1,
+                            note="20 日趋势档色带 + 出清分 / 顶部分"),
+        ]
+        lifecycle_target = "industry_mainline"
+    else:
+        kline_expects = [
+            HookExpectation(name="klines.index", target_sec="index_trend", expect_count=3,
+                            note="上证 / 创业板 / 科创50"),
+            HookExpectation(name="klines.m3_leaders", target_sec="m3_leaders", expect_from="table_rows"),
+            HookExpectation(name="klines.m5_capacity_up", target_sec="m5_capacity_up", expect_from="table_rows"),
+            HookExpectation(name="klines.m5_monthly_base", target_sec="m5_monthly_base", expect_from="table_rows"),
+            HookExpectation(name="klines.m5_early_limit", target_sec="m5_early_limit", expect_from="table_rows"),
+            HookExpectation(name="klines.m5_discount_relaunch", target_sec="m5_discount_relaunch",
+                            expect_from="table_rows"),
+        ]
+        market_trend_expects = [
+            HookExpectation(name="market-trends", target_sec="sentiment_trend", expect_count=5,
+                            note="成交额 / 活跃度 / 融资净买入 / 涨跌家数 / 涨跌停家数"),
+        ]
+        style_expects = [
+            HookExpectation(name="style-compare", target_sec="market_style", expect_min=1,
+                            note="规模轴 + 成长/价值/红利，任一轴缺数据记 no_payload"),
+        ]
+        state_timeline_expects = [
+            HookExpectation(name="state-timeline", target_sec="sentiment_trend", expect_count=1,
+                            note="20 日趋势档色带 + 出清分 / 顶部分"),
+        ]
+        lifecycle_target = "m3_mainline"
     builder.add_chart_hook(
         ChartHook(
             name="klines",
@@ -1928,40 +2034,28 @@ def build_job(args) -> RenderJob:
             },
             js=KLINE_CHARTS_JS,
         ),
-        # One K-line bundle draws into six sections; each insertion attests
+        # One K-line bundle draws into its sections; each insertion attests
         # separately, so a single broken section is named rather than hidden
-        # behind a bundle-level "it ran".
-        expects=[
-            HookExpectation(name="klines.index", target_sec="index_trend", expect_count=3,
-                            note="上证 / 创业板 / 科创50"),
-            HookExpectation(name="klines.m3_leaders", target_sec="m3_leaders", expect_from="table_rows"),
-            HookExpectation(name="klines.m5_capacity_up", target_sec="m5_capacity_up", expect_from="table_rows"),
-            HookExpectation(name="klines.m5_monthly_base", target_sec="m5_monthly_base", expect_from="table_rows"),
-            HookExpectation(name="klines.m5_early_limit", target_sec="m5_early_limit", expect_from="table_rows"),
-            HookExpectation(name="klines.m5_discount_relaunch", target_sec="m5_discount_relaunch",
-                            expect_from="table_rows"),
-        ],
+        # behind a bundle-level "it ran". 期望集合按契约版本(is_swing)重映射。
+        expects=kline_expects,
     )
     builder.add_chart_hook(
         ChartHook(name="market-trends", payload=market_data, js=MARKET_TRENDS_JS),
         # The count is declared here and produced there: the JS builds its own
         # chart list, so a drift between the two is a real signal, not noise.
-        expects=[HookExpectation(name="market-trends", target_sec="sentiment_trend", expect_count=5,
-                                 note="成交额 / 活跃度 / 融资净买入 / 涨跌家数 / 涨跌停家数")],
+        expects=market_trend_expects,
     )
     if style_series_payload:
         builder.add_chart_hook(
             ChartHook(name="style-compare", payload=style_series_payload, js=STYLE_COMPARE_JS),
-            expects=[HookExpectation(name="style-compare", target_sec="market_style", expect_min=1,
-                                     note="规模轴 + 成长/价值/红利，任一轴缺数据记 no_payload")],
+            expects=style_expects,
         )
     if state_timeline_payload:
         builder.add_chart_hook(
             # 时间轴挂在状态卡里面，所以要排在 TREND_STATE_CARD_JS 之后执行；
             # chart hook 本来就在 ui decoration 之后跑，顺序天然成立。
             ChartHook(name="state-timeline", payload=state_timeline_payload, js=STATE_TIMELINE_JS),
-            expects=[HookExpectation(name="state-timeline", target_sec="sentiment_trend", expect_count=1,
-                                     note="20 日趋势档色带 + 出清分 / 顶部分")],
+            expects=state_timeline_expects,
         )
 
     lifecycle_payload = None if args.no_lifecycle else load_lifecycle_payload(input_path, args.lifecycle_days)
@@ -1970,7 +2064,7 @@ def build_job(args) -> RenderJob:
 
         builder.add_chart_hook(
             ChartHook(name=HOOK_NAME, payload=lifecycle_payload, js=LIFECYCLE_JS_BODY),
-            expects=[HookExpectation(name="theme-lifecycle", target_sec="m3_mainline", expect_count=1)],
+            expects=[HookExpectation(name="theme-lifecycle", target_sec=lifecycle_target, expect_count=1)],
         )
 
     return RenderJob(

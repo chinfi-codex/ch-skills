@@ -45,11 +45,11 @@ outputs:
     terminal_capability: report.render-html
     path_glob: reports/report_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].html
     source_output: dms-markdown
-    contract_version: dms/1.5.0
+    contract_version: dms/2.0.0-industry-swing
     gate_policy: hard
     features: [evidence-backed, preserve-source-text, browser-attestation]
     contract:
       <<: *dms_contract
       browser:
         script: scripts/_shared/html_report/render_check.py
-        expect_contract: dms/1.5.0
+        expect_contract: dms/2.0.0-industry-swing

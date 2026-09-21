@@ -30,7 +30,7 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 5. **聚合成稿（产业趋势波段 dms/2.x 结构）**：模块 3 第二阶段读取 theme map、统计结果、enrichment pack、方法论，完成主线判定与领导股；仅当存在 ★★★ 主线时才输出催化与细分线路推演，没有 ★★★ 时整节省略。主 agent 再读取模块 1、3、4、5 输出、`assembled_checks.json`、`macro_risk_scorecard.json` 与 `references/methodology/output_discipline.md`，按下述结构成稿：
 
    - **`## 一句话盘面判断`**：环境 + 主线 + 风险三句收口（环境结论用档位语言，不用指令语言）。
-   - **1 环境与仓位总闸门**：1.1 宏观记分卡表（读 `macro_risk_framework.md`）、1.2 三机判卡读数、1.3 指数与风格、1.4 档位裁决（读 `position_matrix.md`：宏观只减不加、多轴冲突取保守）。
+   - **1 环境与仓位总闸门**：1.1 宏观记分卡表（读 `macro_risk_framework.md`）、1.2 四机判卡读数（趋势/极值/前瞻/集中度，集中度判读读 `turnover_concentration.md`）、1.3 指数与风格、1.4 档位裁决（读 `position_matrix.md`：宏观只减不加、多轴冲突取保守）。
    - **2 大盘温度与宏观**：叙事章，末尾 `==趋势判断==` 只写 A 股内部状态。
    - **3 产业趋势主线总览**：主线表（星级/位置/拥挤度/领导股/波段状态）+ 星级判定证据 + 产业质地；无 ★★★ 时披露"催化推演省略"。
    - **4 主线内关注个股（多维筛选·并集）**：趋势锚/特征组过滤/规模偏好三维并行取并集（读 `mainline_stock_screening.md` 与 `size_preference.md`），4.1 并集清单表（列名固定用「个股」，渲染器按它挂 K 线）+ 4.2–4.4 维度解读 + M3/M4 交叉见顶检查。
@@ -51,7 +51,7 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 
 | 模块 | JSON | 方法论 | 模板 |
 |---|---|---|---|
-| 1 盘面趋势 | `module1_market_trend.json`（含机判 `trend_state_card`、`extreme_state` 两个区块） | `references/methodology/module1_trend.md`、`references/methodology/extreme_state_framework.md` | `references/template/section1.md` |
+| 1 盘面趋势 | `module1_market_trend.json`（含机判 `trend_state_card`、`extreme_state`、`forward_odds`、`turnover_concentration` 区块） | `references/methodology/module1_trend.md`、`references/methodology/extreme_state_framework.md`、`references/methodology/turnover_concentration.md` | `references/template/section1.md` |
 | 3 赚钱效应（首轮） | `module3_money_effect.json`（含 `amount_concentration` 成交额榜，只供 2.1 拥挤度定档） | `references/methodology/module3_money_effect.md` | 先输出临时主题短名单与 `stars: null` 的 `module3_theme_map.json` |
 | 4 爆量下跌 | `module4_decline.json` | `references/methodology/module4_decline.md` | `references/template/section4.md` |
 | 5 特征分组 | `module5_feature_groups.json` | `references/methodology/module5_feature_groups.md` | `references/template/section5.md` |

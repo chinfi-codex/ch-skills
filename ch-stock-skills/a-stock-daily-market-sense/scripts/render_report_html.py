@@ -361,6 +361,34 @@ def extract_state_timeline_payload(evidence: dict) -> Optional[Dict[str, Any]]:
     }
 
 
+def extract_concentration_payload(evidence: dict) -> Optional[Dict[str, Any]]:
+    """集中度卡的 30 日轨迹：CR1%/CR5% 双线 + 量能环境色带 + 逐日驱动状态。
+
+    数据全部来自 `turnover_concentration.recent`（脚本按日算好），渲染层只画不
+    算。卡缺失或序列为空返回 None（不注册图表，门禁按 no_payload 记账）。
+    """
+    card = evidence.get("turnover_concentration") or {}
+    if not card.get("available"):
+        return None
+    recent = [
+        {
+            "date": str(row.get("date") or ""),
+            "cr_1pct": row.get("cr_1pct"),
+            "cr_5pct": row.get("cr_5pct"),
+            "env_bucket": row.get("env_bucket"),
+            "state": row.get("state"),
+        }
+        for row in (card.get("recent") or [])
+        if isinstance(row, dict) and row.get("date")
+    ]
+    if not recent:
+        return None
+    return {
+        "recent": recent,
+        "data_through": card.get("data_through"),
+    }
+
+
 def _clean_style_series_records(records: Any, display_days: int) -> List[Dict[str, Any]]:
     cleaned: List[Dict[str, Any]] = []
     if not isinstance(records, list):
@@ -443,6 +471,7 @@ MARKET_SENSE_EXTRA_CSS = """
 .trend-state-card li { padding: 5px 0; border-top: 1px dashed var(--line-2); font-size: 13px; line-height: 1.65; }
 .trend-state-card li:first-child { border-top: 0; }
 .state-timeline { margin-top: 12px; border-top: 1px dashed var(--line-2); padding-top: 10px; overflow-x: auto; }
+.concentration-timeline { margin-top: 14px; }
 .state-timeline svg { display: block; max-width: 100%; height: auto; }
 .state-timeline .stl-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; font-size: 11px; color: var(--ink-3, #888); }
 .state-timeline .stl-legend span { display: inline-flex; align-items: center; gap: 4px; }
@@ -463,28 +492,52 @@ MARKET_SENSE_EXTRA_CSS = """
 # Upgrade the trend-state readings at the top of "1.1 情绪趋势" (the ULs whose
 # first item is 趋势状态) into a styled state card with a coloured state badge;
 # the sentiment table and the ==趋势判断== highlight stay outside the card.
+# 2.x 报告的读数 UL 在第 1 章「环境与仓位总闸门」的 1.2 小节里，不在章头直后，
+# 所以先在 pos_gate 全节里扫「趋势状态」开头的 UL；legacy 报告仍走节标题直后的
+# 连续 UL 路径。pos_gate 必须排在 sentiment_trend 之前——别名装饰会把后者重映射
+# 到 temp_macro（第 2 章），那里没有读数 UL。
 TREND_STATE_CARD_JS = r"""(function () {
   const root = document.getElementById("report-body");
   if (!root) return;
-  const heading = window.__sec ? window.__sec.head("sentiment_trend") : null;
-  if (!heading) {
-    if (window.__render) window.__render.fail("decoration:trend-state-card", "section [sentiment_trend] not found");
+  const sec = window.__sec;
+  let insertAfter = null;
+  let uls = [];
+  if (sec) {
+    for (const key of ["pos_gate", "sentiment_trend"]) {
+      const h = sec.head(key);
+      if (!h) continue;
+      /* 2.x：读数 UL 藏在 1.2 小节里，扫整个 section 的顶层块 */
+      for (const block of sec.blocks(key)) {
+        if (block.tagName === "UL" && /^\s*趋势状态[：:]/.test(block.textContent)) {
+          uls.push(block);
+          break;
+        }
+      }
+      if (uls.length) { insertAfter = uls[0]; break; }
+      /* legacy：UL 紧跟节标题，连续的都收进卡里 */
+      let cur = h.nextElementSibling;
+      while (cur && !/^H[1-6]$/.test(cur.tagName)) {
+        const next = cur.nextElementSibling;
+        if (cur.tagName === "UL") { uls.push(cur); cur = next; continue; }
+        break;
+      }
+      if (uls.length && /^\s*趋势状态[：:]/.test(uls[0].textContent)) {
+        insertAfter = h;
+        break;
+      }
+      uls = [];
+    }
+  }
+  if (!sec || !insertAfter) {
+    if (window.__render) window.__render.fail("decoration:trend-state-card", "readings UL (趋势状态…) not found in [pos_gate]/[sentiment_trend]");
     return;
   }
-  const uls = [];
-  let cur = heading.nextElementSibling;
-  while (cur && !/^H[1-6]$/.test(cur.tagName)) {
-    const next = cur.nextElementSibling;
-    if (cur.tagName === "UL") { uls.push(cur); cur = next; continue; }
-    break;
-  }
-  if (!uls.length || !/趋势状态[：:]/.test(uls[0].textContent)) return;
   const card = document.createElement("aside");
   card.className = "trend-state-card";
   const head = document.createElement("div");
   head.className = "tsc-head";
   card.appendChild(head);
-  heading.after(card);
+  insertAfter.after(card);
   uls.forEach(ul => card.appendChild(ul));
 
   const text = card.textContent;
@@ -500,16 +553,19 @@ TREND_STATE_CARD_JS = r"""(function () {
     if (li && /^\s*趋势状态[：:]/.test(li.textContent)) li.remove();
   }
   /* 极值轴单独起一个胶囊：它和趋势档是两根正交的轴，并排放才不会被读成
-     "趋势档的补充说明"。行文里那条 li 同样收进卡头，避免重复。 */
-  const ex = /极值轴[：:]\s*出清\s*(\d)\s*\/\s*6[^｜|]*[｜|]\s*顶部\s*(\d)\s*\/\s*5/.exec(text);
+     "趋势档的补充说明"。行文里那条 li 同样收进卡头，避免重复。
+     legacy 写「极值轴：出清 0/6 ｜ 顶部 0/5」，2.x 写「极值状态：底部出清分 0/6、
+     顶部拥挤分 1/5」，两种都认；分母取行文里带的实际 max。 */
+  const ex = /极值(?:轴|状态)[：:][\s\S]*?出清(?:分)?[^0-9]*(\d+)\s*\/\s*(\d+)[^0-9]*?顶部(?:拥挤分)?[^0-9]*(\d+)\s*\/\s*(\d+)/.exec(text);
   if (ex) {
-    const wash = Number(ex[1]), top = Number(ex[2]);
+    const wash = Number(ex[1]), washMaxTxt = Number(ex[2]) || 6;
+    const top = Number(ex[3]), topMaxTxt = Number(ex[4]) || 5;
     const pill = document.createElement("span");
     pill.className = "tsc-extreme" + (wash >= 2 ? " x-wash" : (top >= 2 ? " x-top" : ""));
-    pill.textContent = "出清 " + wash + "/6 ｜ 顶部 " + top + "/5";
+    pill.textContent = "出清 " + wash + "/" + washMaxTxt + " ｜ 顶部 " + top + "/" + topMaxTxt;
     head.appendChild(pill);
     Array.from(card.querySelectorAll("li")).forEach(li => {
-      if (/^\s*极值轴[：:]/.test(li.textContent)) li.remove();
+      if (/^\s*极值(?:轴|状态)[：:]/.test(li.textContent)) li.remove();
     });
   }
   if (!head.childElementCount) head.remove();
@@ -531,9 +587,13 @@ const SEC = window.__sec;
 const REPORT = window.__render;
 const hook = "state-timeline";
 
-const anchor = document.querySelector(".trend-state-card") || SEC.head("sentiment_trend");
+/* 2.x：状态卡（.trend-state-card）在本装饰之前的 ui 装饰里已建好，时间轴挂进卡里；
+   卡没建成时退到 pos_gate（2.x）或 sentiment_trend（legacy）的节标题，此时插在
+   标题之后而不是标题内部——塞进 <h2> 里视觉上是断行的。 */
+const anchor = document.querySelector(".trend-state-card")
+  || (SEC && (SEC.head("pos_gate") || SEC.head("sentiment_trend")));
 if (!anchor) {
-  REPORT.fail("hook:" + hook, "no trend-state-card or [sentiment_trend] heading to anchor to");
+  REPORT.fail("hook:" + hook, "no trend-state-card or [pos_gate]/[sentiment_trend] heading to anchor to");
   return;
 }
 if (!states.length && !scores.length && !pulse.length) {
@@ -754,7 +814,201 @@ if (pulse.length) {
   legend.appendChild(span);
 }
 wrap.appendChild(legend);
-anchor.appendChild(wrap);
+if (/^H[1-6]$/.test(anchor.tagName || "")) anchor.after(wrap); else anchor.appendChild(wrap);
+REPORT.attest(hook, { rendered: 1, matched: 1, expected: 1, unmatched: [], el: wrap });
+"""
+
+
+# --------------------------------------------------------------------------- #
+# 30 日成交额集中度轨迹：量能环境色带 + CR1%/CR5% 双线 + 逐日驱动状态点。
+# 读数来自 turnover_concentration 卡，这里只负责画。
+# --------------------------------------------------------------------------- #
+CONCENTRATION_TIMELINE_JS = r"""
+const rows = __payload.recent || [];
+const SEC = window.__sec;
+const REPORT = window.__render;
+const hook = "concentration-timeline";
+
+if (!SEC || !SEC.head("pos_gate")) {
+  REPORT.attest(hook, { rendered: 0, matched: 0, expected: 1,
+    unmatched: [{ name: hook, reason: "no_payload" }], note: "no [pos_gate] section" });
+  return;
+}
+if (!rows.length) {
+  REPORT.attest(hook, { rendered: 0, matched: 0, expected: 1,
+    unmatched: [{ name: hook, reason: "no_payload" }] });
+  return;
+}
+
+/* 环境桶色：缩量蓝、常态灰、放量琥珀——与状态时间轴的档位色系错开，
+   读作「背景量能」而不是「档位」。 */
+const ENV_COLOR = { shrink: "#2e5fb8", normal: "#9aa0a6", expand: "#d9a441" };
+const ENV_LABEL = { shrink: "缩量", normal: "常态", expand: "放量" };
+const STATE_COLOR = { passive: "#2e5fb8", rotation: "#d9a441", inflow: "#1e8449", overheat: "#c0392b" };
+const STATE_LABEL = {
+  passive: "被动集中", rotation: "存量搬家", inflow: "主动集中", overheat: "主动过热",
+  insufficient_history: "历史不足",
+};
+
+const n = rows.length;
+const padL = 52, padR = 18, padT = 16, padB = 24;
+const cellW = Math.max(18, Math.min(38, Math.floor((700 - padL - padR) / Math.max(n, 1))));
+const W = padL + padR + cellW * n;
+const ribbonH = 26, gap = 10, lineH = 120;
+const H = padT + padB + ribbonH + gap + lineH;
+
+const NS = "http://www.w3.org/2000/svg";
+const svg = document.createElementNS(NS, "svg");
+svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+svg.setAttribute("width", String(W));
+svg.setAttribute("height", String(H));
+svg.style.minWidth = Math.min(W, 640) + "px";
+svg.setAttribute("role", "img");
+svg.setAttribute("aria-label", "近 " + n + " 个交易日的成交额集中度、量能环境与驱动状态");
+
+function label(x, y, text, opts) {
+  const t = document.createElementNS(NS, "text");
+  t.setAttribute("x", String(x));
+  t.setAttribute("y", String(y));
+  t.setAttribute("font-size", (opts && opts.size) || "10");
+  t.setAttribute("fill", (opts && opts.fill) || "currentColor");
+  t.setAttribute("text-anchor", (opts && opts.anchor) || "start");
+  if (opts && opts.weight) t.setAttribute("font-weight", opts.weight);
+  t.setAttribute("opacity", (opts && opts.opacity) || "0.75");
+  t.textContent = text;
+  return t;
+}
+
+/* —— 第一行：量能环境色带，同桶连续的几天并成一段 */
+let y = padT;
+svg.appendChild(label(4, y + ribbonH / 2 + 4, "量能环境", { size: "11", opacity: "0.85" }));
+let i = 0;
+while (i < n) {
+  const cur = rows[i].env_bucket || "";
+  let j = i;
+  while (j + 1 < n && (rows[j + 1].env_bucket || "") === cur) j++;
+  const x = padL + i * cellW;
+  const w = (j - i + 1) * cellW;
+  const rect = document.createElementNS(NS, "rect");
+  rect.setAttribute("x", String(x + 0.5));
+  rect.setAttribute("y", String(y));
+  rect.setAttribute("width", String(Math.max(w - 1, 1)));
+  rect.setAttribute("height", String(ribbonH));
+  rect.setAttribute("rx", "3");
+  rect.setAttribute("fill", cur ? (ENV_COLOR[cur] || "#8a8a8a") : "rgba(127,127,127,.18)");
+  rect.setAttribute("fill-opacity", cur ? "0.7" : "1");
+  const title = document.createElementNS(NS, "title");
+  title.textContent = rows[i].date + (j > i ? " ~ " + rows[j].date : "") + "　"
+    + (cur ? ENV_LABEL[cur] : "无数据") + "（当日总成交额 / 自身20日均）";
+  rect.appendChild(title);
+  svg.appendChild(rect);
+  if (cur && w >= ENV_LABEL[cur].length * 10 + 6) {
+    svg.appendChild(label(x + w / 2, y + ribbonH / 2 + 4, ENV_LABEL[cur],
+      { anchor: "middle", fill: "#fff", opacity: "0.95", weight: "600", size: "10" }));
+  }
+  i = j + 1;
+}
+y += ribbonH + gap;
+
+/* —— 第二行：CR1% / CR5% 双线，共用的百分比纵轴 */
+const topY = y;
+const vals = [];
+rows.forEach(r => { if (r.cr_1pct != null) vals.push(r.cr_1pct); if (r.cr_5pct != null) vals.push(r.cr_5pct); });
+const vMax = Math.max(1, Math.ceil((Math.max.apply(null, vals) || 1) * 1.15));
+svg.appendChild(label(4, topY + 12, "CR%", { size: "11", opacity: "0.85" }));
+for (let g = 0; g <= 3; g++) {
+  const gy = topY + lineH - (g / 3) * lineH;
+  svg.appendChild(label(padL - 6, gy + 3, String(Math.round(vMax * g / 3)), { anchor: "end", size: "9", opacity: "0.55" }));
+  const line = document.createElementNS(NS, "line");
+  line.setAttribute("x1", String(padL)); line.setAttribute("x2", String(padL + n * cellW));
+  line.setAttribute("y1", String(gy)); line.setAttribute("y2", String(gy));
+  line.setAttribute("stroke", "currentColor");
+  line.setAttribute("stroke-opacity", g === 0 ? "0.3" : "0.12");
+  svg.appendChild(line);
+}
+function polyline(key, color) {
+  const pts = [];
+  rows.forEach((r, k) => {
+    if (r[key] == null) return;
+    const px = padL + k * cellW + cellW / 2;
+    const py = topY + lineH - (r[key] / vMax) * lineH;
+    pts.push([px, py]);
+  });
+  if (pts.length < 2) return;
+  const pl = document.createElementNS(NS, "polyline");
+  pl.setAttribute("points", pts.map(p => p.join(",")).join(" "));
+  pl.setAttribute("fill", "none");
+  pl.setAttribute("stroke", color);
+  pl.setAttribute("stroke-width", "1.8");
+  pl.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(pl);
+}
+polyline("cr_5pct", "#4a6fa5");
+polyline("cr_1pct", "#2a9d8f");
+/* 非常态驱动状态：在 CR1% 线上打点。常态日不打——这张图的判读量在
+   「剥离环境后还剩多少主动成分」，常态日没有信息量。 */
+rows.forEach((r, k) => {
+  if (!r.state || r.state === "normal" || r.state === "insufficient_history" || r.cr_1pct == null) return;
+  const px = padL + k * cellW + cellW / 2;
+  const py = topY + lineH - (r.cr_1pct / vMax) * lineH;
+  const dot = document.createElementNS(NS, "circle");
+  dot.setAttribute("cx", String(px));
+  dot.setAttribute("cy", String(py));
+  dot.setAttribute("r", "4");
+  dot.setAttribute("fill", STATE_COLOR[r.state] || "#8a8a8a");
+  dot.setAttribute("stroke", "#fff");
+  dot.setAttribute("stroke-width", "1.2");
+  const title = document.createElementNS(NS, "title");
+  title.textContent = r.date + "　" + (STATE_LABEL[r.state] || r.state)
+    + "（CR1% " + r.cr_1pct + "%" + (r.cr_5pct != null ? "，CR5% " + r.cr_5pct + "%" : "") + "）";
+  dot.appendChild(title);
+  svg.appendChild(dot);
+});
+
+/* —— 日期轴：密的时候隔几个标一个，末日必标 */
+const step = cellW >= 34 ? 2 : (cellW >= 24 ? 3 : 4);
+rows.forEach((r, k) => {
+  const isLast = k === n - 1;
+  if (!isLast && (k % step !== 0 || n - 1 - k < 2)) return;
+  const md = r.date.length >= 10 ? r.date.slice(5) : r.date;
+  svg.appendChild(label(padL + k * cellW + cellW / 2, H - 6, md, { anchor: "middle", size: "9", opacity: "0.6" }));
+});
+
+const wrap = document.createElement("div");
+wrap.className = "state-timeline concentration-timeline";
+const cap = document.createElement("div");
+cap.style.cssText = "font-size:12px;opacity:.7;margin-bottom:4px;";
+cap.textContent = "近 " + n + " 个交易日成交额集中度：CR1% / CR5% · 量能环境 · 驱动状态"
+  + (__payload.data_through ? "（数据截至 " + __payload.data_through + "）" : "");
+wrap.appendChild(cap);
+wrap.appendChild(svg);
+const legend = document.createElement("div");
+legend.className = "stl-legend";
+[["#2a9d8f", "CR1%（前 ~1% 个股）"], ["#4a6fa5", "CR5%（前 ~5% 个股）"]].forEach(pair => {
+  const span = document.createElement("span");
+  const dot = document.createElement("i");
+  dot.style.background = pair[0];
+  span.appendChild(dot);
+  span.appendChild(document.createTextNode(pair[1]));
+  legend.appendChild(span);
+});
+Object.keys(ENV_LABEL).forEach(k => {
+  const span = document.createElement("span");
+  const dot = document.createElement("i");
+  dot.style.background = ENV_COLOR[k];
+  span.appendChild(dot);
+  span.appendChild(document.createTextNode(ENV_LABEL[k]));
+  legend.appendChild(span);
+});
+const note = document.createElement("span");
+note.textContent = "色点 = 剥离量能环境后的驱动状态（蓝=被动集中 · 琥珀=存量搬家 · 绿=主动集中 · 红=主动过热）";
+legend.appendChild(note);
+wrap.appendChild(legend);
+/* 挂在状态卡之后：状态卡装着四张卡的读数 UL，集中度图是同一组读数的展开；
+   卡没建成时退到 pos_gate 末块，作为兄弟节点插在其后（不塞进段落里）。 */
+const anchor = document.querySelector(".trend-state-card") || SEC.tail("pos_gate");
+if (anchor.classList && anchor.classList.contains("trend-state-card")) anchor.appendChild(wrap);
+else anchor.after(wrap);
 REPORT.attest(hook, { rendered: 1, matched: 1, expected: 1, unmatched: [], el: wrap });
 """
 
@@ -1954,6 +2208,13 @@ def build_job(args) -> RenderJob:
     )
     style_series_payload = extract_style_series_payload(evidence)
     state_timeline_payload = extract_state_timeline_payload(evidence)
+    concentration_payload = extract_concentration_payload(evidence)
+    # 集中度轨迹图只挂在 2.x 报告上：legacy(1.x) 章节里没有 1.2 四卡读数，凭空
+    # 插一张 evidence 里才有的图会违背「HTML 只呈现 Markdown 已有内容」的纪律。
+    if concentration_payload is not None and (
+        not is_swing or "成交额集中度" not in markdown_text
+    ):
+        concentration_payload = None
 
     builder = HtmlReportBuilder(
         title=title,
@@ -1996,8 +2257,13 @@ def build_job(args) -> RenderJob:
                             note="规模轴 + 成长/价值/红利，任一轴缺数据记 no_payload"),
         ]
         state_timeline_expects = [
-            HookExpectation(name="state-timeline", target_sec="temp_macro", expect_count=1,
+            # 2.x 读数 UL 在第 1 章 1.2（状态卡与时间轴跟着它走），不在第 2 章。
+            HookExpectation(name="state-timeline", target_sec="pos_gate", expect_count=1,
                             note="20 日趋势档色带 + 出清分 / 顶部分"),
+        ]
+        concentration_expects = [
+            HookExpectation(name="concentration-timeline", target_sec="pos_gate", expect_count=1,
+                            note="30 日 CR1%/CR5% 双线 + 量能环境色带 + 驱动状态点"),
         ]
         lifecycle_target = "industry_mainline"
     else:
@@ -2023,6 +2289,7 @@ def build_job(args) -> RenderJob:
             HookExpectation(name="state-timeline", target_sec="sentiment_trend", expect_count=1,
                             note="20 日趋势档色带 + 出清分 / 顶部分"),
         ]
+        concentration_expects = []  # legacy 不挂集中度图（无对应章节读数）
         lifecycle_target = "m3_mainline"
     builder.add_chart_hook(
         ChartHook(
@@ -2059,6 +2326,14 @@ def build_job(args) -> RenderJob:
             ChartHook(name="state-timeline", payload=state_timeline_payload, js=STATE_TIMELINE_JS),
             expects=state_timeline_expects,
         )
+    if concentration_payload and concentration_expects:
+        # 排在 state-timeline 之后：同一张状态卡先收读数、再挂轨迹图，集中度图
+        # 追加在卡后，阅读顺序与 1.2 节读数的四行一致。
+        builder.add_chart_hook(
+            ChartHook(name="concentration-timeline", payload=concentration_payload,
+                      js=CONCENTRATION_TIMELINE_JS),
+            expects=concentration_expects,
+        )
 
     lifecycle_payload = None if args.no_lifecycle else load_lifecycle_payload(input_path, args.lifecycle_days)
     if lifecycle_payload:
@@ -2082,6 +2357,7 @@ def build_job(args) -> RenderJob:
             },
             "stock_kline_records": len(stock_kline_data.get("by_ts_code") or {}),
             "state_timeline_days": len((state_timeline_payload or {}).get("states") or []),
+            "concentration_days": len((concentration_payload or {}).get("recent") or []),
             "style_series_records": {
                 item["key"]: len(item.get("records") or [])
                 for item in (style_series_payload or {}).get("indices", [])

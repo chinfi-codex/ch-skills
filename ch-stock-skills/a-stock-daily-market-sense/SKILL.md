@@ -1,13 +1,13 @@
 ---
 name: a-stock-daily-market-sense
-description: 基于 Tushare Pro A 股日线与 Baostock 风格指数生成盘后市场研报，面向产业趋势波段范式：用大盘温度（趋势/极值/前瞻三卡）+ 宏观风险记分卡（油价/美债/汇率/避险）定环境闸门，用主线生命周期与领导股健康度选产业趋势主线，用仓位矩阵把环境映射成研究仓位档位。当用户要求复盘每日/历史 A 股盘面、指数与市场风格、赚钱效应与上涨主线、爆量下跌、特征分组，或做特征分组因子挖掘，或需要大盘温度/宏观量化/仓位控制参考时使用。脚本只输出确定性证据与统计；主题归纳、星级评定、仓位档位适配、研报写作由模型完成。不提供具体个股买卖指令。
+description: 基于 Tushare Pro A 股日线与 Baostock 风格指数生成盘后市场研报，面向产业趋势波段范式：用大盘温度（趋势/极值/前瞻/集中度四卡）+ 宏观风险记分卡（油价/美债/汇率/避险）定环境闸门，用主线生命周期与领导股健康度选产业趋势主线，用仓位矩阵把环境映射成研究仓位档位。当用户要求复盘每日/历史 A 股盘面、指数与市场风格、赚钱效应与上涨主线、爆量下跌、特征分组，或做特征分组因子挖掘，或需要大盘温度/宏观量化/仓位控制参考时使用。脚本只输出确定性证据与统计；主题归纳、星级评定、仓位档位适配、研报写作由模型完成。不提供具体个股买卖指令。
 ---
 
 # Tushare Daily Market Sense
 
 ## 目标
 
-基于 Tushare 日线、指数、成交额与本地情绪历史，为 A 股盘后复盘生成结构化研报。范式定位为**产业趋势波段**：用大盘温度（趋势/极值/前瞻三卡）与宏观量化（油价/美债/汇率/避险）定环境闸门，仓位集中在大周期产业趋势主线，用主线生命周期与领导股健康度做波段，用仓位矩阵做仓位控制。
+基于 Tushare 日线、指数、成交额与本地情绪历史，为 A 股盘后复盘生成结构化研报。范式定位为**产业趋势波段**：用大盘温度（趋势/极值/前瞻/集中度四卡）与宏观量化（油价/美债/汇率/避险）定环境闸门，仓位集中在大周期产业趋势主线，用主线生命周期与领导股健康度做波段，用仓位矩阵做仓位控制。
 
 不做单股基本面深度研究、港股/美股/基金/期货/加密分析、超短线交易决策、自动下单、组合优化。脚本只负责取数、计算、筛选、切分 JSON；主题归纳、风险措辞、仓位档位适配和研报写作由模型完成。
 
@@ -38,8 +38,8 @@ description: 基于 Tushare Pro A 股日线与 Baostock 风格指数生成盘后
      --asof 20260429 --output reports/module_context_20260429/macro_risk_scorecard.json
    ```
 
-   得到宏观风险等级后，连同 `trend_state_card`/`extreme_state`/`forward_odds` 三卡一起，按 `references/methodology/position_matrix.md` 判定当日仓位档位（S 进攻 / A 标准 / B 中性 / C 防守 / D 冰点布局）；记分卡阈值与降级行为见 `references/methodology/macro_risk_framework.md`。这一步对应报告第 1 章（环境与仓位总闸门），决定全篇基调——环境不许可时，主线章节降级为"观察清单"而非"进攻方向"。
-1. **生成证据包**：解析日期后运行 `scripts/run_daily_panel.py`，产出完整 evidence、模块级 JSON 与 K 线展示数据；模块 1 同时带三张机判卡——趋势状态卡（`trend_state_card`，所处阶段）、极值状态（`extreme_state`，底部出清分 / 顶部拥挤分）与前瞻轴（`forward_odds`，情绪脉冲 + 同类日之后的条件分布）。详见 `references/execution_flow.md`。
+   得到宏观风险等级后，连同 `trend_state_card`/`extreme_state`/`forward_odds`/`turnover_concentration` 四卡一起，按 `references/methodology/position_matrix.md` 判定当日仓位档位（S 进攻 / A 标准 / B 中性 / C 防守 / D 冰点布局）；记分卡阈值与降级行为见 `references/methodology/macro_risk_framework.md`。这一步对应报告第 1 章（环境与仓位总闸门），决定全篇基调——环境不许可时，主线章节降级为"观察清单"而非"进攻方向"。
+1. **生成证据包**：解析日期后运行 `scripts/run_daily_panel.py`，产出完整 evidence、模块级 JSON 与 K 线展示数据；模块 1 同时带四张机判卡——趋势状态卡（`trend_state_card`，所处阶段）、极值状态（`extreme_state`，底部出清分 / 顶部拥挤分）、前瞻轴（`forward_odds`，情绪脉冲 + 同类日之后的条件分布）与成交额集中度卡（`turnover_concentration`，CR 分位 + 被动/主动驱动分解）。详见 `references/execution_flow.md`。
 2. **分模块撰写**：按最小上下文边界加载各模块 JSON + 方法论 + 模板。模块编号沿用历史值，报告章节按产业趋势波段结构（dms/2.x）组织——模块与章节的映射见 `references/execution_flow.md`。模块 3 赚钱效应采用两阶段契约：首轮只输出临时主题映射与 `stars: null`；统计脚本完成后由模型按证据锁定星级，只有存在 ★★★ 主线时才做催化与细分线路推演。详见 `references/methodology/module3_money_effect.md` 与 `references/execution_flow.md`。
 3. **聚合成稿**：读取模块 1、3、4、5 输出与 `references/methodology/output_discipline.md`，补一句话盘面判断、风险传导提示和语气校准。
 4. **门禁晋级**：模型只把草稿写入 `reports/.staging/`；用 `report.finalize-markdown` 校验结构、数值证据与禁用语后原子晋级。HTML 只能由 `report.render-html` 基于已有成功收据的 Markdown 生成。
@@ -83,6 +83,14 @@ python3 scripts/extreme_state_card.py --asof 20260429 --backfill 300
 ```
 
 没补历史也能出卡，只是阈值会退回固定水平，`percentile_source` 会写明。
+
+成交额集中度卡的分位基准存在 `dms_concentration_daily` 表里，同样**新环境第一次跑要先补历史**（一次即可，之后每日增量）：
+
+```bash
+python3 scripts/turnover_concentration.py --asof 20260429 --backfill 500
+```
+
+没补历史时集中度读数会标 `insufficient_history`，不判读被动/主动。
 
 前瞻轴不需要预热——它直接读 `market_history` 的 6 年市场宽度和拼接后的中证1000 序列，滚动分位攒满 250 天即生效：
 
@@ -135,7 +143,7 @@ python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stag
 
 完整研报按产业趋势波段结构（契约 dms/2.0.0）输出：YAML frontmatter + 标题块（日期/数据来源/生成时间/说明）+ `## 一句话盘面判断` hero + 六个一级章——**1 环境与仓位总闸门、2 大盘温度与宏观、3 产业趋势主线总览、4 主线内关注个股（多维筛选·并集）、5 亏钱效应（爆量下跌）、6 仓位管理备忘**。章节用 `# N.` 一级标题、小节用 `## N.M`，章间用 `---` 分隔，结尾一行数据来源免责。每个判断段先给自然语言结论，再选择少量关键证据支撑；表格承载细项数据，段落解释这些数据意味着进攻、分歧、退潮、修复、拥挤还是扩散。
 
-各章的方法论与数据来源：第 1/6 章的仓位档位判定读 `references/methodology/position_matrix.md`，宏观记分卡阈值见 `references/methodology/macro_risk_framework.md`；第 3 章主线判定沿用模块 3 两阶段锁星（`module3_money_effect.md`）；第 4 章是趋势锚/特征组/规模偏好三个并行维度取并集，读 `references/methodology/mainline_stock_screening.md`（维度 C 的量能-规模规则见 `references/methodology/size_preference.md`）。第 1.2 节照抄三张机判卡读数，三根轴不一致时并列写。
+各章的方法论与数据来源：第 1/6 章的仓位档位判定读 `references/methodology/position_matrix.md`，宏观记分卡阈值见 `references/methodology/macro_risk_framework.md`；第 3 章主线判定沿用模块 3 两阶段锁星（`module3_money_effect.md`）；第 4 章是趋势锚/特征组/规模偏好三个并行维度取并集，读 `references/methodology/mainline_stock_screening.md`（维度 C 的量能-规模规则见 `references/methodology/size_preference.md`）。第 1.2 节照抄四张机判卡读数（集中度卡的判读纪律见 `references/methodology/turnover_concentration.md`），各根轴不一致时并列写。
 
 所有强弱判断都要能回到成交额、放量倍数、涨跌幅、相对收益或回撤证据，但不要把所有可用指标塞进同一段。模块 3 的主题分组只作为内部推理步骤，不输出单独的主题分组陈列表，赚钱效应总览后直接进入主线判定；主线表的拥挤度列读 `amount_concentration` 的全市场成交额榜定档，成交额集中度本身不再单独成章。
 
@@ -149,7 +157,7 @@ python3 scripts/_shared/html_report/render_check.py --target <线上 URL> --stag
 
 **退潮 / 深度退潮 / 冰点是风险状态描述，不等于看空。** 5 年回放（`evals/trend_state_review_2026-08.md`）里，冰点日之后 20 个交易日平均上涨 8.92%、81.8% 的时候在涨，深度退潮 +1.54%，都高于全样本的 +0.44%——档位越差前瞻收益反而越好。写模块 1 时不得把"退潮"翻译成"看空"，也不得暗示应当离场或减仓。同理，趋势轴与极值轴不一致时（退潮档里出现出清极值是 A 股最常见的底部形态）照实并列写，不许为了口径一致改写任一边的读数。
 
-HTML 输出只改变呈现方式：必须保留 Markdown 研报中的所有文字、表格、引用和免责声明。图表只展示 evidence 中已有的 OHLC、成交金额与风格指数收盘序列数据，不得新增与 Markdown 不一致的分析结论。详见 `references/methodology/output_discipline.md`。
+HTML 输出只改变呈现方式：必须保留 Markdown 研报中的所有文字、表格、引用和免责声明。图表只展示 evidence 中已有的 OHLC、成交金额与风格指数收盘序列数据，以及机判卡自带的逐日读数序列（趋势档/极值分/情绪脉冲/成交额集中度），不得新增与 Markdown 不一致的分析结论。详见 `references/methodology/output_discipline.md`。
 
 ## 示例
 
@@ -189,11 +197,12 @@ python3 scripts/_shared/skill_runtime/runner.py --skill-root . run daily.compute
 |---|---:|---:|:--:|---|
 | Brent 原油 | 78.4 | ≥100 | ✘ | 高 |
 
-## 1.2 大盘温度三卡
+## 1.2 大盘温度四卡
 
 - 趋势状态：上行（第 6 日）
 - 极值状态：底部出清分 0/6、顶部拥挤分 1/5
 - 前瞻轴：情绪脉冲四腿全空（0/4），顶部侧信号全部未命中
+- 成交额集中度：CR1% 31.2%（环境匹配分位 76、样本 118 日）｜驱动 rotation（头部 5 日 +8.4%、大盘 +1.2%）；CR5% 状态 inflow
 
 ==档位裁决==：宏观低风险 + 趋势上行 + 存在 ★★ 主线 → **A 标准档**。
 

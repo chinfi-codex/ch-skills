@@ -38,6 +38,13 @@ capabilities:
     judgment: forbidden
     effects: [db:alpha_data.dms_extreme_daily, stdout:json]
 
+  daily.compute-concentration:
+    kind: command
+    entry: scripts/turnover_concentration.py
+    terminal: false
+    judgment: forbidden
+    effects: [db:alpha_data.dms_concentration_daily, stdout:json]
+
   daily.compute-forward-odds:
     kind: command
     entry: scripts/forward_odds.py

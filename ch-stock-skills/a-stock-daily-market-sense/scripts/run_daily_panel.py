@@ -79,6 +79,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--extreme-backfill", type=int, default=0, help="Backfill N trading days of extreme-state metrics before scoring (first run: 300).")
     parser.add_argument("--no-forward-odds", action="store_true", help="Skip the forward_odds card (emotion pulse + conditional forward distributions).")
     parser.add_argument("--forward-odds-full", action="store_true", help="Include the event list and leave-one-year-out detail in forward_odds.")
+    parser.add_argument("--no-concentration", action="store_true", help="Skip the turnover_concentration card (CR percentiles + passive/active split).")
+    parser.add_argument("--concentration-backfill", type=int, default=0, help="Backfill N trading days of concentration metrics before the card (first run: 500).")
     parser.add_argument("--stderr-out", default=None, help="Stderr log output path.")
     parser.add_argument("--money-context-limit", type=int, default=80, help="Money-effect rows in context.")
     parser.add_argument("--decline-context-limit", type=int, default=20, help="Volume-decline rows in context.")
@@ -194,12 +196,23 @@ def build_forward_odds_card(resolved_date: str, full: bool = False) -> Dict[str,
         return {"available": False, "reason": f"forward_odds failed: {exc}"}
 
 
+def build_concentration_card(resolved_date: str, backfill: int = 0) -> Dict[str, Any]:
+    """成交额集中度卡（CR 分位 + 被动/主动分解），失败不阻断研报。"""
+    try:
+        import turnover_concentration
+
+        return turnover_concentration.build_block(resolved_date, backfill=backfill)
+    except Exception as exc:
+        return {"available": False, "reason": f"turnover_concentration failed: {exc}"}
+
+
 def write_module_contexts(
     evidence: dict,
     module_dir: Path,
     trend_card: Optional[Dict[str, Any]] = None,
     extreme_state: Optional[Dict[str, Any]] = None,
     forward_odds_card: Optional[Dict[str, Any]] = None,
+    concentration_card: Optional[Dict[str, Any]] = None,
 ) -> None:
     module_dir.mkdir(parents=True, exist_ok=True)
     for name, payload in market_panel.build_module_contexts(evidence).items():
@@ -210,6 +223,8 @@ def write_module_contexts(
                 payload["extreme_state"] = extreme_state
             if forward_odds_card is not None:
                 payload["forward_odds"] = forward_odds_card
+            if concentration_card is not None:
+                payload["turnover_concentration"] = concentration_card
         (module_dir / f"{name}.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -226,6 +241,24 @@ def _forward_odds_summary(card: Optional[Dict[str, Any]]) -> Optional[str]:
     hits = [s for s in card.get("signals", []) if s.get("hit_today")]
     ok = sum(1 for s in hits if s.get("publishable"))
     return f"情绪脉冲 {gate}｜当日命中信号 {len(hits)} 个，其中 {ok} 个过发布门槛"
+
+
+def _concentration_summary(card: Optional[Dict[str, Any]]) -> Optional[str]:
+    """一行摘要：CR1% 读数 + 环境匹配分位 + 驱动状态（被动/主动）。"""
+    card = card or {}
+    if not card.get("available"):
+        return card.get("reason")
+    readings = card.get("readings") or {}
+    top = readings.get("1pct") or {}
+    if not top.get("available"):
+        return top.get("reason")
+    cond = top.get("env_matched_percentile")
+    cond_txt = f"{cond:g}" if isinstance(cond, (int, float)) else "样本不足"
+    return (
+        f"CR1% {top.get('cr_pct'):g}%"
+        f"（环境匹配分位 {cond_txt}）"
+        f"｜驱动 {top.get('state')}｜CR5% 状态 {(readings.get('5pct') or {}).get('state', 'n/a')}"
+    )
 
 
 def cleanup_intermediates(reports_dir: Path, date: str) -> Dict[str, Any]:
@@ -327,6 +360,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.no_forward_odds:
         forward_odds_card = build_forward_odds_card(resolved_date, args.forward_odds_full)
         evidence["forward_odds"] = forward_odds_card
+    # 集中度轴与前三根正交：趋势说阶段、极值抓拐点、前瞻给条件分布，这根只回答
+    # 「成交额向头部的集中里，有多少是主动吸筹、多少是缩量市的机械效应」
+    concentration_card: Optional[Dict[str, Any]] = None
+    if not args.no_concentration:
+        concentration_card = build_concentration_card(resolved_date, args.concentration_backfill)
+        evidence["turnover_concentration"] = concentration_card
     market_chart_path = refresh_and_verify_market_chart_data(resolved_date)
     evidence_path = Path(args.evidence_out) if args.evidence_out else reports_dir / f"evidence_{resolved_date}_utf8.json"
     if args.stderr_out is None:
@@ -359,7 +398,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     module_context_dir = None
     if not args.no_module_context:
         module_context_dir = Path(args.module_context_dir) if args.module_context_dir else reports_dir / f"module_context_{resolved_date}"
-        write_module_contexts(evidence, module_context_dir, trend_card, extreme_state, forward_odds_card)
+        write_module_contexts(evidence, module_context_dir, trend_card, extreme_state, forward_odds_card, concentration_card)
 
     print(json.dumps({
         "resolved_trade_date": resolved_date,
@@ -370,6 +409,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             if (extreme_state or {}).get("available") else (extreme_state or {}).get("reason")
         ),
         "forward_odds": _forward_odds_summary(forward_odds_card),
+        "turnover_concentration": _concentration_summary(concentration_card),
         "evidence": str(evidence_path),
         "stock_klines": str(kline_path) if kline_payload is not None else None,
         "report_context": str(context_path) if context_path else None,

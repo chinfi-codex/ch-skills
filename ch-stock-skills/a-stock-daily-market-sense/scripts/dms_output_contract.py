@@ -75,6 +75,10 @@ _AUX_PROVENANCE_GLOBS = (
 # 中位数，而偶数样本的中位数按定义要取中间两值的平均——这个数 evidence 里本来
 # 就不会有。硬判会逼出「3.85 / 4.25」这种并列写法，所以只在这一节降为软告警。
 _DERIVED_AGGREGATE_SECTIONS = ("m4_risk_types",)
+_DERIVED_AGGREGATE_SUBSECTION_RE = re.compile(
+    r"^#{1,4}[ \t]*(?:\d+(?:\.\d+)*[ \t]*)?风险类型归纳[ \t]*\n(.*?)(?=^#{1,4}[ \t]|\Z)",
+    re.M | re.S,
+)
 # 数字限流针对的是判断段里的读数密度，不是模板强制的结构块。以下几类整段跳过：
 # frontmatter、正文前的元信息、1.1 那张必须逐项照抄的状态卡、以及判据/口径声明。
 _DEFINITION_PREFIXES = (
@@ -193,6 +197,7 @@ def validate_dms_content(
         )
 
     forward_detail = _validate_forward_axis(sections, evidence, problems)
+    style_detail = _validate_style_factors(sections, evidence, problems)
 
     provenance = _NumberProvenance(evidence, aux_payloads)
     derived_only = _derived_only_tokens(markdown_text, sections)
@@ -221,6 +226,7 @@ def validate_dms_content(
             },
             "highlights": highlight_detail,
             "forward_axis": forward_detail,
+            "style_factors": style_detail,
             "table_numbers": {key: value for key, value in table_numeric.items() if key != "tokens"},
             "paragraph_discipline": paragraph_detail["detail"],
             "forbidden_terms": forbidden,
@@ -378,6 +384,12 @@ def _degradation_supported(
 ) -> Tuple[bool, str]:
     if key == "market_style":
         block = _dig(evidence, "market_trend", "market_style")
+        # 有风格因子读数块的 evidence 以它为准：市场风格的主读数是风格因子，
+        # Baostock 代理指数只剩量价背景；旧 evidence 没有这个块，沿用原判据。
+        factors = block.get("style_factors") if isinstance(block, Mapping) else None
+        if isinstance(factors, Mapping) and factors:
+            available = bool(factors.get("available"))
+            return not available, f"style_factors.available={available}"
         available = bool(block.get("available")) if isinstance(block, Mapping) else False
         return not available, f"market_style.available={available}"
     if key == "m3_mainline":
@@ -423,7 +435,7 @@ def _validate_forward_axis(
     card = evidence.get("forward_odds") or {}
     pulse = card.get("pulse") or {}
     # 前瞻轴纪律语句所在章节随契约版本而变：legacy 在 1.1 情绪趋势；2.x 的前瞻轴
-    # 读数在环境与仓位总闸门(1.2)或大盘温度与宏观都可能落地，取两章并集检查，
+    # 读数在环境与仓位总闸门(1.2)或第 2 章大盘温度与风格都可能落地，取两章并集检查，
     # 避免模型把「情绪脉冲」写进第 2 章时 R1 误报缺失。
     body = "\n".join(
         sections[key].body
@@ -525,6 +537,53 @@ def _validate_forward_axis(
                 "[sentiment_trend] forward-odds cited without horizon-specific sample size: "
                 f"{missing} require {required}"
             )
+    return detail
+
+
+_STYLE_TABLE_RE = re.compile(r"^\|\s*风格因子\s*\|", re.M)
+# 「轮动 / 反转 / 切换」是方向性的风格判断词，只有机判读数里真有 20 日与 60 日
+# 方向相反（rotation_code=reversal_20v60）才允许出现；10 日与 20 日相反只能叫
+# 「短期出现变化」。
+_STYLE_REVERSAL_RE = re.compile(r"风格(?:发生)?(?:轮动|反转|切换)")
+
+
+def _validate_style_factors(
+    sections: Mapping[str, MarkdownSection],
+    evidence: Mapping[str, Any],
+    problems: List[str],
+) -> Dict[str, Any]:
+    """市场风格因子的两条硬纪律（规则见 methodology/style_factors.md）。
+
+    R1 读数可用时，「风格因子」表必须在（legacy 在市场风格节，2.x 在第 1/2 章）；
+    R2 「风格轮动/反转/切换」只能在至少一个风格因子 rotation_code=reversal_20v60 时写。
+    """
+    block = _dig(evidence, "market_trend", "market_style", "style_factors")
+    detail: Dict[str, Any] = {"available": bool(isinstance(block, Mapping) and block.get("available"))}
+    if not detail["available"]:
+        detail["checked"] = False
+        return detail
+    detail["checked"] = True
+    body = "\n".join(
+        sections[key].body for key in ("market_style", "pos_gate", "temp_macro") if key in sections
+    )
+    detail["table_present"] = bool(_STYLE_TABLE_RE.search(body))
+    if not detail["table_present"]:
+        problems.append(
+            "[market_style] style factor readings are available but the 风格因子 table is missing"
+        )
+    metrics = block.get("metrics") or {}
+    reversals = [
+        key for key in ("size", "growth", "small_tail", "dividend")
+        if (metrics.get(key) or {}).get("rotation_code") == "reversal_20v60"
+    ]
+    detail["reversal_factors"] = reversals
+    claimed = _STYLE_REVERSAL_RE.findall(body)
+    detail["reversal_claims"] = claimed
+    if claimed and not reversals:
+        problems.append(
+            f"[market_style] 「{claimed[0]}」claimed but no style factor has 20日与60日方向相反 "
+            "(rotation_code=reversal_20v60)"
+        )
     return detail
 
 
@@ -681,17 +740,21 @@ def _derived_only_tokens(
     A value repeated outside that section is a claim like any other and stays
     hard-judged; the carve-out covers just the medians the model had to compute.
     """
+    bodies = [sections[key].body for key in _DERIVED_AGGREGATE_SECTIONS if key in sections]
+    if not bodies:
+        # 2.x 契约里「风险类型归纳」是亏钱效应章下的小节、不入契约，按标题找回它的正文，
+        # 否则模板承诺的「分组中位数按软告警放行」在 2.x 报告上永远落空。
+        bodies = [match.group(1).strip() for match in _DERIVED_AGGREGATE_SUBSECTION_RE.finditer(markdown_text)]
     derived: set[str] = set()
-    for key in _DERIVED_AGGREGATE_SECTIONS:
-        section = sections.get(key)
-        if section is None:
+    for body in bodies:
+        if not body:
             continue
         elsewhere = {
             _canonical_number(token)
-            for token in _table_tokens(markdown_text.replace(section.body, "", 1))
+            for token in _table_tokens(markdown_text.replace(body, "", 1))
         }
         derived |= {
-            token for token in _table_tokens(section.body)
+            token for token in _table_tokens(body)
             if _canonical_number(token) not in elsewhere
         }
     return derived
@@ -883,12 +946,15 @@ def _paragraph_warnings(
 
 
 # 产业趋势波段契约（dms/2.x）。章节重排为「一句话盘面判断 hero → 环境与仓位总闸门 →
-# 温度宏观 → 产业主线 → 主线内关注个股(三维并集) → 亏钱效应 → 仓位备忘」，与渲染器
+# 温度与风格 → 产业主线 → 主线内关注个股(三维并集) → 亏钱效应 → 仓位备忘」，与渲染器
 # 持有的 legacy(1.5.0) 契约并存——validate 阶段按章节指纹自动选型（select_contract）。
 # 注意：outputs.yaml 的 dms-markdown sections 是同一份章节的 YAML 侧声明，二者必须
 # 同步演进——tests/test_industry_swing_contract.py 有漂移守护。
+# 2.1.0（2026-09-27）：原 1.3「指数与风格」拆开——指数表与指数趋势判断并入第 2 章，
+# 风格因子挪到第 2 章底部，第 2 章改名「大盘温度与风格」；1.4 档位裁决顺延为 1.3。
+# 章节键 temp_macro 保持历史值不动（同模块编号），标题正则兼认 2.0 的旧名。
 INDUSTRY_SWING_CONTRACT = SectionContract(
-    version="dms/2.0.0-industry-swing",
+    version="dms/2.1.0-industry-swing",
     sections=[
         # 排版对齐 legacy：frontmatter + 标题块 + ## 一句话盘面判断 hero；
         # 章节用 # N.（渲染后 h2），小节 ## N.M（渲染后 h3，不入契约）。
@@ -896,7 +962,7 @@ INDUSTRY_SWING_CONTRACT = SectionContract(
                     source="references/report_template.md:1"),
         SectionSpec("pos_gate", [r"环境与仓位总闸门"], level=2,
                     source="methodology/position_matrix.md"),
-        SectionSpec("temp_macro", [r"大盘温度与宏观"], level=2,
+        SectionSpec("temp_macro", [r"大盘温度与(?:风格|宏观)"], level=2,
                     source="references/template/section1.md"),
         SectionSpec("industry_mainline", [r"产业趋势主线总览"], level=2,
                     source="references/template/section3.md"),

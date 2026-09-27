@@ -15,7 +15,7 @@
 | 极值位置 | `extreme_state.washout` / `top` | 出清分高 = 分批布局窗；拥挤分高 = 只减不加、收紧信号阈值 |
 | 宏观风险 | `macro_risk_scorecard.risk_level` / `score` | **只减不加**：宏观再好不是加仓理由，只是不减仓的理由；触发则降档 |
 
-辅助输入（不改变档位，只作确认）：市场温度（up_ratio、成交额水位 vs 20 日均）、前瞻轴尾部风险（只读回撤分布，不读方向）、主线生命周期状态（`theme_lifecycle` 台账）、成交额集中度卡（`turnover_concentration`，`state=overheat` 时类比"主线高位分歧"提示收紧单线信号阈值；`passive` 时不做任何仓位侧引申，见 `turnover_concentration.md`）。
+辅助输入（不改变档位，只作确认）：市场温度（up_ratio、成交额水位 vs 20 日均）、前瞻轴尾部风险（只读回撤分布，不读方向）、主线生命周期状态（`theme_lifecycle` 台账）、成交额集中度卡（`turnover_concentration`，`state=overheat` 时类比"主线高位分歧"提示收紧单线信号阈值；`passive` 时不做任何仓位侧引申，见 `turnover_concentration.md`）。市场风格因子（`market_style.style_factors`）同样只作辅助：红利偏好上行叠加成长走弱只能作为"风险偏好收缩"的旁证写进备忘，不改变档位，见 `style_factors.md`。
 
 ## 五档仓位档位（研究框架，非指令）
 

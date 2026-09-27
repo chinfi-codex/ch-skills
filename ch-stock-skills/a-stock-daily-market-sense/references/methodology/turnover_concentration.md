@@ -47,6 +47,10 @@
 - 主线拥挤"高" + 全市场 `passive`：优先解释为缩量市的被动放大，拥挤定档保持但注明背景；
 - 全市场 `normal`：拥挤度列照常读，不引申。
 
+## 与风格因子的关系
+
+集中度卡从成交额一侧看头部吸筹，风格因子的规模风格（60 日偏大盘）从价格一侧看同一件事。两边同向（`rotation`/`overheat` + 规模因子 60 日偏大盘）才写"容量抱团得到确认"；只有一边成立时只写那一边，不借另一边的读数补强。`passive` 与规模偏大盘同时出现时，优先解释为缩量市里大票相对扛跌，而不是抱团。读法见 `style_factors.md`。
+
 ## 数据与口径备忘
 
 - 逐日指标落 `dms_concentration_daily` 表，首次使用先跑 `python3 scripts/turnover_concentration.py --asof <date> --backfill 500`；之后由 `daily.build-evidence` 每日增量补当日行。

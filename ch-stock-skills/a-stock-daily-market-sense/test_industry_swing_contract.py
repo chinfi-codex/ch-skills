@@ -51,7 +51,7 @@ SWING_MARKDOWN = """# 报告
 
 闸门正文。
 
-# 2. 大盘温度与宏观
+# 2. 大盘温度与风格
 
 温度正文。
 
@@ -143,3 +143,25 @@ def test_missing_chapter_is_named():
         assert "position_memo" in str(exc), str(exc)
     else:
         raise AssertionError("缺 position_memo 章节居然通过了契约校验")
+
+
+def test_swing_risk_type_medians_are_soft_derived():
+    """2.x 的「风险类型归纳」是小节不入契约，分组中位数仍按派生值软放行。"""
+    from dms_output_contract import _derived_only_tokens, _resolve_markdown_sections
+
+    text = SWING_MARKDOWN.replace(
+        "亏钱正文。\n",
+        "亏钱正文。\n\n## 5.1 风险类型归纳\n\n| 风险类型 | 跌幅中位 |\n|---|---:|\n| 软件 | -8.12% |\n\n"
+        "## 5.2 高强度爆量下跌个股明细\n\n| 股票 | 当日跌幅 |\n|---|---:|\n| 甲 | -9.88% |\n",
+    )
+    sections = _resolve_markdown_sections(text, INDUSTRY_SWING_CONTRACT.sections)
+    derived = _derived_only_tokens(text, sections)
+    assert "-8.12%" in derived
+    assert "-9.88%" not in derived   # 明细表不在豁免范围
+
+
+def test_legacy_2_0_chapter_name_still_resolves():
+    """2.0 报告的第 2 章叫「大盘温度与宏观」，2.1 起改名后仍要能重渲染旧稿。"""
+    old = SWING_MARKDOWN.replace("# 2. 大盘温度与风格", "# 2. 大盘温度与宏观")
+    audit = validate_dms_content(old, _minimal_evidence(), INDUSTRY_SWING_CONTRACT)
+    assert audit["status"] == "ok", audit

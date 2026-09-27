@@ -3,7 +3,7 @@
     "dms-html": {
       "contract": {
         "browser": {
-          "expect_contract": "dms/2.0.0-industry-swing",
+          "expect_contract": "dms/2.1.0-industry-swing",
           "script": "scripts/_shared/html_report/render_check.py"
         },
         "forbidden_patterns": [
@@ -34,7 +34,7 @@
             "key": "temp_macro",
             "level": 1,
             "patterns": [
-              "大盘温度与宏观"
+              "大盘温度与(?:风格|宏观)"
             ],
             "required": false
           },
@@ -72,7 +72,7 @@
           }
         ]
       },
-      "contract_version": "dms/2.0.0-industry-swing",
+      "contract_version": "dms/2.1.0-industry-swing",
       "features": [
         "evidence-backed",
         "preserve-source-text",
@@ -137,7 +137,7 @@
                 "key": "temp_macro",
                 "level": 2,
                 "patterns": [
-                  "大盘温度与宏观"
+                  "大盘温度与(?:风格|宏观)"
                 ],
                 "required": false
               },
@@ -212,7 +212,7 @@
         },
         {
           "config": {
-            "expect_contract": "dms/2.0.0-industry-swing",
+            "expect_contract": "dms/2.1.0-industry-swing",
             "script": "scripts/_shared/html_report/render_check.py"
           },
           "id": "browser-attestation",
@@ -250,7 +250,7 @@
             "key": "temp_macro",
             "level": 1,
             "patterns": [
-              "大盘温度与宏观"
+              "大盘温度与(?:风格|宏观)"
             ],
             "required": false
           },
@@ -288,7 +288,7 @@
           }
         ]
       },
-      "contract_version": "dms/2.0.0-industry-swing",
+      "contract_version": "dms/2.1.0-industry-swing",
       "features": [
         "evidence-backed"
       ],
@@ -346,7 +346,7 @@
                 "key": "temp_macro",
                 "level": 1,
                 "patterns": [
-                  "大盘温度与宏观"
+                  "大盘温度与(?:风格|宏观)"
                 ],
                 "required": false
               },
@@ -429,5 +429,5 @@
   },
   "schema_version": 1,
   "skill": "a-stock-daily-market-sense",
-  "source_sha256": "22b9468b1119858ca14c3e9d92074e214e66d09ddb2a12ac3601a4c63251fcaf"
+  "source_sha256": "cad226a53317b4d025f95386977d66ff06ee83c8381eefbc719e57bcf69177cf"
 }

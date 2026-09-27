@@ -6,13 +6,13 @@ outputs:
     type: markdown
     terminal_capability: report.finalize-markdown
     path_glob: reports/report_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].md
-    contract_version: dms/2.0.0-industry-swing
+    contract_version: dms/2.1.0-industry-swing
     gate_policy: hard
     features: [evidence-backed]
     contract: &dms_contract
       min_bytes: 1000
       order: strict
-      # 产业趋势波段契约（dms/2.x）：章节重排为 环境闸门→温度宏观→产业主线→趋势锚→亏钱效应→仓位备忘。
+      # 产业趋势波段契约（dms/2.x）：章节重排为 环境闸门→温度与风格→产业主线→趋势锚→亏钱效应→仓位备忘。
       # 仓位红线措辞仍硬拦（见 forbidden_patterns）；但报告允许"研究仓位框架/档位适配"。
       # 注：dms_output_contract.py 的硬编码校验仍按 1.5.0 章节键，2.x 完整契约校验为后续专项工程；
       # 原型期 sections 全部 required:false，由 validate_dms_content 的 forbidden/数值证据校验兜底。
@@ -28,7 +28,7 @@ outputs:
         # 两处注册表必须同步演进：tests/test_industry_swing_contract.py 有漂移守护。
         - {key: hero_verdict, patterns: ['^一句话盘面判断$'], level: 2, required: false}
         - {key: pos_gate, patterns: ['环境与仓位总闸门'], level: 1, required: false}
-        - {key: temp_macro, patterns: ['大盘温度与宏观'], level: 1, required: false}
+        - {key: temp_macro, patterns: ['大盘温度与(?:风格|宏观)'], level: 1, required: false}
         - {key: industry_mainline, patterns: ['产业趋势主线总览'], level: 1, required: false}
         - {key: mainline_screening, patterns: ['主线内关注个股'], level: 1, required: false}
         - {key: m4_decline, patterns: ['亏钱效应（爆量下跌）'], level: 1, required: false}
@@ -51,11 +51,11 @@ outputs:
     terminal_capability: report.render-html
     path_glob: reports/report_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].html
     source_output: dms-markdown
-    contract_version: dms/2.0.0-industry-swing
+    contract_version: dms/2.1.0-industry-swing
     gate_policy: hard
     features: [evidence-backed, preserve-source-text, browser-attestation]
     contract:
       <<: *dms_contract
       browser:
         script: scripts/_shared/html_report/render_check.py
-        expect_contract: dms/2.0.0-industry-swing
+        expect_contract: dms/2.1.0-industry-swing

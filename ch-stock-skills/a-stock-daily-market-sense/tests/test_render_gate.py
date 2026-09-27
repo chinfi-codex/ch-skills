@@ -533,8 +533,8 @@ class RenderGateTest(unittest.TestCase):
         broken = self.out_dir / "broken_placement.html"
         text = self.html.read_text(encoding="utf-8")
         patched = text.replace(
-            'const insertAfter = window.__sec.tail("sentiment_trend");',
-            'const insertAfter = document.getElementById("report-body").lastElementChild;',
+            'insertAfter = insertAfter || window.__sec.tail("sentiment_trend");',
+            'insertAfter = document.getElementById("report-body").lastElementChild;',
         )
         self.assertNotEqual(text, patched, "patch target not found — test needs updating")
         broken.write_text(patched, encoding="utf-8")

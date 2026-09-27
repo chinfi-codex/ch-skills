@@ -2535,31 +2535,6 @@ def build_market_style_index_summary(
     }
 
 
-def market_style_return(style: Dict[str, Any], key: str, field: str) -> Optional[float]:
-    item = ((style.get("indices") or {}).get(key) or {})
-    value = ((item.get("returns") or {}).get(field))
-    return safe_float(value)
-
-
-def build_style_spread(style: Dict[str, Any], label: str, left_key: str, right_key: str) -> Dict[str, Any]:
-    indices = style.get("indices") or {}
-    left = indices.get(left_key) or {}
-    right = indices.get(right_key) or {}
-    left_5d = market_style_return(style, left_key, "ret_5d")
-    right_5d = market_style_return(style, right_key, "ret_5d")
-    left_20d = market_style_return(style, left_key, "ret_20d")
-    right_20d = market_style_return(style, right_key, "ret_20d")
-    return {
-        "label": label,
-        "left_key": left_key,
-        "left_name": left.get("name"),
-        "right_key": right_key,
-        "right_name": right.get("name"),
-        "ret_5d_diff": round(left_5d - right_5d, 2) if left_5d is not None and right_5d is not None else None,
-        "ret_20d_diff": round(left_20d - right_20d, 2) if left_20d is not None and right_20d is not None else None,
-    }
-
-
 def build_market_style_summary(index_summaries: Dict[str, Dict[str, Any]], target_date: str, start_date: str) -> Dict[str, Any]:
     available_count = sum(1 for item in index_summaries.values() if item.get("available"))
     style: Dict[str, Any] = {
@@ -2588,17 +2563,8 @@ def build_market_style_summary(index_summaries: Dict[str, Dict[str, Any]], targe
     }
     if not style["available"]:
         style["reason"] = "no Baostock style index data available"
-        style["spreads"] = []
-        return style
-
-    style["spreads"] = [
-        build_style_spread(style, "微盘代理相对沪深300", "guozheng2000", "csi300"),
-        build_style_spread(style, "中证1000相对沪深300", "csi1000", "csi300"),
-        build_style_spread(style, "中证500相对沪深300", "csi500", "csi300"),
-        build_style_spread(style, "中证红利相对300成长", "csi_dividend", "csi300_growth"),
-        build_style_spread(style, "300成长相对300价值", "csi300_growth", "csi300_value"),
-        build_style_spread(style, "超大盘相对国证2000", "mega_cap", "guozheng2000"),
-    ]
+    # 旧版的 spreads（两指数 5/20 日收益直接相减）已由 style_factors 的对数比值取代：
+    # 比值涨跌不是两组简单收益率之差。
     return style
 
 
@@ -2622,7 +2588,6 @@ def build_unavailable_market_style(reason: str, target_date: str, start_date: st
             }
             for key, config in MARKET_STYLE_INDEXES.items()
         },
-        "spreads": [],
         "reason": reason,
     }
 
@@ -2759,6 +2724,96 @@ def fetch_market_style_from_baostock(
     style = build_market_style_summary(summaries, target_date, start_date)
     style["source"] = "baostock.query_history_k_data_plus + stock_index_daily cache"
     return style
+
+
+# 风格因子要从国证风格指数的发布前回溯段（2002-12-31）起的完整日历做零缺失核验。
+STYLE_FACTOR_CALENDAR_START = "20020101"
+
+
+def fetch_baostock_index_close(
+    bs_code: str,
+    start_date: str,
+    end_date: str,
+    cache_enabled: bool = True,
+    refresh_cache: bool = False,
+) -> pd.DataFrame:
+    """Baostock 整序列兜底：按 bs_code 读写 stock_index_daily 缓存，只补缺失边界。"""
+    cached = None if refresh_cache or not cache_enabled else read_cached_style_index(bs_code)
+    frames: List[pd.DataFrame] = []
+    if cached is not None and not cached.empty:
+        cached = cached.copy()
+        cached["trade_date"] = cached["trade_date"].astype(str)
+        frames.append(cached)
+        ranges = missing_edge_ranges(cached, "trade_date", start_date, end_date)
+    else:
+        ranges = [(start_date, end_date)]
+    if ranges:
+        if bs is None:
+            raise RuntimeError("missing optional dependency: baostock")
+        with contextlib.redirect_stdout(io.StringIO()):
+            login = bs.login()
+        if getattr(login, "error_code", "0") != "0":
+            raise RuntimeError(f"baostock login failed: {getattr(login, 'error_msg', '')}")
+        try:
+            config = {"bs_code": bs_code, "name": bs_code}
+            for fetch_start, fetch_end in ranges:
+                frame = query_baostock_style_range(config, fetch_start, fetch_end)
+                if not frame.empty:
+                    frame["ts_code"] = bs_code
+                    frames.append(frame)
+        finally:
+            with contextlib.redirect_stdout(io.StringIO()):
+                bs.logout()
+    if not frames:
+        return pd.DataFrame()
+    keep = split_fields(STYLE_INDEX_CACHE_FIELDS)
+    merged = pd.concat([f[[c for c in keep if c in f.columns]] for f in frames], ignore_index=True)
+    merged = merged.drop_duplicates(subset=["trade_date"], keep="last").sort_values("trade_date").reset_index(drop=True)
+    if cache_enabled and ranges and not merged.empty:
+        write_cached_dataset("index_daily", bs_code, merged)
+    return date_range_filter(merged, "trade_date", start_date, end_date)
+
+
+def build_style_factor_block(
+    pro,
+    target_date: str,
+    cache_enabled: bool = True,
+    refresh_cache: bool = False,
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """市场风格因子读数（style_factors.py），数据源用 DMS 已有的两路。
+
+    Tushare index_daily 经 PG stock_index_daily 缓存为主；某条序列核验不过时整条换
+    Baostock（同样走缓存），不拼接。交叉源核对只读已有缓存，不额外联网。
+    """
+    import style_factors
+
+    try:
+        cal = fetch_trade_cal(
+            pro, STYLE_FACTOR_CALENDAR_START, target_date,
+            cache_enabled=cache_enabled, refresh_cache=refresh_cache,
+        )
+        open_dates = sorted(cal.loc[cal["is_open"].astype(int) == 1, "cal_date"].astype(str).tolist())
+    except Exception as exc:
+        return {"available": False, "reason": f"trade_cal failed: {exc}"}, None
+
+    def tushare_loader(code: str, start: str, end: str) -> pd.DataFrame:
+        return fetch_index_daily(pro, code, start, end, cache_enabled=cache_enabled, refresh_cache=refresh_cache)
+
+    def baostock_loader(code: str, start: str, end: str) -> pd.DataFrame:
+        return fetch_baostock_index_close(code, start, end, cache_enabled=cache_enabled, refresh_cache=refresh_cache)
+
+    def cached_only(code: str) -> Optional[pd.DataFrame]:
+        return read_cached_dataset("index_daily", code, "ts_code,trade_date,close") if cache_enabled else None
+
+    try:
+        return style_factors.build_block(
+            target_date,
+            open_dates,
+            {"tushare": tushare_loader, "baostock": baostock_loader},
+            crosscheck=cached_only,
+        )
+    except Exception as exc:  # 风格因子失败不阻断研报，降级为不可用
+        return {"available": False, "reason": f"style_factors failed: {exc}"}, None
 
 
 def collect_stock_kline_targets(*payloads: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -3269,8 +3324,18 @@ def build_market_trend(
         cache_enabled=cache_enabled,
         refresh_cache=refresh_cache,
     )
+    # 风格因子是市场风格小节的主读数；日频曲线只给 HTML，由 build_panel 挪到
+    # evidence 顶层、再由 run_daily_panel 旁路写 style_factors_YYYYMMDD.json。
+    style_factor_block, style_factor_series = build_style_factor_block(
+        pro,
+        target_date,
+        cache_enabled=cache_enabled,
+        refresh_cache=refresh_cache,
+    )
+    market_style["style_factors"] = style_factor_block
 
     return {
+        "style_factor_series": style_factor_series,
         "metadata": {
             "trend_days_requested": safe_trend_days,
             "index_kline_days_requested": safe_index_kline_days,
@@ -3279,6 +3344,7 @@ def build_market_trend(
             "sentiment_source": str(DEFAULT_MARKET_HISTORY_CSV),
             "included_indices": list(MARKET_TREND_INDEXES.keys()),
             "market_style_source": market_style.get("source"),
+            "style_factors_source": style_factor_block.get("source"),
         },
         "indices": indices,
         "market_style": market_style,
@@ -4646,6 +4712,12 @@ def compact_market_style_index(index: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def compact_style_factors(block: Dict[str, Any]) -> Dict[str, Any]:
+    import style_factors
+
+    return style_factors.compact(block) if block else {}
+
+
 def compact_market_style(style: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(style, dict):
         return {}
@@ -4659,8 +4731,8 @@ def compact_market_style(style: Dict[str, Any]) -> Dict[str, Any]:
             key: compact_market_style_index(value)
             for key, value in (style.get("indices") or {}).items()
         },
-        "spreads": style.get("spreads"),
         "missing": style.get("missing"),
+        "style_factors": compact_style_factors(style.get("style_factors") or {}),
         "reason": style.get("reason"),
     }
 
@@ -5024,7 +5096,7 @@ def build_module_contexts(evidence: Dict[str, Any]) -> Dict[str, Any]:
         "meta": {
             "metadata": metadata,
             "subagent_contract": {
-                "module1_market_trend": ["module1_market_trend.json", "references/methodology/module1_trend.md", "references/methodology/extreme_state_framework.md", "references/methodology/forward_odds.md", "references/template/section1.md", "盘面趋势"],
+                "module1_market_trend": ["module1_market_trend.json", "references/methodology/module1_trend.md", "references/methodology/extreme_state_framework.md", "references/methodology/forward_odds.md", "references/methodology/style_factors.md", "references/template/section1.md", "盘面趋势"],
                 "module3_money_effect": ["module3_money_effect.json", "references/methodology/module3_money_effect.md", "module3_theme_map.json", "首轮只做临时主题与成员映射，stars 写 null，不写最终正文"],
                 "module3_money_effect_second_stage": [["module3_theme_map.json", "module3_theme_stats.json", "module3_enrichment_pack.json"], "references/methodology/catalyst_subline_mining.md", "references/template/section3.md", "统计后由模型锁星；星级锁定后补催化与细分线路，再写最终模块 3"],
                 "module4_decline": ["module4_decline.json", "references/methodology/module4_decline.md", "references/template/section4.md", "爆量下跌风险"],
@@ -5405,6 +5477,8 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         "volume_decline_samples": volume_decline,
         "feature_group_analysis_samples": feature_group_analysis,
         "stock_kline_records": stock_kline_records,
+        # 风格因子日频曲线（HTML 展示层），run_daily_panel 会把它挪到旁路文件
+        "style_factor_series": market_trend.pop("style_factor_series", None),
         "notes": [
             "脚本有意不做主题归纳。",
             "不要把市场、行业或概念标签作为预设分组规则；主题应由模型基于证据和业务事实归纳。",
@@ -5415,6 +5489,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             "个股价格序列统一使用前复权口径：Tushare daily OHLC * adj_factor / 目标日前最新 adj_factor；成交额和成交量仍为原始口径。",
             "指数 K 线来自 Tushare index_daily，不涉及个股复权口径。",
             "市场风格代理指数来自 Baostock query_history_k_data_plus；amount 原始单位为元，amount_100m_yuan 已换算为亿元。Baostock 指数字典未见直接微盘指数，默认用国证2000代理小微盘风格。",
+            "market_trend.market_style.style_factors 是市场风格小节的主读数：四个风格比值（规模/成长价值/小市值扩散/红利偏好，对数比值、窗口首日=100）与两个环境指标（全指趋势/20日年化波动），数据源 Tushare index_daily（PG 缓存）+ Baostock 整序列兜底；相对变化是比值涨跌，不是两组收益率相减；历史分位只比当日之前的发布后样本。",
             "money_effect_samples 按涨幅和成交额阈值筛选，并按成交额排序，是每日赚钱效应和上涨主线分析的标准候选池。",
             "volume_decline_samples 按涨跌幅、20日放量倍数和成交额阈值筛选，并按爆量下跌强度（20日放量倍数 * 跌幅绝对值）排序。",
             "feature_group_analysis_samples 是模块 5 的证据包：容量上涨、科创板120日新高且真实月K突破、10:30前涨停、折扣启动四组分别输出，并提供 overlap_hits 供模型做交叉命中上涨归因。折扣启动=市值>80亿、成交额>5亿、涨幅>7%、自前高（最近200日收盘最高）回撤折扣（前高之后最低价/前高收盘）落在0.6~0.85、且该最低点在大涨日前5个交易日内、调整缩量后当日相对前5日均额重新放量(≥2倍)、且当前月收盘站上月线10月均线。",

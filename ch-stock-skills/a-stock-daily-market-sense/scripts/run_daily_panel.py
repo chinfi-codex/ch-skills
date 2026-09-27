@@ -261,6 +261,21 @@ def _concentration_summary(card: Optional[Dict[str, Any]]) -> Optional[str]:
     )
 
 
+def _style_factor_summary(evidence: dict) -> Optional[str]:
+    """一行摘要：四个风格因子的 60 日方向 + 规模对照是否同向。"""
+    block = (((evidence.get("market_trend") or {}).get("market_style") or {}).get("style_factors") or {})
+    if not block.get("available"):
+        return block.get("reason") or "style_factors missing"
+    metrics = block.get("metrics") or {}
+    parts = [
+        f"{m.get('name')} 60日{(m.get('direction') or {}).get('60')}"
+        for key in ("size", "growth", "small_tail", "dividend")
+        if (m := metrics.get(key))
+    ]
+    check = (block.get("robustness_checks") or {}).get("size_csi1000_over_csi300") or {}
+    return "｜".join(parts) + f"｜规模对照：{check.get('note')}"
+
+
 def cleanup_intermediates(reports_dir: Path, date: str) -> Dict[str, Any]:
     """Deterministically remove intermediate artifacts for one date.
 
@@ -273,6 +288,7 @@ def cleanup_intermediates(reports_dir: Path, date: str) -> Dict[str, Any]:
         reports_dir / f"evidence_{date}_utf8.json",
         reports_dir / f"evidence_{date}_utf8.stderr.log",
         reports_dir / f"kline_{date}.json",
+        reports_dir / f"style_factors_{date}.json",
         reports_dir / f"report_context_{date}.json",
         reports_dir / f"lifecycle_{date}.json",
         # Backward-compatible cleanup for artifacts produced before the
@@ -380,6 +396,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     if kline_payload is not None:
         kline_path.write_text(json.dumps(kline_payload, ensure_ascii=False), encoding="utf-8")
 
+    # 风格因子日频曲线（2002 年起、约 600KB）同理只给 HTML 用，不进 evidence：
+    # evidence 里只留读数，数字溯源门禁对着读数查。
+    style_series_payload = evidence.pop("style_factor_series", None)
+    style_series_path = reports_dir / f"style_factors_{resolved_date}.json"
+    if style_series_payload is not None:
+        style_series_path.write_text(json.dumps(style_series_payload, ensure_ascii=False), encoding="utf-8")
+
     evidence_path.write_text(json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
 
     context_path = None
@@ -412,6 +435,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "turnover_concentration": _concentration_summary(concentration_card),
         "evidence": str(evidence_path),
         "stock_klines": str(kline_path) if kline_payload is not None else None,
+        "style_factors": _style_factor_summary(evidence),
+        "style_factor_series": str(style_series_path) if style_series_payload is not None else None,
         "report_context": str(context_path) if context_path else None,
         "module_context_dir": str(module_context_dir) if module_context_dir else None,
         "market_chart_data": str(market_chart_path),

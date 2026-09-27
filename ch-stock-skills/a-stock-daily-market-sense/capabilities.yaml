@@ -8,7 +8,7 @@ capabilities:
     terminal: false
     judgment: forbidden
     required_env: [TUSHARE_TOKEN]
-    effects: [net:tushare, db:alpha_data, "fs:reports/evidence_*.json"]
+    effects: [net:tushare, db:alpha_data, "fs:reports/evidence_*.json", "fs:reports/style_factors_*.json"]
     receipt_outputs:
       - reports/evidence_*.json
       - reports/report_context_*.json
@@ -44,6 +44,15 @@ capabilities:
     terminal: false
     judgment: forbidden
     effects: [db:alpha_data.dms_concentration_daily, stdout:json]
+
+  daily.compute-style-factors:
+    kind: command
+    entry: scripts/style_factors.py
+    terminal: false
+    judgment: forbidden
+    required_env: [TUSHARE_TOKEN]
+    # 调试入口；生产读数随 daily.build-evidence 一起算。只回补 stock_index_daily 缓存。
+    effects: [net:tushare, db:alpha_data, stdout:json]
 
   daily.compute-forward-odds:
     kind: command

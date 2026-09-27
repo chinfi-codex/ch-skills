@@ -30,8 +30,8 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 5. **聚合成稿（产业趋势波段 dms/2.x 结构）**：模块 3 第二阶段读取 theme map、统计结果、enrichment pack、方法论，完成主线判定与领导股；仅当存在 ★★★ 主线时才输出催化与细分线路推演，没有 ★★★ 时整节省略。主 agent 再读取模块 1、3、4、5 输出、`assembled_checks.json`、`macro_risk_scorecard.json` 与 `references/methodology/output_discipline.md`，按下述结构成稿：
 
    - **`## 一句话盘面判断`**：环境 + 主线 + 风险三句收口（环境结论用档位语言，不用指令语言）。
-   - **1 环境与仓位总闸门**：1.1 宏观记分卡表（读 `macro_risk_framework.md`）、1.2 四机判卡读数（趋势/极值/前瞻/集中度，集中度判读读 `turnover_concentration.md`）、1.3 指数与风格、1.4 档位裁决（读 `position_matrix.md`：宏观只减不加、多轴冲突取保守）。
-   - **2 大盘温度与宏观**：叙事章，末尾 `==趋势判断==` 只写 A 股内部状态。
+   - **1 环境与仓位总闸门**：1.1 宏观记分卡表（读 `macro_risk_framework.md`）、1.2 四机判卡读数（趋势/极值/前瞻/集中度，集中度判读读 `turnover_concentration.md`）、1.3 档位裁决（读 `position_matrix.md`：宏观只减不加、多轴冲突取保守）。
+   - **2 大盘温度与风格**：分两小节。`## 2.1 情绪与指数` 先是情绪指标表与叙事，再是指数表（上证/创业板/科创50，首列表头固定叫「指数」，HTML 的指数 K 线按它挂载）与 `==指数趋势判断==`，然后 `==趋势判断==`（只写 A 股内部状态）；`## 2.2 市场风格` 放在**章末**——「风格因子」表 + 市场环境/规模对照/含分红核验三句 + `==市场风格判断==`，读 `style_factors.md`，表首列表头必须叫「风格因子」，HTML 风格面板按它挂载。
    - **3 产业趋势主线总览**：主线表（星级/位置/拥挤度/领导股/波段状态）+ 星级判定证据 + 产业质地；无 ★★★ 时披露"催化推演省略"。
    - **4 主线内关注个股（多维筛选·并集）**：趋势锚/特征组过滤/规模偏好三维并行取并集（读 `mainline_stock_screening.md` 与 `size_preference.md`），4.1 并集清单表（列名固定用「个股」，渲染器按它挂 K 线）+ 4.2–4.4 维度解读 + M3/M4 交叉见顶检查。
    - **5 亏钱效应（爆量下跌）**、**6 仓位管理备忘**：档位映射、明日触发器表、纪律复核。
@@ -41,13 +41,13 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 
 7. **按需生成 HTML**：当用户要求 HTML、网页、可视化报告或截图风格输出时，先完成并核对 `reports/report_YYYYMMDD.md`，再运行 `scripts/render_report_html.py` 生成同日期 HTML。第 6 步没做完就渲染会直接失败——泳道图的数据来自台账，缺当日记录只会画出一条空列而不是报错，所以这道校验放在渲染期硬判（历史回补用 `--no-lifecycle` 显式跳过）。HTML 是展示层产物，不新增研报判断、不删减 Markdown 正文。
 
-8. **清理临时产物**：最终报告生成并核对后，运行 `python3 scripts/run_daily_panel.py --cleanup --asof YYYYMMDD` 删除 `reports/module_context_YYYYMMDD/`、`evidence_YYYYMMDD_utf8.json`、`kline_YYYYMMDD.json`、`assembled_checks.json` 及 `lifecycle_YYYYMMDD.json` 等临时文件，只保留 `reports/report_YYYYMMDD.md`、按需生成的 `reports/report_YYYYMMDD.html`，以及长期维护的 `references/market_data.csv` / `references/market_data.json`。
+8. **清理临时产物**：最终报告生成并核对后，运行 `python3 scripts/run_daily_panel.py --cleanup --asof YYYYMMDD` 删除 `reports/module_context_YYYYMMDD/`、`evidence_YYYYMMDD_utf8.json`、`kline_YYYYMMDD.json`、`style_factors_YYYYMMDD.json`、`assembled_checks.json` 及 `lifecycle_YYYYMMDD.json` 等临时文件，只保留 `reports/report_YYYYMMDD.md`、按需生成的 `reports/report_YYYYMMDD.html`，以及长期维护的 `references/market_data.csv` / `references/market_data.json`。
 
 ## Subagent 编排契约
 
 主 agent 先生成模块级 JSON，然后按下列最小上下文分发。每个 subagent 只看自己的模块数据，不读取其他模块数据。
 
-**模块号 ≠ 章节号。** 模块编号、JSON 文件名与契约键（`module3_*.json`、`m3_mainline` 等）保持历史值不动——契约按语义键匹配、匹配前先剥编号。产业趋势波段（dms/2.x）的章节映射为：模块 1 → 第 1/2 章（环境闸门 + 温度宏观）、模块 3 → 第 3 章主线总览 + 第 4 章主线内关注个股、模块 4 → 第 5 章亏钱效应、模块 5 → 第 4 章特征组过滤维度（只取 `capacity_up` 与 `early_limit_up_1030` 两组做过滤器，明细不再单独成章）。HTML 渲染器把 legacy 图表锚点键（`index_trend`/`sentiment_trend`/`market_style`/`m3_mainline`/`m3_leaders`）经别名装饰落到 2.x 章节，hook 代码不改。
+**模块号 ≠ 章节号。** 模块编号、JSON 文件名与契约键（`module3_*.json`、`m3_mainline` 等）保持历史值不动——契约按语义键匹配、匹配前先剥编号。产业趋势波段（dms/2.x）的章节映射为：模块 1 → 第 1/2 章（环境闸门 + 温度与风格）、模块 3 → 第 3 章主线总览 + 第 4 章主线内关注个股、模块 4 → 第 5 章亏钱效应、模块 5 → 第 4 章特征组过滤维度（只取 `capacity_up` 与 `early_limit_up_1030` 两组做过滤器，明细不再单独成章）。HTML 渲染器把 legacy 图表锚点键（`index_trend`/`sentiment_trend`/`market_style`/`m3_mainline`/`m3_leaders`）经别名装饰落到 2.x 章节，hook 代码不改。
 
 | 模块 | JSON | 方法论 | 模板 |
 |---|---|---|---|

@@ -54,7 +54,8 @@ from dms_output_contract import validate_dms_content  # noqa: E402
 # sections by key via ``window.__sec``, so neither move touches the charts.
 #
 # 产业趋势波段(2.x) 章节键 → legacy(1.5.0) 图表锚点键的别名。2.x 报告把「指数趋势」
-# 「情绪趋势」「市场风格」并进「大盘温度与宏观」，「主线判定」改名「产业趋势主线总览」。
+# 「情绪趋势」「指数趋势」「市场风格」并进第 2 章（dms/2.1 起名为「大盘温度与风格」，
+# 2.0 叫「大盘温度与宏观」，契约两名都认），「主线判定」改名「产业趋势主线总览」。
 # 图表 hook 仍按 legacy 键查 window.__sec；这段装饰在 __sec 之上包一层别名解析，
 # 让 legacy 键透明落到 2.x 章节上，hook 代码一行不改。
 SWING_SEC_ALIAS_JS = """
@@ -435,6 +436,95 @@ def extract_style_series_payload(evidence: dict, display_days: int = 60) -> Opti
     }
 
 
+STYLE_FACTOR_TABLE_MARKER = "风格因子"
+_STYLE_FACTOR_TABLE_RE = re.compile(r"^\|\s*风格因子\s*\|", re.M)
+
+
+def default_style_factor_path(input_path: Path) -> Optional[Path]:
+    match = re.match(r"^report_(\d{8})$", input_path.stem)
+    if not match:
+        return None
+    return input_path.with_name(f"style_factors_{match.group(1)}.json")
+
+
+def style_factor_target_section(markdown_text: str, contract: Any) -> Optional[str]:
+    """「风格因子」表落在哪个契约章节里（2.x 通常是第 1 章 1.3，legacy 是市场风格节）。
+
+    放置校验按章节判定，所以期望章节必须在构建期从 Markdown 本身读出来，
+    而不是写死——模型把 1.3 挪进第 2 章时图也跟着走，而不是被判越界。
+    """
+    from dms_output_contract import _resolve_markdown_sections
+
+    try:
+        sections = _resolve_markdown_sections(markdown_text, contract.sections)
+    except ContractError:
+        return None
+    # 先查最细的节：legacy 的 market_style 是 h3，嵌在更大的章节里
+    for key in ("market_style", "pos_gate", "temp_macro"):
+        section = sections.get(key)
+        if section is not None and _STYLE_FACTOR_TABLE_RE.search(section.body):
+            return key
+    return None
+
+
+def extract_style_factor_payload(
+    evidence: dict,
+    series_path: Optional[Path],
+    target_sec: str,
+) -> Optional[Dict[str, Any]]:
+    """风格因子面板载荷 = evidence 读数 + 旁路 style_factors_YYYYMMDD.json 日频曲线。
+
+    读数不可用返回 None（报告里理应写了降级句、也就不会有「风格因子」表）；读数可用
+    但曲线缺失或日期对不上则直接失败——拿别的日子的曲线配今天的读数，比不画更糟。
+    """
+    style = ((evidence or {}).get("market_trend") or {}).get("market_style") or {}
+    block = style.get("style_factors") or {}
+    if not block.get("available"):
+        return None
+    series: Optional[Dict[str, Any]] = None
+    if series_path is not None and series_path.exists():
+        series = json.loads(series_path.read_text(encoding="utf-8"))
+    elif isinstance(evidence.get("style_factor_series"), dict):
+        series = evidence["style_factor_series"]
+    if not series:
+        raise RuntimeError(
+            "style factor series missing: evidence has style_factors readings but "
+            f"{series_path} does not exist (rerun daily.build-evidence)"
+        )
+    if series.get("as_of") != block.get("as_of"):
+        raise RuntimeError(
+            "style factor series freshness gate failed: "
+            f"series as_of={series.get('as_of')}, readings as_of={block.get('as_of')}, path={series_path}"
+        )
+    qa = [
+        {k: e.get(k) for k in ("symbol", "name", "ts_code", "role", "ok", "source", "start", "end",
+                                 "rows", "missing_trade_days", "max_abs_daily_return_pct", "valid_note",
+                                 "crosscheck", "error")}
+        for e in block.get("qa") or []
+    ]
+    return {
+        "target_sec": target_sec,
+        "as_of": block.get("as_of"),
+        "source": block.get("source"),
+        "coverage": block.get("coverage"),
+        "boundaries": block.get("boundaries") or [],
+        "order": block.get("order") or [],
+        "metrics": block.get("metrics") or {},
+        "robustness": (block.get("robustness_checks") or {}).get("size_csi1000_over_csi300") or {},
+        "sensitivity": block.get("sensitivity_total_return") or [],
+        "tr_note": block.get("total_return_note"),
+        "tr_status": block.get("total_return_status") or {},
+        "cells": block.get("style_cells") or [],
+        "corr": block.get("factor_correlations") or {},
+        "window_dates": block.get("window_dates") or {},
+        "qa": qa,
+        "dates": series.get("dates") or [],
+        "factors": series.get("factors") or {},
+        "views": series.get("views") or {},
+        "view_defs": series.get("view_defs") or [],
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Decorations: pill vocabulary + "一句话盘面判断" hero card (mechanism lives in
 # the shared package; here we only declare the market-sense-specific data).
@@ -484,6 +574,42 @@ MARKET_SENSE_EXTRA_CSS = """
 .style-compare-legend svg { width: 24px; height: 8px; overflow: visible; }
 .style-compare-note { margin-top: 6px; color: var(--ink-3); font-size: 12px; line-height: 1.55; }
 @media (max-width: 900px) { .style-compare-grid { grid-template-columns: 1fr; } }
+.sf-panel { margin: 14px 0 24px; }
+.sf-head { font-size: 12px; color: var(--ink-3); margin-bottom: 10px; line-height: 1.6; }
+.sf-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.sf-card { display: block; background: var(--surface); border: 1px solid var(--line-2); border-top: 3px solid var(--sf-accent); border-radius: var(--r-md); padding: 12px 14px; color: inherit; text-decoration: none; }
+.sf-card .sf-eyebrow { font-size: 12px; color: var(--ink-3); }
+.sf-card strong { display: block; font-size: 24px; color: var(--sf-accent); font-variant-numeric: tabular-nums; margin-top: 2px; }
+.sf-card .sf-small { font-size: 11px; color: var(--ink-3); }
+.sf-card p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; }
+.sf-heat { margin: 4px 0 16px; }
+.sf-subtitle { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.sf-panel th { position: static; }
+.sf-panel td.sf-rowh { font-weight: 600; color: var(--ink-1); white-space: nowrap; }
+.sf-heat-table { border-collapse: collapse; width: 100%; min-width: 420px; font-size: 13px; }
+.sf-heat-table th, .sf-heat-table td { padding: 7px 10px; border-bottom: 1px solid var(--line-2); text-align: left; }
+.sf-heat-table td.num { text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; }
+.sf-note { font-size: 12px; color: var(--ink-3); margin-top: 6px; line-height: 1.55; }
+.sf-toolbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 0; margin-bottom: 8px; background: var(--bg); border-bottom: 1px solid var(--line-2); }
+.sf-toolbar span { font-size: 12px; color: var(--ink-3); margin-right: auto; }
+.sf-range { background: var(--surface); border: 1px solid var(--line-2); border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; color: var(--ink-2); }
+.sf-range.active { background: #27797b; border-color: #27797b; color: #fff; }
+.sf-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.sf-chart-card { min-width: 0; margin: 0; }
+.sf-formula { font-size: 11.5px; color: var(--ink-2); background: rgba(127,127,127,.07); padding: 5px 8px; border-radius: 4px; margin: 6px 0; }
+.sf-window-note { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.sf-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--ink-3); margin-top: 4px; }
+.sf-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.sf-legend i { width: 16px; height: 2px; display: inline-block; }
+.sf-legend i.dash { background: repeating-linear-gradient(90deg, #929185 0 3px, transparent 3px 6px); }
+.sf-details { margin-top: 14px; border: 1px solid var(--line-2); border-radius: var(--r-md); padding: 8px 14px; font-size: 13px; line-height: 1.65; }
+.sf-details summary { cursor: pointer; font-weight: 600; }
+.sf-details h4 { margin: 14px 0 4px; font-size: 13px; }
+.sf-table-wrap { overflow-x: auto; }
+.sf-table-wrap table { border-collapse: collapse; width: 100%; min-width: 0; font-size: 12px; margin: 6px 0; }
+.sf-table-wrap .sf-heat-table { min-width: 420px; font-size: 13px; margin: 0; }
+.sf-table-wrap th, .sf-table-wrap td { padding: 5px 8px; border-bottom: 1px solid var(--line-2); text-align: left; white-space: nowrap; }
+@media (max-width: 900px) { .sf-grid { grid-template-columns: 1fr; } .sf-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .kline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .kline-grid { grid-template-columns: 1fr; } }
 """
@@ -1036,6 +1162,18 @@ const formatDate = CK.fmt.date;
 const formatPercent = CK.fmt.signedPct;
 
 const SEC = window.__sec;
+
+function tableByHead(sec, key, head) {
+  for (const block of sec.blocks(key)) {
+    const tables = block.matches && block.matches("table") ? [block]
+      : Array.from(block.querySelectorAll ? block.querySelectorAll("table") : []);
+    for (const t of tables) {
+      const th = t.querySelector("th");
+      if (th && th.textContent.trim() === head) return t.closest(".table-wrap") || t;
+    }
+  }
+  return null;
+}
 const REPORT = window.__render;
 
 const indexConfigs = [
@@ -1077,7 +1215,10 @@ function insertIndexKlines() {
   }
   /* Anchor after the section's own table; no document-tail fallback — a chart
      that cannot find its section must fail the gate, not relocate itself. */
-  const anchorEl = SEC.find("index_trend", ".table-wrap") || SEC.tail("index_trend");
+  /* 2.x 第 2 章里先是情绪表、后是指数表：按首列表头「指数」认准指数表，
+     K 线才挂在指数表后面而不是情绪表后面；legacy 节里只有这一张表。 */
+  const anchorEl = tableByHead(SEC, "index_trend", "指数")
+    || SEC.find("index_trend", ".table-wrap") || SEC.tail("index_trend");
   if (!anchorEl) {
     REPORT.fail("hook:" + hook, "no insertion anchor inside section [index_trend]");
     return;
@@ -1837,6 +1978,332 @@ function round2(value) { return Math.round(value * 100) / 100; }
 
 
 # --------------------------------------------------------------------------- #
+# 市场风格因子面板（style_factors.py 的读数 + 旁路日频曲线）。
+# 呈现口径移植自 skillhub china-market-style-factors：六张读数卡、风格窗口热力表、
+# 全历史/三年/一年/60 日四窗口切换的详情图（风格比值上层=本窗口起点 100、下层=60 日
+# 滚动相对变化，含分红口径虚线；趋势/波动保留原单位），外加口径与数据质量附录。
+# 不画历史区间阴影；发布前回溯段只在文字里说明。
+# --------------------------------------------------------------------------- #
+STYLE_FACTORS_JS = r"""
+const P = __payload || {};
+const HOOK = "style-factors";
+const targetSec = P.target_sec;
+const COLORS = { size: "#27797b", growth: "#725c98", small_tail: "#b9763d", dividend: "#567450", market_trend: "#39547d", volatility: "#9c6666" };
+const STYLE_KEYS = ["size", "growth", "small_tail", "dividend"];
+const keys = (P.order || []).filter(k => (P.factors || {})[k] && (P.metrics || {})[k]);
+if (!keys.length) {
+  window.__render.attest(HOOK, { rendered: 0, matched: 0, expected: 1, unmatched: [{ name: "style-factors", reason: "no_payload" }] });
+  return;
+}
+
+/* 锚点：本节里第一列表头就是「风格因子」的那张表。找不到就是报告和声明不一致，直接失败。 */
+let anchor = null;
+for (const block of window.__sec.blocks(targetSec)) {
+  const tables = block.matches && block.matches("table") ? [block] : Array.from(block.querySelectorAll ? block.querySelectorAll("table") : []);
+  for (const t of tables) {
+    const th = t.querySelector("th");
+    if (th && th.textContent.trim() === "风格因子") { anchor = t.closest(".table-wrap") || t; break; }
+  }
+  if (anchor) break;
+}
+if (!anchor) {
+  window.__render.fail("hook:" + HOOK, "no 风格因子 table inside section [" + targetSec + "]");
+  return;
+}
+
+const { svgEl, svgText } = CK;
+const M = P.metrics;
+const F = P.factors;
+const dates = P.dates || [];
+const pct = v => (Number.isFinite(v) ? `${v > 0 ? "+" : ""}${v.toFixed(2)}%` : "—");
+const fix = (v, d) => (Number.isFinite(v) ? v.toFixed(d == null ? 2 : d) : "—");
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+const panel = el("section", "sf-panel");
+panel.appendChild(el("div", "sf-head",
+  `风格因子 · 行情截至 ${P.as_of} · 相对变化为比值涨跌，不是两组收益率相减 · ${P.source || ""}`));
+
+/* 1. 六张读数卡 */
+const cards = el("div", "sf-cards");
+keys.forEach(k => {
+  const m = M[k];
+  const isStyle = STYLE_KEYS.includes(k);
+  const c = el("a", "sf-card");
+  c.href = "#sf-" + k;
+  c.style.setProperty("--sf-accent", COLORS[k]);
+  c.appendChild(el("span", "sf-eyebrow", m.name));
+  c.appendChild(el("strong", "", isStyle ? pct(m.relative_60d_pct) : `${fix(m.level)}%`));
+  const pctTxt = Number.isFinite(m.percentile) ? `历史分位 ${m.percentile.toFixed(1)}%` : "历史分位样本不足";
+  c.appendChild(el("span", "sf-small", `${isStyle ? "60日相对变化" : m.unit} · ${pctTxt}`));
+  c.appendChild(el("p", "", m.label || ""));
+  cards.appendChild(c);
+});
+panel.appendChild(cards);
+
+/* 2. 风格窗口热力表：同一因子不同窗口，结论可以不同 */
+const heat = el("div", "sf-heat");
+heat.appendChild(el("div", "sf-subtitle", "风格切换：不同观察窗口，结论并不相同"));
+/* 行标签用 td：主题把 th 设成 sticky，行首的 th 会叠到表头上 */
+const heatWrap = el("div", "sf-table-wrap");
+const ht = el("table", "sf-heat-table");
+const hThead = el("thead");
+const hh = el("tr");
+["因子", "20个交易日", "60个交易日", "120个交易日"].forEach(t => hh.appendChild(el("th", "", t)));
+hThead.appendChild(hh);
+ht.appendChild(hThead);
+const hBody = el("tbody");
+ht.appendChild(hBody);
+STYLE_KEYS.filter(k => M[k]).forEach(k => {
+  const tr = el("tr");
+  tr.appendChild(el("td", "sf-rowh", M[k].name));
+  [20, 60, 120].forEach(n => {
+    const v = M[k][`relative_${n}d_pct`];
+    const td = el("td", "num", pct(v));
+    if (Number.isFinite(v)) {
+      const a = Math.min(Math.abs(v) / 20, 1) * 0.55 + 0.06;
+      td.style.background = v >= 0 ? `rgba(192,57,43,${a.toFixed(3)})` : `rgba(39,121,123,${a.toFixed(3)})`;
+    }
+    tr.appendChild(td);
+  });
+  hBody.appendChild(tr);
+});
+heatWrap.appendChild(ht);
+heat.appendChild(heatWrap);
+heat.appendChild(el("div", "sf-note", "正值偏向：小盘 / 成长 / 更小市值 / 红利。颜色只表示方向，不代表好坏。"));
+panel.appendChild(heat);
+
+/* 3. 四窗口切换 + 六张详情图 */
+const views = P.views || {};
+const viewDefs = (P.view_defs || []).filter(v => views[v.key]);
+const toolbar = el("div", "sf-toolbar");
+toolbar.appendChild(el("span", "", "切换六张图的观察窗口；风格图下层始终是 60 日滚动信号。"));
+const buttons = [];
+viewDefs.forEach(v => {
+  const b = el("button", "sf-range", v.name);
+  b.type = "button";
+  b.dataset.range = v.key;
+  b.addEventListener("click", () => setView(v.key));
+  toolbar.appendChild(b);
+  buttons.push(b);
+});
+panel.appendChild(toolbar);
+
+const grid = el("div", "sf-grid");
+const chartCards = {};
+keys.forEach((k, i) => {
+  const m = M[k];
+  const isStyle = STYLE_KEYS.includes(k);
+  const card = CK.card("chart-card sf-chart-card",
+    `${String(i + 1).padStart(2, "0")} ${m.name}${isStyle ? `（上升＝${m.positive}）` : ""}`,
+    isStyle
+      ? `60日相对变化 ${pct(m.relative_60d_pct)} · 历史分位 ${Number.isFinite(m.percentile) ? m.percentile.toFixed(1) + "%" : "—"} · ${m.label}`
+      : `当前读数 ${fix(m.level)}% · 历史分位 ${Number.isFinite(m.percentile) ? m.percentile.toFixed(1) + "%" : "—"} · ${m.label}`);
+  card.id = "sf-" + k;
+  const formula = el("div", "sf-formula", m.formula || "");
+  const note = el("div", "sf-window-note");
+  const host = el("div", "sf-svg-host");
+  card.append(formula, host, note);
+  if (isStyle && (F[k].tr_relative_60d || []).length) {
+    const lg = el("div", "sf-legend");
+    lg.innerHTML = `<span><i style="background:${COLORS[k]}"></i>价格口径：60日相对变化</span><span><i class="dash"></i>含分红口径：敏感性核验</span>`;
+    card.appendChild(lg);
+  }
+  grid.appendChild(card);
+  chartCards[k] = { card, host, note, tip: CK.tooltip(card) };
+});
+panel.appendChild(grid);
+
+/* 4. 口径、核验与数据质量（折叠） */
+panel.appendChild(buildDetails());
+
+anchor.after(panel);
+setView(viewDefs.some(v => v.key === "all") ? "all" : (viewDefs[0] || {}).key);
+window.__render.attest(HOOK, { rendered: 1, matched: 1, expected: 1, unmatched: [], el: panel });
+
+function windowIndices(stat) {
+  const idx = [];
+  for (let i = 0; i < dates.length; i += 1) {
+    if (dates[i] >= stat.from && dates[i] <= stat.to) idx.push(i);
+  }
+  return idx;
+}
+
+function setView(view) {
+  if (!view) return;
+  buttons.forEach(b => b.classList.toggle("active", b.dataset.range === view));
+  keys.forEach(k => {
+    const stat = (views[view] || {})[k];
+    const cc = chartCards[k];
+    cc.host.innerHTML = "";
+    if (!stat) { cc.note.textContent = "该窗口无数据"; return; }
+    const isStyle = STYLE_KEYS.includes(k);
+    const idx = windowIndices(stat).filter(i => Number.isFinite(F[k].level[i]));
+    if (idx.length < 2) { cc.note.textContent = "该窗口有效观测不足"; return; }
+    const base = stat.raw_start;
+    const upper = idx.map(i => (isStyle ? F[k].level[i] / base * 100 : F[k].level[i]));
+    const panels = [{ values: upper, ref: isStyle ? 100 : (k === "market_trend" ? 0 : null), color: COLORS[k], unit: isStyle ? "本窗口起点=100" : "%", height: isStyle ? 176 : 210 }];
+    if (isStyle) {
+      const lower = idx.map(i => F[k].relative_60d[i]);
+      const trLine = (F[k].tr_relative_60d || []).length ? idx.map(i => F[k].tr_relative_60d[i]) : null;
+      panels.push({ values: lower, extra: trLine, ref: 0, color: COLORS[k], unit: "60日相对变化（%）", height: 128 });
+    }
+    cc.host.appendChild(drawPanels(k, idx, panels, cc));
+    const change = Number.isFinite(stat.change) ? `${stat.change >= 0 ? "+" : ""}${stat.change.toFixed(2)}` : "—";
+    cc.note.textContent = `${stat.view_name}：${stat.from} → ${stat.to} ｜ ` +
+      (isStyle ? `起点=100；区间相对变化 ${change}%` : `期末 ${fix(stat.raw_last)}%；区间变化 ${change} 个百分点`);
+  });
+}
+
+function drawPanels(k, idx, panels, cc) {
+  const W = 560;
+  const padL = 46, padR = 14, gap = 22, top = 10, bottom = 26;
+  const H = top + panels.reduce((a, p) => a + p.height, 0) + gap * (panels.length - 1) + bottom;
+  const usableW = W - padL - padR;
+  const n = idx.length;
+  const x = j => padL + (n <= 1 ? usableW / 2 : j / (n - 1) * usableW);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+  let y0 = top;
+  const scales = [];
+  panels.forEach((p, pi) => {
+    const vals = p.values.concat(p.extra || []).filter(Number.isFinite);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (p.ref != null) { lo = Math.min(lo, p.ref); hi = Math.max(hi, p.ref); }
+    const padV = Math.max((hi - lo) * 0.09, 0.1);
+    lo -= padV; hi += padV;
+    const y = v => y0 + (hi - v) / (hi - lo) * p.height;
+    scales.push({ y, p });
+    for (let g = 0; g <= 3; g += 1) {
+      const v = lo + (hi - lo) * g / 3;
+      svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: y(v), y2: y(v), class: "grid-line" }));
+      svg.appendChild(svgText(padL - 4, y(v) + 3, v.toFixed(Math.abs(hi - lo) < 5 ? 1 : 0), "end", "var(--text-tertiary)", 9));
+    }
+    if (p.ref != null) {
+      svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: y(p.ref), y2: y(p.ref), stroke: "#999", "stroke-width": 0.8, "stroke-dasharray": "4 3" }));
+    }
+    svg.appendChild(svgText(padL, y0 - 1, p.unit, "start", "var(--text-tertiary)", 9));
+    const line = (values, attrs) => {
+      let d = "", pen = false;
+      values.forEach((v, j) => {
+        if (!Number.isFinite(v)) { pen = false; return; }
+        d += `${pen ? "L" : "M"} ${x(j).toFixed(1)} ${y(v).toFixed(1)} `;
+        pen = true;
+      });
+      if (d) svg.appendChild(svgEl("path", Object.assign({ d, fill: "none", "stroke-linejoin": "round" }, attrs)));
+    };
+    if (p.extra) line(p.extra, { stroke: "#929185", "stroke-width": 1, "stroke-dasharray": "3 3" });
+    line(p.values, { stroke: p.color, "stroke-width": n > 1500 ? 1 : 1.6 });
+    if (pi === 0) {
+      const lastJ = n - 1;
+      if (Number.isFinite(p.values[lastJ])) svg.appendChild(svgEl("circle", { cx: x(lastJ), cy: y(p.values[lastJ]), r: 2.8, fill: p.color }));
+    }
+    y0 += p.height + gap;
+  });
+  /* x 轴：首尾写全日期，中间按跨度写年月或月日 */
+  const span = (Date.parse(dates[idx[n - 1]]) - Date.parse(dates[idx[0]])) / 86400000;
+  const ticks = 5;
+  for (let t = 0; t < ticks; t += 1) {
+    const j = Math.round(t * (n - 1) / (ticks - 1));
+    const d = dates[idx[j]];
+    const label = t === 0 || t === ticks - 1 ? d : (span > 365 ? d.slice(0, 7) : d.slice(5));
+    svg.appendChild(svgText(x(j), H - 8, label, t === 0 ? "start" : (t === ticks - 1 ? "end" : "middle"), "var(--text-tertiary)", 9));
+  }
+  /* 悬停：按像素反推最近的交易日，不给几千个日期各挂一个热区 */
+  const hit = svgEl("rect", { x: padL, y: top, width: usableW, height: H - top - bottom, fill: "transparent" });
+  const cursor = svgEl("line", { x1: 0, x2: 0, y1: top, y2: H - bottom, stroke: "#999", "stroke-width": 0.6, opacity: 0 });
+  svg.appendChild(cursor);
+  hit.addEventListener("mousemove", ev => {
+    const r = svg.getBoundingClientRect();
+    const sx = (ev.clientX - r.left) * W / r.width;
+    const j = Math.max(0, Math.min(n - 1, Math.round((sx - padL) / usableW * (n - 1))));
+    cursor.setAttribute("x1", x(j)); cursor.setAttribute("x2", x(j)); cursor.setAttribute("opacity", 1);
+    const rows = [`<div style="color:#94a3b8;font-size:11px">${dates[idx[j]]}</div>`];
+    scales.forEach(({ p }, pi) => {
+      const v = p.values[j];
+      const lab = pi === 0 ? (STYLE_KEYS.includes(k) ? "相对强弱" : M[k].name) : "60日相对变化";
+      rows.push(`<div>${lab}: <strong>${pi === 0 && STYLE_KEYS.includes(k) ? fix(v) : (pi === 0 ? fix(v) + "%" : pct(v))}</strong></div>`);
+      if (p.extra && Number.isFinite(p.extra[j])) rows.push(`<div>含分红60日: <strong>${pct(p.extra[j])}</strong></div>`);
+    });
+    cc.tip.innerHTML = rows.join("");
+    cc.tip.style.opacity = "1";
+    CK.moveTip(cc.tip, cc.card, ev);
+  });
+  hit.addEventListener("mouseleave", () => { cc.tip.style.opacity = "0"; cursor.setAttribute("opacity", 0); });
+  svg.appendChild(hit);
+  return svg;
+}
+
+function table(headers, rows) {
+  const wrap = el("div", "sf-table-wrap");
+  const t = el("table");
+  const thead = el("thead");
+  const tr = el("tr");
+  headers.forEach(h => tr.appendChild(el("th", "", h)));
+  thead.appendChild(tr);
+  const tbody = el("tbody");
+  t.append(thead, tbody);
+  rows.forEach(r => {
+    const row = el("tr");
+    r.forEach((c, i) => row.appendChild(el("td", i === 0 ? "sf-rowh" : "num", c)));
+    tbody.appendChild(row);
+  });
+  wrap.appendChild(t);
+  return wrap;
+}
+
+function buildDetails() {
+  const d = el("details", "sf-details");
+  d.appendChild(el("summary", "", "口径、全收益核验与数据质量"));
+  keys.forEach(k => {
+    const p = el("p");
+    p.innerHTML = `<b>${M[k].name}</b>：`;
+    p.appendChild(document.createTextNode(`${M[k].formula}；${M[k].description}`));
+    d.appendChild(p);
+  });
+  d.appendChild(el("p", "", "前四个风格因子在各窗口起点重设为100，终值减100即区间相对变化；趋势与波动保留原单位。三年与一年按日历年回溯，顺延到首个可用交易日；60日采用60个交易日收益区间（61个收盘观测）。图中不添加历史区间阴影。"));
+  const releases = STYLE_KEYS.filter(k => M[k]).map(k => `${M[k].name}发布边界 ${M[k].release}`).join("；");
+  d.appendChild(el("p", "", `发布前回溯段仅以文字说明（${releases}；趋势与波动随全指配对为 ${(M.market_trend || {}).release || "—"}）：曲线保留这些观测，历史分位排除它们及预热不足的窗口，只比较当日之前、至少252个样本。`));
+
+  d.appendChild(el("h4", "", "含分红（全收益）敏感性核验"));
+  d.appendChild(el("p", "", P.tr_note || ""));
+  if ((P.sensitivity || []).length) {
+    d.appendChild(table(["因子", "10日", "20日", "60日", "120日", "与价格口径方向"],
+      P.sensitivity.map(r => [r.name + (r.extension ? "（DMS 扩展：H00922/H00985）" : ""),
+        pct(r.relative_10d_pct), pct(r.relative_20d_pct), pct(r.relative_60d_pct), pct(r.relative_120d_pct),
+        r.all_directions_agree ? "全部一致" : "存在差异"])));
+  }
+  Object.entries(P.tr_status || {}).forEach(([g, st]) => { if (st !== "complete") d.appendChild(el("p", "sf-note", `${g}：${st}`)); });
+
+  const rb = P.robustness || {};
+  d.appendChild(el("h4", "", "规模稳健性对照"));
+  d.appendChild(el("p", "", `${rb.proxy || "中证1000/沪深300"}：20日 ${pct(rb.relative_20d_pct)}，60日 ${pct(rb.relative_60d_pct)}，120日 ${pct(rb.relative_120d_pct)}。与主规模指标对照：${rb.note || "—"}。`));
+
+  if ((P.cells || []).length) {
+    d.appendChild(el("h4", "", "六个风格格子与全指（价格口径绝对收益）"));
+    d.appendChild(table(["指数", "20日", "60日", "120日"],
+      P.cells.map(c => [c.name, pct(c.return_20d_pct), pct(c.return_60d_pct), pct(c.return_120d_pct)])));
+  }
+  const corrKeys = Object.keys(P.corr || {});
+  if (corrKeys.length) {
+    d.appendChild(el("h4", "", "四个风格因子日度对数价差相关系数（全样本）"));
+    d.appendChild(table([""].concat(corrKeys.map(k => (M[k] || {}).name || k)),
+      corrKeys.map(a => [(M[a] || {}).name || a].concat(corrKeys.map(b => fix(P.corr[a][b], 3))))));
+  }
+  d.appendChild(el("h4", "", "来源与质量"));
+  d.appendChild(el("p", "", "所有必需序列已核验：截止日期一致、日期唯一、价格为正、各自区间内交易日零缺失；不填充缺失价格、不跨源拼接，只允许整序列换源。"));
+  d.appendChild(table(["序列", "代码", "来源", "开始", "结束", "行数", "缺失日", "交叉源差(bps)"],
+    (P.qa || []).map(q => [q.name + (q.role === "total_return" ? "（可选）" : ""), q.ts_code || q.symbol, q.ok ? q.source : "失败",
+      q.start || "—", q.end || "—", q.rows != null ? String(q.rows) : "—", q.missing_trade_days != null ? String(q.missing_trade_days) : "—",
+      q.crosscheck ? `${fix(q.crosscheck.max_diff_bps)}（${q.crosscheck.overlap}日）` : "—"])));
+  (P.qa || []).filter(q => q.valid_note || q.error).forEach(q => d.appendChild(el("p", "sf-note", `${q.name}：${q.valid_note || q.error}`)));
+  const ul = el("ul");
+  (P.boundaries || []).concat(P.coverage ? [P.coverage] : []).forEach(b => ul.appendChild(el("li", "", b)));
+  d.appendChild(ul);
+  return d;
+}
+"""
+
+
+# --------------------------------------------------------------------------- #
 # Market-trend mini-chart panel driven by market_data.json.
 # --------------------------------------------------------------------------- #
 MARKET_TRENDS_JS = r"""
@@ -1883,7 +2350,18 @@ charts.forEach(config => {
    deliberately no "append to the document instead" fallback: that fallback is
    what silently moved five charts to the bottom of the page the day 情绪趋势
    was renumbered from 1.1 to 1.2. */
-const insertAfter = window.__sec.tail("sentiment_trend");
+/* 2.x 的第 2 章在情绪表之后还有指数与风格两段，趋势图要紧跟情绪表，
+   不能掉到风格因子下面；legacy 的情绪趋势节仍挂在节尾。 */
+let insertAfter = null;
+if (window.__sec.head("temp_macro")) {
+  for (const block of window.__sec.blocks("temp_macro")) {
+    const t = block.matches && block.matches("table") ? block
+      : (block.querySelector ? block.querySelector("table") : null);
+    const th = t && t.querySelector("th");
+    if (th && th.textContent.trim() === "指标") { insertAfter = t.closest(".table-wrap") || t; break; }
+  }
+}
+insertAfter = insertAfter || window.__sec.tail("sentiment_trend");
 if (!insertAfter) {
   window.__render.fail("hook:" + HOOK, "section [sentiment_trend] not found — refusing to relocate the trend panel");
   return;
@@ -2119,6 +2597,11 @@ def add_arguments(parser) -> None:
         help="Stock kline JSON path. Defaults to sibling kline_YYYYMMDD.json; falls back to evidence stock_kline_records.",
     )
     parser.add_argument(
+        "--style-factors",
+        default=None,
+        help="Style factor series JSON. Defaults to sibling style_factors_YYYYMMDD.json; falls back to evidence style_factor_series.",
+    )
+    parser.add_argument(
         "--lifecycle-days",
         type=int,
         default=22,
@@ -2207,6 +2690,21 @@ def build_job(args) -> RenderJob:
         missing=bool((evidence.get("metadata") or {}).get("missing")) and not stock_klines_raw,
     )
     style_series_payload = extract_style_series_payload(evidence)
+    # 风格因子面板：只在报告真的写了「风格因子」表时挂（HTML 只呈现 Markdown 已有的
+    # 内容）；挂上之后旧的 Baostock 归一化对比图退场，两套风格图不并存。
+    style_factor_path = (
+        Path(args.style_factors) if getattr(args, "style_factors", None) else default_style_factor_path(input_path)
+    )
+    style_factor_target = (
+        style_factor_target_section(markdown_text, active_contract)
+        if STYLE_FACTOR_TABLE_MARKER in markdown_text else None
+    )
+    style_factor_payload = (
+        extract_style_factor_payload(evidence, style_factor_path, style_factor_target)
+        if style_factor_target else None
+    )
+    if style_factor_payload:
+        style_series_payload = None
     state_timeline_payload = extract_state_timeline_payload(evidence)
     concentration_payload = extract_concentration_payload(evidence)
     # 集中度轨迹图只挂在 2.x 报告上：legacy(1.x) 章节里没有 1.2 四卡读数，凭空
@@ -2319,6 +2817,14 @@ def build_job(args) -> RenderJob:
             ChartHook(name="style-compare", payload=style_series_payload, js=STYLE_COMPARE_JS),
             expects=style_expects,
         )
+    if style_factor_payload:
+        builder.add_chart_hook(
+            ChartHook(name="style-factors", payload=style_factor_payload, js=STYLE_FACTORS_JS),
+            expects=[HookExpectation(
+                name="style-factors", target_sec=style_factor_target, expect_count=1,
+                note="读数卡 + 窗口热力表 + 四窗口详情图 + 口径与质检附录，挂在「风格因子」表之后",
+            )],
+        )
     if state_timeline_payload:
         builder.add_chart_hook(
             # 时间轴挂在状态卡里面，所以要排在 TREND_STATE_CARD_JS 之后执行；
@@ -2358,6 +2864,8 @@ def build_job(args) -> RenderJob:
             "stock_kline_records": len(stock_kline_data.get("by_ts_code") or {}),
             "state_timeline_days": len((state_timeline_payload or {}).get("states") or []),
             "concentration_days": len((concentration_payload or {}).get("recent") or []),
+            "style_factor_days": len((style_factor_payload or {}).get("dates") or []),
+            "style_factor_section": style_factor_target,
             "style_series_records": {
                 item["key"]: len(item.get("records") or [])
                 for item in (style_series_payload or {}).get("indices", [])

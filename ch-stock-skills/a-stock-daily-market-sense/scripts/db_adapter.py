@@ -209,6 +209,9 @@ def write_dataset(
             columns = list(df.columns)
             col_str = ",".join(columns)
             records = df[columns].replace({pd.NaT: None}).where(pd.notnull(df), None).to_records(index=False).tolist()
+            # 指数的发布前回溯段只有收盘价（国证风格 2010 年前 OHLC/vol 全是 NaN）：
+            # NaN 进 BIGINT 列直接报 out of range，进 NUMERIC 列则伪装成有值。
+            records = _null_out_non_finite(records)
             execute_values(
                 cur,
                 f"INSERT INTO {table} ({col_str}) VALUES %s",

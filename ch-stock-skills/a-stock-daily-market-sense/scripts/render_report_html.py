@@ -562,6 +562,13 @@ MARKET_SENSE_EXTRA_CSS = """
 .trend-state-card li:first-child { border-top: 0; }
 .state-timeline { margin-top: 12px; border-top: 1px dashed var(--line-2); padding-top: 10px; overflow-x: auto; }
 .concentration-timeline { margin-top: 14px; }
+.concentration-timeline .concentration-reading { margin-bottom: 6px; }
+.concentration-timeline .concentration-caption { font-size: 12px; color: var(--ink-3, #888); margin-bottom: 4px; }
+.concentration-timeline .concentration-chart { overflow-x: auto; }
+.concentration-timeline .concentration-chart svg { width: 100%; min-width: 640px; }
+.concentration-timeline .stl-legend { gap: 4px 12px; }
+.concentration-timeline .stl-legend .cr-key { width: 16px; height: 2px; }
+.concentration-timeline .stl-legend .driver-key { border-radius: 50%; }
 .state-timeline svg { display: block; max-width: 100%; height: auto; }
 .state-timeline .stl-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; font-size: 11px; color: var(--ink-3, #888); }
 .state-timeline .stl-legend span { display: inline-flex; align-items: center; gap: 4px; }
@@ -988,7 +995,6 @@ const svg = document.createElementNS(NS, "svg");
 svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
 svg.setAttribute("width", String(W));
 svg.setAttribute("height", String(H));
-svg.style.minWidth = Math.min(W, 640) + "px";
 svg.setAttribute("role", "img");
 svg.setAttribute("aria-label", "近 " + n + " 个交易日的成交额集中度、量能环境与驱动状态");
 
@@ -1025,11 +1031,12 @@ while (i < n) {
   rect.setAttribute("fill-opacity", cur ? "0.7" : "1");
   const title = document.createElementNS(NS, "title");
   title.textContent = rows[i].date + (j > i ? " ~ " + rows[j].date : "") + "　"
-    + (cur ? ENV_LABEL[cur] : "无数据") + "（当日总成交额 / 自身20日均）";
+    + (cur ? (ENV_LABEL[cur] || cur) : "无数据") + "（当日总成交额 / 自身20日均）";
   rect.appendChild(title);
   svg.appendChild(rect);
-  if (cur && w >= ENV_LABEL[cur].length * 10 + 6) {
-    svg.appendChild(label(x + w / 2, y + ribbonH / 2 + 4, ENV_LABEL[cur],
+  const envLabel = ENV_LABEL[cur] || cur;
+  if (cur && w >= envLabel.length * 10 + 6) {
+    svg.appendChild(label(x + w / 2, y + ribbonH / 2 + 4, envLabel,
       { anchor: "middle", fill: "#fff", opacity: "0.95", weight: "600", size: "10" }));
   }
   i = j + 1;
@@ -1091,6 +1098,26 @@ rows.forEach((r, k) => {
   svg.appendChild(dot);
 });
 
+/* 每个交易日都能读到双线数值，常态日同样可查；不再增加逐日数值表。 */
+rows.forEach((r, k) => {
+  const hit = document.createElementNS(NS, "rect");
+  hit.setAttribute("x", String(padL + k * cellW));
+  hit.setAttribute("y", String(topY));
+  hit.setAttribute("width", String(cellW));
+  hit.setAttribute("height", String(lineH));
+  hit.setAttribute("fill", "transparent");
+  hit.setAttribute("tabindex", "0");
+  const reading = r.date + " · CR1% " + (r.cr_1pct == null ? "缺失" : r.cr_1pct + "%")
+    + " · CR5% " + (r.cr_5pct == null ? "缺失" : r.cr_5pct + "%")
+    + " · " + (ENV_LABEL[r.env_bucket] || r.env_bucket || "量能环境缺失")
+    + " · " + (STATE_LABEL[r.state] || (r.state === "normal" ? "常态集中" : r.state) || "驱动状态缺失");
+  hit.setAttribute("aria-label", reading);
+  const title = document.createElementNS(NS, "title");
+  title.textContent = reading;
+  hit.appendChild(title);
+  svg.appendChild(hit);
+});
+
 /* —— 日期轴：密的时候隔几个标一个，末日必标 */
 const step = cellW >= 34 ? 2 : (cellW >= 24 ? 3 : 4);
 rows.forEach((r, k) => {
@@ -1102,33 +1129,52 @@ rows.forEach((r, k) => {
 
 const wrap = document.createElement("div");
 wrap.className = "state-timeline concentration-timeline";
+/* 把原读数移动到对应图上方，不克隆、不截断；口径、样本与缺口仍完整可见。
+   只处理本章唯一的集中度读数，其他章节的分析不由渲染层改写。 */
+const readings = Array.from(document.querySelectorAll("#report-body li")).filter(li =>
+  SEC.contains("pos_gate", li) && /^\s*成交额集中度[：:]/.test(li.textContent));
+if (readings.length === 1) {
+  const source = readings[0];
+  const oldList = source.parentElement;
+  const list = document.createElement("ul");
+  list.className = "concentration-reading";
+  list.appendChild(source);
+  wrap.appendChild(list);
+  if (!oldList.children.length) oldList.remove();
+}
 const cap = document.createElement("div");
-cap.style.cssText = "font-size:12px;opacity:.7;margin-bottom:4px;";
-cap.textContent = "近 " + n + " 个交易日成交额集中度：CR1% / CR5% · 量能环境 · 驱动状态"
-  + (__payload.data_through ? "（数据截至 " + __payload.data_through + "）" : "");
+cap.className = "concentration-caption";
+cap.textContent = (readings.length === 1 ? "" : "成交额集中度 · ") + "近 " + n + " 个交易日"
+  + (__payload.data_through ? " · 截至 " + __payload.data_through : "");
 wrap.appendChild(cap);
-wrap.appendChild(svg);
+const chart = document.createElement("div");
+chart.className = "concentration-chart";
+chart.setAttribute("tabindex", "0");
+chart.setAttribute("role", "region");
+chart.setAttribute("aria-label", "集中度轨迹，窄屏可横向滚动查看完整日期");
+chart.appendChild(svg);
+wrap.appendChild(chart);
 const legend = document.createElement("div");
 legend.className = "stl-legend";
-[["#2a9d8f", "CR1%（前 ~1% 个股）"], ["#4a6fa5", "CR5%（前 ~5% 个股）"]].forEach(pair => {
+function legendItem(color, text, kind) {
   const span = document.createElement("span");
   const dot = document.createElement("i");
-  dot.style.background = pair[0];
+  dot.className = kind || "";
+  dot.style.background = color;
   span.appendChild(dot);
-  span.appendChild(document.createTextNode(pair[1]));
+  span.appendChild(document.createTextNode(text));
   legend.appendChild(span);
+}
+[["#2a9d8f", "CR1%（前1%个股）"], ["#4a6fa5", "CR5%（前5%个股）"]].forEach(pair => {
+  legendItem(pair[0], pair[1], "cr-key");
 });
-Object.keys(ENV_LABEL).forEach(k => {
-  const span = document.createElement("span");
-  const dot = document.createElement("i");
-  dot.style.background = ENV_COLOR[k];
-  span.appendChild(dot);
-  span.appendChild(document.createTextNode(ENV_LABEL[k]));
-  legend.appendChild(span);
+Array.from(new Set(rows.map(r => r.env_bucket).filter(Boolean))).forEach(k => {
+  legendItem(ENV_COLOR[k] || "#8a8a8a", "量能：" + (ENV_LABEL[k] || k));
 });
-const note = document.createElement("span");
-note.textContent = "色点 = 剥离量能环境后的驱动状态（蓝=被动集中 · 琥珀=存量搬家 · 绿=主动集中 · 红=主动过热）";
-legend.appendChild(note);
+Array.from(new Set(rows.filter(r => r.cr_1pct != null && r.state &&
+  r.state !== "normal" && r.state !== "insufficient_history").map(r => r.state))).forEach(k => {
+  legendItem(STATE_COLOR[k] || "#8a8a8a", "驱动：" + (STATE_LABEL[k] || k), "driver-key");
+});
 wrap.appendChild(legend);
 /* 挂在状态卡之后：状态卡装着四张卡的读数 UL，集中度图是同一组读数的展开；
    卡没建成时退到 pos_gate 末块，作为兄弟节点插在其后（不塞进段落里）。 */

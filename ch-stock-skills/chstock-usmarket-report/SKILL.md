@@ -77,7 +77,7 @@ QQQ 用四个数读，不与个股做扩散度对比、不做风格判断：
 7. **异动核查**：对 ★ 票按优先级用 Tavily 核查，把来源填进异动扫描表。
 8. **校验 + 落稿**：每个数字结论能在 evidence 找到出处；每条催化能找到搜索来源。产出最终 Markdown。
 9. **跨日台账落库**：定稿后运行 `scripts/theme_ledger.py` 落库，让新方向票可标注首现 / 连续 N 晚 / 已建议待跟踪。
-10. **HTML 派生**（用户要求时）：Markdown 定稿后 `python scripts/render_report_html.py`；详见 `references/html_rendering.md`。
+10. **HTML 派生**（用户要求时）：Markdown 定稿后 `python scripts/render_report_html.py`；详见 `references/html_rendering.md`。主题行板读跨日台账，须先完成第 9 步落库再渲染，否则主题板退化为当日快照或缺席。
 
 ## 数据获取（脚本抓手）
 

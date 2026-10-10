@@ -13,6 +13,12 @@ Chart data sources, all deterministic:
   structured theme blocks the cross-day ledger consumes — reused here so the
   sector money-effect chart has the model's theme grouping without a separate
   handoff. The renderer never groups themes itself (that's the model's job).
+- theme ledger (`--ledger`, default ~/.usmarket-ledger/theme_ledger.jsonl):
+  cross-day theme records written by theme_ledger.py — powers the build-time
+  主题行板 (share rows + 隔日变动 + 16 期走势), in the visual language of
+  ch-news-reporter's geopolitical path board. Index snapshots power the
+  指数行板. Both are StaticFigures spliced in at build time, so they survive
+  readers that block inline scripts.
 """
 
 from __future__ import annotations
@@ -37,6 +43,8 @@ from html_report import (  # noqa: E402
     RenderJob,
     render_report,
 )
+
+import usmarket_boards  # noqa: E402  (same scripts/ dir; resolves via sys.path[0])
 
 
 FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n.*?\n---[ \t]*(?:\n|$)", re.DOTALL)
@@ -112,7 +120,9 @@ const ratX = v => Number.isFinite(CK.num(v)) ? CK.num(v).toFixed(1) + "x" : "—
 const stars = n => "★".repeat(Math.max(0, Math.min(3, n || 0)));
 
 insertIndexKlines();
-insertSectorChart();
+/* 主题行板（构建期 StaticFigure，台账数据）存在时，旧的运行期条形图让位；
+   台账/主题数据缺失时才回退到这张客户端图。 */
+if (!data.theme_board) insertSectorChart();
 insertPoolCharts();
 insertNewDirections();
 
@@ -362,6 +372,9 @@ function poolTipHtml(m) {
 }
 
 function insertNewDirections() {
+  /* 新方向卡片装饰已把正文里的编号列表升级成卡片（ke-list），
+     此处再插网格就是同一批主题的重复展示。装饰脚本先于本 hook 执行。 */
+  if (root.querySelector(".ke-list")) return;
   const nd = (data.themes || []).filter(t => t.is_new_direction);
   if (!nd.length) return;
   const grid = CK.grid("chart-grid");
@@ -643,6 +656,7 @@ def load_themes(path: Optional[Path]) -> List[Dict[str, Any]]:
         themes.append(
             {
                 "name": str(name),
+                "theme_id": str(rec.get("theme_id") or ""),
                 "stars": rec.get("stars"),
                 "dollar_vol_share": to_number(rec.get("dollar_vol_share")),
                 "state": rec.get("state"),
@@ -652,6 +666,35 @@ def load_themes(path: Optional[Path]) -> List[Dict[str, Any]]:
             }
         )
     return themes
+
+
+def default_ledger_path() -> Path:
+    """Same resolution theme_ledger.py uses: env override, else ~/.usmarket-ledger."""
+    import os
+
+    root = os.environ.get("USMARKET_LEDGER_DIR") or str(Path.home() / ".usmarket-ledger")
+    return Path(root).expanduser() / "theme_ledger.jsonl"
+
+
+def load_ledger_records(path: Optional[Path]) -> List[Dict[str, Any]]:
+    """Read the cross-day theme ledger (JSONL). Any problem degrades to []."""
+    if path is None or not path.exists():
+        return []
+    try:
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict):
+                rows.append(rec)
+        return rows
+    except OSError:
+        return []
 
 
 def to_number(value: Any) -> Optional[float]:
@@ -704,6 +747,7 @@ def extract_chart_payload(
         }
 
     qqq: Optional[Dict[str, Any]] = None
+    index_snapshots: Dict[str, Dict[str, Any]] = {}
     index_klines: List[Dict[str, Any]] = []
     for item in evidence.get("indices") or []:
         if not isinstance(item, dict):
@@ -712,6 +756,9 @@ def extract_chart_payload(
         ticker = str(item.get("ticker") or snapshot.get("ticker") or "").upper()
         if not ticker:
             continue
+        compact = compact_snapshot(ticker, item.get("snapshot"), name=short_name(snapshot.get("name"), ticker))
+        if compact is not None:
+            index_snapshots[ticker] = compact
         if ticker == "QQQ" and qqq is None:
             qqq = compact_snapshot("QQQ", item.get("snapshot"), name=snapshot.get("name"))
         records = item.get("kline_records") or []
@@ -778,6 +825,7 @@ def extract_chart_payload(
             "generated_at": evidence.get("generated_at"),
         },
         "index": qqq or {},
+        "index_snapshots": index_snapshots,
         "index_klines": index_klines,
         "stats": {
             "valid_count": valid_count,
@@ -802,6 +850,7 @@ def extract_title(markdown_text: str, fallback: str) -> str:
 def add_arguments(parser: Any) -> None:
     parser.add_argument("--evidence", default=None, help="Evidence JSON path. Defaults to a date-matched outputs/us-YYYY-MM-DD.json if found.")
     parser.add_argument("--themes", default=None, help="Themes JSON (the ledger lifecycle_<date>.json). Defaults to a date-matched file if found; drives the sector money-effect chart.")
+    parser.add_argument("--ledger", default=None, help="Theme ledger JSONL path. Defaults to $USMARKET_LEDGER_DIR/theme_ledger.jsonl or ~/.usmarket-ledger/theme_ledger.jsonl; powers the theme board's deltas and sparklines.")
     parser.add_argument("--keep-frontmatter", action="store_true", help="Render YAML frontmatter as visible content. Default strips it.")
 
 
@@ -824,6 +873,21 @@ def build_job(args: Any) -> RenderJob:
     if evidence_path:
         meta_text += f" | evidence={evidence_path.name}"
 
+    # Build-time dashboard boards (geo path-board visual language): 指数行板
+    # from evidence snapshots, 主题行板 from the cross-day ledger. Today's theme
+    # rows come from the ledger first (it is recorded before HTML derivation);
+    # the --themes lifecycle payload is the fallback for days never recorded.
+    ledger_path = Path(args.ledger).expanduser().resolve() if args.ledger else default_ledger_path()
+    ledger_records = load_ledger_records(ledger_path)
+    report_day = None if meta_date == "unknown" else meta_date
+    ledger_today = [r for r in ledger_records if str(r.get("asof") or "")[:10] == report_day]
+    themes_today = ledger_today or themes
+
+    figures, board_meta = usmarket_boards.build_usmarket_figures(
+        payload, themes_today, ledger_records, report_day
+    )
+    payload["theme_board"] = board_meta["theme_board"]
+
     builder = HtmlReportBuilder(
         title=title,
         theme=args.theme,
@@ -831,6 +895,10 @@ def build_job(args: Any) -> RenderJob:
         extra_css=USMARKET_COLOR_CSS,
     )
     builder.add_decoration(PillDecoration(USMARKET_PILL_RULES))
+    # 池外新方向的编号列表 → 编号卡片（view-time 装饰，纯展示层）
+    builder.add_decoration(usmarket_boards.NEW_DIRECTION_DECORATION)
+    for figure in figures:
+        builder.add_figure(figure)
     builder.add_chart_hook(ChartHook(name="usmarket", payload=payload, js=USMARKET_CHARTS_JS))
 
     output_path = Path(args.output).expanduser().resolve() if args.output else input_path.with_suffix(".html")
@@ -841,11 +909,14 @@ def build_job(args: Any) -> RenderJob:
         summary={
             "evidence": str(evidence_path) if evidence_path else None,
             "themes": str(themes_path) if themes_path else None,
+            "ledger": str(ledger_path) if ledger_path.exists() else None,
             "data_date": meta_date,
             "frontmatter_stripped": frontmatter_stripped,
+            "boards": board_meta,
             "charts": {
                 "index_klines": len(payload.get("index_klines") or []),
                 "themes": len(payload.get("themes") or []),
+                "themes_today": len(themes_today),
                 "pool_relative": len(payload.get("pool_relative") or []),
                 "group_index_series": len((payload.get("group_indices") or {}).get("series") or []),
             },

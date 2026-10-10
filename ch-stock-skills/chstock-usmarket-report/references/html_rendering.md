@@ -14,7 +14,28 @@ description: 仅供 chstock-usmarket-report skill 内部按需读取。说明美
 - HTML 必须从已定稿 Markdown 渲染，不让 renderer 代写正文，也不作为 Wiki 真相源。
 - 带 YAML frontmatter 默认剥离后渲染。
 - `==...==` 渲染为浅蓝提示块。
-- 图表只读 evidence 已有的价格 / 成交额 / 位置字段；催化仍以正文联网检索（Tavily/WebSearch）来源为准。
+- 图表只读 evidence 已有的价格 / 成交额 / 位置字段与台账 JSONL 的跨日登记；催化仍以正文联网检索（Tavily/WebSearch）来源为准。
+
+## 指数行板（构建期）
+
+「大盘」小节末尾接一块**指数速览行板**（QQQ / SOXX 各一整行）：
+
+- 行填充 = 52 周位置（越满越贴顶）；大数 = 当日涨跌；中列徽章 = 5 日累计；右端走势 = 近 60 个交易日收盘；代码旁小字给收盘 / 52周位置 / 量比。
+- 数据全取自 evidence `indices[].snapshot` + `kline_records`，构建期静态写入（StaticFigure），不依赖浏览器执行 JS。
+- 只有 QQQ 一条指数时自动单行，不留空位。
+
+## 主题行板（构建期）
+
+「板块赚钱效应」标题下接一块**主题成交额占比行板**，取代旧的运行期 SVG 条形图：
+
+- 每行一个主题，按当日成交额占比降序（至多 10 行）。行填充与大数 = 占比；徽章 = ★ 确认度（蓝=★★★、青=★★、灰=★及以下，★★★ 行带高亮边框）；主题名旁给生命周期状态 pill（确认主线 / 在场 / 低位启动 / 高位分歧 / 退潮 / 沉寂）与 池外 / 新方向 标签。
+- 中列 = 占比较上一登记日的百分点变动；右端走势 = 近 16 期占比轨迹。跨日匹配按 `theme_id`，主题改名不断线。
+- 数据源是跨日台账（`--ledger`，默认 `$USMARKET_LEDGER_DIR/theme_ledger.jsonl` 或 `~/.usmarket-ledger/theme_ledger.jsonl`）——**所以工作流必须先 `theme_ledger.py record` 落库、再渲染 HTML**；台账缺当日记录时回退 `--themes` 的 lifecycle JSON（当日快照、无隔日变动），两者都缺时整板缺席、退回旧条形图。
+- 当日未登记占比的主题行照实显示 `—`（扫描残缺日常见），不伪造数字。
+
+## 新方向卡片（浏览期装饰）
+
+「池外新方向」小节的编号列表在浏览期升级为编号卡片（标题取加粗段、正文其余部分随卡）。构建期 Markdown 不动，禁 JS 的阅读器仍看到原列表。卡片生效时，由 themes 数据驱动的旧 nd-card 网格自动让位，避免同一批新方向重复展示。
 
 ## 热力墙
 
@@ -51,4 +72,7 @@ description: 仅供 chstock-usmarket-report skill 内部按需读取。说明美
 ```bash
 python scripts/render_report_html.py --input reports/us-2026-06-18.md --evidence outputs/us-2026-06-18.json
 python scripts/render_report_html.py --input reports/us-2026-06-18.md --theme print
+python scripts/render_report_html.py --input reports/us-2026-06-18.md --ledger ~/.usmarket-ledger/theme_ledger.jsonl
 ```
+
+`--ledger` 一般不用显式给（默认按台账标准路径解析），只在台账被移到非默认位置时用。

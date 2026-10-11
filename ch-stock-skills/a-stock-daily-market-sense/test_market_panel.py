@@ -867,6 +867,69 @@ def test_cleanup_intermediates():
 
 
 # --------------------------------------------------------------------------- #
+# 创业板指 PE-TTM（index_dailybasic → evidence 块 → 渲染载荷）
+# --------------------------------------------------------------------------- #
+def _pe_frame(rows):
+    return pd.DataFrame(rows, columns=["ts_code", "trade_date", "pe", "pe_ttm", "pb"])
+
+
+def test_build_chinext_pe_block_full_history_percentile():
+    # 4 天历史，最新值 30：分位母体是全历史（20、30 两天 ≤ 30，占 2/4），不是显示窗口。
+    df = _pe_frame([
+        ("399006.SZ", "20260601", 40.0, 40.0, 5.0),
+        ("399006.SZ", "20260602", 20.0, 20.0, 4.0),
+        ("399006.SZ", "20260603", 50.0, 50.0, 6.0),
+        ("399006.SZ", "20260604", 30.0, 30.0, 4.5),
+    ])
+    block = mp.build_chinext_pe_block(df, "20260604", display_days=2)
+    assert block["available"] is True
+    assert block["as_of"] == "20260604"
+    assert block["latest"] == 30.0
+    assert block["history_days"] == 4
+    assert block["percentile_full_history"] == 50.0
+    # 显示窗口下限 20 天：4 行历史全部进入窗口
+    assert [r["trade_date"] for r in block["records"]] == [
+        "20260601", "20260602", "20260603", "20260604"]
+    # 25 行历史切到 20 行窗口：只留最近 20 天
+    df25 = _pe_frame([
+        ("399006.SZ", f"202606{day:02d}", 30.0, 30.0, 4.0) for day in range(1, 26)
+    ])
+    block25 = mp.build_chinext_pe_block(df25, "20260625", display_days=20)
+    assert len(block25["records"]) == 20
+    assert block25["records"][0]["trade_date"] == "20260606"
+    assert block25["records"][-1]["trade_date"] == "20260625"
+
+
+def test_build_chinext_pe_block_degrades_cleanly():
+    assert mp.build_chinext_pe_block(pd.DataFrame(), "20260604")["available"] is False
+    # 目标日之后的行不参与；pe_ttm 缺失/非正值被剔除
+    df = _pe_frame([
+        ("399006.SZ", "20260605", 40.0, 40.0, 5.0),
+        ("399006.SZ", "20260603", None, -1.0, 4.0),
+    ])
+    assert mp.build_chinext_pe_block(df, "20260604")["available"] is False
+
+
+def test_extract_chinext_pe_payload_freshness_gate():
+    good = {
+        "market_trend": {"indices": {"chinext": {
+            "trade_date": "20261009",
+            "pe_ttm": {"available": True, "as_of": "20261009", "latest": 34.83,
+                       "percentile_full_history": 18.6,
+                       "records": [{"trade_date": "20261009", "pe_ttm": 34.83}]},
+        }}}
+    }
+    payload = rrh.extract_chinext_pe_payload(good)
+    assert payload and payload["latest"] == 34.83 and len(payload["records"]) == 1
+    # 旧 evidence 没有 pe_ttm 块：静默缺席（不注册 hook）
+    assert rrh.extract_chinext_pe_payload({"market_trend": {"indices": {"chinext": {}}}}) is None
+    # PE 日期与 K 线日期对不上：拒绝拿别的日子的估值配今天的图
+    stale = json.loads(json.dumps(good))
+    stale["market_trend"]["indices"]["chinext"]["pe_ttm"]["as_of"] = "20260930"
+    assert rrh.extract_chinext_pe_payload(stale) is None
+
+
+# --------------------------------------------------------------------------- #
 # Runner
 # --------------------------------------------------------------------------- #
 def main() -> int:

@@ -230,7 +230,23 @@ SWING = """# 报告
 
 # 2. 大盘温度与风格
 
-温度正文。
+## 2.1 情绪趋势
+
+| 指标 | 今日 |
+|---|---:|
+| 成交额（万亿） |  |
+
+==趋势判断：测试用判断句。==
+
+## 2.2 指数趋势
+
+| 指数 | 今日表现 |
+|---|---:|
+| 上证指数 |  |
+
+==指数趋势判断：测试用判断句。==
+
+## 2.3 风格因子
 
 {style}
 
@@ -253,6 +269,8 @@ SWING = """# 报告
 TABLE = """| 风格因子 | 60日 |
 |---|---:|
 | 规模风格 | 大盘 |
+
+==市场风格判断：测试判断句。==
 """
 
 
@@ -291,7 +309,11 @@ def test_contract_rejects_unsupported_rotation_claim():
 def test_contract_skips_when_readings_unavailable():
     ev = _evidence()
     ev["market_trend"]["market_style"]["style_factors"] = {"available": False}
-    audit = validate_dms_content(SWING.format(style="风格正文。"), ev, INDUSTRY_SWING_CONTRACT)
+    audit = validate_dms_content(
+        SWING.format(style="风格正文。\n\n==市场风格判断：风格证据不足，不强行定性。==\n"),
+        ev,
+        INDUSTRY_SWING_CONTRACT,
+    )
     assert audit["detail"]["style_factors"]["checked"] is False
 
 
@@ -301,7 +323,8 @@ def test_contract_skips_when_readings_unavailable():
 def test_renderer_target_section_and_freshness_gate():
     import render_report_html as rrh
 
-    assert rrh.style_factor_target_section(SWING.format(style=TABLE), INDUSTRY_SWING_CONTRACT) == "temp_macro"
+    # 2.2.0 起「风格因子」表落在 2.3 小节（契约键 market_style），风格面板跟表走。
+    assert rrh.style_factor_target_section(SWING.format(style=TABLE), INDUSTRY_SWING_CONTRACT) == "market_style"
     assert rrh.style_factor_target_section(SWING.format(style="无表"), INDUSTRY_SWING_CONTRACT) is None
 
     loaders, _ = _loaders(_all_frames())

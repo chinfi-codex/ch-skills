@@ -53,7 +53,27 @@ SWING_MARKDOWN = """# 报告
 
 # 2. 大盘温度与风格
 
-温度正文。
+## 2.1 情绪趋势
+
+| 指标 | 今日 | 近 5/20 日参照 | 趋势提示 |
+|---|---:|---:|---|
+| 成交额（万亿） |  |  |  |
+
+==趋势判断：测试用判断句。==
+
+## 2.2 指数趋势
+
+| 指数 | 今日表现 | 5/20 日表现 | 位置与量价 | 趋势提示 |
+|---|---:|---:|---|---|
+| 上证指数 |  |  |  |  |
+
+==指数趋势判断：测试用判断句。==
+
+## 2.3 风格因子
+
+风格因子正文。
+
+==市场风格判断：测试用判断句。==
 
 # 3. 产业趋势主线总览
 
@@ -79,6 +99,9 @@ EXPECTED_SECTIONS = [
     ("hero_verdict", 3),
     ("pos_gate", 2),
     ("temp_macro", 2),
+    ("sentiment_trend", 3),
+    ("index_trend", 3),
+    ("market_style", 3),
     ("industry_mainline", 2),
     ("mainline_screening", 2),
     ("m4_decline", 2),
@@ -161,7 +184,76 @@ def test_swing_risk_type_medians_are_soft_derived():
 
 
 def test_legacy_2_0_chapter_name_still_resolves():
-    """2.0 报告的第 2 章叫「大盘温度与宏观」，2.1 起改名后仍要能重渲染旧稿。"""
+    """2.0 报告的第 2 章叫「大盘温度与宏观」，章名正则兼认旧名；但三个小节必须有。"""
     old = SWING_MARKDOWN.replace("# 2. 大盘温度与风格", "# 2. 大盘温度与宏观")
+    audit = validate_dms_content(old, _minimal_evidence(), INDUSTRY_SWING_CONTRACT)
+    assert audit["status"] == "ok", audit
+
+
+def test_flat_chapter2_fails_and_names_missing_subsections():
+    """09-29 起的平铺第 2 章（无 h3 小节）必须被点名拦下——这是 2.2.0 的动机。"""
+    flat = SWING_MARKDOWN.replace("""## 2.1 情绪趋势
+
+| 指标 | 今日 | 近 5/20 日参照 | 趋势提示 |
+|---|---:|---:|---|
+| 成交额（万亿） |  |  |  |
+
+==趋势判断：测试用判断句。==
+
+## 2.2 指数趋势
+
+| 指数 | 今日表现 | 5/20 日表现 | 位置与量价 | 趋势提示 |
+|---|---:|---:|---|---|
+| 上证指数 |  |  |  |  |
+
+==指数趋势判断：测试用判断句。==
+
+## 2.3 风格因子
+
+风格因子正文。
+
+==市场风格判断：测试用判断句。==
+""", "平铺正文，没有任何小节。\n")
+    try:
+        validate_dms_content(flat, _minimal_evidence(), INDUSTRY_SWING_CONTRACT)
+    except ContractError as exc:
+        message = str(exc)
+        for key in ("sentiment_trend", "index_trend", "market_style"):
+            assert key in message, f"缺少对 {key} 的点名: {message}"
+    else:
+        raise AssertionError("平铺第 2 章居然通过了契约校验")
+
+
+def test_missing_index_table_fails():
+    """指数表（首列表头「指数」）是 K 线与创业板 PE 图的锚点，降级为散文要硬拦。"""
+    broken = SWING_MARKDOWN.replace(
+        "| 指数 | 今日表现 | 5/20 日表现 | 位置与量价 | 趋势提示 |\n|---|---:|---:|---|---|\n| 上证指数 |  |  |  |  |\n",
+        "指数表现写成散文，没有表格。\n",
+    )
+    try:
+        validate_dms_content(broken, _minimal_evidence(), INDUSTRY_SWING_CONTRACT)
+    except ContractError as exc:
+        assert "index_trend" in str(exc) and "指数表" in str(exc), str(exc)
+    else:
+        raise AssertionError("缺指数表居然通过了契约校验")
+
+
+def test_missing_emotion_table_fails():
+    """情绪指标表（首列表头「指标」）是情绪趋势五图的锚点。"""
+    broken = SWING_MARKDOWN.replace(
+        "| 指标 | 今日 | 近 5/20 日参照 | 趋势提示 |\n|---|---:|---:|---|\n| 成交额（万亿） |  |  |  |\n",
+        "情绪读数写成散文，没有表格。\n",
+    )
+    try:
+        validate_dms_content(broken, _minimal_evidence(), INDUSTRY_SWING_CONTRACT)
+    except ContractError as exc:
+        assert "sentiment_trend" in str(exc) and "情绪指标表" in str(exc), str(exc)
+    else:
+        raise AssertionError("缺情绪指标表居然通过了契约校验")
+
+
+def test_style_subsection_legacy_name_still_resolves():
+    """2.3 小节接受旧名「市场风格」——2.1.0 时期的合规稿件仍能重渲染。"""
+    old = SWING_MARKDOWN.replace("## 2.3 风格因子", "## 2.3 市场风格")
     audit = validate_dms_content(old, _minimal_evidence(), INDUSTRY_SWING_CONTRACT)
     assert audit["status"] == "ok", audit

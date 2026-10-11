@@ -198,6 +198,7 @@ def validate_dms_content(
 
     forward_detail = _validate_forward_axis(sections, evidence, problems)
     style_detail = _validate_style_factors(sections, evidence, problems)
+    temp_macro_tables = _validate_temp_macro_tables(sections, contract, problems)
 
     provenance = _NumberProvenance(evidence, aux_payloads)
     derived_only = _derived_only_tokens(markdown_text, sections)
@@ -227,6 +228,7 @@ def validate_dms_content(
             "highlights": highlight_detail,
             "forward_axis": forward_detail,
             "style_factors": style_detail,
+            "temp_macro_tables": temp_macro_tables,
             "table_numbers": {key: value for key, value in table_numeric.items() if key != "tokens"},
             "paragraph_discipline": paragraph_detail["detail"],
             "forbidden_terms": forbidden,
@@ -545,6 +547,37 @@ _STYLE_TABLE_RE = re.compile(r"^\|\s*风格因子\s*\|", re.M)
 # 方向相反（rotation_code=reversal_20v60）才允许出现；10 日与 20 日相反只能叫
 # 「短期出现变化」。
 _STYLE_REVERSAL_RE = re.compile(r"风格(?:发生)?(?:轮动|反转|切换)")
+_EMOTION_TABLE_RE = re.compile(r"^\|\s*指标\s*\|", re.M)
+_INDEX_TABLE_RE = re.compile(r"^\|\s*指数\s*\|", re.M)
+
+
+def _validate_temp_macro_tables(
+    sections: Mapping[str, MarkdownSection],
+    contract: SectionContract,
+    problems: List[str],
+) -> Dict[str, Any]:
+    """第 2 章两张机读表是图表锚点，2.2.0 起硬判（legacy 锚点路径不同，不管）。
+
+    情绪指标表（首列「指标」）挂情绪趋势五图，指数表（首列「指数」）挂指数 K 线
+    与创业板 PE 图。09-29 起的平铺第 2 章把指数表写成散文，图表靠兜底锚点漂移——
+    表在，图才在正确的位置。
+    """
+    if contract.version.startswith("dms/1."):
+        return {"checked": False}
+    detail: Dict[str, Any] = {"checked": True}
+    if "sentiment_trend" in sections:
+        detail["emotion_table"] = bool(_EMOTION_TABLE_RE.search(sections["sentiment_trend"].body))
+        if not detail["emotion_table"]:
+            problems.append(
+                "[sentiment_trend] 情绪指标表（首列表头「指标」）缺失——情绪趋势五图按它挂载"
+            )
+    if "index_trend" in sections:
+        detail["index_table"] = bool(_INDEX_TABLE_RE.search(sections["index_trend"].body))
+        if not detail["index_table"]:
+            problems.append(
+                "[index_trend] 指数表（首列表头「指数」）缺失——指数 K 线与创业板 PE 图按它挂载"
+            )
+    return detail
 
 
 def _validate_style_factors(
@@ -953,17 +986,28 @@ def _paragraph_warnings(
 # 2.1.0（2026-09-27）：原 1.3「指数与风格」拆开——指数表与指数趋势判断并入第 2 章，
 # 风格因子挪到第 2 章底部，第 2 章改名「大盘温度与风格」；1.4 档位裁决顺延为 1.3。
 # 章节键 temp_macro 保持历史值不动（同模块编号），标题正则兼认 2.0 的旧名。
+# 2.2.0（2026-10-10）：第 2 章三个小节「情绪趋势 / 指数趋势 / 风格因子」入契约。
+# 09-29 起连续四期报告把第 2 章写成平铺（无 h3、指数表降级为散文），图表全靠
+# 兜底锚点才没丢——小节不入契正是这个塌法能过门禁的原因。三小节沿用 legacy 键，
+# 图表 hook 因此直接锚到小节，temp_macro 的别名兜底退役为仅兼容旧章名。
 INDUSTRY_SWING_CONTRACT = SectionContract(
-    version="dms/2.1.0-industry-swing",
+    version="dms/2.2.0-industry-swing",
     sections=[
         # 排版对齐 legacy：frontmatter + 标题块 + ## 一句话盘面判断 hero；
-        # 章节用 # N.（渲染后 h2），小节 ## N.M（渲染后 h3，不入契约）。
+        # 章节用 # N.（渲染后 h2）。第 2 章小节 ## 2.M（渲染后 h3）自 2.2.0 起入契约。
         SectionSpec("hero_verdict", [r"^一句话盘面判断$"], level=3,
                     source="references/report_template.md:1"),
         SectionSpec("pos_gate", [r"环境与仓位总闸门"], level=2,
                     source="methodology/position_matrix.md"),
         SectionSpec("temp_macro", [r"大盘温度与(?:风格|宏观)"], level=2,
                     source="references/template/section1.md"),
+        SectionSpec("sentiment_trend", [r"^情绪趋势$"], level=3,
+                    source="references/template/section1.md:3"),
+        SectionSpec("index_trend", [r"^指数趋势$"], level=3,
+                    source="references/template/section1.md:24"),
+        SectionSpec("market_style", [r"^风格因子$", r"^市场风格$"], level=3,
+                    degraded_patterns=[r"风格证据不足，不强行定性"],
+                    source="references/template/section1.md:34"),
         SectionSpec("industry_mainline", [r"产业趋势主线总览"], level=2,
                     source="references/template/section3.md"),
         SectionSpec("mainline_screening", [r"主线内关注个股"], level=2,

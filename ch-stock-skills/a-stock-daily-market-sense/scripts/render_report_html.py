@@ -54,10 +54,12 @@ from dms_output_contract import validate_dms_content  # noqa: E402
 # sections by key via ``window.__sec``, so neither move touches the charts.
 #
 # 产业趋势波段(2.x) 章节键 → legacy(1.5.0) 图表锚点键的别名。2.x 报告把「指数趋势」
-# 「情绪趋势」「指数趋势」「市场风格」并进第 2 章（dms/2.1 起名为「大盘温度与风格」，
+# 「情绪趋势」「市场风格」并进第 2 章（dms/2.1 起名为「大盘温度与风格」，
 # 2.0 叫「大盘温度与宏观」，契约两名都认），「主线判定」改名「产业趋势主线总览」。
-# 图表 hook 仍按 legacy 键查 window.__sec；这段装饰在 __sec 之上包一层别名解析，
-# 让 legacy 键透明落到 2.x 章节上，hook 代码一行不改。
+# dms/2.2.0 起第 2 章三个小节以 legacy 原名（情绪趋势/指数趋势/风格因子）入契约，
+# 温度与风格三键直接命中、不再走别名；仍在服役的是主线两键（m3_mainline /
+# m3_leaders → 2.x 章节）。图表 hook 仍按 legacy 键查 window.__sec；这段装饰在
+# __sec 之上包一层别名解析，让 legacy 键透明落到 2.x 章节上，hook 代码一行不改。
 SWING_SEC_ALIAS_JS = """
 (function () {
   if (!window.__sec) return;
@@ -255,6 +257,43 @@ def extract_index_kline_payload(evidence: dict, source_path: Optional[Path]) -> 
             "records": records,
         }
     return payload
+
+
+def extract_chinext_pe_payload(evidence: dict) -> Optional[Dict[str, Any]]:
+    """创业板指 PE-TTM 图卡载荷；数据缺席或日期对不上创业板 K 线时返回 None。
+
+    返回 None 等于不注册 hook、不声明期望——旧 evidence（没有 pe_ttm 块）重渲染
+    不报警；新 evidence 数据对不上 K 线日期时打印告警，让缺失可追踪。
+    """
+    indices = ((evidence or {}).get("market_trend") or {}).get("indices") or {}
+    chinext = indices.get("chinext") or {}
+    block = chinext.get("pe_ttm") or {}
+    if not isinstance(block, dict) or not block.get("available"):
+        return None
+    records = [
+        row for row in (block.get("records") or [])
+        if isinstance(row, dict) and row.get("trade_date") and isinstance(row.get("pe_ttm"), (int, float))
+    ]
+    if not records:
+        return None
+    kline_date = chinext.get("trade_date")
+    if kline_date and block.get("as_of") and str(block["as_of"]) != str(kline_date):
+        print(
+            f"[warn] chinext pe_ttm as_of={block.get('as_of')} != kline trade_date={kline_date}; "
+            "PE chart skipped",
+            file=sys.stderr,
+        )
+        return None
+    return {
+        "name": "创业板指 PE-TTM",
+        "ts_code": block.get("ts_code") or "399006.SZ",
+        "as_of": block.get("as_of"),
+        "latest": block.get("latest"),
+        "percentile_full_history": block.get("percentile_full_history"),
+        "history_start": block.get("history_start"),
+        "history_days": block.get("history_days"),
+        "records": records,
+    }
 
 
 def extract_stock_kline_payload(raw: dict, source_path: Optional[Path], missing: bool = False) -> Dict[str, Any]:
@@ -1763,6 +1802,106 @@ function formatAmount(value) {
 
 
 # --------------------------------------------------------------------------- #
+# 创业板指 PE-TTM 估值温度卡：第 2 章指数区的第 4 张图，挂在指数 K 线网格之后。
+# 数据来自 evidence market_trend.indices.chinext.pe_ttm（Tushare index_dailybasic）。
+# 机读口径只呈现事实：曲线、最新值、全历史分位；估值判断留给正文。
+# --------------------------------------------------------------------------- #
+CHINEXT_PE_CHART_JS = r"""
+const P = __payload || {};
+const HOOK = "chinext-pe-ttm";
+const rows = (P.records || []).filter(r => r && r.trade_date && Number.isFinite(Number(r.pe_ttm)));
+if (!rows.length) {
+  window.__render.attest(HOOK, { rendered: 0, matched: 0, expected: 1,
+    unmatched: [{ name: "chinext-pe-ttm", reason: "no_payload" }] });
+  return;
+}
+
+const SEC = window.__sec;
+const { svgEl, svgText } = CK;
+const formatDate = CK.fmt.date;
+
+const pctText = Number.isFinite(Number(P.percentile_full_history))
+  ? ` · 2010年以来分位 ${Number(P.percentile_full_history).toFixed(1)}%`
+  : "";
+const card = CK.card(
+  "chart-card kline-card",
+  "创业板指 PE-TTM",
+  `截至 ${formatDate(P.as_of)} · 最新 ${Number(P.latest).toFixed(2)} 倍${pctText}`
+);
+card.classList.add("chinext-pe-card");
+
+const width = 480, height = 200, pad = { left: 42, right: 16, top: 14, bottom: 28 };
+const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img",
+  "aria-label": "创业板指 PE-TTM 走势" });
+const values = rows.map(r => Number(r.pe_ttm));
+let vMin = Math.min(...values), vMax = Math.max(...values);
+if (vMin === vMax) { vMin -= 1; vMax += 1; }
+const x = i => pad.left + (i / Math.max(1, rows.length - 1)) * (width - pad.left - pad.right);
+const y = v => pad.top + (1 - (v - vMin) / (vMax - vMin)) * (height - pad.top - pad.bottom);
+
+/* 网格与轴刻度（三条横线：max / 中位 / min） */
+[0, 1, 2].forEach(g => {
+  const gy = pad.top + (g / 2) * (height - pad.top - pad.bottom);
+  svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: gy, y2: gy,
+    class: "axis", "stroke-width": g === 2 ? 1.2 : 0.6, opacity: g === 2 ? 0.9 : 0.45 }));
+  const gv = vMax - (g / 2) * (vMax - vMin);
+  svg.appendChild(svgText(pad.left - 6, gy + 3, gv.toFixed(1), "end", "var(--text-tertiary)"));
+});
+/* 首尾日期 */
+svg.appendChild(svgText(pad.left, height - 8, formatDate(rows[0].trade_date), "start", "var(--text-tertiary)"));
+svg.appendChild(svgText(width - pad.right, height - 8, formatDate(rows[rows.length - 1].trade_date), "end", "var(--text-tertiary)"));
+
+const d = rows.map((r, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(2)} ${y(Number(r.pe_ttm)).toFixed(2)}`).join(" ");
+svg.appendChild(svgEl("path", { d, fill: "none", stroke: "var(--blue)", "stroke-width": 2 }));
+
+/* 最新值端点强调 */
+svg.appendChild(svgEl("circle", { cx: x(rows.length - 1), cy: y(Number(rows[rows.length - 1].pe_ttm)),
+  r: 3.2, fill: "var(--blue)" }));
+
+const tooltip = CK.tooltip(card);
+const hit = svgEl("rect", { x: pad.left, y: pad.top, width: width - pad.left - pad.right,
+  height: height - pad.top - pad.bottom, fill: "transparent", stroke: "none", style: "cursor:pointer" });
+hit.addEventListener("mousemove", e => {
+  const rect = svg.getBoundingClientRect();
+  const px = (e.clientX - rect.left) * (width / rect.width);
+  const idx = Math.max(0, Math.min(rows.length - 1,
+    Math.round((px - pad.left) / (width - pad.left - pad.right) * (rows.length - 1))));
+  tooltip.innerHTML = `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${formatDate(rows[idx].trade_date)}</div>` +
+    `<div>PE-TTM: ${Number(rows[idx].pe_ttm).toFixed(2)} 倍</div>`;
+  tooltip.style.opacity = "1";
+  CK.moveTip(tooltip, card, e);
+});
+hit.addEventListener("mouseleave", () => { tooltip.style.opacity = "0"; });
+svg.appendChild(hit);
+
+card.appendChild(svg);
+card.appendChild(CK.legend([["PE-TTM", "var(--blue)"]]));
+
+/* 锚点：指数 K 线网格之后；旧报告（无 K 线网格）退到「指数」表之后，
+   再退到指数趋势节尾。找不到指数趋势节就失败，不另行搬家。 */
+const anchorEl = SEC.find("index_trend", ".kline-grid")
+  || (function () {
+    for (const block of SEC.blocks("index_trend")) {
+      const tables = block.matches && block.matches("table") ? [block]
+        : Array.from(block.querySelectorAll ? block.querySelectorAll("table") : []);
+      for (const t of tables) {
+        const th = t.querySelector("th");
+        if (th && th.textContent.trim() === "指数") return t.closest(".table-wrap") || t;
+      }
+    }
+    return null;
+  })()
+  || SEC.tail("index_trend");
+if (!anchorEl) {
+  window.__render.fail("hook:" + HOOK, "no insertion anchor inside section [index_trend]");
+  return;
+}
+anchorEl.after(card);
+window.__render.attest(HOOK, { rendered: 1, matched: 1, expected: 1, unmatched: [], el: card });
+"""
+
+
+# --------------------------------------------------------------------------- #
 # Market-style normalized comparison charts driven by evidence market_style.series.
 # --------------------------------------------------------------------------- #
 STYLE_COMPARE_JS = r"""
@@ -2796,6 +2935,10 @@ def build_job(args) -> RenderJob:
             HookExpectation(name="market-trends", target_sec="temp_macro", expect_count=5,
                             note="成交额 / 活跃度 / 融资净买入 / 涨跌家数 / 涨跌停家数"),
         ]
+        pe_expects = [
+            HookExpectation(name="chinext-pe-ttm", target_sec="temp_macro", expect_count=1,
+                            note="创业板指 PE-TTM 估值温度卡，挂在指数 K 线网格之后"),
+        ]
         style_expects = [
             HookExpectation(name="style-compare", target_sec="temp_macro", expect_min=1,
                             note="规模轴 + 成长/价值/红利，任一轴缺数据记 no_payload"),
@@ -2825,6 +2968,10 @@ def build_job(args) -> RenderJob:
             HookExpectation(name="market-trends", target_sec="sentiment_trend", expect_count=5,
                             note="成交额 / 活跃度 / 融资净买入 / 涨跌家数 / 涨跌停家数"),
         ]
+        pe_expects = [
+            HookExpectation(name="chinext-pe-ttm", target_sec="index_trend", expect_count=1,
+                            note="创业板指 PE-TTM 估值温度卡，挂在指数 K 线网格之后"),
+        ]
         style_expects = [
             HookExpectation(name="style-compare", target_sec="market_style", expect_min=1,
                             note="规模轴 + 成长/价值/红利，任一轴缺数据记 no_payload"),
@@ -2852,6 +2999,14 @@ def build_job(args) -> RenderJob:
         # behind a bundle-level "it ran". 期望集合按契约版本(is_swing)重映射。
         expects=kline_expects,
     )
+    # 创业板指 PE-TTM 估值温度卡：排在 klines 之后注册，PE 卡才能锚到 K 线网格上。
+    # evidence 无 pe_ttm 块（旧稿）时 payload 为 None——不注册 hook、不声明期望。
+    chinext_pe_payload = extract_chinext_pe_payload(evidence)
+    if chinext_pe_payload:
+        builder.add_chart_hook(
+            ChartHook(name="chinext-pe-ttm", payload=chinext_pe_payload, js=CHINEXT_PE_CHART_JS),
+            expects=pe_expects,
+        )
     builder.add_chart_hook(
         ChartHook(name="market-trends", payload=market_data, js=MARKET_TRENDS_JS),
         # The count is declared here and produced there: the JS builds its own

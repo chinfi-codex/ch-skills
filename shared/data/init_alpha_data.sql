@@ -120,7 +120,20 @@ CREATE TABLE IF NOT EXISTS stock_index_daily (
 
 
 -- -------------------------------------------------------------------------
--- 5b. Adjustment factors (Tushare pro.adj_factor, for qfq price series)
+-- 5b. Index valuation daily (Tushare pro.index_dailybasic: PE/PE-TTM/PB)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS stock_index_daily_basic (
+    ts_code     TEXT NOT NULL,
+    trade_date  DATE NOT NULL,
+    pe          DECIMAL(12,4),
+    pe_ttm      DECIMAL(12,4),
+    pb          DECIMAL(12,4),
+    PRIMARY KEY (ts_code, trade_date)
+);
+
+
+-- -------------------------------------------------------------------------
+-- 5c. Adjustment factors (Tushare pro.adj_factor, for qfq price series)
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS stock_adj_factor (
     ts_code     TEXT NOT NULL,

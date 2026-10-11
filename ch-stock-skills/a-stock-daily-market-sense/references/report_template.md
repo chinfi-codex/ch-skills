@@ -10,7 +10,7 @@
 
 **📈 1. 盘面趋势**
 
-> 数据基础：`market_trend` + `trend_state_card` + `extreme_state`。本模块看趋势轴状态卡与极值轴、上证指数、创业板指数、科创50、`references/market_data.csv` 情绪趋势，以及市场风格因子（`market_style.style_factors`，Baostock 代理指数只作量价背景）；不加入创业板 PE、外围资产或新闻解释（融资类读数只出现在 1.1 趋势状态卡与极值轴的机器口径里，不进正文叙事）。
+> 数据基础：`market_trend` + `trend_state_card` + `extreme_state`。本模块看趋势轴状态卡与极值轴、上证指数、创业板指数、科创50、`references/market_data.csv` 情绪趋势，以及市场风格因子（`market_style.style_factors`，Baostock 代理指数只作量价背景）；不加入外围资产或新闻解释（融资类读数只出现在 1.1 趋势状态卡与极值轴的机器口径里，不进正文叙事）。创业板指 PE-TTM 走势图（`indices.chinext.pe_ttm`，Tushare index_dailybasic）只是 HTML 展示层的机读图表，挂在第 2 章指数区——正文不做估值叙事、不引用 PE 读数，贵便宜的判断不写成文字。
 
 **1.1 情绪趋势**
 

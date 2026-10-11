@@ -15,7 +15,7 @@
 - `market.trend.sentiment`
 - `market.temperature`
 
-不要加入创业板 PE、外围资产或新闻解释；融资类读数**只允许出现在 1.1 开头的趋势状态卡与极值轴**（机器口径，机器生成），不得进入正文叙事；市场风格以 `market.trend.market_style.style_factors` 的风格因子为主读数（Baostock 指数只作量价背景），不临时引入别的风格口径。
+不要加入外围资产或新闻解释；创业板指 PE-TTM 只是 HTML 展示层的机读图表（挂在指数区，口径见 `indices.chinext.pe_ttm`），正文不做估值叙事、不引用 PE 读数；融资类读数**只允许出现在 1.1 开头的趋势状态卡与极值轴**（机器口径，机器生成），不得进入正文叙事；市场风格以 `market.trend.market_style.style_factors` 的风格因子为主读数（Baostock 指数只作量价背景），不临时引入别的风格口径。
 
 分析框架：
 

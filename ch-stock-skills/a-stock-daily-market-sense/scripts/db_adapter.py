@@ -44,11 +44,15 @@ ENDPOINT_TABLE = {
     "daily": "stock_daily",
     "daily_basic": "stock_daily_basic",
     "index_daily": "stock_index_daily",
+    "index_dailybasic": "stock_index_daily_basic",
     "trade_cal": "stock_trade_cal",
     "stock_basic": "stock_basic",
     "margin": "stock_margin",
     "adj_factor": "stock_adj_factor",
 }
+
+# 按 ts_code 键控读写的数据集端点（read/write_dataset 的 key 参数生效）。
+_KEYED_DATASET_ENDPOINTS = ("index_daily", "index_dailybasic")
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +160,7 @@ def read_dataset(
     if date_column and start_date and end_date:
         conditions.append(f"{date_column} BETWEEN %s AND %s")
         params.extend([start_date, end_date])
-    if endpoint == "index_daily" and key:
+    if endpoint in _KEYED_DATASET_ENDPOINTS and key:
         conditions.append("ts_code = %s")
         params.append(key)
 
@@ -200,7 +204,7 @@ def write_dataset(
     with get_connection() as conn:
         try:
             cur = conn.cursor()
-            if endpoint == "index_daily" and key:
+            if endpoint in _KEYED_DATASET_ENDPOINTS and key:
                 cur.execute(f"DELETE FROM {table} WHERE ts_code = %s", (key,))
             else:
                 # Full replacement for unkeyed datasets such as trade_cal/stock_basic.

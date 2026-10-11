@@ -675,6 +675,109 @@ def fetch_index_daily(
     return date_range_filter(merged, "trade_date", start_date, end_date)
 
 
+INDEX_DAILYBASIC_FIELDS = "ts_code,trade_date,pe,pe_ttm,pb"
+# 创业板指 2010-06-01 发布，PE-TTM 历史分位以全历史为母体。
+CHINEXT_PE_HISTORY_START = "20100101"
+
+
+def fetch_index_daily_basic(
+    pro,
+    index_code: str,
+    start_date: str,
+    end_date: str,
+    cache_enabled: bool = True,
+    refresh_cache: bool = False,
+) -> pd.DataFrame:
+    """指数估值日线（PE/PE-TTM/PB）。缓存策略与 fetch_index_daily 相同：
+    键控数据集（ts_code 一行的全历史），只补两端缺口。
+
+    Tushare 单次调用按最新 N 行截断，全历史首抓会丢最老的一段；这里循环补边
+    直到窗口闭合（每次迭代只抓缺口），避免历史分位的母体被静默截短。
+    """
+    cache_key = index_code
+    merged = None if refresh_cache or not cache_enabled else read_cached_dataset("index_dailybasic", cache_key, INDEX_DAILYBASIC_FIELDS)
+
+    for _ in range(4):
+        fetch_ranges = missing_edge_ranges(merged, "trade_date", start_date, end_date) if merged is not None else [(start_date, end_date)]
+        if not fetch_ranges:
+            break
+        progressed = False
+        frames: List[pd.DataFrame] = []
+        if merged is not None and not merged.empty:
+            frames.append(merged)
+        for fetch_start, fetch_end in fetch_ranges:
+            try:
+                df = pro.index_dailybasic(
+                    ts_code=index_code,
+                    start_date=fetch_start,
+                    end_date=fetch_end,
+                    fields=INDEX_DAILYBASIC_FIELDS,
+                )
+            except Exception as exc:
+                print(f"[warn] index_dailybasic failed for {index_code} {fetch_start}-{fetch_end}: {exc}", file=sys.stderr)
+                continue
+            if df is not None and not df.empty:
+                frames.append(df)
+                progressed = True
+        if not progressed:
+            break
+        if frames:
+            merged = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
+            merged["trade_date"] = merged["trade_date"].astype(str)
+            merged = merged.sort_values("trade_date")
+
+    if merged is None or merged.empty:
+        return pd.DataFrame()
+    if cache_enabled:
+        write_cached_dataset("index_dailybasic", cache_key, merged)
+    return date_range_filter(merged, "trade_date", start_date, end_date)
+
+
+def build_chinext_pe_block(
+    pe_daily: pd.DataFrame,
+    target_date: str,
+    display_days: int = 120,
+) -> Dict[str, Any]:
+    """创业板指 PE-TTM 展示块：display_days 窗口曲线 + 全历史分位（机读口径）。
+
+    曲线只呈现事实（点位、分位、区间），估值贵便宜的判断留给正文模型。
+    """
+    if pe_daily is None or pe_daily.empty:
+        return {"available": False, "reason": "index_dailybasic returned no data"}
+    df = pe_daily.copy()
+    if "trade_date" not in df.columns or "pe_ttm" not in df.columns:
+        return {"available": False, "reason": "trade_date/pe_ttm column missing"}
+    df["trade_date"] = df["trade_date"].astype(str)
+    df["pe_ttm"] = pd.to_numeric(df["pe_ttm"], errors="coerce")
+    df = df.loc[df["trade_date"] <= target_date].dropna(subset=["pe_ttm"])
+    df = df.loc[df["pe_ttm"] > 0].sort_values("trade_date")
+    if df.empty:
+        return {"available": False, "reason": "no positive pe_ttm rows on or before target date"}
+
+    latest = df.iloc[-1]
+    latest_pe = float(latest["pe_ttm"])
+    history = df["pe_ttm"]
+    percentile = float((history <= latest_pe).mean() * 100.0)
+
+    window = df.tail(max(20, int(display_days)))
+    records = [
+        {"trade_date": str(row["trade_date"]), "pe_ttm": round(float(row["pe_ttm"]), 2)}
+        for _, row in window.iterrows()
+    ]
+    return {
+        "available": True,
+        "ts_code": str(latest["ts_code"]) if "ts_code" in df.columns else "399006.SZ",
+        "as_of": str(latest["trade_date"]),
+        "latest": round(latest_pe, 2),
+        # 分位母体是全历史（2010-06 起），不是显示窗口——窗口内分位会随窗口滑动失真。
+        "history_start": str(df["trade_date"].iloc[0]),
+        "history_days": int(len(df)),
+        "percentile_full_history": round(percentile, 1),
+        "display_days": int(len(records)),
+        "records": records,
+    }
+
+
 def fetch_limit_list(pro, trade_date: str) -> pd.DataFrame:
     try:
         df = pro.limit_list_d(trade_date=trade_date)
@@ -3316,6 +3419,24 @@ def build_market_trend(
             trend_days=safe_trend_days,
             kline_days=safe_index_kline_days,
         )
+
+    # 创业板指 PE-TTM：第 2 章指数区的估值温度图。估值日线与行情日线分表缓存，
+    # 失败只降级这一块（available=false），不拖垮整个 evidence 构建。
+    chinext_config = MARKET_TREND_INDEXES["chinext"]
+    chinext_pe_daily = fetch_index_daily_basic(
+        pro,
+        chinext_config["ts_code"],
+        CHINEXT_PE_HISTORY_START,
+        target_date,
+        cache_enabled=cache_enabled,
+        refresh_cache=refresh_cache,
+    )
+    pe_block = build_chinext_pe_block(
+        chinext_pe_daily,
+        target_date,
+        display_days=safe_index_kline_days,
+    )
+    indices["chinext"]["pe_ttm"] = pe_block
 
     market_style = fetch_market_style_from_baostock(
         target_date=target_date,

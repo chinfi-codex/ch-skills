@@ -1802,7 +1802,8 @@ function formatAmount(value) {
 
 
 # --------------------------------------------------------------------------- #
-# 创业板指 PE-TTM 估值温度卡：第 2 章指数区的第 4 张图，挂在指数 K 线网格之后。
+# 创业板指 PE-TTM 估值温度卡：情绪趋势区 market-trends 五图网格的第 6 张图，
+# 追加在网格尾部（2.x 网格在 temp_macro，legacy 在 sentiment_trend）。
 # 数据来自 evidence market_trend.indices.chinext.pe_ttm（Tushare index_dailybasic）。
 # 机读口径只呈现事实：曲线、最新值、全历史分位；估值判断留给正文。
 # --------------------------------------------------------------------------- #
@@ -1824,7 +1825,7 @@ const pctText = Number.isFinite(Number(P.percentile_full_history))
   ? ` · 2010年以来分位 ${Number(P.percentile_full_history).toFixed(1)}%`
   : "";
 const card = CK.card(
-  "chart-card kline-card",
+  "chart-card",
   "创业板指 PE-TTM",
   `截至 ${formatDate(P.as_of)} · 最新 ${Number(P.latest).toFixed(2)} 倍${pctText}`
 );
@@ -1877,26 +1878,26 @@ svg.appendChild(hit);
 card.appendChild(svg);
 card.appendChild(CK.legend([["PE-TTM", "var(--blue)"]]));
 
-/* 锚点：指数 K 线网格之后；旧报告（无 K 线网格）退到「指数」表之后，
-   再退到指数趋势节尾。找不到指数趋势节就失败，不另行搬家。 */
-const anchorEl = SEC.find("index_trend", ".kline-grid")
-  || (function () {
-    for (const block of SEC.blocks("index_trend")) {
-      const tables = block.matches && block.matches("table") ? [block]
-        : Array.from(block.querySelectorAll ? block.querySelectorAll("table") : []);
-      for (const t of tables) {
-        const th = t.querySelector("th");
-        if (th && th.textContent.trim() === "指数") return t.closest(".table-wrap") || t;
-      }
-    }
-    return null;
-  })()
-  || SEC.tail("index_trend");
-if (!anchorEl) {
-  window.__render.fail("hook:" + HOOK, "no insertion anchor inside section [index_trend]");
+/* 锚点：情绪趋势区 market-trends 的五图网格（2.x 在 temp_macro，legacy 在
+   sentiment_trend），追加为第 6 张图。网格靠首卡标题「成交额趋势」辨认；
+   找不到就失败，不另行搬家——没有五图网格说明情绪区没渲染，PE 卡挪去
+   别处只会掩盖问题。 */
+let grid = null;
+for (const secKey of ["temp_macro", "sentiment_trend"]) {
+  for (const block of SEC.blocks(secKey)) {
+    const g = block.matches && block.matches(".chart-grid") ? block
+      : (block.querySelector ? block.querySelector(".chart-grid") : null);
+    if (!g) continue;
+    const firstTitle = g.querySelector(".chart-title");
+    if (firstTitle && firstTitle.textContent.trim() === "成交额趋势") { grid = g; break; }
+  }
+  if (grid) break;
+}
+if (!grid) {
+  window.__render.fail("hook:" + HOOK, "market-trends chart grid not found in [temp_macro]/[sentiment_trend] — refusing to relocate the PE card");
   return;
 }
-anchorEl.after(card);
+grid.appendChild(card);
 window.__render.attest(HOOK, { rendered: 1, matched: 1, expected: 1, unmatched: [], el: card });
 """
 
@@ -2937,7 +2938,7 @@ def build_job(args) -> RenderJob:
         ]
         pe_expects = [
             HookExpectation(name="chinext-pe-ttm", target_sec="temp_macro", expect_count=1,
-                            note="创业板指 PE-TTM 估值温度卡，挂在指数 K 线网格之后"),
+                            note="创业板指 PE-TTM 估值温度卡，情绪趋势五图网格的第 6 张图"),
         ]
         style_expects = [
             HookExpectation(name="style-compare", target_sec="temp_macro", expect_min=1,
@@ -2969,8 +2970,8 @@ def build_job(args) -> RenderJob:
                             note="成交额 / 活跃度 / 融资净买入 / 涨跌家数 / 涨跌停家数"),
         ]
         pe_expects = [
-            HookExpectation(name="chinext-pe-ttm", target_sec="index_trend", expect_count=1,
-                            note="创业板指 PE-TTM 估值温度卡，挂在指数 K 线网格之后"),
+            HookExpectation(name="chinext-pe-ttm", target_sec="sentiment_trend", expect_count=1,
+                            note="创业板指 PE-TTM 估值温度卡，情绪趋势五图网格的第 6 张图"),
         ]
         style_expects = [
             HookExpectation(name="style-compare", target_sec="market_style", expect_min=1,
@@ -2999,7 +3000,14 @@ def build_job(args) -> RenderJob:
         # behind a bundle-level "it ran". 期望集合按契约版本(is_swing)重映射。
         expects=kline_expects,
     )
-    # 创业板指 PE-TTM 估值温度卡：排在 klines 之后注册，PE 卡才能锚到 K 线网格上。
+    builder.add_chart_hook(
+        ChartHook(name="market-trends", payload=market_data, js=MARKET_TRENDS_JS),
+        # The count is declared here and produced there: the JS builds its own
+        # chart list, so a drift between the two is a real signal, not noise.
+        expects=market_trend_expects,
+    )
+    # 创业板指 PE-TTM 估值温度卡：排在 market-trends 之后注册，PE 卡才能追加进
+    # 情绪趋势五图网格的第 6 个空位。
     # evidence 无 pe_ttm 块（旧稿）时 payload 为 None——不注册 hook、不声明期望。
     chinext_pe_payload = extract_chinext_pe_payload(evidence)
     if chinext_pe_payload:
@@ -3007,12 +3015,6 @@ def build_job(args) -> RenderJob:
             ChartHook(name="chinext-pe-ttm", payload=chinext_pe_payload, js=CHINEXT_PE_CHART_JS),
             expects=pe_expects,
         )
-    builder.add_chart_hook(
-        ChartHook(name="market-trends", payload=market_data, js=MARKET_TRENDS_JS),
-        # The count is declared here and produced there: the JS builds its own
-        # chart list, so a drift between the two is a real signal, not noise.
-        expects=market_trend_expects,
-    )
     if style_series_payload:
         builder.add_chart_hook(
             ChartHook(name="style-compare", payload=style_series_payload, js=STYLE_COMPARE_JS),

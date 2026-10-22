@@ -230,11 +230,19 @@ def sync(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
 
     title_map = fetch_sheet_id_map(token)
     watchlist_rows = rows_to_dicts(run_lark_read(token, resolve_sheet_id(title_map, watchlist_title)))
-    groups_rows = rows_to_dicts(run_lark_read(token, resolve_sheet_id(title_map, groups_title)))
     thresholds_rows = rows_to_dicts(run_lark_read(token, resolve_sheet_id(title_map, thresholds_title)))
 
     indices, group_to_stocks = parse_watchlist(watchlist_rows)
-    group_meta = parse_groups(groups_rows)
+    if groups_title in title_map:
+        groups_rows = rows_to_dicts(run_lark_read(token, resolve_sheet_id(title_map, groups_title)))
+        group_meta = parse_groups(groups_rows)
+    else:
+        # groups 子表已删：分组元数据冻结在本地 yaml，成员仍以 watchlist 行为准刷新
+        group_meta = [
+            {"name": g.get("name") or "", "emoji": g.get("emoji") or "", "desc": g.get("desc") or ""}
+            for g in (current.get("groups") or [])
+            if g.get("name")
+        ]
     thresholds = parse_thresholds(thresholds_rows)
 
     new_config = assemble_config(

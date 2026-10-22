@@ -402,7 +402,7 @@ def extract_state_timeline_payload(evidence: dict) -> Optional[Dict[str, Any]]:
 
 
 def extract_concentration_payload(evidence: dict) -> Optional[Dict[str, Any]]:
-    """集中度卡的 30 日轨迹：CR1%/CR5% 双线 + 量能环境色带 + 逐日驱动状态。
+    """集中度卡的 30 日轨迹：CR1% 单线 + 逐日驱动状态点。
 
     数据全部来自 `turnover_concentration.recent`（脚本按日算好），渲染层只画不
     算。卡缺失或序列为空返回 None（不注册图表，门禁按 no_payload 记账）。
@@ -414,8 +414,6 @@ def extract_concentration_payload(evidence: dict) -> Optional[Dict[str, Any]]:
         {
             "date": str(row.get("date") or ""),
             "cr_1pct": row.get("cr_1pct"),
-            "cr_5pct": row.get("cr_5pct"),
-            "env_bucket": row.get("env_bucket"),
             "state": row.get("state"),
         }
         for row in (card.get("recent") or [])
@@ -622,19 +620,8 @@ MARKET_SENSE_EXTRA_CSS = """
 @media (max-width: 900px) { .style-compare-grid { grid-template-columns: 1fr; } }
 .sf-panel { margin: 14px 0 24px; }
 .sf-head { font-size: 12px; color: var(--ink-3); margin-bottom: 10px; line-height: 1.6; }
-.sf-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
-.sf-card { display: block; background: var(--surface); border: 1px solid var(--line-2); border-top: 3px solid var(--sf-accent); border-radius: var(--r-md); padding: 12px 14px; color: inherit; text-decoration: none; }
-.sf-card .sf-eyebrow { font-size: 12px; color: var(--ink-3); }
-.sf-card strong { display: block; font-size: 24px; color: var(--sf-accent); font-variant-numeric: tabular-nums; margin-top: 2px; }
-.sf-card .sf-small { font-size: 11px; color: var(--ink-3); }
-.sf-card p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; }
-.sf-heat { margin: 4px 0 16px; }
-.sf-subtitle { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
 .sf-panel th { position: static; }
 .sf-panel td.sf-rowh { font-weight: 600; color: var(--ink-1); white-space: nowrap; }
-.sf-heat-table { border-collapse: collapse; width: 100%; min-width: 420px; font-size: 13px; }
-.sf-heat-table th, .sf-heat-table td { padding: 7px 10px; border-bottom: 1px solid var(--line-2); text-align: left; }
-.sf-heat-table td.num { text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; }
 .sf-note { font-size: 12px; color: var(--ink-3); margin-top: 6px; line-height: 1.55; }
 .sf-toolbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 0; margin-bottom: 8px; background: var(--bg); border-bottom: 1px solid var(--line-2); }
 .sf-toolbar span { font-size: 12px; color: var(--ink-3); margin-right: auto; }
@@ -642,20 +629,14 @@ MARKET_SENSE_EXTRA_CSS = """
 .sf-range.active { background: #27797b; border-color: #27797b; color: #fff; }
 .sf-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .sf-chart-card { min-width: 0; margin: 0; }
-.sf-formula { font-size: 11.5px; color: var(--ink-2); background: rgba(127,127,127,.07); padding: 5px 8px; border-radius: 4px; margin: 6px 0; }
 .sf-window-note { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; font-variant-numeric: tabular-nums; }
-.sf-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--ink-3); margin-top: 4px; }
-.sf-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.sf-legend i { width: 16px; height: 2px; display: inline-block; }
-.sf-legend i.dash { background: repeating-linear-gradient(90deg, #929185 0 3px, transparent 3px 6px); }
 .sf-details { margin-top: 14px; border: 1px solid var(--line-2); border-radius: var(--r-md); padding: 8px 14px; font-size: 13px; line-height: 1.65; }
 .sf-details summary { cursor: pointer; font-weight: 600; }
 .sf-details h4 { margin: 14px 0 4px; font-size: 13px; }
 .sf-table-wrap { overflow-x: auto; }
 .sf-table-wrap table { border-collapse: collapse; width: 100%; min-width: 0; font-size: 12px; margin: 6px 0; }
-.sf-table-wrap .sf-heat-table { min-width: 420px; font-size: 13px; margin: 0; }
 .sf-table-wrap th, .sf-table-wrap td { padding: 5px 8px; border-bottom: 1px solid var(--line-2); text-align: left; white-space: nowrap; }
-@media (max-width: 900px) { .sf-grid { grid-template-columns: 1fr; } .sf-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 900px) { .sf-grid { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .kline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .kline-grid { grid-template-columns: 1fr; } }
 """
@@ -992,8 +973,9 @@ REPORT.attest(hook, { rendered: 1, matched: 1, expected: 1, unmatched: [], el: w
 
 
 # --------------------------------------------------------------------------- #
-# 30 日成交额集中度轨迹：量能环境色带 + CR1%/CR5% 双线 + 逐日驱动状态点。
-# 读数来自 turnover_concentration 卡，这里只负责画。
+# 30 日成交额集中度轨迹：CR1% 单线 + 非常态日的驱动状态点。
+# 读数来自 turnover_concentration 卡，这里只负责画。dms/2.4.0 起去掉量能色带与
+# CR5% 线：两档分歧已写在读数括号里，图只承担"头部占比怎么走"这一件事。
 # --------------------------------------------------------------------------- #
 CONCENTRATION_TIMELINE_JS = r"""
 const rows = __payload.recent || [];
@@ -1012,13 +994,9 @@ if (!rows.length) {
   return;
 }
 
-/* 环境桶色：缩量蓝、常态灰、放量琥珀——与状态时间轴的档位色系错开，
-   读作「背景量能」而不是「档位」。 */
-const ENV_COLOR = { shrink: "#2e5fb8", normal: "#9aa0a6", expand: "#d9a441" };
-const ENV_LABEL = { shrink: "缩量", normal: "常态", expand: "放量" };
 const STATE_COLOR = { passive: "#2e5fb8", rotation: "#d9a441", inflow: "#1e8449", overheat: "#c0392b" };
 const STATE_LABEL = {
-  passive: "被动集中", rotation: "存量搬家", inflow: "主动集中", overheat: "主动过热",
+  passive: "被动集中", rotation: "存量搬家", inflow: "增量集中", overheat: "增量过热",
   insufficient_history: "历史不足",
 };
 
@@ -1026,8 +1004,8 @@ const n = rows.length;
 const padL = 52, padR = 18, padT = 16, padB = 24;
 const cellW = Math.max(18, Math.min(38, Math.floor((700 - padL - padR) / Math.max(n, 1))));
 const W = padL + padR + cellW * n;
-const ribbonH = 26, gap = 10, lineH = 120;
-const H = padT + padB + ribbonH + gap + lineH;
+const lineH = 110;
+const H = padT + padB + lineH;
 
 const NS = "http://www.w3.org/2000/svg";
 const svg = document.createElementNS(NS, "svg");
@@ -1035,7 +1013,7 @@ svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
 svg.setAttribute("width", String(W));
 svg.setAttribute("height", String(H));
 svg.setAttribute("role", "img");
-svg.setAttribute("aria-label", "近 " + n + " 个交易日的成交额集中度、量能环境与驱动状态");
+svg.setAttribute("aria-label", "近 " + n + " 个交易日的 CR1% 成交额集中度与驱动状态");
 
 function label(x, y, text, opts) {
   const t = document.createElementNS(NS, "text");
@@ -1050,47 +1028,19 @@ function label(x, y, text, opts) {
   return t;
 }
 
-/* —— 第一行：量能环境色带，同桶连续的几天并成一段 */
-let y = padT;
-svg.appendChild(label(4, y + ribbonH / 2 + 4, "量能环境", { size: "11", opacity: "0.85" }));
-let i = 0;
-while (i < n) {
-  const cur = rows[i].env_bucket || "";
-  let j = i;
-  while (j + 1 < n && (rows[j + 1].env_bucket || "") === cur) j++;
-  const x = padL + i * cellW;
-  const w = (j - i + 1) * cellW;
-  const rect = document.createElementNS(NS, "rect");
-  rect.setAttribute("x", String(x + 0.5));
-  rect.setAttribute("y", String(y));
-  rect.setAttribute("width", String(Math.max(w - 1, 1)));
-  rect.setAttribute("height", String(ribbonH));
-  rect.setAttribute("rx", "3");
-  rect.setAttribute("fill", cur ? (ENV_COLOR[cur] || "#8a8a8a") : "rgba(127,127,127,.18)");
-  rect.setAttribute("fill-opacity", cur ? "0.7" : "1");
-  const title = document.createElementNS(NS, "title");
-  title.textContent = rows[i].date + (j > i ? " ~ " + rows[j].date : "") + "　"
-    + (cur ? (ENV_LABEL[cur] || cur) : "无数据") + "（当日总成交额 / 自身20日均）";
-  rect.appendChild(title);
-  svg.appendChild(rect);
-  const envLabel = ENV_LABEL[cur] || cur;
-  if (cur && w >= envLabel.length * 10 + 6) {
-    svg.appendChild(label(x + w / 2, y + ribbonH / 2 + 4, envLabel,
-      { anchor: "middle", fill: "#fff", opacity: "0.95", weight: "600", size: "10" }));
-  }
-  i = j + 1;
-}
-y += ribbonH + gap;
-
-/* —— 第二行：CR1% / CR5% 双线，共用的百分比纵轴 */
-const topY = y;
-const vals = [];
-rows.forEach(r => { if (r.cr_1pct != null) vals.push(r.cr_1pct); if (r.cr_5pct != null) vals.push(r.cr_5pct); });
-const vMax = Math.max(1, Math.ceil((Math.max.apply(null, vals) || 1) * 1.15));
-svg.appendChild(label(4, topY + 12, "CR%", { size: "11", opacity: "0.85" }));
+/* CR1% 单线：纵轴按窗口内实际范围缩放，起伏才看得清 */
+const topY = padT;
+const vals = rows.map(r => r.cr_1pct).filter(v => v != null);
+const vLo = vals.length ? Math.min.apply(null, vals) : 0;
+const vHi = vals.length ? Math.max.apply(null, vals) : 1;
+const span = Math.max(vHi - vLo, 1);
+const vMin = Math.max(0, Math.floor(vLo - span * 0.15));
+const vMax = Math.ceil(vHi + span * 0.15);
+const yOf = v => topY + lineH - ((v - vMin) / Math.max(vMax - vMin, 1)) * lineH;
 for (let g = 0; g <= 3; g++) {
-  const gy = topY + lineH - (g / 3) * lineH;
-  svg.appendChild(label(padL - 6, gy + 3, String(Math.round(vMax * g / 3)), { anchor: "end", size: "9", opacity: "0.55" }));
+  const v = vMin + (vMax - vMin) * g / 3;
+  const gy = yOf(v);
+  svg.appendChild(label(padL - 6, gy + 3, String(Math.round(v)), { anchor: "end", size: "9", opacity: "0.55" }));
   const line = document.createElementNS(NS, "line");
   line.setAttribute("x1", String(padL)); line.setAttribute("x2", String(padL + n * cellW));
   line.setAttribute("y1", String(gy)); line.setAttribute("y2", String(gy));
@@ -1098,46 +1048,37 @@ for (let g = 0; g <= 3; g++) {
   line.setAttribute("stroke-opacity", g === 0 ? "0.3" : "0.12");
   svg.appendChild(line);
 }
-function polyline(key, color) {
-  const pts = [];
-  rows.forEach((r, k) => {
-    if (r[key] == null) return;
-    const px = padL + k * cellW + cellW / 2;
-    const py = topY + lineH - (r[key] / vMax) * lineH;
-    pts.push([px, py]);
-  });
-  if (pts.length < 2) return;
+const pts = [];
+rows.forEach((r, k) => {
+  if (r.cr_1pct == null) return;
+  pts.push([padL + k * cellW + cellW / 2, yOf(r.cr_1pct)]);
+});
+if (pts.length >= 2) {
   const pl = document.createElementNS(NS, "polyline");
   pl.setAttribute("points", pts.map(p => p.join(",")).join(" "));
   pl.setAttribute("fill", "none");
-  pl.setAttribute("stroke", color);
+  pl.setAttribute("stroke", "#2a9d8f");
   pl.setAttribute("stroke-width", "1.8");
   pl.setAttribute("stroke-linejoin", "round");
   svg.appendChild(pl);
 }
-polyline("cr_5pct", "#4a6fa5");
-polyline("cr_1pct", "#2a9d8f");
-/* 非常态驱动状态：在 CR1% 线上打点。常态日不打——这张图的判读量在
-   「剥离环境后还剩多少主动成分」，常态日没有信息量。 */
+/* 非常态驱动状态：在 CR1% 线上打点。常态日不打——常态没有信息量。 */
 rows.forEach((r, k) => {
   if (!r.state || r.state === "normal" || r.state === "insufficient_history" || r.cr_1pct == null) return;
-  const px = padL + k * cellW + cellW / 2;
-  const py = topY + lineH - (r.cr_1pct / vMax) * lineH;
   const dot = document.createElementNS(NS, "circle");
-  dot.setAttribute("cx", String(px));
-  dot.setAttribute("cy", String(py));
+  dot.setAttribute("cx", String(padL + k * cellW + cellW / 2));
+  dot.setAttribute("cy", String(yOf(r.cr_1pct)));
   dot.setAttribute("r", "4");
   dot.setAttribute("fill", STATE_COLOR[r.state] || "#8a8a8a");
   dot.setAttribute("stroke", "#fff");
   dot.setAttribute("stroke-width", "1.2");
   const title = document.createElementNS(NS, "title");
-  title.textContent = r.date + "　" + (STATE_LABEL[r.state] || r.state)
-    + "（CR1% " + r.cr_1pct + "%" + (r.cr_5pct != null ? "，CR5% " + r.cr_5pct + "%" : "") + "）";
+  title.textContent = r.date + "　" + (STATE_LABEL[r.state] || r.state) + "（CR1% " + r.cr_1pct + "%）";
   dot.appendChild(title);
   svg.appendChild(dot);
 });
 
-/* 每个交易日都能读到双线数值，常态日同样可查；不再增加逐日数值表。 */
+/* 每个交易日都能悬停读到 CR1% 与状态，常态日同样可查；不再增加逐日数值表。 */
 rows.forEach((r, k) => {
   const hit = document.createElementNS(NS, "rect");
   hit.setAttribute("x", String(padL + k * cellW));
@@ -1147,9 +1088,7 @@ rows.forEach((r, k) => {
   hit.setAttribute("fill", "transparent");
   hit.setAttribute("tabindex", "0");
   const reading = r.date + " · CR1% " + (r.cr_1pct == null ? "缺失" : r.cr_1pct + "%")
-    + " · CR5% " + (r.cr_5pct == null ? "缺失" : r.cr_5pct + "%")
-    + " · " + (ENV_LABEL[r.env_bucket] || r.env_bucket || "量能环境缺失")
-    + " · " + (STATE_LABEL[r.state] || (r.state === "normal" ? "常态集中" : r.state) || "驱动状态缺失");
+    + " · " + (STATE_LABEL[r.state] || (r.state === "normal" ? "常态" : r.state) || "驱动状态缺失");
   hit.setAttribute("aria-label", reading);
   const title = document.createElementNS(NS, "title");
   title.textContent = reading;
@@ -1183,7 +1122,7 @@ if (readings.length === 1) {
 }
 const cap = document.createElement("div");
 cap.className = "concentration-caption";
-cap.textContent = (readings.length === 1 ? "" : "成交额集中度 · ") + "近 " + n + " 个交易日"
+cap.textContent = (readings.length === 1 ? "" : "成交额集中度 · ") + "CR1% · 近 " + n + " 个交易日"
   + (__payload.data_through ? " · 截至 " + __payload.data_through : "");
 wrap.appendChild(cap);
 const chart = document.createElement("div");
@@ -1204,12 +1143,7 @@ function legendItem(color, text, kind) {
   span.appendChild(document.createTextNode(text));
   legend.appendChild(span);
 }
-[["#2a9d8f", "CR1%（前1%个股）"], ["#4a6fa5", "CR5%（前5%个股）"]].forEach(pair => {
-  legendItem(pair[0], pair[1], "cr-key");
-});
-Array.from(new Set(rows.map(r => r.env_bucket).filter(Boolean))).forEach(k => {
-  legendItem(ENV_COLOR[k] || "#8a8a8a", "量能：" + (ENV_LABEL[k] || k));
-});
+legendItem("#2a9d8f", "CR1%（前1%个股）", "cr-key");
 Array.from(new Set(rows.filter(r => r.cr_1pct != null && r.state &&
   r.state !== "normal" && r.state !== "insufficient_history").map(r => r.state))).forEach(k => {
   legendItem(STATE_COLOR[k] || "#8a8a8a", "驱动：" + (STATE_LABEL[k] || k), "driver-key");
@@ -2165,9 +2099,9 @@ function round2(value) { return Math.round(value * 100) / 100; }
 
 # --------------------------------------------------------------------------- #
 # 市场风格因子面板（style_factors.py 的读数 + 旁路日频曲线）。
-# 呈现口径移植自 skillhub china-market-style-factors：六张读数卡、风格窗口热力表、
-# 全历史/三年/一年/60 日四窗口切换的详情图（风格比值上层=本窗口起点 100、下层=60 日
-# 滚动相对变化，含分红口径虚线；趋势/波动保留原单位），外加口径与数据质量附录。
+# dms/2.4.0 起只画四个风格因子的小图（2×2，单层比值曲线，本窗口起点=100），
+# 窗口 60 日 / 1 年 / 3 年切换，外加折叠的口径与数据质量附录。读数卡与窗口热力表
+# 与 Markdown「风格因子」表重复，已删除；趋势与波动只在判断段里一句带过，不单独画图。
 # 不画历史区间阴影；发布前回溯段只在文字里说明。
 # --------------------------------------------------------------------------- #
 STYLE_FACTORS_JS = r"""
@@ -2176,7 +2110,7 @@ const HOOK = "style-factors";
 const targetSec = P.target_sec;
 const COLORS = { size: "#27797b", growth: "#725c98", small_tail: "#b9763d", dividend: "#567450", market_trend: "#39547d", volatility: "#9c6666" };
 const STYLE_KEYS = ["size", "growth", "small_tail", "dividend"];
-const keys = (P.order || []).filter(k => (P.factors || {})[k] && (P.metrics || {})[k]);
+const keys = STYLE_KEYS.filter(k => (P.factors || {})[k] && (P.metrics || {})[k]);
 if (!keys.length) {
   window.__render.attest(HOOK, { rendered: 0, matched: 0, expected: 1, unmatched: [{ name: "style-factors", reason: "no_payload" }] });
   return;
@@ -2209,60 +2143,12 @@ const panel = el("section", "sf-panel");
 panel.appendChild(el("div", "sf-head",
   `风格因子 · 行情截至 ${P.as_of} · 相对变化为比值涨跌，不是两组收益率相减 · ${P.source || ""}`));
 
-/* 1. 六张读数卡 */
-const cards = el("div", "sf-cards");
-keys.forEach(k => {
-  const m = M[k];
-  const isStyle = STYLE_KEYS.includes(k);
-  const c = el("a", "sf-card");
-  c.href = "#sf-" + k;
-  c.style.setProperty("--sf-accent", COLORS[k]);
-  c.appendChild(el("span", "sf-eyebrow", m.name));
-  c.appendChild(el("strong", "", isStyle ? pct(m.relative_60d_pct) : `${fix(m.level)}%`));
-  const pctTxt = Number.isFinite(m.percentile) ? `历史分位 ${m.percentile.toFixed(1)}%` : "历史分位样本不足";
-  c.appendChild(el("span", "sf-small", `${isStyle ? "60日相对变化" : m.unit} · ${pctTxt}`));
-  c.appendChild(el("p", "", m.label || ""));
-  cards.appendChild(c);
-});
-panel.appendChild(cards);
-
-/* 2. 风格窗口热力表：同一因子不同窗口，结论可以不同 */
-const heat = el("div", "sf-heat");
-heat.appendChild(el("div", "sf-subtitle", "风格切换：不同观察窗口，结论并不相同"));
-/* 行标签用 td：主题把 th 设成 sticky，行首的 th 会叠到表头上 */
-const heatWrap = el("div", "sf-table-wrap");
-const ht = el("table", "sf-heat-table");
-const hThead = el("thead");
-const hh = el("tr");
-["因子", "20个交易日", "60个交易日", "120个交易日"].forEach(t => hh.appendChild(el("th", "", t)));
-hThead.appendChild(hh);
-ht.appendChild(hThead);
-const hBody = el("tbody");
-ht.appendChild(hBody);
-STYLE_KEYS.filter(k => M[k]).forEach(k => {
-  const tr = el("tr");
-  tr.appendChild(el("td", "sf-rowh", M[k].name));
-  [20, 60, 120].forEach(n => {
-    const v = M[k][`relative_${n}d_pct`];
-    const td = el("td", "num", pct(v));
-    if (Number.isFinite(v)) {
-      const a = Math.min(Math.abs(v) / 20, 1) * 0.55 + 0.06;
-      td.style.background = v >= 0 ? `rgba(192,57,43,${a.toFixed(3)})` : `rgba(39,121,123,${a.toFixed(3)})`;
-    }
-    tr.appendChild(td);
-  });
-  hBody.appendChild(tr);
-});
-heatWrap.appendChild(ht);
-heat.appendChild(heatWrap);
-heat.appendChild(el("div", "sf-note", "正值偏向：小盘 / 成长 / 更小市值 / 红利。颜色只表示方向，不代表好坏。"));
-panel.appendChild(heat);
-
-/* 3. 四窗口切换 + 六张详情图 */
+/* 1. 三窗口切换 + 四张小图 */
 const views = P.views || {};
-const viewDefs = (P.view_defs || []).filter(v => views[v.key]);
+const VIEW_ORDER = [["60d", "60 日"], ["1y", "1 年"], ["3y", "3 年"]];
+const viewDefs = VIEW_ORDER.filter(([key]) => views[key]).map(([key, name]) => ({ key, name }));
 const toolbar = el("div", "sf-toolbar");
-toolbar.appendChild(el("span", "", "切换六张图的观察窗口；风格图下层始终是 60 日滚动信号。"));
+toolbar.appendChild(el("span", "", "风格比值走势（本窗口起点 = 100，向上 = 小盘 / 成长 / 更小市值 / 红利）"));
 const buttons = [];
 viewDefs.forEach(v => {
   const b = el("button", "sf-range", v.name);
@@ -2276,34 +2162,24 @@ panel.appendChild(toolbar);
 
 const grid = el("div", "sf-grid");
 const chartCards = {};
-keys.forEach((k, i) => {
+keys.forEach(k => {
   const m = M[k];
-  const isStyle = STYLE_KEYS.includes(k);
-  const card = CK.card("chart-card sf-chart-card",
-    `${String(i + 1).padStart(2, "0")} ${m.name}${isStyle ? `（上升＝${m.positive}）` : ""}`,
-    isStyle
-      ? `60日相对变化 ${pct(m.relative_60d_pct)} · 历史分位 ${Number.isFinite(m.percentile) ? m.percentile.toFixed(1) + "%" : "—"} · ${m.label}`
-      : `当前读数 ${fix(m.level)}% · 历史分位 ${Number.isFinite(m.percentile) ? m.percentile.toFixed(1) + "%" : "—"} · ${m.label}`);
+  /* 小图标题只写因子名与正向含义：60 日读数、分位已在 Markdown 表里，不再复述 */
+  const card = CK.card("chart-card sf-chart-card", m.name, `向上 = ${m.positive || ""}`);
   card.id = "sf-" + k;
-  const formula = el("div", "sf-formula", m.formula || "");
   const note = el("div", "sf-window-note");
   const host = el("div", "sf-svg-host");
-  card.append(formula, host, note);
-  if (isStyle && (F[k].tr_relative_60d || []).length) {
-    const lg = el("div", "sf-legend");
-    lg.innerHTML = `<span><i style="background:${COLORS[k]}"></i>价格口径：60日相对变化</span><span><i class="dash"></i>含分红口径：敏感性核验</span>`;
-    card.appendChild(lg);
-  }
+  card.append(host, note);
   grid.appendChild(card);
   chartCards[k] = { card, host, note, tip: CK.tooltip(card) };
 });
 panel.appendChild(grid);
 
-/* 4. 口径、核验与数据质量（折叠） */
+/* 2. 口径、核验与数据质量（折叠） */
 panel.appendChild(buildDetails());
 
 anchor.after(panel);
-setView(viewDefs.some(v => v.key === "all") ? "all" : (viewDefs[0] || {}).key);
+setView(viewDefs.some(v => v.key === "1y") ? "1y" : (viewDefs[0] || {}).key);
 window.__render.attest(HOOK, { rendered: 1, matched: 1, expected: 1, unmatched: [], el: panel });
 
 function windowIndices(stat) {
@@ -2322,21 +2198,14 @@ function setView(view) {
     const cc = chartCards[k];
     cc.host.innerHTML = "";
     if (!stat) { cc.note.textContent = "该窗口无数据"; return; }
-    const isStyle = STYLE_KEYS.includes(k);
     const idx = windowIndices(stat).filter(i => Number.isFinite(F[k].level[i]));
     if (idx.length < 2) { cc.note.textContent = "该窗口有效观测不足"; return; }
     const base = stat.raw_start;
-    const upper = idx.map(i => (isStyle ? F[k].level[i] / base * 100 : F[k].level[i]));
-    const panels = [{ values: upper, ref: isStyle ? 100 : (k === "market_trend" ? 0 : null), color: COLORS[k], unit: isStyle ? "本窗口起点=100" : "%", height: isStyle ? 176 : 210 }];
-    if (isStyle) {
-      const lower = idx.map(i => F[k].relative_60d[i]);
-      const trLine = (F[k].tr_relative_60d || []).length ? idx.map(i => F[k].tr_relative_60d[i]) : null;
-      panels.push({ values: lower, extra: trLine, ref: 0, color: COLORS[k], unit: "60日相对变化（%）", height: 128 });
-    }
+    const upper = idx.map(i => F[k].level[i] / base * 100);
+    const panels = [{ values: upper, ref: 100, color: COLORS[k], unit: "本窗口起点=100", height: 150 }];
     cc.host.appendChild(drawPanels(k, idx, panels, cc));
     const change = Number.isFinite(stat.change) ? `${stat.change >= 0 ? "+" : ""}${stat.change.toFixed(2)}` : "—";
-    cc.note.textContent = `${stat.view_name}：${stat.from} → ${stat.to} ｜ ` +
-      (isStyle ? `起点=100；区间相对变化 ${change}%` : `期末 ${fix(stat.raw_last)}%；区间变化 ${change} 个百分点`);
+    cc.note.textContent = `${stat.from} → ${stat.to} ｜ 区间相对变化 ${change}%`;
   });
 }
 
@@ -2405,8 +2274,8 @@ function drawPanels(k, idx, panels, cc) {
     const rows = [`<div style="color:#94a3b8;font-size:11px">${dates[idx[j]]}</div>`];
     scales.forEach(({ p }, pi) => {
       const v = p.values[j];
-      const lab = pi === 0 ? (STYLE_KEYS.includes(k) ? "相对强弱" : M[k].name) : "60日相对变化";
-      rows.push(`<div>${lab}: <strong>${pi === 0 && STYLE_KEYS.includes(k) ? fix(v) : (pi === 0 ? fix(v) + "%" : pct(v))}</strong></div>`);
+      const lab = pi === 0 ? "相对强弱" : "60日相对变化";
+      rows.push(`<div>${lab}: <strong>${pi === 0 ? fix(v) : pct(v)}</strong></div>`);
       if (p.extra && Number.isFinite(p.extra[j])) rows.push(`<div>含分红60日: <strong>${pct(p.extra[j])}</strong></div>`);
     });
     cc.tip.innerHTML = rows.join("");
@@ -2439,13 +2308,13 @@ function table(headers, rows) {
 function buildDetails() {
   const d = el("details", "sf-details");
   d.appendChild(el("summary", "", "口径、全收益核验与数据质量"));
-  keys.forEach(k => {
+  (P.order || []).filter(k => M[k]).forEach(k => {
     const p = el("p");
     p.innerHTML = `<b>${M[k].name}</b>：`;
     p.appendChild(document.createTextNode(`${M[k].formula}；${M[k].description}`));
     d.appendChild(p);
   });
-  d.appendChild(el("p", "", "前四个风格因子在各窗口起点重设为100，终值减100即区间相对变化；趋势与波动保留原单位。三年与一年按日历年回溯，顺延到首个可用交易日；60日采用60个交易日收益区间（61个收盘观测）。图中不添加历史区间阴影。"));
+  d.appendChild(el("p", "", "四个风格因子在各窗口起点重设为100，终值减100即区间相对变化。三年与一年按日历年回溯，顺延到首个可用交易日；60日采用60个交易日收益区间（61个收盘观测）。图中不添加历史区间阴影。"));
   const releases = STYLE_KEYS.filter(k => M[k]).map(k => `${M[k].name}发布边界 ${M[k].release}`).join("；");
   d.appendChild(el("p", "", `发布前回溯段仅以文字说明（${releases}；趋势与波动随全指配对为 ${(M.market_trend || {}).release || "—"}）：曲线保留这些观测，历史分位排除它们及预热不足的窗口，只比较当日之前、至少252个样本。`));
 
@@ -2458,10 +2327,6 @@ function buildDetails() {
         r.all_directions_agree ? "全部一致" : "存在差异"])));
   }
   Object.entries(P.tr_status || {}).forEach(([g, st]) => { if (st !== "complete") d.appendChild(el("p", "sf-note", `${g}：${st}`)); });
-
-  const rb = P.robustness || {};
-  d.appendChild(el("h4", "", "规模稳健性对照"));
-  d.appendChild(el("p", "", `${rb.proxy || "中证1000/沪深300"}：20日 ${pct(rb.relative_20d_pct)}，60日 ${pct(rb.relative_60d_pct)}，120日 ${pct(rb.relative_120d_pct)}。与主规模指标对照：${rb.note || "—"}。`));
 
   if ((P.cells || []).length) {
     d.appendChild(el("h4", "", "六个风格格子与全指（价格口径绝对收益）"));
@@ -2940,10 +2805,10 @@ def build_job(args) -> RenderJob:
             HookExpectation(name="chinext-pe-ttm", target_sec="temp_macro", expect_count=1,
                             note="创业板指 PE-TTM 估值温度卡，情绪趋势五图网格的第 6 张图"),
         ]
-        style_expects = [
-            HookExpectation(name="style-compare", target_sec="temp_macro", expect_min=1,
-                            note="规模轴 + 成长/价值/红利，任一轴缺数据记 no_payload"),
-        ]
+        # dms/2.4.0：2.x 报告不再挂 Baostock 归一化对比图——风格方向一律以风格因子为准，
+        # 那两张背景图与因子小图重复。legacy 报告照旧挂。
+        style_series_payload = None
+        style_expects = []
         state_timeline_expects = [
             # 2.x 读数 UL 在第 1 章 1.2（状态卡与时间轴跟着它走），不在第 2 章。
             HookExpectation(name="state-timeline", target_sec="pos_gate", expect_count=1,
@@ -2951,7 +2816,7 @@ def build_job(args) -> RenderJob:
         ]
         concentration_expects = [
             HookExpectation(name="concentration-timeline", target_sec="pos_gate", expect_count=1,
-                            note="30 日 CR1%/CR5% 双线 + 量能环境色带 + 驱动状态点"),
+                            note="30 日 CR1% 单线 + 驱动状态点"),
         ]
         lifecycle_target = "industry_mainline"
     else:

@@ -70,6 +70,9 @@ _AUX_PROVENANCE_GLOBS = (
     # 产业趋势波段(2.x)：宏观风险记分卡的油价/美债/汇率读数与 evidence 同等可信，
     # 由 daily.macro-risk-scorecard 写入 module_context_<日期>/。
     "macro_risk_scorecard.json",
+    # dms/2.4.0 第 4 章双轨：估值锚定与流动性扫描读数。
+    "valuation_anchor.json",
+    "liquidity_scan.json",
 )
 # 模型自建分组的派生聚合列：3.1 的风险类型是模型当场分的组，模板要求填组内
 # 中位数，而偶数样本的中位数按定义要取中间两值的平均——这个数 evidence 里本来
@@ -197,7 +200,9 @@ def validate_dms_content(
         )
 
     forward_detail = _validate_forward_axis(sections, evidence, problems)
-    style_detail = _validate_style_factors(sections, evidence, problems)
+    style_detail = _validate_style_factors(
+        sections, evidence, problems, compact_table=_contract_at_least(contract, (2, 4))
+    )
     temp_macro_tables = _validate_temp_macro_tables(sections, contract, problems)
 
     provenance = _NumberProvenance(evidence, aux_payloads)
@@ -548,6 +553,15 @@ _STYLE_TABLE_RE = re.compile(r"^\|\s*风格因子\s*\|", re.M)
 # 「短期出现变化」。
 _STYLE_REVERSAL_RE = re.compile(r"风格(?:发生)?(?:轮动|反转|切换)")
 _EMOTION_TABLE_RE = re.compile(r"^\|\s*指标\s*\|", re.M)
+# dms/2.4.0 起风格因子表固定五列：10 日、120 日与分位列退出正文（证据仍在 evidence），
+# 10 日只在与 20 日反向时写进「延续还是在变」，分位只在极端位置写一句。
+STYLE_TABLE_COLUMNS = ("风格因子", "当前偏向", "20日", "60日", "延续还是在变")
+_STYLE_HEADER_LINE_RE = re.compile(r"^\|\s*风格因子\s*\|.*$", re.M)
+
+
+def _contract_at_least(contract: SectionContract, minimum: Tuple[int, int]) -> bool:
+    match = re.match(r"^dms/(\d+)\.(\d+)", contract.version)
+    return bool(match) and (int(match.group(1)), int(match.group(2))) >= minimum
 _INDEX_TABLE_RE = re.compile(r"^\|\s*指数\s*\|", re.M)
 
 
@@ -584,11 +598,13 @@ def _validate_style_factors(
     sections: Mapping[str, MarkdownSection],
     evidence: Mapping[str, Any],
     problems: List[str],
+    compact_table: bool = False,
 ) -> Dict[str, Any]:
-    """市场风格因子的两条硬纪律（规则见 methodology/style_factors.md）。
+    """市场风格因子的硬纪律（规则见 methodology/style_factors.md）。
 
     R1 读数可用时，「风格因子」表必须在（legacy 在市场风格节，2.x 在第 1/2 章）；
-    R2 「风格轮动/反转/切换」只能在至少一个风格因子 rotation_code=reversal_20v60 时写。
+    R2 「风格轮动/反转/切换」只能在至少一个风格因子 rotation_code=reversal_20v60 时写；
+    R3（dms/2.4.0 起）表头固定为 STYLE_TABLE_COLUMNS 五列。
     """
     block = _dig(evidence, "market_trend", "market_style", "style_factors")
     detail: Dict[str, Any] = {"available": bool(isinstance(block, Mapping) and block.get("available"))}
@@ -604,6 +620,15 @@ def _validate_style_factors(
         problems.append(
             "[market_style] style factor readings are available but the 风格因子 table is missing"
         )
+    elif compact_table:
+        header = _STYLE_HEADER_LINE_RE.search(body).group(0)
+        columns = tuple(cell.strip().replace(" ", "") for cell in header.strip().strip("|").split("|"))
+        detail["table_columns"] = list(columns)
+        if columns != STYLE_TABLE_COLUMNS:
+            problems.append(
+                "[market_style] 风格因子表须为五列 "
+                f"{' | '.join(STYLE_TABLE_COLUMNS)}，实际为 {' | '.join(columns)}"
+            )
     metrics = block.get("metrics") or {}
     reversals = [
         key for key in ("size", "growth", "small_tail", "dividend")
@@ -992,8 +1017,12 @@ def _paragraph_warnings(
 # 图表 hook 因此直接锚到小节，temp_macro 的别名兜底退役为仅兼容旧章名。
 # 2.3.0（2026-10-18）：删除第 6 章「仓位管理备忘」，报告在第 5 章收口；
 # 第 1 章的仓位档位裁决保留。
+# 2.4.0（2026-10-22）：第 4 章维度 C 由「规模偏好」改为双轨——4.4 大盘估值锚定、
+# 4.5 中小盘流动性挖掘两个小节入契约（4.1 并集 / 4.2 趋势锚 / 4.3 特征组 / 4.6 交叉
+# 见顶保留，不入契约以免锁死措辞）；风格因子表固定五列（R3）；集中度读数瘦身为
+# 「CR1% 当日值｜状态」一行（呈现层改动，契约不拦）。
 INDUSTRY_SWING_CONTRACT = SectionContract(
-    version="dms/2.3.0-industry-swing",
+    version="dms/2.4.0-industry-swing",
     sections=[
         # 排版对齐 legacy：frontmatter + 标题块 + ## 一句话盘面判断 hero；
         # 章节用 # N.（渲染后 h2）。第 2 章小节 ## 2.M（渲染后 h3）自 2.2.0 起入契约。
@@ -1014,6 +1043,10 @@ INDUSTRY_SWING_CONTRACT = SectionContract(
                     source="references/template/section3.md"),
         SectionSpec("mainline_screening", [r"主线内关注个股"], level=2,
                     source="methodology/mainline_stock_screening.md"),
+        SectionSpec("valuation_anchor", [r"估值锚定"], level=3,
+                    source="methodology/dual_track.md"),
+        SectionSpec("liquidity_mining", [r"流动性挖掘"], level=3,
+                    source="methodology/dual_track.md"),
         SectionSpec("m4_decline", [r"亏钱效应（爆量下跌）"], level=2,
                     source="references/template/section4.md"),
     ],

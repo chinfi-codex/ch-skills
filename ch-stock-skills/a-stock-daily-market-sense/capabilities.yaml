@@ -72,6 +72,28 @@ capabilities:
     receipt_outputs:
       - reports/module_context_*/macro_risk_scorecard.json
 
+  daily.valuation-anchor:
+    kind: command
+    entry: scripts/valuation_anchor.py
+    terminal: false
+    judgment: forbidden
+    required_env: [TUSHARE_TOKEN]
+    # 第 4 章双轨·大盘轨：指数 10 年 / 个股 3 年估值分位。锁星之后跑（读已锁星的主题映射）；
+    # 产物落 module_context_<日期>/，数字溯源门禁按该路径把读数纳入取数集。
+    effects: [net:tushare, db:alpha_data.dms_valuation_daily, stdout:json, "fs:reports/module_context_*/valuation_anchor.json"]
+    receipt_outputs:
+      - reports/module_context_*/valuation_anchor.json
+
+  daily.liquidity-scan:
+    kind: command
+    entry: scripts/liquidity_scan.py
+    terminal: false
+    judgment: forbidden
+    # 第 4 章双轨·中小盘轨：流动性门槛扫描，只读 PG（build-evidence 已落库的日线与 daily_basic）。
+    effects: [db:read, stdout:json, "fs:reports/module_context_*/liquidity_scan.json"]
+    receipt_outputs:
+      - reports/module_context_*/liquidity_scan.json
+
   daily.compute-trend-state:
     kind: command
     entry: scripts/trend_state_card.py

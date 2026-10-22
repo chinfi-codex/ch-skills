@@ -3,7 +3,7 @@
     "dms-html": {
       "contract": {
         "browser": {
-          "expect_contract": "dms/2.3.0-industry-swing",
+          "expect_contract": "dms/2.4.0-industry-swing",
           "script": "scripts/_shared/html_report/render_check.py"
         },
         "forbidden_patterns": [
@@ -80,6 +80,22 @@
             "required": false
           },
           {
+            "key": "valuation_anchor",
+            "level": 2,
+            "patterns": [
+              "估值锚定"
+            ],
+            "required": false
+          },
+          {
+            "key": "liquidity_mining",
+            "level": 2,
+            "patterns": [
+              "流动性挖掘"
+            ],
+            "required": false
+          },
+          {
             "key": "m4_decline",
             "level": 1,
             "patterns": [
@@ -89,7 +105,7 @@
           }
         ]
       },
-      "contract_version": "dms/2.3.0-industry-swing",
+      "contract_version": "dms/2.4.0-industry-swing",
       "features": [
         "evidence-backed",
         "preserve-source-text",
@@ -200,6 +216,22 @@
                 "required": false
               },
               {
+                "key": "valuation_anchor",
+                "level": 3,
+                "patterns": [
+                  "估值锚定"
+                ],
+                "required": false
+              },
+              {
+                "key": "liquidity_mining",
+                "level": 3,
+                "patterns": [
+                  "流动性挖掘"
+                ],
+                "required": false
+              },
+              {
                 "key": "m4_decline",
                 "level": 2,
                 "patterns": [
@@ -246,7 +278,7 @@
         },
         {
           "config": {
-            "expect_contract": "dms/2.3.0-industry-swing",
+            "expect_contract": "dms/2.4.0-industry-swing",
             "script": "scripts/_shared/html_report/render_check.py"
           },
           "id": "browser-attestation",
@@ -330,6 +362,22 @@
             "required": false
           },
           {
+            "key": "valuation_anchor",
+            "level": 2,
+            "patterns": [
+              "估值锚定"
+            ],
+            "required": false
+          },
+          {
+            "key": "liquidity_mining",
+            "level": 2,
+            "patterns": [
+              "流动性挖掘"
+            ],
+            "required": false
+          },
+          {
             "key": "m4_decline",
             "level": 1,
             "patterns": [
@@ -339,7 +387,7 @@
           }
         ]
       },
-      "contract_version": "dms/2.3.0-industry-swing",
+      "contract_version": "dms/2.4.0-industry-swing",
       "features": [
         "evidence-backed"
       ],
@@ -443,6 +491,22 @@
                 "required": false
               },
               {
+                "key": "valuation_anchor",
+                "level": 2,
+                "patterns": [
+                  "估值锚定"
+                ],
+                "required": false
+              },
+              {
+                "key": "liquidity_mining",
+                "level": 2,
+                "patterns": [
+                  "流动性挖掘"
+                ],
+                "required": false
+              },
+              {
                 "key": "m4_decline",
                 "level": 1,
                 "patterns": [
@@ -497,5 +561,5 @@
   },
   "schema_version": 1,
   "skill": "a-stock-daily-market-sense",
-  "source_sha256": "a5804ce481eaa2be7ab46209ed495bf1e57f5cfb79f546f975dd08b3cabe33c6"
+  "source_sha256": "f04e472151cfc34f38c7326d7522a65b9e65d50b8c1d904885b1ff2da5a7a6d6"
 }

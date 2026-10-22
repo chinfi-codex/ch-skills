@@ -14,7 +14,7 @@ from html_report import ChartHook, HookExpectation, HtmlReportBuilder, SectionCo
 from render_report_html import CONCENTRATION_TIMELINE_JS, MARKET_SENSE_EXTRA_CSS, TREND_STATE_CARD_JS
 
 
-READING = "成交额集中度：CR1% 17.92%、CR5% 43.09%，均为常态集中；缩量桶样本不足，分位回退无条件口径。"
+READING = "成交额集中度：CR1% 17.92%｜常态（分位回退无条件口径）"
 
 
 def render_panel(rows, *, with_card=True, reading=READING):
@@ -45,7 +45,7 @@ def render_panel(rows, *, with_card=True, reading=READING):
 
 def rows_for(states):
     return [{"date": f"2026-09-{i + 1:02d}", "cr_1pct": 17.92 + i / 10,
-             "cr_5pct": 43.09 + i / 10, "env_bucket": "shrink", "state": state}
+             "state": state}
             for i, state in enumerate(states)]
 
 
@@ -82,20 +82,21 @@ class ConcentrationRenderTest(unittest.TestCase):
         self.assertEqual(page.locator("#report-body").inner_text().count(READING), 1)
         self.assertTrue(page.locator(".concentration-reading").is_visible())
         self.assertIn("结合前文", page.locator("#report-body").inner_text())
-        self.assertEqual(page.locator(".concentration-timeline svg polyline").count(), 2)
+        # dms/2.4.0：只画 CR1% 一条线，不再有量能色带。
+        self.assertEqual(page.locator(".concentration-timeline svg polyline").count(), 1)
         self.assertTrue(page.evaluate("window.__sec.contains('pos_gate', document.querySelector('.concentration-timeline'))"))
 
     def test_normal_window_has_no_unused_driver_legend(self):
         page = self.open_panel(rows_for(["normal"] * 30))
         legend = page.locator(".concentration-timeline .stl-legend").inner_text()
         self.assertIn("CR1%", legend)
-        self.assertIn("CR5%", legend)
-        self.assertIn("量能：缩量", legend)
+        self.assertNotIn("CR5%", legend)
+        self.assertNotIn("量能", legend)
         self.assertNotIn("驱动：", legend)
-        self.assertNotIn("放量", legend)
         hits = page.locator(".concentration-timeline svg rect[tabindex]")
         self.assertEqual(hits.count(), 30)
-        self.assertIn("43.09%", hits.first.get_attribute("aria-label"))
+        self.assertIn("17.92%", hits.first.get_attribute("aria-label"))
+        self.assertIn("常态", hits.first.get_attribute("aria-label"))
 
     def test_only_drawn_states_enter_legend_and_missing_values_are_explicit(self):
         rows = rows_for(["normal", "passive", "passive", "overheat", "rotation"])
@@ -103,7 +104,7 @@ class ConcentrationRenderTest(unittest.TestCase):
         page = self.open_panel(rows)
         legend = page.locator(".concentration-timeline .stl-legend").inner_text()
         self.assertEqual(legend.count("驱动：被动集中"), 1)
-        self.assertEqual(legend.count("驱动：主动过热"), 1)
+        self.assertEqual(legend.count("驱动：增量过热"), 1)
         self.assertNotIn("驱动：存量搬家", legend)
         self.assertIn("CR1% 缺失", page.locator(".concentration-timeline svg rect[tabindex]").last.get_attribute("aria-label"))
 

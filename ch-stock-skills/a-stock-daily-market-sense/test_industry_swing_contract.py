@@ -83,6 +83,14 @@ SWING_MARKDOWN = """# 报告
 
 并集正文。
 
+## 4.4 维度 C·大盘：估值锚定
+
+估值正文。
+
+## 4.5 维度 C·中小盘：流动性挖掘
+
+挖掘正文。
+
 # 5. 亏钱效应（爆量下跌）
 
 亏钱正文。
@@ -100,6 +108,8 @@ EXPECTED_SECTIONS = [
     ("market_style", 3),
     ("industry_mainline", 2),
     ("mainline_screening", 2),
+    ("valuation_anchor", 3),
+    ("liquidity_mining", 3),
     ("m4_decline", 2),
 ]
 
@@ -252,3 +262,14 @@ def test_style_subsection_legacy_name_still_resolves():
     old = SWING_MARKDOWN.replace("## 2.3 风格因子", "## 2.3 市场风格")
     audit = validate_dms_content(old, _minimal_evidence(), INDUSTRY_SWING_CONTRACT)
     assert audit["status"] == "ok", audit
+
+
+def test_missing_dual_track_subsection_is_named():
+    """dms/2.4.0：第 4 章丢掉双轨任一小节要被点名。"""
+    broken = SWING_MARKDOWN.replace("## 4.5 维度 C·中小盘：流动性挖掘\n\n挖掘正文。\n", "")
+    try:
+        validate_dms_content(broken, _minimal_evidence(), INDUSTRY_SWING_CONTRACT)
+    except ContractError as exc:
+        assert "liquidity_mining" in str(exc) or "流动性挖掘" in str(exc)
+    else:
+        raise AssertionError("missing 4.5 流动性挖掘 must fail")

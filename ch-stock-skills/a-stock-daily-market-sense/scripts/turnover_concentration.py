@@ -24,7 +24,7 @@
       无条件分位 < 70            → normal（常态集中，不解读）
       ≥ 70 且 head_5d ≤ 0        → passive
       ≥ 70 且 total_5d ≤ 0       → rotation（head_5d > 0 隐含）
-      ≥ 70 且 head 分位 < 85     → inflow（温和主动）
+      ≥ 70 且 head 分位 < 85     → inflow（增量集中，温和）
       其余                        → overheat
 
 **口径与纪律。** 逐日指标落 `dms_concentration_daily` 表；CR 分位的滚动窗口与极值卡
@@ -285,7 +285,7 @@ def growth(series: pd.Series, window: int) -> Optional[float]:
 
 def classify(uncond_pct: Optional[float], head_g: Optional[float],
              total_g: Optional[float], head_amt_pct: Optional[float]) -> str:
-    """状态机：常态 / 被动集中 / 存量搬家 / 温和主动 / 增量过热。"""
+    """状态机：常态 / 被动集中 / 存量搬家 / 增量集中 / 增量过热。"""
     if uncond_pct is None or head_g is None or total_g is None:
         return "insufficient_history"
     if uncond_pct < HIGH_PCT:
@@ -300,11 +300,11 @@ def classify(uncond_pct: Optional[float], head_g: Optional[float],
 
 
 STATE_LABELS = {
-    "normal": "常态集中（不解读）",
+    "normal": "常态（不解读）",
     "passive": "被动集中（尾部失血，机械抬升）",
-    "rotation": "存量搬家型主动集中（头部虹吸流动性）",
-    "inflow": "主动集中（温和）",
-    "overheat": "增量型主动过热（放量+头部加速吸筹+绝对水位高）",
+    "rotation": "存量搬家（头部虹吸流动性）",
+    "inflow": "增量集中（温和）",
+    "overheat": "增量过热（放量+头部加速吸筹+绝对水位高）",
     "insufficient_history": "历史不足，不出判读",
 }
 
@@ -479,7 +479,7 @@ def build_block(asof: Optional[str] = None, backfill: int = 0) -> Dict[str, Any]
         "percentile_min_days": ROLL_MIN,
         "confidence_note": (
             "本卡的判读规则未做前瞻回测（极值卡那种 5 年回放是独立工程），状态标签"
-            "是确定性分解的描述，不是预测；被动集中≠看空，主动过热是风险累积度的"
+            "是确定性分解的描述，不是预测；被动集中≠看空，增量过热是风险累积度的"
             "表述而非方向结论。引用分位时必须带口径（无条件 / 环境匹配）与样本量。"
         ),
     })

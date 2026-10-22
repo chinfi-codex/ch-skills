@@ -258,13 +258,21 @@ SWING = """# 报告
 
 并集正文。
 
+## 4.4 维度 C·大盘：估值锚定
+
+估值正文。
+
+## 4.5 维度 C·中小盘：流动性挖掘
+
+挖掘正文。
+
 # 5. 亏钱效应（爆量下跌）
 
 亏钱正文。
 """
-TABLE = """| 风格因子 | 60日 |
-|---|---:|
-| 规模风格 | 大盘 |
+TABLE = """| 风格因子 | 当前偏向 | 20日 | 60日 | 延续还是在变 |
+|---|---|---:|---:|---|
+| 规模风格 | 偏大盘 |  |  | 两档同向 |
 
 ==市场风格判断：测试判断句。==
 """
@@ -338,3 +346,23 @@ def test_renderer_target_section_and_freshness_gate():
             assert "freshness" in str(exc)
         else:
             raise AssertionError("mismatched series must fail")
+
+
+def test_contract_requires_five_column_style_table():
+    """dms/2.4.0 R3：旧的七列表（10/20/60/120 日 + 分位 + 解读）不再放行。"""
+    old = """| 风格因子 | 10日 | 20日 | 60日 | 120日 | 60日历史分位 | 分窗口解读 |
+|---|---:|---:|---:|---:|---:|---|
+| 规模风格 |  |  |  |  |  |  |
+
+==市场风格判断：测试判断句。==
+"""
+    try:
+        validate_dms_content(SWING.format(style=old), _evidence(), INDUSTRY_SWING_CONTRACT)
+    except ContractError as exc:
+        assert "五列" in str(exc) and "延续还是在变" in str(exc)
+    else:
+        raise AssertionError("legacy seven-column style table must fail under dms/2.4.0")
+    audit = validate_dms_content(SWING.format(style=TABLE), _evidence(), INDUSTRY_SWING_CONTRACT)
+    assert audit["detail"]["style_factors"]["table_columns"] == [
+        "风格因子", "当前偏向", "20日", "60日", "延续还是在变",
+    ]

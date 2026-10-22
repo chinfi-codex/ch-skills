@@ -27,17 +27,17 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 
 4. **统计并锁定模块 3 星级**：运行 `theme_group_stats.py` 生成 `module3_theme_stats.json`，再由模型严格按 Market Evidence Pack 与统计结果写回 `stars: 1/2/3`。星级锁定后，只对当日 ★★★ 主线强制尝试搜索，并按宿主能力选读知识库或产业链资料；★ 与 ★★ 方向都不搜索、不做产业推演、不进入 2.2。主 agent 将 Web 结果、可选的宿主知识证据与查询错误压缩成 `module3_enrichment_pack.json`。外部资料只用于解释催化、推演产业变量与挖掘细分线路，绝不回写或上调 2.1 星级。详细搜索、证据和评级纪律见 `references/methodology/catalyst_subline_mining.md`。
 
-5. **聚合成稿（产业趋势波段 dms/2.x 结构）**：模块 3 第二阶段读取 theme map、统计结果、enrichment pack、方法论，完成主线判定与领导股；仅当存在 ★★★ 主线时才输出催化与细分线路推演，没有 ★★★ 时整节省略。主 agent 再读取模块 1、3、4、5 输出、`assembled_checks.json`、`macro_risk_scorecard.json` 与 `references/methodology/output_discipline.md`，按下述结构成稿：
+5. **聚合成稿（产业趋势波段 dms/2.x 结构）**：模块 3 第二阶段读取 theme map、统计结果、enrichment pack、方法论，完成主线判定与领导股；仅当存在 ★★★ 主线时才输出催化与细分线路推演，没有 ★★★ 时整节省略。主 agent 再读取模块 1、3、4、5 输出、`assembled_checks.json`、`macro_risk_scorecard.json`、`valuation_anchor.json`、`liquidity_scan.json` 与 `references/methodology/output_discipline.md`，按下述结构成稿：
 
    - **`## 一句话盘面判断`**：环境 + 主线 + 风险三句收口（环境结论用档位语言，不用指令语言）。
    - **1 环境与仓位总闸门**：1.1 宏观记分卡表（读 `macro_risk_framework.md`）、1.2 四机判卡读数（趋势/极值/前瞻/集中度，集中度判读读 `turnover_concentration.md`）、1.3 档位裁决（读 `position_matrix.md`：宏观只减不加、多轴冲突取保守）。
-   - **2 大盘温度与风格**：分三小节（dms/2.2.0 起三小节入契约，平铺第 2 章渲染期直接 fail）。`## 2.1 情绪趋势` 放情绪指标表（首列表头固定叫「指标」，HTML 情绪趋势五图按它挂载）与叙事，小节末尾 `==趋势判断==`（只写 A 股内部状态）；`## 2.2 指数趋势` 放指数表（上证/创业板/科创50，首列表头固定叫「指数」，HTML 的指数 K 线与创业板指 PE-TTM 图按它挂载）与 `==指数趋势判断==`；`## 2.3 风格因子` 放在**章末**——「风格因子」表 + 市场环境/规模对照/含分红核验三句 + `==市场风格判断==`，读 `style_factors.md`，表首列表头必须叫「风格因子」，HTML 风格面板按它挂载。
+   - **2 大盘温度与风格**：分三小节（dms/2.2.0 起三小节入契约，平铺第 2 章渲染期直接 fail）。`## 2.1 情绪趋势` 放情绪指标表（首列表头固定叫「指标」，HTML 情绪趋势五图按它挂载）与叙事，小节末尾 `==趋势判断==`（只写 A 股内部状态）；`## 2.2 指数趋势` 放指数表（上证/创业板/科创50，首列表头固定叫「指数」，HTML 的指数 K 线与创业板指 PE-TTM 图按它挂载）与 `==指数趋势判断==`；`## 2.3 风格因子` 放在**章末**——五列「风格因子」表（风格因子 / 当前偏向 / 20日 / 60日 / 延续还是在变，dms/2.4.0 契约硬拦）+ 仅在有分歧时的一条核验提示 + 最多三句的 `==市场风格判断==`，读 `style_factors.md`；HTML 风格小图按这张表挂载。
    - **3 产业趋势主线总览**：主线表（星级/位置/拥挤度/领导股/波段状态）+ 最影响星级的证据 + 产业质地；无 ★★★ 时直接省略催化节，不写执行过程的兜底句。
-   - **4 主线内关注个股（多维筛选·并集）**：趋势锚/特征组过滤/规模偏好三维并行取并集（读 `mainline_stock_screening.md` 与 `size_preference.md`），4.1 并集清单表（列名固定用「个股」，渲染器按它挂 K 线）+ 4.2–4.4 维度解读 + M3/M4 交叉见顶检查。
+   - **4 主线内关注个股（多维筛选·并集）**：趋势锚/特征组过滤/双轨三维并行取并集（读 `mainline_stock_screening.md` 与 `dual_track.md`），4.1 并集清单表（本章第一张表，列名固定用「个股」，渲染器按它挂 K 线）+ 4.2 趋势锚 + 4.3 特征组过滤 + 4.4 大盘估值锚定（读 `valuation_anchor.json`）+ 4.5 中小盘流动性挖掘（读 `liquidity_scan.json`，含主线外潜在新线索）+ 4.6 M3/M4 交叉见顶检查。两个双轨取数在锁星之后跑，命令见 `dual_track.md`。
    - **5 亏钱效应（爆量下跌）**：风险归纳与个股明细；M3/M4 交叉结论只在第 4/5 章中完整展开一次。
    - 排版：frontmatter + 标题块 + `# N.` 一级章 + `## N.M` 小节 + 章间 `---` + 结尾数据来源行；各章定性段用 `==...==`。搜索或知识查询失败不阻断日报，但要披露证据缺口并降低产业推演确定性。
 
-   聚合后先做一遍去重：表格已列的整组数据不再写成段落；相邻叙事与高亮判断合并；集中度只在 1.2 留一条核心读数（常态不展开分位，非常态按方法论选证据），保留 HTML 的 CR 双线轨迹。保留影响判断的缺口与口径说明。精简后的 Markdown 才送门禁，HTML 继续完整保全它的文字与表格。
+   聚合后先做一遍去重：表格已列的整组数据不再写成段落；相邻叙事与高亮判断合并；集中度只在 1.2 留一条“CR1% 当日值｜状态”读数，保留 HTML 的 CR1% 单线轨迹。保留影响判断的缺口与口径说明。精简后的 Markdown 才送门禁，HTML 继续完整保全它的文字与表格。
 
 6. **主线生命周期落库**：报告定稿后，把当日 2.1 主线判定沉淀进 PG 生命周期台账。先运行 `python3 scripts/theme_lifecycle.py context --asof YYYYMMDD` 取注册表、各主线近期状态与 watchlist；模型完成别名归一（当日临时主题名 → canonical theme_id）和生命周期状态判定（低位启动/在场候选/主线确认/高位分歧/退潮/修复/再聚焦/沉寂），写出 `reports/lifecycle_YYYYMMDD.json` 后运行 `python3 scripts/theme_lifecycle.py record --input reports/lifecycle_YYYYMMDD.json` 落库。脚本只做确定性校验（枚举、状态机转移合法性、theme_id 存在性），判断留给模型；输入格式、状态机与判定基准见 `references/theme_lifecycle.md`。
 
@@ -63,6 +63,7 @@ description: 仅供 a-stock-daily-market-sense skill 内部按需读取。说明
 聚合 agent 额外读取：
 
 - `assembled_checks.json`：M3 赚钱效应池与 M4 爆量下跌池的确定性交叉检查。
+- `valuation_anchor.json` / `liquidity_scan.json`：第 4 章双轨的估值分位与流动性门槛候选（锁星后由 `daily.valuation-anchor` / `daily.liquidity-scan` 生成，方法论 `references/methodology/dual_track.md`）。
 - `references/methodology/output_discipline.md`：最终成稿纪律。
 
 Python 不调用 Anthropic API、不调用任何 LLM、不硬编码模型名。Codex、Claude Code 或其他通用 agent 的 subagent 编排能力负责撰写；知识 evidence pack 是宿主可选输入，不在 core skill 中硬编码知识库路径或图谱实现。

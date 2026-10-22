@@ -12,6 +12,8 @@ evals/
 .kimi/
 .codex/
 .openclaw/
+# workbuddy 本地工具状态（会话记忆等），运行时自有数据，不入库
+.workbuddy/
 
 .env
 .env.*
@@ -55,3 +57,6 @@ ch-gpu-compute-monitor/reports/
 # 运行时残留：watchboard 状态 / enrichment targets，运行时自动重建，不入库
 ch-news-reporter/*watchboard.json
 ch-news-reporter/selected_targets.json
+
+# 金库产业链简报：私有 skill，不上传 git
+ch-vault-chain-brief/

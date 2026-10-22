@@ -90,7 +90,24 @@ AI_PILLS = [
     (r"^(热度|噪音|存疑)$", "pill warn"),
 ]
 
-PILL_SETS = {"macro": MACRO_PILLS, "geopolitical": IRAN_PILLS, "ai": AI_PILLS}
+# 商业航天:主要落在「融资与 IPO 进度变化表」的状态列,以及正文里的进展/失利状态词。
+# 状态词是这份报告的硬约束(已受理 / 已问询 / 静力试验 / 出厂评审各是各的意思),
+# 上色的同时也在提醒模型不要把状态写混。
+SPACE_PILLS = [
+    (r"^(入轨成功|发射成功|回收成功|复用成功|首飞成功)$", "pill pos"),
+    (r"^(注册|发行|上市|获批|中标|签约)$", "pill pos"),
+    (r"^(在轨|出厂评审|总装测试|静力试验|试车|转运|进场)$", "pill"),
+    (r"^(辅导备案|已受理|已问询|已递表)$", "pill"),
+    (r"^(失利|失败|推迟|延期|中止|归零)$", "pill neg"),
+    (r"^(待确认|未经证实|传闻)$", "pill warn"),
+]
+
+PILL_SETS = {
+    "macro": MACRO_PILLS,
+    "geopolitical": IRAN_PILLS,
+    "ai": AI_PILLS,
+    "space": SPACE_PILLS,
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -251,6 +268,33 @@ def load_axis_figures(
 
 
 # --------------------------------------------------------------------------- #
+# geopolitical_daily dashboard (path board + nodes timeline + key events).
+# Static figures like the ai_daily ones; history comes from report_state so the
+# board can show day-over-day probability moves and a trailing sparkline.
+# --------------------------------------------------------------------------- #
+def load_path_board_figures(
+    args, profile_name: Optional[str], profile_render: Dict[str, Any], stem: str
+) -> Tuple[List[Any], Optional[Dict[str, Any]]]:
+    if not (profile_render.get("path_board") and args.watchboard and profile_name):
+        return [], None
+    path = Path(args.watchboard)
+    if not path.exists():
+        return [], None
+    try:
+        watchboard = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return [], None
+    if not isinstance(watchboard, dict):
+        return [], None
+    from geo_path_board import build_geo_figures  # noqa: E402
+
+    day = report_date(watchboard, stem)
+    history = load_state_history(profile_name, day, args.history_days)
+    labels = configured_probability_labels(profile_render)
+    return build_geo_figures(watchboard, history, labels, day), watchboard
+
+
+# --------------------------------------------------------------------------- #
 # Title / meta derived from the report's H1 line (e.g. "# 每日宏观日报 | 2026-05-19").
 # --------------------------------------------------------------------------- #
 def derive_title_meta(
@@ -308,6 +352,7 @@ def output_id_for_report(profile_name: Optional[str], stem: str) -> str:
         "geopolitical_daily": (
             "geopolitical-brief-html" if brief else "geopolitical-daily-html"
         ),
+        "space_daily": "space-daily-html",
     }
     return mapping.get(str(profile_name or ""), "")
 
@@ -364,7 +409,16 @@ def build_job(args) -> RenderJob:
         builder.add_decoration(PillDecoration(pill_rules))
 
     chart_added = False
-    if bool(profile_render.get("probability_chart")):
+    board_figures: List[Any] = []
+    if bool(profile_render.get("path_board")):
+        board_figures, _wb = load_path_board_figures(args, profile_name, profile_render, input_path.stem)
+        for figure in board_figures:
+            builder.add_figure(figure)
+        # 今日边际变化 → 关键事件卡片（view-time 装饰，纯展示层）
+        from geo_path_board import KEY_EVENTS_DECORATION  # noqa: E402
+
+        builder.add_decoration(KEY_EVENTS_DECORATION)
+    if bool(profile_render.get("probability_chart")) and not board_figures:
         wb_path = Path(args.watchboard) if args.watchboard else None
         payload = load_probabilities(wb_path, configured_probability_labels(profile_render))
         if payload is not None:
@@ -398,6 +452,7 @@ def build_job(args) -> RenderJob:
             "profile": profile_name,
             "pills": bool(pill_rules),
             "probability_chart": chart_added,
+            "path_board_figures": len(board_figures),
             "axis_figures": len(figures),
         },
     )

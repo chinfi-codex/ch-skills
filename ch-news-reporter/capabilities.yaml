@@ -61,6 +61,7 @@ capabilities:
       - macro-brief-markdown
       - geopolitical-daily-markdown
       - geopolitical-brief-markdown
+      - space-daily-markdown
     requires_receipts: [news.prepare-evidence]
     effects: ["fs:reports/*.md"]
 
@@ -75,6 +76,7 @@ capabilities:
       - macro-brief-html
       - geopolitical-daily-html
       - geopolitical-brief-html
+      - space-daily-html
     artifact_arg: --output
     source_arg: --input
     bound_arg_aliases: [-o, -i]

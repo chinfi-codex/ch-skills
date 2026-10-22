@@ -495,6 +495,25 @@ def profile_item_keywords(profile: dict[str, Any]) -> list[str]:
     return [str(keyword) for keyword in configured if str(keyword).strip()]
 
 
+def profile_item_exclude_keywords(profile: dict[str, Any]) -> list[str]:
+    """排除关键词:命中即丢弃,优先级高于 item_keywords。
+
+    用于同名主体的噪音剥离——典型如 SpaceX 与 xAI 合并后(上市代码 SPCX.O),
+    "SpaceX"/"SpaceXAI" 的新闻里混着大量 Grok、AI 编程内容,关键词层面挡不干净,
+    只能按噪音词反剔。未配置时返回空列表,过滤逻辑整体跳过。
+
+    匹配语义与 item_keywords 一致:`contains_any` 是大小写不敏感的**子串**匹配。
+    英文排除词必须带上下文(写 "cursor ai" 而不是 "cursor"),否则会误伤
+    "cursory" 这类航天正文里的常见词。
+    """
+    configured = profile.get("item_exclude_keywords") or []
+    if not isinstance(configured, list):
+        raise SystemExit(
+            f"profile {profile.get('_name') or '?'} item_exclude_keywords must be a list"
+        )
+    return [str(keyword) for keyword in configured if str(keyword).strip()]
+
+
 def profile_keyword_filter_sources(profile: dict[str, Any]) -> set[str]:
     configured = profile.get("keyword_filter_sources") or []
     if not isinstance(configured, list):
@@ -537,6 +556,15 @@ def macro_rank_key(item: dict[str, Any]) -> tuple[Any, ...]:
 def apply_profile_filters(
     items: list[dict[str, Any]], profile: dict[str, Any]
 ) -> list[dict[str, Any]]:
+    # 排除先跑且对所有源生效:噪音词(如合并后 SpaceX 新闻里的 Grok)在金十和 RSS
+    # 里都会出现,挂在 keyword_filter_sources 之下会漏掉未列入的源。
+    exclude_keywords = profile_item_exclude_keywords(profile)
+    if exclude_keywords:
+        items = [
+            item
+            for item in items
+            if not contains_any(item_search_text(item), exclude_keywords)
+        ]
     categories = rss_categories(profile)
     if categories:
         items = [

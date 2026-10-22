@@ -25,6 +25,7 @@ takes `clock`/`sleep` callables for the same reason.
 
 from __future__ import annotations
 
+import http.client
 import json
 import random
 import socket
@@ -164,6 +165,96 @@ def _classify_status(status: int) -> str:
     return UNKNOWN
 
 
+class _KeepAliveHTTPHandler(urllib.request.HTTPHandler):
+    """HTTPHandler without urllib's hardcoded ``Connection: close``.
+
+    ``AbstractHTTPHandler.do_open`` always marks requests ``Connection: close``
+    so the addinfourl wrapper can read to EOF safely. Some CDN edges truncate
+    large chunked responses arriving on a close-marked HTTP/1.1 connection
+    (observed on gamma-api.polymarket.com and github.com through a proxy in
+    2026-10: http.client.IncompleteRead after ~330-440 KB), while the same
+    request without the header completes. HTTP/1.1 servers frame keep-alive
+    responses with Content-Length/chunked, so the read is still well-defined;
+    the socket is released when the response object goes away (do_open tail).
+    """
+
+    def do_open(self, http_class, req, **http_conn_args):
+        host = req.host
+        if not host:
+            raise urllib.error.URLError("no host given")
+
+        h = http_class(host, timeout=req.timeout, **http_conn_args)
+        h.set_debuglevel(self._debuglevel)
+
+        headers = dict(req.unredirected_hdrs)
+        headers.update({k: v for k, v in req.headers.items() if k not in headers})
+        headers = {name.title(): val for name, val in headers.items()}
+
+        if req._tunnel_host:
+            tunnel_headers = {}
+            proxy_auth_hdr = "Proxy-Authorization"
+            if proxy_auth_hdr in headers:
+                tunnel_headers[proxy_auth_hdr] = headers[proxy_auth_hdr]
+                # Proxy-Authorization should not be sent to origin server.
+                del headers[proxy_auth_hdr]
+            h.set_tunnel(req._tunnel_host, headers=tunnel_headers)
+
+        try:
+            try:
+                h.request(
+                    req.get_method(),
+                    req.selector,
+                    req.data,
+                    headers,
+                    encode_chunked=req.has_header("Transfer-encoding"),
+                )
+            except OSError as err:  # timeout error
+                raise urllib.error.URLError(err)
+            r = h.getresponse()
+        except:  # noqa: E722 - mirror stdlib cleanup semantics
+            h.close()
+            raise
+
+        # The response owns the socket file now; this only drops the
+        # connection's reference so it closes with the response object.
+        if h.sock:
+            h.sock.close()
+            h.sock = None
+
+        r.url = req.get_full_url()
+        r.msg = r.reason
+        return r
+
+
+class _KeepAliveHTTPSHandler(_KeepAliveHTTPHandler, urllib.request.HTTPSHandler):
+    def __init__(self, debuglevel=0, context=None, check_hostname=None):
+        urllib.request.HTTPSHandler.__init__(
+            self, debuglevel, context, check_hostname
+        )
+
+    def https_open(self, req):
+        return self.do_open(
+            http.client.HTTPSConnection,
+            req,
+            context=self._context,
+        )
+
+
+_OPENER: Optional[urllib.request.OpenerDirector] = None
+_OPENER_LOCK = threading.Lock()
+
+
+def _get_opener() -> urllib.request.OpenerDirector:
+    global _OPENER
+    if _OPENER is None:
+        with _OPENER_LOCK:
+            if _OPENER is None:
+                _OPENER = urllib.request.build_opener(
+                    _KeepAliveHTTPHandler(), _KeepAliveHTTPSHandler()
+                )
+    return _OPENER
+
+
 def _urllib_opener(
     url: str,
     *,
@@ -177,7 +268,7 @@ def _urllib_opener(
         url, data=body, headers=dict(headers), method=method
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _get_opener().open(request, timeout=timeout) as response:
             text = response.read().decode("utf-8", "replace")
             return RawResponse(
                 status=response.status,

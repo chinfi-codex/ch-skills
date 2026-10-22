@@ -127,7 +127,10 @@ profiles:
     open_budget: 12
     render:
       pill_set: geopolitical
-      probability_chart: true
+      # 路径分支板（整行概率 + 隔日变动 + 近 16 期走势）+ 时间节点轴 + 关键事件卡片，
+      # 构建时静态渲染；需要 --watchboard，隔日变动另需 report_state 历史，取不到自动降级。
+      path_board: true
+      probability_chart: true   # path_board 缺数据时的回退小图
       probability_labels:
         - {key: W1, label: W1 封锁执行与代理战}
         - {key: W2, label: W2 美伊直接军事对抗}
@@ -135,6 +138,114 @@ profiles:
         - {key: W4, label: W4 核阈值与系统性战争}
         - {key: De, label: De 去升级与停火重建}
     # frame schema 已迁入 references/reports/geopolitical_daily/framework.md 机器区(唯一可信源)
+
+  space_daily:
+    title: 商业航天日报
+    reference_dir: space_daily
+    timezone: Asia/Shanghai
+    sources:
+      - rss
+      - jin10
+    # 海外线靠 10 个 category: space 的 RSS 源;国内线没有可用 RSS,靠金十关键词通道补。
+    # 两条线缺任何一条都不成报——海外缺了只剩国内自说自话,国内缺了就退回外文转述。
+    rss_categories: [space]
+    keyword_filter_sources: [jin10]
+    # 金十是中文快讯,英文主体名(NASASpaceflight 报道国内公司只用 LandSpace 这类英文名)
+    # 命中不到,所以这里只列中文词;英文侧完全交给 space RSS。
+    item_keywords:
+      - 航天
+      - 运载火箭
+      - 可重复使用
+      - 一箭多星
+      - 发射场
+      - 卫星互联网
+      - 卫星制造
+      - 卫星载荷
+      - 遥感卫星
+      - 星座组网
+      - 低轨
+      - 在轨
+      - 入轨
+      - 星链
+      - 千帆星座
+      - 中国星网
+      - 北斗
+      - 长征
+      - 朱雀
+      - 天龙二号
+      - 天龙三号
+      - 引力一号
+      - 力箭
+      - 谷神星
+      - 快舟
+      - 捷龙
+      # 星际荣耀的公司全名含"航天科技集团"字样,与 CASC 同名;两个词同时出现时按民营公司算
+      - 航天科技集团
+      - 航天科工
+      # 国内民营/混合所有制公司,口径同《中国商业航天融资全景图》(2026-08-18)
+      - 蓝箭航天
+      - 天兵科技
+      - 星际荣耀
+      - 星河动力
+      - 中科宇航
+      - 东方空间
+      - 深蓝航天
+      - 宇石空间
+      - 大航跃迁
+      - 箭元科技
+      - 微光启航
+      - 致航科技
+      - 九州云箭
+      - 星辰基石
+      - 垣信
+      - 银河航天
+      - 时空道宇
+      - 星移联信
+      - 长光卫星
+      - 微纳星空
+      - 国星宇航
+      - 天仪空间
+      - 瑞启深空
+      - 航天驭星
+      - 极光星通
+      - 氦星光联
+      - 光邮星空
+      - 一行凌光
+      - 超低轨
+    # 噪音剥离,命中即丢弃且优先于 item_keywords。前六个挡消费向天文/占星(主要来自
+    # Space.com);Grok / "cursor ai" 挡 SpaceX 与 xAI 合并后(上市代码 SPCX.O)同名新闻里
+    # 大量混入的 AI 侧内容——那部分归 ai_daily,关键词层面挡不干净只能反剔。
+    #
+    # 注意:这里的匹配与 item_keywords 同语义,是大小写不敏感的**子串**匹配。英文排除词
+    # 必须带足够上下文,否则会误伤:裸 "cursor" 会命中航天稿件里常见的 "cursory",
+    # 所以写成 "cursor ai"。同理不要写裸 "star"、"orbit" 这类航天正文高频词。
+    #
+    # 后三条是 2026-09-01 实测补的:Space.com 与 NASA Breaking News 有大量消费向内容
+    # (游戏评测、天文每日一图、读者竞猜),这类是确定噪音,脚本层面直接挡掉。
+    # 其余甄别(业余天文摄影、载人航天非商业任务)留给模型,见 methodology 信源特性一节。
+    item_exclude_keywords:
+      - 流星雨
+      - 星座运势
+      - 占星
+      - horoscope
+      - stargazing
+      - telescope deal
+      - Grok
+      - cursor ai
+      - APOD
+      - Puzzler
+      - sci-fi
+    source_selection:
+      preferred_limits:
+        rss: 60
+        jin10: 50
+      hard_max_share: 0.70
+    state_enabled: true
+    # 四条主线各留 1-2 条 open 跟踪项(订单与融资两条通常最活跃)
+    open_budget: 6
+    render:
+      pill_set: space
+    # frame schema 见 references/reports/space_daily/framework.md 机器区(唯一可信源)
 
   macro_daily:
     title: 每日宏观日报

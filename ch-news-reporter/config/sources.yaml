@@ -24,7 +24,7 @@
 # 低于阈值视为"覆盖不足"并重采,避免旧默认"一条即齐"的假覆盖。典型日产量注释在旁。
 collect_min_rows:
   jin10: 300            # 金十电报典型日产量 300-600 条
-  rss: 30               # 35 个 feed,典型日合计 30-80 条
+  rss: 35               # 45 个 feed(ai 25 / geopolitics 8 / finance 2 / space 10),典型日合计 35-100 条
   github_trending: 20   # 日榜约 25 个仓库
   product_hunt: 10      # featured 日榜约 10-20 个
   hacker_news: 20       # top/best 合并去重后约 30-60 条
@@ -184,4 +184,49 @@ rss:
   - name: Maritime Executive
     url: https://www.maritime-executive.com/rss
     category: geopolitics
+    enabled: true
+
+  # --- 商业航天层(category: space,服务 space_daily profile) ---
+  # 海外线主干:10 个源覆盖发射、卫星、政策三条线。国内线没有可用 RSS,
+  # 靠 space_daily 的 jin10 关键词通道补。
+  - name: SpaceNews
+    url: https://spacenews.com/feed/
+    category: space
+    enabled: true
+  - name: Payload
+    url: https://payloadspace.com/feed/
+    category: space
+    enabled: true
+  - name: TechCrunch Space
+    url: https://techcrunch.com/category/space/feed/
+    category: space
+    enabled: true
+  - name: Ars Technica Space
+    url: https://arstechnica.com/space/feed/
+    category: space
+    enabled: true
+  - name: NASASpaceflight
+    url: https://www.nasaspaceflight.com/feed/
+    category: space
+    enabled: true
+  - name: Spaceflight Now
+    url: https://spaceflightnow.com/feed/
+    category: space
+    enabled: true
+  - name: NASA Breaking News
+    url: https://www.nasa.gov/rss/dyn/breaking_news.rss
+    category: space
+    enabled: true
+  - name: SpacePolicyOnline
+    url: https://spacepolicyonline.com/feed/
+    category: space
+    enabled: true
+  - name: European Spaceflight
+    url: https://europeanspaceflight.com/feed/
+    category: space
+    enabled: true
+  # 唯一带消费向天文/占星噪音的源,靠 space_daily 的 item_exclude_keywords 挡
+  - name: Space.com
+    url: https://www.space.com/feeds/all
+    category: space
     enabled: true

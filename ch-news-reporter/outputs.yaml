@@ -12,10 +12,15 @@ outputs:
     contract: &ai_contract
       min_bytes: 800
       order: strict
+      # 前三条只覆盖句首锚定与固定前缀,挡不住"建议关注相关标的,逢低买入"这类
+      # 把交易动词埋在句中、且不带"建议读者/我们建议"前缀的写法。后两条是补漏:
+      # 已对 64 份历史报告(ai/macro/geo/custom/iran_dynamic/space 全 profile)回归,0 误伤。
       forbidden_patterns: &trading_advice_patterns
         - '(?:建议读者|建议投资者|我们建议|操作建议|交易建议|可考虑|应当|应该|宜|请|务必)[^。；\n]{0,24}(?:买入|卖出|加仓|止损)'
         - '(?m)^(?:[-*]\s*)?(?:买入|卖出|加仓|止损)(?:[：:\s]|$)'
         - '(?m)^(?:[-*]\s*)?(?:目标价|止损价)\s*(?:为|设为|看到|上看|下看|[:：])?\s*(?:人民币|[¥￥$])?\s*\d'
+        - '(?:建议|推荐)[^。；\n]{0,16}(?:买入|卖出|加仓|建仓|止损|清仓)'
+        - '(?:逢低|逢高|择机|分批|回调)[^。；\n]{0,8}(?:买入|卖出|建仓|加仓|布局|介入)'
       sections:
         - {key: hero, patterns: ['^一句话结论$'], level: 2}
         - {key: focus, patterns: ['^今日重点 · 深度拆解$'], level: 2, required: false}
@@ -158,4 +163,38 @@ outputs:
     features: [evidence-backed, preserve-source-text, browser-attestation]
     contract:
       <<: *geo_brief_contract
+      browser: *browser
+
+  space-daily-markdown:
+    type: markdown
+    terminal_capability: report.finalize-markdown
+    path_glob: reports/space_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md
+    contract_version: news/space-daily/1.0.0
+    gate_policy: hard
+    features: [evidence-backed]
+    contract: &space_contract
+      min_bytes: 500
+      order: strict
+      forbidden_patterns: *trading_advice_patterns
+      sections:
+        - {key: hero, patterns: ['^一句话结论$'], level: 2}
+        # 国内四主线按天出现:哪条当天有增量才出哪节,没有就整节省掉,
+        # 不做无增量的空节充数。顺序固定,不出现即跳过。
+        - {key: launch, patterns: ['^发射与运力$'], level: 2, required: false}
+        - {key: satellite, patterns: ['^卫星与载荷$'], level: 2, required: false}
+        - {key: orders, patterns: ['^订单披露$'], level: 2, required: false}
+        - {key: funding, patterns: ['^产业融资$'], level: 2, required: false}
+        - {key: overseas, patterns: ['^海外$'], level: 2, required: false}
+    validators: *citation_gate
+
+  space-daily-html:
+    type: html
+    terminal_capability: report.render-html
+    path_glob: reports/space_daily_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].html
+    source_output: space-daily-markdown
+    contract_version: news/space-daily/1.0.0
+    gate_policy: hard
+    features: [evidence-backed, preserve-source-text, browser-attestation]
+    contract:
+      <<: *space_contract
       browser: *browser

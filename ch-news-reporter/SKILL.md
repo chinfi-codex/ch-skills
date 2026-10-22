@@ -1,6 +1,6 @@
 ---
 name: ch-news-reporter
-description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、Polymarket、RSS 等多信源采集财经、AI、宏观或全球地缘风险新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出三类固定主题日报——AI 日报、每日宏观日报、地缘日报（覆盖中东、俄乌、台海、朝鲜半岛、红海/航运、能源通道、制裁、联盟与大国博弈，含风险资产影响），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“生成今天地缘日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“分析红海/霍尔木兹/俄乌/台海/制裁对油价、航运和风险资产的影响”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述三类固定日报，不用于临时/零碎新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
+description: 当用户要求从金十、GitHub Trending、Product Hunt、Hacker News、Polymarket、RSS 等多信源采集财经、AI、宏观或全球地缘风险新闻，建立统一新闻数据表，按 report profile 生成 evidence packet，并输出四类固定主题日报——AI 日报、每日宏观日报、地缘日报（覆盖中东、俄乌、台海、朝鲜半岛、红海/航运、能源通道、制裁、联盟与大国博弈，含风险资产影响）、商业航天日报（覆盖发射运力、卫星与载荷、订单披露、产业融资四条国内主线与海外动向），或把这些日报导出为 HTML/网页/可视化单页时，必须使用此 skill。适用于“今天 AI 有什么重要新闻”“生成今天宏观日报”“生成今天地缘日报”“生成今天商业航天日报”“把宏观日报导出成 HTML/网页版”“跟踪 CPI/PPI/社融/PMI/非农/美债/Brent/黄金信号”“结合 PH/HN/GitHub Trending 写 AI 日报”“分析红海/霍尔木兹/俄乌/台海/制裁对油价、航运和风险资产的影响”“今天商业航天有什么进展/星舰/卫星互联网/火箭发射/航天订单”等多步骤任务；本 skill 不采集财联社/CLS 数据，只产出上述四类固定日报，不用于临时/零碎新闻检索与自由主题研究、单条网页摘要、普通聊天式新闻问答、股票实时交易建议或不需要本地数据采集的简单搜索。
 ---
 
 # CH News Reporter
@@ -106,16 +106,16 @@ python scripts/_shared/skill_runtime/runner.py --skill-root . run news.prepare-e
 
 常用参数：
 
-- `--profile ai_daily|geopolitical_daily|macro_daily`：报告画像；信源、RSS 类别、关键词过滤、状态预算、reference 目录和渲染配置在 `config/report_profiles.yaml`。
+- `--profile ai_daily|geopolitical_daily|macro_daily|space_daily`：报告画像；信源、RSS 类别、关键词过滤（含 `item_exclude_keywords` 排除词）、状态预算、reference 目录和渲染配置在 `config/report_profiles.yaml`。
 - `--include-enrichments`：把 `enrichments` 表里的二次加工结果拼回证据包。
 - `--format json|markdown`：JSON 适合 Agent 继续处理，Markdown 适合人工核查。
 
 evidence packet 现在还带两块新内容(DB-first 与活动状态):
 
 - `coverage`：本 profile 各期望源在库里当天的行数、缺失源、profile 相关 feed 失败，以及最终 packet 的分源选择摘要。某源缺数或具体 feed 失败时,报告里相应判断要降级标注；不能用 RSS 总行数掩盖关键官方源抓取失败。
-- `prior_state`：`state_enabled` 的 profile(三个日报都已开启)会带上**最近一期 watchboard**(date < 今天)。markdown 输出里是 `## Prior Watchboard` 段,列出今天必须逐条结算的 open 跟踪项;冷启动(无上一期)时按各 profile methodology 的种子/默认构造第一份。机制见 `references/reports/watchboard.md`。
+- `prior_state`：`state_enabled` 的 profile(四个日报都已开启)会带上**最近一期 watchboard**(date < 今天)。markdown 输出里是 `## Prior Watchboard` 段,列出今天必须逐条结算的 open 跟踪项;冷启动(无上一期)时按各 profile methodology 的种子/默认构造第一份。机制见 `references/reports/watchboard.md`。
 
-`prepare_report_data.py` 会按 profile 的 `rss_categories` 过滤 RSS，避免地缘 RSS 污染 AI 日报。RSS 池现有三类 category：`ai`(25 个源)、`geopolitics`(8)、`finance`(2)；三个日报都声明了 `rss_categories`，新增源只会进它声明的那一类。`macro_daily` 会先从当天金十和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
+`prepare_report_data.py` 会按 profile 的 `rss_categories` 过滤 RSS，避免地缘 RSS 污染 AI 日报。RSS 池现有四类 category：`ai`(25 个源)、`geopolitics`(8)、`finance`(2)、`space`(10)；四个日报都声明了 `rss_categories`，新增源只会进它声明的那一类。`space_daily` 额外用 `item_exclude_keywords` 做二次排噪——命中排除词（如 Grok / xAI / 大模型类）的条目即便来自航天 feed 也会被剔除，避免 SpaceX 与 xAI 合并后大模型新闻串进航天日报。`macro_daily` 会先从当天金十和 RSS 中筛选宏观相关新闻；每日固定附加两类行情 evidence：
 
 - **基础行情**（金十/Stooq/AV）：Brent、WTI、黄金、天然气、USDCNH、纳指期货等。
 - **位置富数据**（Yahoo）：美国 10Y / 5Y 国债收益率、DXY、VIX、BTC，以及核心估值锚——纳斯达克综合（^IXIC）与上证指数（000001.SS）。每个标的额外计算 52 周高低、距 52 周高 %、YTD、20/60 日均线、`pct_vs_ma20`，作为"市场相对位置"判断依据。
@@ -244,7 +244,7 @@ python scripts/_shared/skill_runtime/runner.py --skill-root . run report.finaliz
 
 ### 6. 回写活动状态（watchboard）
 
-`state_enabled` 的 profile（ai_daily / macro_daily / geopolitical_daily）出完报告后,必须把今天的新 watchboard 存回去,供明天 carry-forward:
+`state_enabled` 的 profile（ai_daily / macro_daily / geopolitical_daily / space_daily）出完报告后,必须把今天的新 watchboard 存回去,供明天 carry-forward:
 
 ```bash
 cat today_watchboard.json | python scripts/_shared/skill_runtime/runner.py --skill-root . run news.save-state -- \
@@ -272,13 +272,13 @@ python scripts/_shared/skill_runtime/runner.py --skill-root . run report.render-
   --theme default
 ```
 
-三个 profile 通用的处理：
+各 profile 通用的处理：
 
 - `一句话结论` 段自动升格成醒目的 hero 摘要卡。
 - 表格里的 +/- 数值、涨跌方向自动染色；非加粗的分类格（如宏观日报「性质」列的"数据事件/政策表态"）渲染成彩色 pill。
 - `--theme print` 出黑白衬线、A4 友好版，适合导出 PDF 或邮件附件；文件名非标准前缀时用 `--profile` 手动指定。
 
-`geopolitical_daily` 的渲染配置启用 **v2 路径概率图**（W1/W2/W3/W4/De），把当天 watchboard 传进来即可：
+`geopolitical_daily` 的渲染配置启用 **v2 路径分支看板**（W1/W2/W3/W4/De），把当天 watchboard 传进来即可：
 
 ```bash
 python scripts/_shared/skill_runtime/runner.py --skill-root . run report.render-html \
@@ -287,6 +287,12 @@ python scripts/_shared/skill_runtime/runner.py --skill-root . run report.render-
   --evidence reports/evidence/geopolitical_daily_2026-06-04.json -- \
   --watchboard today_watchboard.json
 ```
+
+- **路径分支板**挂在「一句话结论」段末：每条路径整行显示——行背景填充即概率宽度，行内含徽章、当前路径高亮、**隔日变动**（▲/▼ 百分点，基准为 report_state 里上一期）与近 16 期走势 sparkline。隔日变动与走势需要 report_state 历史，取不到就只画当日快照、不报错。
+- **升级阶梯板**紧跟路径板：`escalation_rung` / `econ_war_rung` 两条 1-10 阶梯按路径行同款整行显示（行背景填充=档位进度、每 10% 一档刻度、隔日档位差 chip、近 16 期档位走势）。
+- **关键时间节点轴**挂在「主战线」之前：watchboard `next_nodes` 按日期铺在水平轴上，按影响渠道着色（战争路径/去升级/能源/市场/大国核/并行战线），同日节点自动分车道堆叠，悬停看完整名称与 affects。
+- **关键事件卡片**：战况速览的「今日边际变化」编号列表在浏览时升级为带序号的卡片（纯 view-time 装饰，JS 被拦截时退化为原列表）。
+- 两块图都是构建时静态 SVG/HTML（同 ai_daily 双轴图的理由），不靠运行时 JS；配置键 `path_board: true` 优先于旧的 `probability_chart` 小图，看板建成时小图自动跳过。
 
 `ai_daily` 的渲染配置启用**两张双轴图**，同样只要把当天 watchboard 传进来（回写 state 之后再渲染，图才是今天的）：
 
@@ -463,5 +469,38 @@ python scripts/macro_monitor.py market
 - 中东、俄乌、台海、朝鲜半岛、制裁/联盟等区域主线中真正有边际变化的部分。
 - 能源、航运、制裁、避险资产与风险资产的传导评估。
 - 路径概率今日变动、下一关键节点倒计时、24-72h 观察清单。
+
+出完报告后用 `save_report_state.py` 回写今天的 watchboard，供明天 carry-forward。
+
+### 商业航天日报
+
+用户：
+
+```text
+生成今天的商业航天日报，重点看国内发射运力和卫星互联网订单。
+```
+
+执行：
+
+```bash
+export ALPHA_DB_BACKEND=postgresql
+export ALPHA_PG_URL="postgresql://alpha_user:alpha_pass@localhost:5432/alpha_data"
+python scripts/collect_news.py --date today --source all --only-missing
+python scripts/prepare_report_data.py --profile space_daily --date today --format markdown
+```
+
+加载：
+
+- `references/reports/watchboard.md`（活动状态机制）
+- `references/reports/space_daily/methodology.md`（四条主线与冷启动种子）
+- `references/reports/space_daily/framework.md`（frame schema 与 watchlist）
+- `references/reports/space_daily/template.md`
+
+输出应包含：
+
+- 一句话结论先行。
+- 国内四条主线中**当天真正有增量**的部分（发射与运力 / 卫星与载荷 / 订单披露 / 产业融资），其余整节省掉，不做无增量空节。
+- 海外动向（SpaceX、Blue Origin、Rocket Lab、AST、Planet 等）中构成国内产业映射或竞争压力的部分。
+- 今日边际变化与 24-72h 观察清单。
 
 出完报告后用 `save_report_state.py` 回写今天的 watchboard，供明天 carry-forward。

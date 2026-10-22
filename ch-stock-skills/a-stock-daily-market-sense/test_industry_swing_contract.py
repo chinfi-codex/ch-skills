@@ -6,9 +6,9 @@
   只改一侧在本地全绿，直到某份报告撞上另一侧。yaml 侧刻意 required:false
   （同一 glob 服务两代报告），必选性由契约侧硬判——所以守护断言的是键/层级对齐，
   不是 requiredness。
-- **指纹回退**：2.x 报告意外丢掉全部三个指纹标题时会静默回退 legacy 契约，
+- **指纹回退**：2.x 报告意外丢掉全部两个指纹标题时会静默回退 legacy 契约，
   再报一墙 legacy 章节错误。测试钉死指纹键。
-- **缺章必须点名**：2.x 章节是必选 spec，丢掉仓位管理备忘要被点名，不许放行。
+- **缺章必须点名**：2.x 章节是必选 spec，丢掉亏钱效应要被点名，不许放行。
 
 跑法：python3 tests/run_tests.py（本文件在技能根目录，会被自动发现）
 """
@@ -86,14 +86,10 @@ SWING_MARKDOWN = """# 报告
 # 5. 亏钱效应（爆量下跌）
 
 亏钱正文。
-
-# 6. 仓位管理备忘
-
-备忘正文。
 """
 
-# 命中指纹三键之一即可选型——这是 select_contract 的合同。
-FINGERPRINT_KEYS = ("环境与仓位总闸门", "仓位管理备忘", "产业趋势主线总览")
+# 命中指纹两键之一即可选型——这是 select_contract 的合同。
+FINGERPRINT_KEYS = ("环境与仓位总闸门", "产业趋势主线总览")
 
 EXPECTED_SECTIONS = [
     ("hero_verdict", 3),
@@ -105,7 +101,6 @@ EXPECTED_SECTIONS = [
     ("industry_mainline", 2),
     ("mainline_screening", 2),
     ("m4_decline", 2),
-    ("position_memo", 2),
 ]
 
 
@@ -159,13 +154,13 @@ def test_full_skeleton_passes():
 
 
 def test_missing_chapter_is_named():
-    broken = SWING_MARKDOWN.replace("# 6. 仓位管理备忘\n\n备忘正文。\n", "")
+    broken = SWING_MARKDOWN.replace("# 5. 亏钱效应（爆量下跌）\n\n亏钱正文。\n", "")
     try:
         validate_dms_content(broken, _minimal_evidence(), INDUSTRY_SWING_CONTRACT)
     except ContractError as exc:
-        assert "position_memo" in str(exc), str(exc)
+        assert "m4_decline" in str(exc), str(exc)
     else:
-        raise AssertionError("缺 position_memo 章节居然通过了契约校验")
+        raise AssertionError("缺 m4_decline 章节居然通过了契约校验")
 
 
 def test_swing_risk_type_medians_are_soft_derived():

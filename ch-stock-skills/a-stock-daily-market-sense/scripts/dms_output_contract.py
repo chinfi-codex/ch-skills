@@ -979,7 +979,7 @@ def _paragraph_warnings(
 
 
 # 产业趋势波段契约（dms/2.x）。章节重排为「一句话盘面判断 hero → 环境与仓位总闸门 →
-# 温度与风格 → 产业主线 → 主线内关注个股(三维并集) → 亏钱效应 → 仓位备忘」，与渲染器
+# 温度与风格 → 产业主线 → 主线内关注个股(三维并集) → 亏钱效应」，与渲染器
 # 持有的 legacy(1.5.0) 契约并存——validate 阶段按章节指纹自动选型（select_contract）。
 # 注意：outputs.yaml 的 dms-markdown sections 是同一份章节的 YAML 侧声明，二者必须
 # 同步演进——tests/test_industry_swing_contract.py 有漂移守护。
@@ -990,8 +990,10 @@ def _paragraph_warnings(
 # 09-29 起连续四期报告把第 2 章写成平铺（无 h3、指数表降级为散文），图表全靠
 # 兜底锚点才没丢——小节不入契正是这个塌法能过门禁的原因。三小节沿用 legacy 键，
 # 图表 hook 因此直接锚到小节，temp_macro 的别名兜底退役为仅兼容旧章名。
+# 2.3.0（2026-10-18）：删除第 6 章「仓位管理备忘」，报告在第 5 章收口；
+# 第 1 章的仓位档位裁决保留。
 INDUSTRY_SWING_CONTRACT = SectionContract(
-    version="dms/2.2.0-industry-swing",
+    version="dms/2.3.0-industry-swing",
     sections=[
         # 排版对齐 legacy：frontmatter + 标题块 + ## 一句话盘面判断 hero；
         # 章节用 # N.（渲染后 h2）。第 2 章小节 ## 2.M（渲染后 h3）自 2.2.0 起入契约。
@@ -1014,8 +1016,6 @@ INDUSTRY_SWING_CONTRACT = SectionContract(
                     source="methodology/mainline_stock_screening.md"),
         SectionSpec("m4_decline", [r"亏钱效应（爆量下跌）"], level=2,
                     source="references/template/section4.md"),
-        SectionSpec("position_memo", [r"仓位管理备忘"], level=2,
-                    source="methodology/position_matrix.md"),
     ],
     order="strict",
 )
@@ -1024,11 +1024,11 @@ INDUSTRY_SWING_CONTRACT = SectionContract(
 def select_contract(markdown_text: str, legacy: SectionContract) -> SectionContract:
     """按章节指纹在 legacy(1.5.0) 与 产业趋势波段(2.x) 之间选型。
 
-    2.x 报告含「环境与仓位总闸门」「仓位管理备忘」这类独有章节；legacy 报告含
+    2.x 报告含「环境与仓位总闸门」「产业趋势主线总览」这类独有章节；legacy 报告含
     「情绪趋势」「特征分组」等旧章节。指纹命中谁就用谁，都不命中回退 legacy
     （回退后按 legacy 必选节报错，错误信息会列出缺失的 legacy 章节）。
     """
-    if re.search(r"环境与仓位总闸门|仓位管理备忘|产业趋势主线总览", markdown_text):
+    if re.search(r"环境与仓位总闸门|产业趋势主线总览", markdown_text):
         return INDUSTRY_SWING_CONTRACT
     return legacy
 

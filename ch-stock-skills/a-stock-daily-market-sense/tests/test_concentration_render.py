@@ -23,7 +23,7 @@ def render_panel(rows, *, with_card=True, reading=READING):
         extra_css=MARKET_SENSE_EXTRA_CSS,
         contract=SectionContract(version="concentration-test/1", sections=[
             SectionSpec("pos_gate", ["环境与仓位总闸门"], level=2),
-            SectionSpec("position_memo", ["仓位管理备忘"], level=2),
+            SectionSpec("m4_decline", ["亏钱效应（爆量下跌）"], level=2),
         ]),
     )
     if with_card:
@@ -39,7 +39,7 @@ def render_panel(rows, *, with_card=True, reading=READING):
         "- 趋势状态：退潮（第 26 日）\n"
         "- 前瞻轴：未触发。\n"
         f"- {reading}\n\n"
-        "# 6. 仓位管理备忘\n\n- 成交额集中度：结合前文，只解释主线拥挤背景。\n"
+        "# 5. 亏钱效应（爆量下跌）\n\n- 成交额集中度：结合前文，只解释主线拥挤背景。\n"
     )
 
 

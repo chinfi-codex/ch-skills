@@ -3,7 +3,7 @@
     "dms-html": {
       "contract": {
         "browser": {
-          "expect_contract": "dms/2.2.0-industry-swing",
+          "expect_contract": "dms/2.3.0-industry-swing",
           "script": "scripts/_shared/html_report/render_check.py"
         },
         "forbidden_patterns": [
@@ -86,18 +86,10 @@
               "亏钱效应（爆量下跌）"
             ],
             "required": false
-          },
-          {
-            "key": "position_memo",
-            "level": 1,
-            "patterns": [
-              "仓位管理备忘"
-            ],
-            "required": false
           }
         ]
       },
-      "contract_version": "dms/2.2.0-industry-swing",
+      "contract_version": "dms/2.3.0-industry-swing",
       "features": [
         "evidence-backed",
         "preserve-source-text",
@@ -214,14 +206,6 @@
                   "亏钱效应（爆量下跌）"
                 ],
                 "required": false
-              },
-              {
-                "key": "position_memo",
-                "level": 2,
-                "patterns": [
-                  "仓位管理备忘"
-                ],
-                "required": false
               }
             ]
           },
@@ -262,7 +246,7 @@
         },
         {
           "config": {
-            "expect_contract": "dms/2.2.0-industry-swing",
+            "expect_contract": "dms/2.3.0-industry-swing",
             "script": "scripts/_shared/html_report/render_check.py"
           },
           "id": "browser-attestation",
@@ -352,18 +336,10 @@
               "亏钱效应（爆量下跌）"
             ],
             "required": false
-          },
-          {
-            "key": "position_memo",
-            "level": 1,
-            "patterns": [
-              "仓位管理备忘"
-            ],
-            "required": false
           }
         ]
       },
-      "contract_version": "dms/2.2.0-industry-swing",
+      "contract_version": "dms/2.3.0-industry-swing",
       "features": [
         "evidence-backed"
       ],
@@ -473,14 +449,6 @@
                   "亏钱效应（爆量下跌）"
                 ],
                 "required": false
-              },
-              {
-                "key": "position_memo",
-                "level": 1,
-                "patterns": [
-                  "仓位管理备忘"
-                ],
-                "required": false
               }
             ]
           },
@@ -529,5 +497,5 @@
   },
   "schema_version": 1,
   "skill": "a-stock-daily-market-sense",
-  "source_sha256": "346af0c429061c02a8a9981f42d230c8c308847aa744f2f2859c303496115510"
+  "source_sha256": "a5804ce481eaa2be7ab46209ed495bf1e57f5cfb79f546f975dd08b3cabe33c6"
 }

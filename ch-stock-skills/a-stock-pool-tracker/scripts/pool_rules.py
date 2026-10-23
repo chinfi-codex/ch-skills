@@ -36,6 +36,8 @@ DEFAULT_RULES: dict[str, Any] = {
         "exclude_one_word": True,
         "exclude_st": True,
         "exclude_listed_days": 20,
+        "first_board_only": True,
+        "max_gain_5d_pct": 30,
     },
     "exit": {
         "remove_break_entry_low": True,
@@ -166,7 +168,9 @@ def screen_limit_up(row: dict, rules: dict, trade_date: str) -> tuple[bool, list
 
     row keys: ts_code, name, open, high, low, close, pre_close, amount,
     up_limit (optional; board rule fallback), turnover_rate[_f],
-    first_time ('HHMMSS' or None), list_date.
+    first_time ('HHMMSS' or None), list_date, pct_chg,
+    prior: up to 4 previous trading-day rows (ascending) with close,
+    pre_close, pct_chg, up_limit (optional) — for 首板 and 5 日涨幅.
     """
     cfg = rules["entry"]
     ts_code = row.get("ts_code") or ""
@@ -206,6 +210,35 @@ def screen_limit_up(row: dict, rules: dict, trade_date: str) -> tuple[bool, list
     if listed_days_min and listed_days is not None and listed_days < listed_days_min:
         reasons.append("newly_listed")
 
+    prev_limit_up, gain_5d = None, None
+    need_history = cfg.get("first_board_only") or cfg.get("max_gain_5d_pct") is not None
+    prior = list(row.get("prior") or [])[-4:]
+    if need_history:
+        if len(prior) < 4:
+            # 前 4 日缺数据（次新、停牌复牌）时无法确认首板和 5 日涨幅，保守不收
+            reasons.append("history_missing")
+        else:
+            prev = prior[-1]
+            prev_up = _f(prev.get("up_limit"))
+            if prev_up is None and _f(prev.get("pre_close")) is not None:
+                prev_up = board_up_limit(ts_code, name, _f(prev["pre_close"]))
+            prev_limit_up = is_limit_close(_f(prev.get("close")), prev_up)
+            if cfg.get("first_board_only") and prev_limit_up:
+                reasons.append("not_first_board")
+            today_pct = _f(row.get("pct_chg"))
+            if today_pct is None and close is not None and pre_close:
+                today_pct = (close / pre_close - 1) * 100
+            pcts = [_f(p.get("pct_chg")) for p in prior] + [today_pct]
+            if all(p is not None for p in pcts):
+                growth = 1.0
+                for p in pcts:
+                    growth *= 1 + p / 100
+                gain_5d = (growth - 1) * 100
+                if cfg.get("max_gain_5d_pct") is not None and gain_5d >= float(cfg["max_gain_5d_pct"]):
+                    reasons.append("gain_5d_too_high")
+            else:
+                reasons.append("history_missing")
+
     facts = {
         "ts_code": ts_code,
         "name": name,
@@ -217,6 +250,8 @@ def screen_limit_up(row: dict, rules: dict, trade_date: str) -> tuple[bool, list
         "turnover_pct": _r(turnover),
         "first_limit_time": first_time.zfill(6) if first_time else None,
         "listed_days": listed_days,
+        "prev_limit_up": prev_limit_up,
+        "gain_5d_pct": _r(gain_5d),
     }
     return (not reasons), reasons, facts
 

@@ -126,6 +126,26 @@ def market_day(trade_date: str) -> dict:
     return {"rows": rows, "notes": notes}
 
 
+def prior_days(trade_date: str, n: int = 4) -> dict:
+    """{ts_code: [前 n 个交易日的 daily 行（升序）]}，前一交易日附 up_limit。供首板与 5 日涨幅判定。"""
+    start = (date.fromisoformat(trade_date) - timedelta(days=30)).isoformat()
+    days = [d for d in trade_dates(start, trade_date) if d < trade_date][-n:]
+    out: dict[str, list[dict]] = {}
+    for d in days:
+        for r in call("daily", trade_date=ts_date(d), fields="ts_code,trade_date,close,pre_close,pct_chg"):
+            out.setdefault(r["ts_code"], []).append(dict(r, trade_date=d))
+    if days:
+        try:
+            limits = {r["ts_code"]: r.get("up_limit") for r in call("stk_limit", trade_date=ts_date(days[-1]))}
+        except Exception:  # noqa: BLE001 — 退回板制规则推算
+            limits = {}
+        for code, rows in out.items():
+            if rows[-1]["trade_date"] == days[-1]:
+                rows[-1]["up_limit"] = limits.get(code)
+    # 前一交易日没有数据（停牌）的票，最后一行不是前一交易日；交给规则判 history_missing
+    return {code: rows for code, rows in out.items() if days and rows[-1]["trade_date"] == days[-1]}
+
+
 def first_limit_times(trade_date: str) -> dict:
     """{ts_code: 'HHMMSS'} 首次封板时间。Tushare limit_list_d 优先，JRJ 涨停池兜底。"""
     errors = []

@@ -9,6 +9,8 @@ entry:
   exclude_one_word: true      # 一字板（全天最低价 = 涨停价）不入池
   exclude_st: true
   exclude_listed_days: 20     # 上市不足 N 个自然日的次新股不入池（0 = 不限）
+  first_board_only: true      # 只收首板：前一交易日收盘未涨停
+  max_gain_5d_pct: 30         # 涨停当天 + 前 4 个交易日，共 5 日累计涨幅须 < 30%（按每日涨跌幅连乘，已含除权）
 
 exit:
   # 直接移除（自动股）；手动股命中只进预警并标记"建议移除"

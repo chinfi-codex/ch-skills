@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Daily entry scan: limit-up stocks that pass the hard rules join the pool.
 
-Rules (assets/pool_rules.yaml → entry): 收盘涨停、非一字板、非 ST、成交额 ≥ 3 亿、
-换手率 < 15%、首次封板不晚于 10:30。Passing stocks not already in the pool
+Rules (assets/pool_rules.yaml → entry): 收盘涨停、首板、非一字板、非 ST、成交额 ≥ 3 亿、
+换手率 < 15%、首次封板不晚于 10:30、含当天的 5 日累计涨幅 < 30%。Passing stocks not already in the pool
 are inserted with their entry anchors (涨停价 / 涨停日最低价 / 启动价 / 成交额)
 and an empty reason — the model fills reason + theme via pool_cli.py annotate.
 A stock already in the pool that qualifies again is only reported here; the
@@ -28,7 +28,7 @@ import pool_data  # noqa: E402
 import pool_rules  # noqa: E402
 import pool_store  # noqa: E402
 
-NEAR_MISS_REASONS = {"amount_below_min", "turnover_too_high", "first_time_after_cutoff"}
+NEAR_MISS_REASONS = {"amount_below_min", "turnover_too_high", "first_time_after_cutoff", "gain_5d_too_high"}
 
 
 def main() -> int:
@@ -45,11 +45,12 @@ def main() -> int:
 
     market = pool_data.market_day(td)
     ft = pool_data.first_limit_times(td)
+    prior = pool_data.prior_days(td)
     degraded = ft["source"] is None
 
     passed, near_miss, counts = [], [], Counter()
     for row in market["rows"]:
-        row = dict(row, first_time=ft["times"].get(row["ts_code"]))
+        row = dict(row, first_time=ft["times"].get(row["ts_code"]), prior=prior.get(row["ts_code"]))
         ok, reasons, facts = pool_rules.screen_limit_up(row, rules, td)
         if "not_limit_close" in reasons:
             continue

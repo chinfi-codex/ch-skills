@@ -45,8 +45,10 @@ def make_bars(post: list[tuple]) -> tuple[list[dict], dict]:
 # --------------------------------------------------------------------------- #
 # Entry screen
 # --------------------------------------------------------------------------- #
-BASE_ROW = dict(ts_code="000001.SZ", name="样本", open=10.3, high=11, low=10.2, close=11, pre_close=10,
-                up_limit=11, amount=400000, turnover_rate=8.0, first_time="094512", list_date="20100101")
+PRIOR_FLAT = [dict(trade_date=f"2026-10-{d}", close=10, pre_close=10, pct_chg=0, up_limit=11) for d in (16, 19, 20, 21)]
+BASE_ROW = dict(ts_code="000001.SZ", name="样本", open=10.3, high=11, low=10.2, close=11, pre_close=10, pct_chg=10,
+                up_limit=11, amount=400000, turnover_rate=8.0, first_time="094512", list_date="20100101",
+                prior=PRIOR_FLAT)
 
 
 def screen(**kw):
@@ -68,6 +70,31 @@ def test_screen_rejects_each_rule():
     assert "st" in screen(name="*ST样本", up_limit=10.5, close=10.5)[1]
     assert "newly_listed" in screen(list_date="20261015")[1]
     assert "not_limit_close" in screen(close=10.9)[1]
+
+
+def test_first_board_only():
+    prior = PRIOR_FLAT[:3] + [dict(trade_date="2026-10-21", close=10, pre_close=9.09, pct_chg=10.01)]
+    ok, reasons, facts = screen(prior=prior)
+    assert "not_first_board" in reasons and facts["prev_limit_up"] is True
+    # 昨天冲板未封（收盘 9.9 < 涨停价 10.0）仍算首板
+    prior[-1] = dict(trade_date="2026-10-21", close=9.9, pre_close=9.09, pct_chg=8.91)
+    assert "not_first_board" not in screen(prior=prior, pre_close=9.9, close=10.89, up_limit=10.89, high=10.89)[1]
+
+
+def test_gain_5d_limit():
+    # 前 4 日每天 +4.5%，叠加今天 +10%：1.045^4 × 1.10 − 1 ≈ 31.2% ≥ 30%
+    prior = [dict(p, pct_chg=4.5) for p in PRIOR_FLAT]
+    ok, reasons, facts = screen(prior=prior)
+    assert "gain_5d_too_high" in reasons and facts["gain_5d_pct"] == 31.18
+    prior = [dict(p, pct_chg=4.0) for p in PRIOR_FLAT]  # ≈ 28.7%
+    ok, reasons, facts = screen(prior=prior)
+    assert ok, reasons
+    assert facts["gain_5d_pct"] == 28.68
+
+
+def test_missing_history_rejected():
+    assert "history_missing" in screen(prior=PRIOR_FLAT[:3])[1]
+    assert "history_missing" in screen(prior=None)[1]
 
 
 def test_screen_boundary_1030_passes():

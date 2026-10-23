@@ -37,15 +37,16 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import db_adapter  # noqa: E402
-from collectors import openrouter, ornn  # noqa: E402
-from collectors.base import CollectorError, utc_now_iso  # noqa: E402
+import collector_openrouter as openrouter  # noqa: E402
+import collector_ornn as ornn  # noqa: E402
+from collector_base import CollectorError, utc_now_iso  # noqa: E402
 from gpu_catalog import load_catalog  # noqa: E402
 
 CONFIG_DIR = SCRIPT_DIR.parent / "config"
 
 # 有历史接口的源在这里注册。没有的源不是"忘了实现"，是接口不存在。
 # openrouter 是个混合体：日度模型级序列补不回去，但厂商级周度的 market-share
-# 有 52 周真历史，落进另一张表（口径不同，见 collectors/openrouter.collect_history）。
+# 有 52 周真历史，落进另一张表（口径不同，见 collector_openrouter.collect_history）。
 HISTORY_COLLECTORS = {"ornn": ornn.collect, "openrouter": openrouter.collect_history}
 
 

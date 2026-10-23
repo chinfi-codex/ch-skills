@@ -35,7 +35,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import db_adapter  # noqa: E402
-from collectors.base import percentile  # noqa: E402
+from collector_base import percentile  # noqa: E402
 
 # 单位换算出错时最常见的倍数。
 # 4/8/16 倍这种幅度真实市场几乎不会一天走出来，所以不管有没有超过通用跳变

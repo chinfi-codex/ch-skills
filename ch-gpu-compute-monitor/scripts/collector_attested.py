@@ -17,9 +17,9 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from .base import CollectResult, CollectorError, price_row, query_fingerprint
+from collector_base import CollectResult, CollectorError, price_row, query_fingerprint
 
-CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "attested_prices.yaml"
+CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "attested_prices.yaml"
 
 
 def collect(source: str, cfg: Dict[str, Any], catalog, obs_date: str,

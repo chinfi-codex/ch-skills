@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-RAW_ROOT = Path(__file__).resolve().parents[2] / "raw"
+RAW_ROOT = Path(__file__).resolve().parents[1] / "raw"
 
 
 class CollectorError(RuntimeError):

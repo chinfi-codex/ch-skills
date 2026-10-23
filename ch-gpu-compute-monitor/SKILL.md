@@ -147,7 +147,7 @@ stealth 模型在免费放量，它进出榜单就能让总量凭空跳一大截
    成因矩阵读：**GPU 涨价 + token 量涨 = 真需求拉动；GPU 涨价 + 量平 = 供给收缩**。
    混合价单独下跌不算降价，必须和固定篮子一起看。
 5. **写报告**：按 `references/report_template.md` 写 Markdown 到
-   `reports/gpu-<report_date>.md`。`report_date` 固定取开始生成报告时的本地执行日期，
+   `evidence/gpu-<report_date>.md`。`report_date` 固定取开始生成报告时的本地执行日期，
    不从 `obs_date`、`evidence.asof` 或任一 `anchor_date` 推导；frontmatter 的 `date`
    与正文标题也用这个执行日期。另写 `data_asof: <evidence.asof>` 保留数据截止日，
    面板里的真实最新数据仍按各自 `anchor_date` 解释。
@@ -155,8 +155,8 @@ stealth 模型在免费放量，它进出榜单就能让总量凭空跳一大截
    **frontmatter 的 `verdict` 块是仪表盘唯一认的判断契约**，必须填；正文写仪表盘表达不了的
    推理，不要重抄标准报价矩阵——那是仪表盘的活。
 6. **出仪表盘**：`python scripts/render_report_html.py
-   --evidence evidence/gpu-<data_asof>.json --input reports/gpu-<report_date>.md`。
-   HTML 默认同样输出为 `reports/gpu-<report_date>.html`，页头并列显示报告日与数据截止日。
+   --evidence evidence/gpu-<data_asof>.json --input evidence/gpu-<report_date>.md`。
+   HTML 默认同样输出为 `evidence/gpu-<report_date>.html`，页头并列显示报告日与数据截止日。
 
 补录 CoreWeave / Nebius 挂牌价时，编辑 `config/attested_prices.yaml`（每条必须带 `as_of` 与
 `source_url`），再重跑 collect 与 metrics。**动手前先读 `references/source_notes.md` 的
@@ -229,7 +229,7 @@ python scripts/metrics.py --no-persist-alerts        # 只算不写 gpu_alerts
 
 ```bash
 python scripts/render_report_html.py --evidence evidence/gpu-2026-08-25.json
-python scripts/render_report_html.py --evidence … --input reports/gpu-2026-08-25.md
+python scripts/render_report_html.py --evidence … --input evidence/gpu-2026-08-25.md
 python scripts/render_report_html.py --evidence … --output docs/index.html
 python scripts/render_report_html.py --evidence … --report-date 2026-08-30
 ```
@@ -316,7 +316,7 @@ python scripts/daily_update.py --skip-collect
 
 **输入**：「出一份今天的 GPU 算力监控日报」
 
-**做法**：`collect.py` → `metrics.py` → 读证据 → 写 `reports/gpu-<date>.md`。
+**做法**：`collect.py` → `metrics.py` → 读证据 → 写 `evidence/gpu-<date>.md`。
 
 **冷启动第一天的正确产出长这样**（真实运行结果）：
 

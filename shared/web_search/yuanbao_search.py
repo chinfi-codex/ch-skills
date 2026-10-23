@@ -29,7 +29,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 ENDPOINT = "https://wsa.tencentcloudapi.com"
@@ -157,23 +157,29 @@ def build_tc3_headers(
     }
 
 
-def _is_real_iso_date(value: str) -> bool:
-    try:
-        datetime.strptime(value, "%Y-%m-%d")
-    except ValueError:
-        return False
-    return True
-
-
 def _validate_freshness(freshness: str) -> str | None:
     if not any(pattern.fullmatch(freshness) for pattern in _FRESHNESS_PATTERNS):
         return (
             "freshness must be d[1-30] / m[1-12] / y[1-5] / YYYY-MM-DD "
             "or 'YYYY-MM-DD,YYYY-MM-DD'"
         )
+    today = date.today()
     for part in freshness.split(","):
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", part) and not _is_real_iso_date(part):
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", part):
+            continue
+        try:
+            parsed = datetime.strptime(part, "%Y-%m-%d").date()
+        except ValueError:
             return f"freshness contains an invalid date: {part}"
+        if parsed < date(1970, 1, 1):
+            return f"freshness date cannot be before 1970-01-01: {part}"
+        if parsed > today:
+            return f"freshness date cannot be later than today ({today.isoformat()}): {part}"
+    if "," in freshness:
+        start, end = freshness.split(",")
+        # 文档正文写反了约束（示例为 A<B），按示例执行：起点不得晚于终点
+        if start > end:
+            return f"freshness range start must be on or before end: {freshness}"
     return None
 
 
@@ -183,13 +189,17 @@ def _validate_site(site: str) -> str | None:
         return "site cannot be blank"
     if parts[0].startswith("exclude:"):
         parts = [parts[0][len("exclude:") :], *parts[1:]]
-    if len(parts) > 5:
-        return "site supports at most 5 domains (站内与排除合计)"
+        if len(parts) > 5:
+            return "site excludes at most 5 domains"
+    elif len(parts) > 1:
+        # 文档约束：指定网址搜索每次仅支持一个域名，多个域名只支持排除形态
+        return "site 站内搜索仅支持一个域名；排除多个域名用 'exclude:a.com|b.com'"
     return None
 
 
 def _normalize_page(raw: object) -> dict | None:
-    """Pages 数组里每项是 JSON 字符串，解析并裁剪成统一字段。"""
+    """Pages 数组里每项是 JSON 字符串：公共字段归一，其余（含旗舰版独有的
+    authority_level / deeplinks、通用 pics / favicon）原样保留，不丢字段。"""
     if isinstance(raw, dict):
         item = raw
     elif isinstance(raw, str):
@@ -201,14 +211,17 @@ def _normalize_page(raw: object) -> dict | None:
             return None
     else:
         return None
-    return {
+    consumed = ("title", "date", "content", "passage")
+    normalized = {
         "title": item.get("title"),
         "url": item.get("url"),
         "published_date": item.get("date"),
         "content": item.get("content") or item.get("passage"),
-        "site": item.get("site"),
-        "score": item.get("score"),
     }
+    for key, value in item.items():
+        if key not in consumed:
+            normalized[key] = value
+    return normalized
 
 
 def yuanbao_search(
@@ -318,10 +331,14 @@ def yuanbao_search(
         for raw in body_data.get("Pages", [])
         if (normalized := _normalize_page(raw)) is not None
     ]
-    return {
-        "query": query,
-        "results": pages,
-    }
+    payload: dict = {"query": query, "results": pages}
+    # Version 告知本次由哪一档服务应答（lite/standard/flagship），Msg 承载
+    # "hit black query" 之类的引擎提示；缺省时不出现在返回里。
+    version = body_data.get("Version")
+    msg = body_data.get("Msg")
+    if version or msg:
+        payload["meta"] = {"version": version, "msg": msg}
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -339,7 +356,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--site",
         default=None,
-        help="站内搜索如 'qq.com'，排除用 'exclude:a.com|b.com'（合计最多 5 个域名）",
+        help="站内搜索仅一个域名如 'qq.com'；排除用 'exclude:a.com|b.com'（最多 5 个）",
     )
     parser.add_argument(
         "--cnt",

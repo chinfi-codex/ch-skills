@@ -68,6 +68,42 @@ class YuanbaoSearchContractTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["content"], "passage text")
 
     @patch("requests.post")
+    def test_flagship_and_common_extra_fields_are_preserved(self, post: Mock) -> None:
+        post.return_value = _mock_response(
+            {
+                "Response": {
+                    "Version": "flagship",
+                    "Msg": "ok",
+                    "Pages": [
+                        _page(
+                            authority_level=4,
+                            pics=[{"caption": "图", "origin_url": "https://example.com/p.png"}],
+                            favicon="https://example.com/favicon.ico",
+                            deeplinks=["https://example.com/news/1/sub"],
+                        )
+                    ],
+                }
+            }
+        )
+
+        result = search.yuanbao_search("寒武纪", secret_id="id-x", secret_key="key-x")
+
+        item = result["results"][0]
+        self.assertEqual(item["authority_level"], 4)
+        self.assertEqual(item["pics"][0]["caption"], "图")
+        self.assertEqual(item["favicon"], "https://example.com/favicon.ico")
+        self.assertEqual(item["deeplinks"], ["https://example.com/news/1/sub"])
+        self.assertEqual(result["meta"], {"version": "flagship", "msg": "ok"})
+
+    @patch("requests.post")
+    def test_meta_omitted_when_response_lacks_version_and_msg(self, post: Mock) -> None:
+        post.return_value = _mock_response({"Response": {"Pages": [_page()]}})
+
+        result = search.yuanbao_search("寒武纪", secret_id="id-x", secret_key="key-x")
+
+        self.assertNotIn("meta", result)
+
+    @patch("requests.post")
     def test_optional_filters_are_forwarded(self, post: Mock) -> None:
         post.return_value = _mock_response({"Response": {"Pages": []}})
 
@@ -95,7 +131,15 @@ class YuanbaoSearchContractTests(unittest.TestCase):
 
     @patch("requests.post")
     def test_freshness_must_match_api_grammar(self, post: Mock) -> None:
-        for bad in ("d31", "m13", "y6", "2026-13-01", "2026/01/01"):
+        for bad in (
+            "d31",
+            "m13",
+            "y6",
+            "2026-13-01",           # 不存在的日期
+            "1969-12-31",           # 早于 1970-01-01
+            "2099-01-01",           # 晚于请求当天
+            "2026-06-30,2026-01-01",  # 区间起点晚于终点
+        ):
             with self.subTest(freshness=bad):
                 result = search.yuanbao_search(
                     "query", freshness=bad, secret_id="id-x", secret_key="key-x"
@@ -104,7 +148,7 @@ class YuanbaoSearchContractTests(unittest.TestCase):
         post.assert_not_called()
 
     @patch("requests.post")
-    def test_site_accepts_at_most_five_domains(self, post: Mock) -> None:
+    def test_site_rules_match_api_grammar(self, post: Mock) -> None:
         post.return_value = _mock_response({"Response": {"Pages": []}})
 
         ok = search.yuanbao_search(
@@ -115,9 +159,19 @@ class YuanbaoSearchContractTests(unittest.TestCase):
         )
         self.assertNotIn("error", ok)
 
+        # 站内搜索每次只允许一个域名
+        multi_include = search.yuanbao_search(
+            "query",
+            site="a.com|b.com",
+            secret_id="id-x",
+            secret_key="key-x",
+        )
+        self.assertEqual(multi_include["error"]["code"], "invalid_parameters")
+
+        # 排除形态最多 5 个域名
         too_many = search.yuanbao_search(
             "query",
-            site="a.com|b.com|c.com|d.com|e.com|f.com",
+            site="exclude:a.com|b.com|c.com|d.com|e.com|f.com",
             secret_id="id-x",
             secret_key="key-x",
         )

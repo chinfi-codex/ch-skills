@@ -110,6 +110,13 @@ def _call_yuanbao(query: str, *, max_results: int, days, start_date, end_date,
         return {
             "skipped": "yuanbao: Site 只支持站内或排除二选一，无法同时表达 include+exclude"
         }, notes
+    if len(include) > 1:
+        return {
+            "skipped": (
+                f"yuanbao: 站内搜索仅支持一个域名（收到 {len(include)} 个），"
+                "多个域名请改用排除形态或单引擎直调"
+            )
+        }, notes
 
     freshness = None
     if days is not None:
@@ -129,7 +136,7 @@ def _call_yuanbao(query: str, *, max_results: int, days, start_date, end_date,
 
     kwargs: dict = {"cnt": cnt}
     if include:
-        kwargs["site"] = "|".join(include)
+        kwargs["site"] = include[0]
     elif exclude:
         kwargs["site"] = "exclude:" + "|".join(exclude)
     if freshness:
@@ -168,7 +175,21 @@ def _run_engine(engine: str, query: str, **params) -> tuple[str, dict, list[str]
         return engine, {"skipped": out["skipped"]}, notes
     if "error" in out:
         return engine, {"error": out["error"]}, notes
-    return engine, {"results": _normalize_items(out.get("results") or [])}, notes
+    payload = {"results": _normalize_items(out.get("results") or [])}
+    if out.get("meta"):
+        payload["meta"] = out["meta"]
+    return engine, payload, notes
+
+
+def _failover_payload(query: str, name: str, out: dict, attempts: dict, notes: list[str]) -> dict:
+    payload = {"query": query, "mode": "failover", "engine": name, "results": out["results"]}
+    if out.get("meta"):
+        payload["meta"] = out["meta"]
+    if attempts:
+        payload["attempts"] = attempts
+    if notes:
+        payload["notes"] = notes
+    return payload
 
 
 def multi_search(
@@ -228,23 +249,13 @@ def multi_search(
             continue
         if not out["results"]:
             attempts[name] = {"empty": True}
-            last_success = (name, out["results"], notes)
+            last_success = (name, out)
             continue
-        payload = {"query": query, "mode": "failover", "engine": name, "results": out["results"]}
-        if attempts:
-            payload["attempts"] = attempts
-        if all_notes:
-            payload["notes"] = all_notes
-        return payload
+        return _failover_payload(query, name, out, attempts, all_notes)
 
     if last_success is not None:
-        name, results, _ = last_success
-        payload = {"query": query, "mode": "failover", "engine": name, "results": results}
-        if attempts:
-            payload["attempts"] = attempts
-        if all_notes:
-            payload["notes"] = all_notes
-        return payload
+        name, out = last_success
+        return _failover_payload(query, name, out, attempts, all_notes)
 
     return {
         "query": query,
@@ -316,8 +327,8 @@ def main(argv: list[str] | None = None) -> int:
 
     result = multi_search(
         args.query,
-        engines=args.engine,
-        mode=mode or "failover",
+        engines=engines,
+        mode=mode,
         max_results=args.max_results,
         days=args.days,
         start_date=args.start_date,

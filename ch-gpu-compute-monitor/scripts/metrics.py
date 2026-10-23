@@ -36,8 +36,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import db_adapter  # noqa: E402
-from collectors.base import percentile  # noqa: E402
-from collectors.runpod import stock_rank  # noqa: E402
+from collector_base import percentile  # noqa: E402
+from collector_runpod import stock_rank  # noqa: E402
 from gpu_catalog import load_catalog  # noqa: E402
 
 CONFIG_DIR = SCRIPT_DIR.parent / "config"

@@ -33,8 +33,12 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import db_adapter  # noqa: E402
 import validate  # noqa: E402
-from collectors import attested, openrouter, ornn, runpod, vast  # noqa: E402
-from collectors.base import CollectResult, CollectorError, utc_now_iso  # noqa: E402
+import collector_attested as attested  # noqa: E402
+import collector_openrouter as openrouter  # noqa: E402
+import collector_ornn as ornn  # noqa: E402
+import collector_runpod as runpod  # noqa: E402
+import collector_vast as vast  # noqa: E402
+from collector_base import CollectResult, CollectorError, utc_now_iso  # noqa: E402
 from gpu_catalog import load_catalog  # noqa: E402
 
 CONFIG_DIR = SCRIPT_DIR.parent / "config"

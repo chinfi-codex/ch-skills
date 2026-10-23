@@ -19,7 +19,7 @@ Ornn 自带滚动 3 个月历史，掉出窗口的点明天还能重取）；供
 
 用法：
     python scripts/render_report_html.py --evidence evidence/gpu-2026-08-25.json
-    python scripts/render_report_html.py --input reports/gpu-2026-08-25.md   # 从报告读 verdict
+    python scripts/render_report_html.py --input evidence/gpu-2026-08-25.md   # 从报告读 verdict
     python scripts/render_report_html.py --evidence … --output docs/index.html
 """
 
@@ -1230,7 +1230,7 @@ def main() -> int:
     verdict = meta.get("verdict") or {}
 
     output = Path(args.output) if args.output else (
-        SKILL_ROOT / "reports" / f"gpu-{report_date}.html")
+        SKILL_ROOT / "evidence" / f"gpu-{report_date}.html")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(build_html(ev, verdict, report_date), encoding="utf-8")
 

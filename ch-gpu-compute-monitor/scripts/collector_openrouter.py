@@ -38,7 +38,7 @@ import statistics
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import (
+from collector_base import (
     CollectResult,
     CollectorError,
     query_fingerprint,

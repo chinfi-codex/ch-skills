@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 
-from .base import (
+from collector_base import (
     CollectResult,
     CollectorError,
     price_row,

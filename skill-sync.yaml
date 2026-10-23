@@ -148,8 +148,7 @@ exclude:
     us-ai-semi-earnings:
       - reports
       - .cache
-    # 采集与指标产物:原始响应、证据包、报告,运行时重建,不进发布包
+    # 采集与指标产物:原始响应、证据包与报告(同放 evidence/),运行时重建,不进发布包
     ch-gpu-compute-monitor:
       - raw
       - evidence
-      - reports

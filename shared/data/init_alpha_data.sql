@@ -419,3 +419,77 @@ CREATE TABLE IF NOT EXISTS stock_tracking_history (
 
 CREATE INDEX IF NOT EXISTS idx_stock_tracking_history_field
     ON stock_tracking_history(ts_code, field_id, asof);
+
+
+-- -------------------------------------------------------------------------
+-- 16. Stock pool (a-stock-pool-tracker, 涨停强势股票池)
+-- -------------------------------------------------------------------------
+-- pool_member is one row per *episode*: a stock removed and later
+-- re-qualified gets a new row keyed by its new entry_date.  Anchors
+-- (limit_price / entry_low / launch_price) are raw prices on entry_date with
+-- entry_adj_factor, so pool_rules.py can forward-adjust them consistently.
+-- Status transitions are hard rules from assets/pool_rules.yaml applied by
+-- pool_track.py; verdict (健康/分歧/预警/走坏) and event.category are model
+-- judgement written through pool_cli.py.  metrics / exit_hits / signals are
+-- JSON text so the same DDL works on the SQLite fallback.
+CREATE TABLE IF NOT EXISTS pool_member (
+    ts_code           TEXT NOT NULL,
+    entry_date        DATE NOT NULL,
+    name              TEXT,
+    source            TEXT NOT NULL DEFAULT 'auto',     -- auto / manual
+    status            TEXT NOT NULL DEFAULT 'active',   -- active / watch / removed
+    limit_price       DOUBLE PRECISION,
+    entry_low         DOUBLE PRECISION,
+    launch_price      DOUBLE PRECISION,
+    entry_amount      DOUBLE PRECISION,                 -- Tushare 千元
+    entry_turnover    DOUBLE PRECISION,
+    entry_adj_factor  DOUBLE PRECISION,
+    first_limit_time  TEXT,                             -- HHMMSS
+    reason            TEXT,
+    theme_id          TEXT,
+    theme_name        TEXT,
+    watch_since       DATE,
+    suggest_remove    INTEGER NOT NULL DEFAULT 0,
+    removed_date      DATE,
+    removed_reason    TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ts_code, entry_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pool_member_status
+    ON pool_member(status);
+
+CREATE TABLE IF NOT EXISTS pool_daily (
+    ts_code      TEXT NOT NULL,
+    entry_date   DATE NOT NULL,
+    trade_date   DATE NOT NULL,
+    status       TEXT NOT NULL,
+    metrics      TEXT NOT NULL,
+    exit_hits    TEXT,
+    signals      TEXT,
+    verdict      TEXT,                                  -- 健康 / 分歧 / 预警 / 走坏
+    note         TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ts_code, entry_date, trade_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pool_daily_date
+    ON pool_daily(trade_date);
+
+CREATE TABLE IF NOT EXISTS pool_event (
+    id           BIGSERIAL PRIMARY KEY,
+    ts_code      TEXT NOT NULL,
+    entry_date   DATE NOT NULL,
+    event_date   DATE NOT NULL,
+    kind         TEXT NOT NULL,     -- entry / relimit / status / signal / news / note
+    category     TEXT,              -- 催化兑现 / 新催化 / 题材证伪 / 实质利空 / 中性
+    title        TEXT NOT NULL,
+    detail       TEXT,
+    source       TEXT,
+    url          TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pool_event_stock
+    ON pool_event(ts_code, entry_date, event_date);

@@ -1,0 +1,47 @@
+# 股票池硬规则（脚本执行，可复现、可回测）。
+# 改阈值只改这里；判断类的东西（题材归属、消息定性、走势四档）不写进来，留给模型。
+
+entry:
+  amount_min_yi: 3            # 涨停日成交额下限（亿元）
+  turnover_max_pct: 15        # 涨停日换手率上限（%），超过视为筹码太松
+  turnover_field: turnover_rate   # Tushare daily_basic 字段：turnover_rate（流通股口径）/ turnover_rate_f（自由流通）
+  first_limit_time_max: "103000"  # 首次封板时间不晚于 10:30（HHMMSS）
+  exclude_one_word: true      # 一字板（全天最低价 = 涨停价）不入池
+  exclude_st: true
+  exclude_listed_days: 20     # 上市不足 N 个自然日的次新股不入池（0 = 不限）
+  first_board_only: true      # 只收首板：前一交易日收盘未涨停
+  max_gain_5d_pct: 30         # 涨停当天 + 前 4 个交易日，共 5 日累计涨幅须 < 30%（按每日涨跌幅连乘，已含除权）
+
+exit:
+  # 直接移除（自动股）；手动股命中只进预警并标记"建议移除"
+  remove_break_entry_low: true      # 收盘跌破涨停日最低价（复权后）
+  remove_drawdown_pct: 20           # 收盘距入池后最高收盘回撤 ≥ 20%
+  # 预警：进 watch，连续 watch_to_remove_days 个交易日未修复则移除
+  watch_below_ma20_days: 2          # 连续 N 日收盘在 MA20 之下
+  watch_big_bear_pct: -5            # 放量大阴线：跌幅 ≤ -5% ……
+  watch_big_bear_amount_ratio: 2.0  # …… 且成交额 ≥ 前 5 日均额 2 倍
+  time_stop_days_in_pool: 15        # 时间止损：入池满 N 个交易日 ……
+  time_stop_days_since_peak: 10     # …… 且已 N 个交易日没创新高 ……
+                                    # …… 且收盘跌破 MA10
+  watch_to_remove_days: 3
+
+signal:
+  # 介入提醒只有两类：突破、缩量回踩。脚本只给命中事实和失效价位，结论由模型写。
+  breakout:
+    min_consolidation_days: 3       # 平台高点之后至少横了 N 个交易日才算"突破"，否则只是连涨
+    min_amount_ratio: 1.5           # 突破日成交额 ≥ 前 5 日均额 1.5 倍
+    near_pct: 3                     # 收盘距平台高点 3% 以内且缩量 → "临近突破"预备提醒
+    near_max_amount_ratio: 0.8
+    fail_buffer_pct: 3              # 收盘跌回平台高点下方 3% 视为突破失败
+  pullback:
+    supports: [limit_price, ma10, ma20]   # 涨停价（涨停实体顶部）、MA10、MA20
+    min_pullback_pct: 5             # 距入池后最高收盘至少回撤 5% 才算"回踩"
+    touch_tolerance_pct: 2          # 最低价进入支撑位上方 2% 以内
+    hold_tolerance_pct: 1           # 收盘不低于支撑位下方 1%
+    max_amount_ratio: 0.7           # 缩量：成交额 ≤ 前 5 日均额 0.7 倍 ……
+    max_amount_vs_entry: 0.5        # …… 或 ≤ 涨停日成交额 0.5 倍（二者满足其一）
+    min_pct_chg: -5                 # 当日跌幅超过 5% 不算回踩，算破位
+    fail_buffer_pct: 3              # 收盘跌破支撑位 3% 视为回踩失败
+
+track:
+  lookback_calendar_days: 60        # 入池日之前多取多少自然日日线，保证 MA20 可算

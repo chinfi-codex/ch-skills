@@ -910,8 +910,8 @@ renderList();
 
 
 def render_html(view: Dict[str, Any], kline_assets: Optional[Dict[str, Any]] = None) -> str:
-    empty_note = ('<div class="foot">未接入主线台账——主线归属与行业趋势栏为空；如需归属，先运行 daily-market-sense '
-                  '填充 theme 台账、再跑 verdict 判分归属。</div>' if view["theme_registry_empty"] else "")
+    empty_note = ('<div class="foot">未接入主线台账——主线归属与行业趋势栏为空。</div>'
+                  if view["theme_registry_empty"] else "")
     if not view.get("tushare_enabled", True):
         empty_note += ('<div class="foot">未接入 Tushare——本页只含巨潮公告事实（预告区间、上年同期、变动原因、原文）；'
                        '单季拆解、营收、年化PE、股价断层与行业为空，配置 TUSHARE_TOKEN 后重跑 scan 即可补齐。</div>')
@@ -965,7 +965,7 @@ def render_html(view: Dict[str, Any], kline_assets: Optional[Dict[str, Any]] = N
 <div class="list" id="list"><div class="empty">正在加载 {len(view['stocks'])} 家预告数据…</div></div>
 <div class="detail" id="detail"><div class="empty">点击左侧个股查看详情</div></div>
 </div>
-<div class="foot">净利=预告中值 · 断层以首次披露日为锚(预告多在披露日前一交易日盘后发出，反应落在披露日当天)：跳空=公告日当天开盘 vs 公告日前一交易日收盘；向上=业绩超预期跳空(强表现)、向下=不及预期跳空下跌(弱表现)；未回补=其后价格未回到公告前收盘另一侧，D+n=断层后交易日数(新断层未经检验) · 行业趋势=报告期内按主线聚合成员的断层方向(强表现向上/弱表现向下)自下而上归纳：↑↓⇅为机械计数，「判·方向」为模型对强/弱成员变动原因的归因交叉验证(落 verdict 台账，†=成员已变化待复判) · 页首产业结构综述=模型基于全样本行业聚合(industry_summary，含负向预告)的结构判断，样本随披露累积、综述会随之更新 · K线使用前复权(qfq)口径，红涨绿跌，蓝虚线=公告日标注(落在公告日前一交易日，如公告日7.3则标7.2)、橙虚线=公告前收盘 · 年化PE=最新交易日总市值÷年化净利，年化净利=预告中值÷报告期季数×4(简单年化，未调季节性，年报预告即中值)；有 cninfo 扣非中值时头条 PE 优先按扣非(剔除一次性损益)算、归母 PE 作对照，无扣非退回归母；滚动PE分母=上年年报实际+本期中值−上年同期实际(季节性对照)；年化净利≤0不给PE，扭亏小基数会把PE推到数百倍、一次性损益会让归母PE虚低，与行情软件静态PE/PE-TTM口径不同 · 归属主线由模型语义匹配 daily-market-sense 主线台账 · 仅作观察、不含买卖建议</div>
+<div class="foot">净利=预告中值 · 断层以首次披露日为锚(预告多在披露日前一交易日盘后发出，反应落在披露日当天)：跳空=公告日当天开盘 vs 公告日前一交易日收盘；向上=业绩超预期跳空(强表现)、向下=不及预期跳空下跌(弱表现)；未回补=其后价格未回到公告前收盘另一侧，D+n=断层后交易日数(新断层未经检验) · 行业趋势=报告期内按主线聚合成员的断层方向(强表现向上/弱表现向下)自下而上归纳：↑↓⇅为机械计数，「判·方向」为模型对强/弱成员变动原因的归因交叉验证(落 verdict 台账，†=成员已变化待复判) · 页首产业结构综述=模型基于全样本行业聚合(industry_summary，含负向预告)的结构判断，样本随披露累积、综述会随之更新 · K线使用前复权(qfq)口径，红涨绿跌，蓝虚线=公告日标注(落在公告日前一交易日，如公告日7.3则标7.2)、橙虚线=公告前收盘 · 年化PE=最新交易日总市值÷年化净利，年化净利=预告中值÷报告期季数×4(简单年化，未调季节性，年报预告即中值)；有 cninfo 扣非中值时头条 PE 优先按扣非(剔除一次性损益)算、归母 PE 作对照，无扣非退回归母；滚动PE分母=上年年报实际+本期中值−上年同期实际(季节性对照)；年化净利≤0不给PE，扭亏小基数会把PE推到数百倍、一次性损益会让归母PE虚低，与行情软件静态PE/PE-TTM口径不同 · 归属主线由模型语义匹配主线台账（未接入时为空） · 仅作观察、不含买卖建议</div>
 {empty_note}
 </div>
 <script>const DATA={data_json};{_JS}</script>

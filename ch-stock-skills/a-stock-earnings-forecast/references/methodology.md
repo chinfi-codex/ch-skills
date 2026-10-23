@@ -109,7 +109,7 @@ SKILL.md 只放纲要，这里放判断锚点、拆解语义、字段字典和�
 
 ## 七、CNInfo 主源公告字段（`forecast_scan.py` 全样本输出）
 
-`forecast_scan.py` 对 CNInfo 发现的全样本运行一次，公告 PDF 与解析结果进入 PostgreSQL 缓存；日更只下载新增或修订公告。每条记录：
+`forecast_scan.py` 对 CNInfo 发现的全样本运行一次，公告 PDF 与解析结果进入数据库缓存；日更只下载新增或修订公告。每条记录：
 
 - `announcement.title/ann_date/url`：预告公告标题、日期、原文 PDF 链接。
 - `parsed.kf_net_profit_yi`：**扣非净利**（亿元，`low/high` 区间或 `point`）。Tushare 结构化预告没有，这是主要增量；判含金量看它与归母的差额。
@@ -241,4 +241,4 @@ SKILL.md 只放纲要，这里放判断锚点、拆解语义、字段字典和�
 - **年化净利 ≤ 0 不给 PE**（`np_nonpositive`，仍亏损的减亏/首亏/续亏票）；扭亏但绝对利润很小的票，年化PE会飙到数百上千倍——那是低基数失真，不是"贵"，报告里按绝对额讲。
 - **扣非解析有 confidence**（high=单位贴数字 / med=表头推断）。头条用扣非 PE 时把 confidence 一并标出，`med` 的先对照 enrich `text` 核一眼再采信（§七）。
 - **两口径的差是信息**：归母年化PE 明显低于滚动PE = 本期利润节奏高于过去四个季度（加速或旺季），反之是减速或淡季——先排除季节性，再当加速/减速读。扣非年化PE 高于归母年化PE 的幅度 = 一次性成分占比的直观刻度。
-- 红线：PE 只是估值参照证据，"贵不贵、值不值"要结合成长性与含金量由模型判断（个股估值深判用 `a-stock-analyzer`），不给买卖建议。
+- 红线：PE 只是估值参照证据，"贵不贵、值不值"要结合成长性与含金量由模型判断（估值深判见 a-stock-earnings-review 的 `pricing.md`<!-- repo-only -->，完整个股研究用 `a-stock-analyzer`<!-- /repo-only -->），不给买卖建议。

@@ -34,6 +34,10 @@ python3 scripts/package_expert.py experts/a-stock-earnings-season               
 
 打包脚本按 `skill-sync.yaml` 注入 shared bundles、按发布边界剔除测试/评估/报告产物、补 WorkBuddy 技能 frontmatter(`description_zh/description_en/author/version`)。作者邮箱不入库:plugin.json 留 `__AUTHOR_EMAIL__`,打包时取 `--author-email`、`WORKBUDDY_AUTHOR_EMAIL` 或 `git config user.email`。
 
+**包外内容不进专家包**:只对本仓库成立的 Markdown(维护者环境、指向包里没有的 skill)用 `<!-- repo-only -->…<!-- /repo-only -->` 包起来,打包时剥掉;两边都成立的内容写成中性表述。`expert.yaml` 的 `bundle_files` 把共享 bundle 收窄到脚本实际 import 的文件。打包最后有引用审计:包内文本(含 Python 里给用户看的字符串)只要还出现包外 skill 名或 `~/.zshrc`、`shared/data`、`crawler/` 这类仓库路径,构建直接失败。
+
+**专用解释器**:Agent 宿主自带的 `python3` 常缺依赖。`chstock-env-setup` 的 `setup --install-deps` 在 `~/.ch-skills/venv` 建虚拟环境、从清华源装依赖并记为 `CH_SKILLS_PYTHON`,专家的人设要求所有脚本都用它运行。
+
 专家包面向非开发者,改动其中 skill 时要守住两条可用性约定:**环境不全时降级而不是崩溃**(如业绩预告在无 Tushare token 时只出巨潮事实),**脚本输出写到当前工作目录**(专家在 `~/earnings-season/` 下运行,不写进安装目录)。
 
 ### Skill 设计的核心准则(决定怎么改 SKILL.md)

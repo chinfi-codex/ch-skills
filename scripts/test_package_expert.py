@@ -49,6 +49,24 @@ class ValidationTests(unittest.TestCase):
             self.assertTrue(any(expected in e for e in errors), (expected, errors))
 
 
+class ReferenceAuditTests(unittest.TestCase):
+    def test_strip_and_audit(self) -> None:
+        _, manifest = _load()
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = Path(tmp)
+            (stage / "a.md").write_text("保留<!-- repo-only -->（用 `a-stock-analyzer`）<!-- /repo-only -->文本",
+                                        encoding="utf-8")
+            (stage / "b.md").write_text("请先运行 a-stock-daily-market-sense", encoding="utf-8")
+            (stage / "c.py").write_text("# owned by a-stock-analyzer\nprint('see a-stock-analyzer')\n",
+                                        encoding="utf-8")
+            self.assertEqual(pe.strip_repo_only(stage), 1)
+            self.assertEqual((stage / "a.md").read_text(encoding="utf-8"), "保留文本")
+            problems = pe.audit_references(stage, manifest)
+            self.assertTrue(any(p.startswith("b.md:1") for p in problems), problems)
+            self.assertTrue(any(p.startswith("c.py:2") for p in problems), problems)  # comment on line 1 ignored
+            self.assertFalse(any(p.startswith("a.md") for p in problems), problems)
+
+
 class BuildTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -81,6 +99,21 @@ class BuildTests(unittest.TestCase):
             self.assertNotIn("/reports/", name)
             self.assertNotIn("invest-autoresearch", name)
             self.assertNotIn("__pycache__", name)
+
+    def test_repo_only_blocks_and_outside_skills_are_gone(self) -> None:
+        for name in self.names:
+            if not name.endswith((".md", ".json")):
+                continue
+            text = self.zip.read(name).decode("utf-8")
+            self.assertNotIn("repo-only", text, name)
+            for term in ("a-stock-analyzer", "daily-market-sense", "~/.zshrc", "crawler/"):
+                self.assertNotIn(term, text, (name, term))
+
+    def test_shared_bundles_ship_only_imported_files(self) -> None:
+        shared = sorted(n.split("/scripts/_shared/", 1)[1] for n in self.names
+                        if "/a-stock-earnings-forecast/scripts/_shared/" in n)
+        self.assertEqual(shared, ["db_core.py", "html_report/assets.py",
+                                  "html_report/safe_json.py", "html_report/themes/default.css"])
 
     def test_skill_frontmatter_has_workbuddy_fields(self) -> None:
         text = self.zip.read(

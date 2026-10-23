@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Persistence + incremental-fetch cache for the earnings-forecast skill.
 
-Uses the shared connection layer `shared/data/db_core.py` (dev) / `_shared/`
-(bundled) — per the house rule, skills must not roll their own DB connection.
+Uses the shared connection layer `scripts/_shared/db_core.py` (bundled with the
+skill; the repository copy in development) — skills must not roll their own DB
+connection.
 Backend follows ALPHA_DB_BACKEND (postgresql default, sqlite offline). All tables
 are namespaced `forecast_*` inside the shared alpha_data database.
 
@@ -665,7 +666,7 @@ class Store:
         except Exception:  # noqa: BLE001
             pass
 
-    # -- theme registry / lifecycle (READ-ONLY; owned by daily-market-sense) -
+    # -- theme registry / lifecycle (READ-ONLY; maintained outside this skill) -
     def load_theme_registry(self) -> Dict[str, Dict[str, Any]]:
         """{theme_id: {name, aliases[], overlay, status}}. Empty if the theme
         tables are absent/empty — this skill never creates or writes them."""

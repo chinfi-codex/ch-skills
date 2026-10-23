@@ -9,7 +9,7 @@ version: 1.3.0
 ## 目标
 
 - **做什么**：按某个报告期（默认当前最新季度，如 2026H1=20260630）全市场扫描业绩预告，把净利润预告区间按中值折算成一个数，拆出「当年累计同比 / 最新单季度同比 / 环比」三个口径的利润增速，按最新总市值折算预告中值年化 PE（估值参照），读出业绩变动原因，对照最近实际报告期的营收趋势，最后由模型挑出真正业绩优秀的个股并排序。
-- **不做什么**：不做单股基本面深挖（用 `a-stock-analyzer`）、不做盘面复盘（用 `a-stock-daily-market-sense`）、不做同一季度预告与正式报告的合并研判及股价提前定价判断（用 `a-stock-earnings-review`）；不给买卖建议、目标价、仓位；不在脚本里判断“谁优秀”。
+- **不做什么**：不做单股基本面深挖<!-- repo-only -->（用 `a-stock-analyzer`）<!-- /repo-only -->、不做盘面复盘<!-- repo-only -->（用 `a-stock-daily-market-sense`）<!-- /repo-only -->、不做同一季度预告与正式报告的合并研判及股价提前定价判断（用 `a-stock-earnings-review`）；不给买卖建议、目标价、仓位；不在脚本里判断“谁优秀”。
 - **给谁用**：面向要在财报季快速锁定「业绩超预期 / 加速 / 高景气」候选池的投研读者，具备基本财务常识。
 
 ## 数据现实（务必先读，直接决定能交付什么）
@@ -43,31 +43,34 @@ version: 1.3.0
 2. **跑证据脚本**：交互运行 `python3 scripts/forecast_scan.py --period 20260630`；自动化先算 `NEXT_ANN_DATE=<北京时间运行日+1>`，再显式传 `--end-ann`。脚本先按日历日扫描 CNInfo 官方预告分类并解析新 PDF，再调用 Tushare `forecast` 做集合和字段差异校验；CNInfo 解析字段优先，解析缺口或同公告日结构化冲突才由 Tushare 补值/回退。随后取 Tushare `income`、前复权日线和 `daily_basic` 计算三口径、trailing 营收、断层和年化 PE。一次扫描同时生成 `forecast_scan_<period>.json` 与全样本 `cninfo_enrich_<period>.json`，不再需要候选名单驱动的增强步骤。
 3. **模型读证据做初筛**：读 JSON，按上面的方法论**逐股判断是否优秀并排序**——重点用 `profit_growth`（三口径 + `base_consistency`）、`flags`（`accelerating/turnaround/positive_type` 等）、`change_reason`（一次性损益识别）、`revenue_trailing`（营收匹配）。先圈出「强 / 中 / 观察」候选池。
 4. **复核 CNInfo 解析**：全样本公告已随 scan 下载并进入 `cninfo_enrich_<period>.json`。`cninfo_enrich.py --codes ... --refresh` 只用于定向重解析或人工核验，不再承担发现新增公司的职责。`parsed` 仍是最佳努力解析，重要数值应对照 `raw`/`text`。
-5. **判分 + 主线匹配 + 行业趋势 + 产业综述落台账**：跑 `python3 scripts/verdict.py context --period 20260630` 拿到「待判个股（新披露 + 预告已修订/增速漂移的待复判）+ 主线注册表（daily-market-sense 的 `theme_registry`：名称/别名/当前★状态/成员样本）+ 待判主线（`to_judge_themes`：每条主线的强表现/弱表现/无断层成员简报，含变动原因）+ 产业综述状态（`period_overview`：样本指纹与上一版全文）+ `industry_summary` 透传」。模型据此做三层判断：**逐只判 `tier`（强/中/观察/剔除）+ `theme_id`（归属哪条在场主线，对不上填 `null`=无归属）**；**逐主线判报告期行业趋势 `theme_trends[]`**——分别读强表现（向上断层）与弱表现（向下断层）成员的变动原因做归因，判每侧是行业级共性还是个体因素，交叉验证出 `direction`（向上/向下/分化/证据不足）+ 强/弱侧归因 + 一句话交叉验证结论（方法论见 `references/methodology.md` §九）；**全样本写产业结构综述 `period_overview`**——据 `industry_summary`（含负向预告）把行业聚宏观组、判哪类产业在获得业绩增速、哪类延续疲软及筑底证据，(a)(b) 式成文（§十）。写 `reports/verdict_<period>.json`，再 `python3 scripts/verdict.py record --period 20260630 --input reports/verdict_<period>.json` 落 `forecast_verdict` / `forecast_theme_trend` / `forecast_period_overview` 台账。主线匹配是**语义判断**：用 `change_reason`/行业比对主线 name/aliases/成员样本，弱匹配标 `match_confidence=low`（渲染成"疑似"），完全对不上就 `null`（"无归属"本身是"业绩强但暂无主线关注"的信号）。台账增量累积，每天只判 context 列出的增量；主线成员构成变化后趋势自动标待复判、样本指纹变化后综述自动待复判。判分细则、trend/overview 格式与匹配方法见 `references/verdict_and_html.md`。
-6. **生成报告期 HTML**：交互使用 `python3 scripts/render_period_html.py --period 20260630`；自动化/发布链路必须使用 `python3 scripts/render_period_html.py --period 20260630 --require-ann-cutoff "$NEXT_ANN_DATE"`。严格门禁会校验 evidence 的北京时间截止日、截止日股票数、总股票数与时区元数据，不一致时停止渲染，避免 scan 尚未完成或旧 JSON 被误发布。页面头部固定展示“公告扫描截至 YYYY-MM-DD（北京时间次日口径 · 截止日 N 家）”，因此 HTML 自身可审计是否包含当天+1数据。页面基础视觉统一加载仓库 `shared/html_report/themes/default.css`（同步安装后位于 `scripts/_shared/html_report/themes/default.css`），skill 内只保留 Earnings Forecast 的主从布局与交互增量样式；字号层级需保证标题、筛选器、列表、详情和脚注可读，宽屏容器充分展开。**一期一页、每次从累积缓存整页重渲染**：读 evidence + enrich + `forecast_verdict` + `forecast_theme_trend` + `forecast_period_overview` + `forecast_daily_cache`，实时 join `theme_daily_state`。页面为「标题 → **产业结构综述**（模型全文 + 判于日期 + 当时样本数）→ 过滤条 → **左列表+右详情**双栏」；默认按发布时间排序，保留既有断层、K线、年化PE、主线趋势与分档语义。为避免财报季样本增长后首屏被大体积 K 线阻塞，渲染器只把股票/判分/趋势数据内嵌到 HTML，并同时生成 `forecast_<period>.klines/` 下的 64 个确定性 JSON 分片；点击个股时按需加载一个分片并缓存。发布或同步 HTML 时必须连同同名 `.klines/` 目录一起复制，不能只复制 HTML。完整 HTML 契约见 `references/verdict_and_html.md`。
+5. **判分 + 主线匹配 + 行业趋势 + 产业综述落台账**：跑 `python3 scripts/verdict.py context --period 20260630` 拿到「待判个股（新披露 + 预告已修订/增速漂移的待复判）+ 主线注册表（`theme_registry`：名称/别名/当前★状态/成员样本；只读，未接入主线台账时为空，此时 `theme_id` 一律填 `null`、`theme_trends` 留空）+ 待判主线（`to_judge_themes`：每条主线的强表现/弱表现/无断层成员简报，含变动原因）+ 产业综述状态（`period_overview`：样本指纹与上一版全文）+ `industry_summary` 透传」。模型据此做三层判断：**逐只判 `tier`（强/中/观察/剔除）+ `theme_id`（归属哪条在场主线，对不上填 `null`=无归属）**；**逐主线判报告期行业趋势 `theme_trends[]`**——分别读强表现（向上断层）与弱表现（向下断层）成员的变动原因做归因，判每侧是行业级共性还是个体因素，交叉验证出 `direction`（向上/向下/分化/证据不足）+ 强/弱侧归因 + 一句话交叉验证结论（方法论见 `references/methodology.md` §九）；**全样本写产业结构综述 `period_overview`**——据 `industry_summary`（含负向预告）把行业聚宏观组、判哪类产业在获得业绩增速、哪类延续疲软及筑底证据，(a)(b) 式成文（§十）。写 `reports/verdict_<period>.json`，再 `python3 scripts/verdict.py record --period 20260630 --input reports/verdict_<period>.json` 落 `forecast_verdict` / `forecast_theme_trend` / `forecast_period_overview` 台账。主线匹配是**语义判断**：用 `change_reason`/行业比对主线 name/aliases/成员样本，弱匹配标 `match_confidence=low`（渲染成"疑似"），完全对不上就 `null`（"无归属"本身是"业绩强但暂无主线关注"的信号）。台账增量累积，每天只判 context 列出的增量；主线成员构成变化后趋势自动标待复判、样本指纹变化后综述自动待复判。判分细则、trend/overview 格式与匹配方法见 `references/verdict_and_html.md`。
+6. **生成报告期 HTML**：交互使用 `python3 scripts/render_period_html.py --period 20260630`；自动化/发布链路必须使用 `python3 scripts/render_period_html.py --period 20260630 --require-ann-cutoff "$NEXT_ANN_DATE"`。严格门禁会校验 evidence 的北京时间截止日、截止日股票数、总股票数与时区元数据，不一致时停止渲染，避免 scan 尚未完成或旧 JSON 被误发布。页面头部固定展示“公告扫描截至 YYYY-MM-DD（北京时间次日口径 · 截止日 N 家）”，因此 HTML 自身可审计是否包含当天+1数据。页面基础视觉统一加载 `scripts/_shared/html_report/themes/default.css`<!-- repo-only -->（开发态为仓库 `shared/html_report/themes/default.css`）<!-- /repo-only -->，skill 内只保留 Earnings Forecast 的主从布局与交互增量样式；字号层级需保证标题、筛选器、列表、详情和脚注可读，宽屏容器充分展开。**一期一页、每次从累积缓存整页重渲染**：读 evidence + enrich + `forecast_verdict` + `forecast_theme_trend` + `forecast_period_overview` + `forecast_daily_cache`，实时 join `theme_daily_state`。页面为「标题 → **产业结构综述**（模型全文 + 判于日期 + 当时样本数）→ 过滤条 → **左列表+右详情**双栏」；默认按发布时间排序，保留既有断层、K线、年化PE、主线趋势与分档语义。为避免财报季样本增长后首屏被大体积 K 线阻塞，渲染器只把股票/判分/趋势数据内嵌到 HTML，并同时生成 `forecast_<period>.klines/` 下的 64 个确定性 JSON 分片；点击个股时按需加载一个分片并缓存。发布或同步 HTML 时必须连同同名 `.klines/` 目录一起复制，不能只复制 HTML。完整 HTML 契约见 `references/verdict_and_html.md`。
    **性能契约**：左侧列表按 120 家一批渐进渲染，避免财报季全量样本一次性创建超大 DOM；K 线仍按当前详情所在分片加载。
 7. **（可选）写 Markdown 报告**：需要叙事版时按 `references/output_template.md` 输出整体画像 + 报告期行业趋势（开头放产业结构综述 (a)(b) 式分条，再按主线细看强/弱侧归因 + 交叉验证结论，与台账同一口径）+ 优秀个股 shortlist（每只三口径、扣非含金量、归属主线、caveat）。HTML 与 Markdown 同源于 evidence + verdict，二选一或都出。
-8. **诚实标注缺口**：`meta.income_missing`、`single_q_note=base_missing/base_nonpositive/cur_missing`、`base_consistency=diverge`、cninfo `missing`、以及 `theme_registry` 为空（主线台账未填充需先跑 daily-market-sense）都要如实说明。
+8. **诚实标注缺口**：`meta.income_missing`、`single_q_note=base_missing/base_nonpositive/cur_missing`、`base_consistency=diverge`、cninfo `missing`、以及 `theme_registry` 为空（未接入主线台账）都要如实说明。
 
-脑/手边界：脚本只做取数、按中值折算、确定性拆解、护栏标记、断层方向分组、校验落库、渲染投影；“谁优秀、怎么排、归属哪条主线、原因可不可持续、要不要剔除、行业趋势判什么方向”全是模型写进 `forecast_verdict` / `forecast_theme_trend` 台账的判断。**不在脚本里替模型下业绩好坏、主线归属或行业趋势结论，不给买卖建议。** 主线台账只读（归 daily-market-sense 维护），本 skill 不写主线。
+脑/手边界：脚本只做取数、按中值折算、确定性拆解、护栏标记、断层方向分组、校验落库、渲染投影；“谁优秀、怎么排、归属哪条主线、原因可不可持续、要不要剔除、行业趋势判什么方向”全是模型写进 `forecast_verdict` / `forecast_theme_trend` 台账的判断。**不在脚本里替模型下业绩好坏、主线归属或行业趋势结论，不给买卖建议。** 主线台账只读<!-- repo-only -->（归 daily-market-sense 维护）<!-- /repo-only -->，本 skill 不写主线。
 
 ## 数据获取（脚本抓手）
 
 环境变量：
 
 ```bash
-TUSHARE_TOKEN=your_token          # 见 ~/.zshrc 的 export；脚本也会回退读 cwd/.env，再读 ~/.ch-skills/config.env（chstock-env-setup 写入）
-# 存储/增量缓存统一走仓库共享连接层 shared/data/db_core.py，正式路径是 PostgreSQL：
-ALPHA_DB_BACKEND=postgresql
-ALPHA_PG_URL=postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp
-# ALPHA_DB_BACKEND=sqlite ALPHA_SQLITE_DIR=~/AlphaData/db   # 仅本地调试/无 PG 时临时用，不当持久台账
+TUSHARE_TOKEN=your_token          # 可选；查找顺序：环境变量 → 工作目录 .env → ~/.ch-skills/config.env
+ALPHA_DB_BACKEND=sqlite           # 存储/增量缓存走 scripts/_shared/db_core.py；sqlite 或 postgresql
+ALPHA_SQLITE_DIR=~/.ch-skills/db
+# ALPHA_DB_BACKEND=postgresql ALPHA_PG_URL=postgresql://...   # 已有 PostgreSQL 时
 ```
 
-独立安装（如 WorkBuddy 专家包）由 `chstock-env-setup` 把 `ALPHA_DB_BACKEND=sqlite` 写进 `~/.ch-skills/config.env`，环境变量为空时 `db_core` 读它；真实环境变量永远优先。**PostgreSQL 是默认与推荐后端**，累积台账以它为准；sqlite 只作离线调试或无 PG 时的临时兜底，别把 sqlite/降级结果当持久 truth。若连 DB 都不可用，脚本会兜底降级为「全量抓取、不落库」（`meta.fetch_stats.cache` 显示 `off`），仍能出报告、只是不省抓取——这是容错，不是常态运行方式。
+独立安装由 `chstock-env-setup` 写入 `~/.ch-skills/config.env`（`ALPHA_DB_BACKEND=sqlite`、`TUSHARE_TOKEN`），环境变量为空时脚本自动读取；真实环境变量永远优先。<!-- repo-only -->
 
-依赖：`pip install tushare pandas requests PyMuPDF PyPDF2`（见 `requirements.txt`；后三者用于 CNInfo 主源公告抓取与 PDF 解析）。cninfo 走公开披露接口，用 `requests` 直连（不经 WebFetch，避免本机代理拦截）。
+本仓库维护者环境：`TUSHARE_TOKEN` 见 `~/.zshrc` 的 export；存储走仓库共享连接层 `shared/data/db_core.py`，正式后端是 PostgreSQL（`ALPHA_PG_URL=postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp`），累积台账以它为准，sqlite 只作离线调试的临时兜底。<!-- /repo-only -->
 
-命令（在 skill 根目录执行）：
+若连 DB 都不可用，脚本会兜底降级为「全量抓取、不落库」（`meta.fetch_stats.cache` 显示 `off`），仍能出报告、只是不省抓取——这是容错，不是常态运行方式。
+
+依赖：见 `requirements.txt`（tushare、pandas、requests、PyMuPDF、PyPDF2；后三者用于 CNInfo 主源公告抓取与 PDF 解析），独立安装由 `chstock-env-setup` 统一装到专用解释器。cninfo 走公开披露接口，用 `requests` 直连（不经 WebFetch，避免本机代理拦截）。
+
+命令（命令里的 `scripts/` 指本技能目录下的脚本；在工作目录执行，产物写入当前目录的 `reports/`。`python3` 指装好依赖的解释器——独立安装请用 `chstock-env-setup` 记录的 `CH_SKILLS_PYTHON`。）：
 
 ```bash
 # 第一步：CNInfo主源全市场扫描 + PDF解析 + Tushare差异校验 + 三口径拆解
@@ -141,7 +144,7 @@ HTML 产物不是孤立单文件：`reports/forecast_<period>.html` 是轻量首
 
 预告是逐日增量披露的，所以脚本把抓到的都落库、每天只补新增，不重复全量抓：
 
-- **连接层**：统一走仓库共享的 `shared/data/db_core.py`（开发态）/ 同步后的 `scripts/_shared/db_core.py`，不自建连接方案。后端由 `ALPHA_DB_BACKEND` 决定（PostgreSQL 默认，sqlite 离线），表都建在共享库里、以 `forecast_` 前缀命名（首次运行自动建表）。
+- **连接层**：统一走 `scripts/_shared/db_core.py`<!-- repo-only -->（开发态为仓库 `shared/data/db_core.py`）<!-- /repo-only -->，不自建连接方案。后端由 `ALPHA_DB_BACKEND` 决定（sqlite 或 postgresql），表都建在共享库里、以 `forecast_` 前缀命名（首次运行自动建表）。
 - **落库的东西**：`forecast_cninfo_fetch_log`（CNInfo公告日水位）、`forecast_cninfo_announcement`（官方公告元数据与链接）、`forecast_tushare_cache`（非权威差异对照）、`forecast_cache`（CNInfo优先合并后的报告事实层）、`forecast_enrich_cache`（公告PDF解析/原文），以及原有 income/basic/daily/verdict/theme/overview 台账。
 - **增量逻辑**：CNInfo 与 Tushare 使用各自独立的公告日水位；未扫描日期补抓、最近 `--refetch-days` 日重扫。CNInfo 新公告下载 PDF 一次后复用缓存；每股留最新公告、更正公告覆盖旧版。最终事实层是 CNInfo 集合加显式 Tushare 例外，不以 Tushare 候选名单限制 CNInfo 发现。
 - **控制开关**：`--rebuild`（忽略水位、整窗重扫并刷新季报）、`--refresh-income`（强制重取季报，用于季报追溯调整）、`--no-cache`（本次不落库、全量抓）。`cninfo_enrich --refresh` 强制重下原文。

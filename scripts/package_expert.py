@@ -20,6 +20,12 @@ everything that is not a runtime asset (tests, evals, reports, caches — see th
 publish boundary in CLAUDE.md), and gets the WorkBuddy skill frontmatter fields
 (description_zh / description_en / author / version) added.
 
+Repo-only content: Markdown wrapped in ``<!-- repo-only -->…<!-- /repo-only -->``
+(maintainer environment, pointers to skills this package does not ship) is
+removed. expert.yaml ``bundle_files`` narrows a shared bundle to the files the
+packaged scripts import. The build then fails if anything shipped still names a
+repository skill outside the package or a repository-only path.
+
 The author email is never stored in the repo: plugin.json carries the
 __AUTHOR_EMAIL__ placeholder, filled from --author-email, $WORKBUDDY_AUTHOR_EMAIL
 or `git config user.email`.
@@ -68,6 +74,10 @@ ALWAYS_EXCLUDE_DIRS = ["reports", "evals", "eval", "benchmarks", "tests", "__pyc
                        ".pytest_cache", "*-workspace", ".staging"]
 ALWAYS_EXCLUDE_FILES = ["test_*.py", "*_test.py", "conftest.py", ".env", ".env.*", "*.pyc",
                         "*.db", "*.sqlite", "*.log", "gate-plan.json", ".receipts.jsonl"]
+REPO_ONLY_BLOCK = re.compile(r"<!--\s*repo-only\s*-->.*?<!--\s*/repo-only\s*-->", re.S)
+# Paths and files that exist only in the source repository or the maintainer's machine.
+REPO_ONLY_TERMS = ["~/.zshrc", "shared/data", "shared/html_report", "crawler/", "AGENTS.md",
+                   "eval.md", "skill-sync.yaml", "skill_sync.py", "ch-stock-skills/"]
 SECRET_PATTERNS = [
     re.compile(r"TUSHARE_TOKEN\s*=\s*['\"]?[0-9a-f]{40,}"),
     re.compile(r"(?i)(api[_-]?key|secret|password)\s*=\s*['\"][^'\"\s]{16,}['\"]"),
@@ -228,6 +238,31 @@ def inject_skill_frontmatter(skill_md: Path, spec: dict[str, Any], author: str, 
     skill_md.write_text(f"---\n{head}\n---\n{body}", encoding="utf-8")
 
 
+def strip_repo_only(stage: Path) -> int:
+    count = 0
+    for path in stage.rglob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        new, n = REPO_ONLY_BLOCK.subn("", text)
+        if n:
+            path.write_text(new, encoding="utf-8")
+            count += n
+    return count
+
+
+def copy_bundle(bundle_src: Path, bundle_dst: Path, files: list[str] | None,
+                exclude_dirs: list[str], exclude_files: list[str]) -> None:
+    if files is None:
+        copy_tree(bundle_src, bundle_dst, exclude_dirs, exclude_files)
+        return
+    for rel in files:
+        src = bundle_src / rel
+        if not src.is_file():
+            raise PackageError(f"bundle_files entry not found: {src.relative_to(REPO_ROOT)}")
+        target = bundle_dst / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, target)
+
+
 def assemble(expert_dir: Path, plugin: dict[str, Any], manifest: dict[str, Any],
              stage: Path) -> list[str]:
     config = skill_sync.load_config(REPO_ROOT / "skill-sync.yaml")
@@ -271,9 +306,58 @@ def assemble(expert_dir: Path, plugin: dict[str, Any], manifest: dict[str, Any],
                 continue
             bundle_src = skill_sync._resolve_repo_relative_path(bundle["source"])
             bundle_dst = skill_sync._resolve_skill_relative_path(dst, bundle["dest"])
-            copy_tree(bundle_src, bundle_dst, exclude_dirs, exclude_files)
+            copy_bundle(bundle_src, bundle_dst, (manifest.get("bundle_files") or {}).get(bundle["source"]),
+                        exclude_dirs, exclude_files)
         inject_skill_frontmatter(dst / "SKILL.md", spec, plugin["author"]["name"], plugin["version"])
+    strip_repo_only(stage)
     return warnings
+
+
+def outside_skill_names(manifest: dict[str, Any]) -> list[str]:
+    """Names of repository skills (directory and frontmatter names) this package does not ship."""
+    shipped = {s["package_name"] for s in manifest["skills"]}
+    names: set[str] = set()
+    for dir_name, path in skill_sync.discover_skills(REPO_ROOT, {}).items():
+        names.add(dir_name)
+        try:
+            fm, _ = split_frontmatter((path / "SKILL.md").read_text(encoding="utf-8"))
+            if fm.get("name"):
+                names.add(str(fm["name"]))
+        except (PackageError, OSError, yaml.YAMLError):
+            pass
+    return sorted(n for n in names - shipped if len(n) > 3)
+
+
+def _mentions(text: str, term: str, python: bool) -> list[int]:
+    """Line numbers mentioning term; in Python only user-visible string literals count."""
+    hits = []
+    for no, line in enumerate(text.splitlines(), 1):
+        if term not in line:
+            continue
+        if python:
+            code = line.split("#", 1)[0] if not line.lstrip().startswith(("'", '"')) else line
+            if not re.search(r"""["'][^"']*""" + re.escape(term), code):
+                continue
+        hits.append(no)
+    return hits
+
+
+def audit_references(stage: Path, manifest: dict[str, Any]) -> list[str]:
+    """Shipped text must not send the model to skills or paths that are not in the package."""
+    terms = outside_skill_names(manifest) + REPO_ONLY_TERMS
+    problems = []
+    for path in sorted(stage.rglob("*")):
+        if not path.is_file() or path.suffix not in {".md", ".json", ".yaml", ".yml", ".txt", ".py"}:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for term in terms:
+            # Word-ish boundary so "a-stock-analyzer" does not match inside a longer name.
+            if not re.search(r"(?<![\w-])" + re.escape(term) + r"(?![\w-])", text):
+                continue
+            lines = _mentions(text, term, path.suffix == ".py")
+            if lines:
+                problems.append(f"{path.relative_to(stage)}:{lines[0]} references outside-package '{term}'")
+    return problems
 
 
 def audit_stage(stage: Path) -> list[str]:
@@ -326,7 +410,7 @@ def build(expert_dir: Path, out_dir: Path, author_email: str | None, check_only:
     with tempfile.TemporaryDirectory() as tmp:
         stage = Path(tmp) / plugin["name"]
         warnings = assemble(expert_dir, plugin, manifest, stage)
-        problems = audit_stage(stage)
+        problems = audit_stage(stage) + audit_references(stage, manifest)
         if problems:
             raise PackageError("; ".join(problems))
         out_dir.mkdir(parents=True, exist_ok=True)

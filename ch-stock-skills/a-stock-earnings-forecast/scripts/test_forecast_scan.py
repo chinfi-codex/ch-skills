@@ -93,5 +93,16 @@ class TushareUnavailableTests(unittest.TestCase):
         self.assertEqual(rec["net_profit"]["last_parent_yi"], 0.3218)
 
 
+class VerdictPayloadShapeTests(unittest.TestCase):
+    def test_wrong_keys_are_rejected_not_skipped(self) -> None:
+        import verdict
+
+        allowed = ("period", "records", "theme_trends", "period_overview")
+        errors = verdict.check_payload_shape({"stocks": [], "period_overview": {"t": 1}}, allowed)
+        self.assertEqual(len(errors), 3)
+        self.assertEqual(verdict.check_payload_shape(
+            {"records": [], "period_overview": "综述"}, allowed), [])
+
+
 if __name__ == "__main__":
     unittest.main()

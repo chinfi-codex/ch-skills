@@ -8,7 +8,7 @@ description: A 股正式季报/半年报/年报全市场扫描与优秀个股筛
 ## 目标
 
 - **做什么**：按某个报告期（季报/半年报/年报，如 2026Q1=`20260331`）扫描**全市场已披露**的正式财报，拆出营收 / 归母 / 扣非 / 经营现金流各自的「当年累计同比 / 最新单季同比 / 环比」三口径，再判利润质量（扣非占比、现金流覆盖、应收存货是否跑赢营收）、盈利能力边际（毛利率、费用率、ROE）、资产负债表前瞻信号（合同负债、在建工程、存货）、对自家预告/快报的兑现度、真实 TTM 与年化 PE、公布后的股价断层，最后由模型挑出真正业绩优秀的个股并排序。
-- **不做什么**：不做单股基本面深挖（用 `a-stock-analyzer`）、不做业绩预告扫描（用 `a-stock-earnings-forecast`）、不做盘面复盘（用 `a-stock-daily-market-sense`）、不做同一季度预告与正式报告的合并研判及股价提前定价判断（用 `a-stock-earnings-review`）；不给买卖建议、目标价、仓位；不在脚本里判断"谁优秀"。
+- **不做什么**：不做单股基本面深挖<!-- repo-only -->（用 `a-stock-analyzer`）<!-- /repo-only -->、不做业绩预告扫描（用 `a-stock-earnings-forecast`）、不做盘面复盘<!-- repo-only -->（用 `a-stock-daily-market-sense`）<!-- /repo-only -->、不做同一季度预告与正式报告的合并研判及股价提前定价判断（用 `a-stock-earnings-review`）；不给买卖建议、目标价、仓位；不在脚本里判断"谁优秀"。
 - **给谁用**：财报季要在全市场里锁定「增长真实、质量扎实、边际向上」候选池的投研读者，具备基本财务常识。
 
 **和 `a-stock-earnings-forecast` 的分工**：预告 skill 看的是**触发式披露的边际变化**（只有大增大减扭亏的公司会出现，没有营收、没有现金流、数字是区间估计）；本 skill 看的是**强制全市场披露的实证**（每家都有，三张表齐全，数字是审计或至少是正式口径）。两者共用报告期与主线台账，但事实层互不覆盖：预告是前瞻，正式报告是兑现。
@@ -45,29 +45,29 @@ description: A 股正式季报/半年报/年报全市场扫描与优秀个股筛
 2. **跑证据脚本**：交互运行 `python3 scripts/report_scan.py --period 20260630`；自动化先算 `NEXT_ANN_DATE=<北京时间运行日+1>` 再显式传 `--end-ann`。脚本按披露日历发现已披露公司，增量取四张表，按交易日抓全市场前复权日线算断层，最后出三口径、质量、边际、资产负债表信号、估值、行业聚合与机械漏斗。默认交互模式可扫描预告/快报作兑现度参照；**禁止触碰业绩预告的正式报告单源自动化必须显式传 `--formal-only`**：该模式不调用 Tushare `forecast`，SQL 不读取旧 `kind=forecast` 行，也不写 forecast fetch log，只保留业绩快报 `express` 参照。产出决策包 `reports/qreport_scan_<period>.json` 与全样本 `reports/qreport_universe_<period>.json`。
 3. **模型读证据做初筛**：读决策包（不要读全样本文件，它是给查询和渲染用的）。按方法论**逐股判断是否优秀并排序**——用 `growth`（四条线三口径）、`quality`（三件套）、`margins`（边际 pp）、`balance_signals`（前瞻）、`fulfillment`（兑现度）、`screen.hits`（机械命中，不是结论）。先圈出「强 / 中 / 观察」候选池。
 4. **需要原文才开 PDF**：数字之外的问题——增长来自哪个产品线？管理层怎么解释毛利率变化？非经常损益是处置还是补助？——用 `python3 scripts/report_pdf.py --period 20260630 --code 300750.SZ --sections segment,mdna,nonrecurring`。**不要凭数字编故事**：没读原文就说不出"因为某产品放量"。何时该开、开哪一节、季报和年报的差别见 `references/pdf_on_demand.md`。
-5. **判分 + 质量成色 + 兑现度 + 主线匹配 + 行业趋势落台账**：跑 `python3 scripts/verdict.py context --period 20260630` 拿到待判集合（新披露 + 追溯调整/增速漂移的待复判）、主线注册表（daily-market-sense 的 `theme_registry`，只读）与待判主线的强/弱/无断层成员简报。模型逐只判 **`tier`（强/中/观察/剔除）+ `quality_call`（扎实/尚可/存疑/虚高）+ `fulfillment`（超预告上限/落区间上沿/符合/落区间下沿/低于预告/无预告）+ `theme_id`**，逐主线判 `theme_trends[]`。写 `reports/qreport_verdict_<period>.json`，再 `python3 scripts/verdict.py record --period 20260630 --input reports/qreport_verdict_<period>.json` 落 `qreport_verdict` / `qreport_theme_trend`。台账增量累积，每天只判 context 列出的增量。细则见 `references/verdict_and_html.md`。
-6. **生成报告期 HTML**：`python3 scripts/render_period_html.py --period 20260630`；发布链路必须加 `--require-ann-cutoff "$NEXT_ANN_DATE"`。一期一页、每次从累积缓存整页重渲染：过滤条 → 左列表 + 右详情（详情以利润质量三件套开头，然后兑现度、资产负债表前瞻、K 线与断层）。**HTML 默认剔除 `theme_id=null` 的无归属主线个股**；仅在调试或人工复核时加 `--include-unassigned` 恢复全部候选。主线台账为空（独立安装、没跑 daily-market-sense）时自动包含全部候选，否则页面会是空的。默认按**披露时间**排序。K 线走同级 `qreport_<period>.klines/` 分片，**发布时必须连同该目录一起复制**。
+5. **判分 + 质量成色 + 兑现度 + 主线匹配 + 行业趋势落台账**：跑 `python3 scripts/verdict.py context --period 20260630` 拿到待判集合（新披露 + 追溯调整/增速漂移的待复判）、主线注册表（`theme_registry`，只读；未接入主线台账时为空，此时 `theme_id` 一律填 `null`、`theme_trends` 留空）与待判主线的强/弱/无断层成员简报。模型逐只判 **`tier`（强/中/观察/剔除）+ `quality_call`（扎实/尚可/存疑/虚高）+ `fulfillment`（超预告上限/落区间上沿/符合/落区间下沿/低于预告/无预告）+ `theme_id`**，逐主线判 `theme_trends[]`。写 `reports/qreport_verdict_<period>.json`，再 `python3 scripts/verdict.py record --period 20260630 --input reports/qreport_verdict_<period>.json` 落 `qreport_verdict` / `qreport_theme_trend`。台账增量累积，每天只判 context 列出的增量。细则见 `references/verdict_and_html.md`。
+6. **生成报告期 HTML**：`python3 scripts/render_period_html.py --period 20260630`；发布链路必须加 `--require-ann-cutoff "$NEXT_ANN_DATE"`。一期一页、每次从累积缓存整页重渲染：过滤条 → 左列表 + 右详情（详情以利润质量三件套开头，然后兑现度、资产负债表前瞻、K 线与断层）。**HTML 默认剔除 `theme_id=null` 的无归属主线个股**；仅在调试或人工复核时加 `--include-unassigned` 恢复全部候选。主线台账为空（未接入）时自动包含全部候选，否则页面会是空的。默认按**披露时间**排序。K 线走同级 `qreport_<period>.klines/` 分片，**发布时必须连同该目录一起复制**。
 7. **（可选）写 Markdown 报告**：需要叙事版时按 `references/output_template.md` 输出。
-8. **诚实标注缺口**：`*_note` 里的 `base_missing/base_nonpositive/cur_missing`、`dedt_note=dedt_missing`、金融类公司无 `oper_cost` 导致毛利率为空、`pre_pos_bars` 不足一年、上游尚未收录本期报表的家数、`theme_registry` 为空（需先跑 daily-market-sense）都要如实说明。
+8. **诚实标注缺口**：`*_note` 里的 `base_missing/base_nonpositive/cur_missing`、`dedt_note=dedt_missing`、金融类公司无 `oper_cost` 导致毛利率为空、`pre_pos_bars` 不足一年、上游尚未收录本期报表的家数、`theme_registry` 为空（未接入主线台账）都要如实说明。
 
-脑/手边界：脚本只做取数、确定性拆解、比率与 pp 计算、阈值命中、计数、渲染投影；"谁优秀、质量算不算扎实、兑现得好不好、归属哪条主线、行业往哪走"全是模型写进台账的判断。**不在脚本里替模型下业绩好坏或行业方向结论，不给买卖建议。** 主线台账只读（归 daily-market-sense 维护），本 skill 不写主线。
+脑/手边界：脚本只做取数、确定性拆解、比率与 pp 计算、阈值命中、计数、渲染投影；"谁优秀、质量算不算扎实、兑现得好不好、归属哪条主线、行业往哪走"全是模型写进台账的判断。**不在脚本里替模型下业绩好坏或行业方向结论，不给买卖建议。** 主线台账只读<!-- repo-only -->（归 daily-market-sense 维护）<!-- /repo-only -->，本 skill 不写主线。
 
 ## 数据获取（脚本抓手）
 
 环境变量：
 
 ```bash
-TUSHARE_TOKEN=your_token          # 见 ~/.zshrc 的 export；脚本也会回退读 cwd/.env，再读 ~/.ch-skills/config.env
-ALPHA_DB_BACKEND=postgresql
-ALPHA_PG_URL=postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp
+TUSHARE_TOKEN=your_token          # 必需；查找顺序：环境变量 → 工作目录 .env → ~/.ch-skills/config.env
+ALPHA_DB_BACKEND=sqlite           # 存储走 scripts/_shared/db_core.py；sqlite 或 postgresql
+ALPHA_SQLITE_DIR=~/.ch-skills/db
 # TUSHARE_CALLS_PER_MIN=180       # 每接口限速，默认 180（Tushare 上限 200）
 ```
 
-**PostgreSQL 是默认与推荐后端**，累积台账以它为准；独立安装由 `chstock-env-setup` 在 `~/.ch-skills/config.env` 写入 SQLite。没有 token 时 `report_scan.py` 返回 `{"error": "tushare_required"}`（退出码 2），本 skill 没有非 Tushare 数值源。DB 不可用时脚本降级为「全量抓取、不落库」（`meta.fetch_stats.cache=off`），仍能出报告，只是每次都重抓——这是容错，不是常态。
+独立安装由 `chstock-env-setup` 写入 `~/.ch-skills/config.env`（`ALPHA_DB_BACKEND=sqlite`、`TUSHARE_TOKEN`），环境变量为空时脚本自动读取；真实环境变量永远优先。<!-- repo-only -->本仓库维护者环境：`TUSHARE_TOKEN` 见 `~/.zshrc`；正式后端是 PostgreSQL（`ALPHA_PG_URL=postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp`），累积台账以它为准。<!-- /repo-only -->没有 token 时 `report_scan.py` 返回 `{"error": "tushare_required"}`（退出码 2），本 skill 没有非 Tushare 数值源。DB 不可用时脚本降级为「全量抓取、不落库」（`meta.fetch_stats.cache=off`），仍能出报告，只是每次都重抓——这是容错，不是常态。
 
-依赖：`pip install tushare pandas requests PyMuPDF PyPDF2 psycopg2-binary`（见 `requirements.txt`；PDF 两件只在 `report_pdf.py` 用到）。CNInfo 走公开披露接口，用 `requests` 直连（不经 WebFetch，避免本机代理拦截）。
+依赖：见 `requirements.txt`（PDF 两件只在 `report_pdf.py` 用到；psycopg2 只在 PostgreSQL 后端需要），独立安装由 `chstock-env-setup` 统一装到专用解释器。CNInfo 走公开披露接口，用 `requests` 直连（不经 WebFetch，避免本机代理拦截）。
 
-命令（在 skill 根目录执行）：
+命令（命令里的 `scripts/` 指本技能目录下的脚本；在工作目录执行，产物写入当前目录的 `reports/`。`python3` 指装好依赖的解释器——独立安装请用 `chstock-env-setup` 记录的 `CH_SKILLS_PYTHON`。）：
 
 ```bash
 # 第一步：全市场证据扫描（首次种子约 30 分钟，之后日更 ~10 秒）
@@ -135,7 +135,7 @@ python3 scripts/test_report_scan.py
 
 财报是逐日增量披露的，脚本把抓到的都落库、每天只补新增：
 
-- **连接层**：统一走 `shared/data/db_core.py`（开发态）/ 同步后的 `scripts/_shared/db_core.py`，不自建连接方案。表以 `qreport_` 前缀建在共享库里（首次运行自动建表）。
+- **连接层**：统一走 `scripts/_shared/db_core.py`<!-- repo-only -->（开发态为仓库 `shared/data/db_core.py`）<!-- /repo-only -->，不自建连接方案。表以 `qreport_` 前缀建在共享库里（首次运行自动建表）。
 - **落库的东西**：`qreport_disclosure`（披露日历，发现层）、`qreport_fin_cache`（按 (股, 报告期) 存一份报表行项目 JSON + 已取到哪几个接口）、`qreport_basic_cache`、`qreport_daily_cache`（前复权日线）、`qreport_cninfo_fetch_log` / `qreport_cninfo_announcement`（公告溯源）、`qreport_pdf_section`（按需 PDF 章节）、`qreport_forecast_ref` / `qreport_forecast_fetch_log`（兑现度参照）、`qreport_verdict` / `qreport_theme_trend`（模型台账）。
 - **增量逻辑**：披露日历每次全量刷新（一次调用）；已取全四个接口且不在 `--refetch-days` 窗口内的股票直接走缓存；日线按交易日水位只补新增交易日；CNInfo 公告按公告日水位增量枚举。
 - **性能**：报表、日线、预告扫描都走有界线程池 + 每接口令牌桶；PostgreSQL 批量 upsert。首次全市场种子约 30 分钟，之后日更 ~10 秒。

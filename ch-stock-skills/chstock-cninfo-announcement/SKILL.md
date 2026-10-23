@@ -54,8 +54,9 @@ description: 当用户要查询巨潮资讯网公告、按日期查某只 A 股�
 
 基础命令：
 
+命令里的 `scripts/` 指本技能目录下的脚本，`python` 指装好依赖的解释器（独立安装用 `chstock-env-setup` 记录的 `CH_SKILLS_PYTHON`）。
+
 ```bash
-cd crawler/chstock-cninfo-announcement
 python scripts/cninfo_announcement_search.py --tabtype fulltext --date 2026-03-01~2026-03-28 --stock 300017
 ```
 

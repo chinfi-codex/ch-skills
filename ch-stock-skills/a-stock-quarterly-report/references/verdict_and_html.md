@@ -24,13 +24,13 @@
 
 ## 二、主线匹配方法论（Agent 语义判断）
 
-目标：把每只财报股对上 daily-market-sense 正在跟踪的**在场主线**（`theme_registry` + `theme_daily_state`），不是套行业标签。
+目标：把每只财报股对上主线台账<!-- repo-only -->（daily-market-sense 维护）<!-- /repo-only -->正在跟踪的**在场主线**（`theme_registry` + `theme_daily_state`），不是套行业标签。
 
 匹配依据：每条主线的 `name`、`aliases`、`members_sample`、当前 `state`/`stars`；每只股的业务实质、行业、名称。
 
 **和预告 skill 的差别**：预告自带《业绩变动原因》，业务实质一读就知道。正式报告没有这段文本，所以匹配依据是——公司名称与行业、`screen.hits` 反映的驱动特征（`margin_expanding` + `orderbook_building` 指向景气链）、以及必要时 `report_pdf.py --sections segment` 读到的分产品收入。**宁可标 `low` 或填 `null`，不要硬贴。**
 
-给 `match_confidence`：`high` 业务实质与主线高度一致或已是成员样本；`medium` 属上下游/分支，方向对但不在核心；`low` 只是沾边（渲染成"疑似"，供人工复核）。对不上填 `null`——`null` 是"业绩强但暂无主线关注"的正向信号，HTML 会单列。一只股给一条主线；横跨两条时在 `theme_rationale` 里注明。`theme_registry` 为空（daily-market-sense 没跑）时 `theme_id` 一律 `null`。
+给 `match_confidence`：`high` 业务实质与主线高度一致或已是成员样本；`medium` 属上下游/分支，方向对但不在核心；`low` 只是沾边（渲染成"疑似"，供人工复核）。对不上填 `null`——`null` 是"业绩强但暂无主线关注"的正向信号，HTML 会单列。一只股给一条主线；横跨两条时在 `theme_rationale` 里注明。`theme_registry` 为空（未接入主线台账）时 `theme_id` 一律 `null`。
 
 主线的**当前状态**由 HTML 渲染时实时 join `theme_daily_state` 最新一日，不写进 verdict——所以看到的"在场★★/退潮"永远是最新的。
 

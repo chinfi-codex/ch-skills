@@ -46,3 +46,13 @@ skills:
     display_name_en: Investor Q&A Search
     description_zh: 检索上市公司在互动易/全景网的投资者问答，按公司和关键词过滤并导出证据。
     description_en: Searches listed companies' investor Q&A replies by company and keyword, and exports them as evidence.
+
+# Shared bundles narrowed to what the packaged scripts import (key = bundle source
+# in skill-sync.yaml). Unlisted bundles ship whole.
+bundle_files:
+  shared/data:
+    - db_core.py
+  shared/html_report:
+    - assets.py
+    - safe_json.py
+    - themes/default.css

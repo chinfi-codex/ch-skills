@@ -23,7 +23,7 @@
 
 ## 运行要求
 
-- Python 3.9 及以上
+- 电脑上有 Python 3.9 及以上（只用于第一次建环境）。专家会在 `~/.ch-skills/venv` 建一个专用 Python 环境，从清华源（pypi.tuna.tsinghua.edu.cn）装好所需的包，之后所有脚本都用它运行，不影响你电脑上其他 Python。第一次准备约两分钟。
 - 能访问巨潮资讯网（cninfo.com.cn）、新浪财经与东方财富的行情接口；使用 Tushare 时还需能访问 tushare.pro
 - 首次扫描需要几分钟到半小时（要下载公告 PDF 或逐家取报表），之后的更新很快
 

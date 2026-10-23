@@ -34,22 +34,24 @@ skills:
 
 判断口径以 `a-stock-earnings-review` 的三份方法论为准：`unified_framework.md`（业绩怎么判）、`price_validation.md`（股价反映了多少）、`pricing.md`（估值配不配）。两个扫描技能是取数引擎，它们的 `methodology.md` 是字段说明书。用到哪个技能，先读它的 SKILL.md 再动手。
 
-## 第一次对话：先确认环境
+## 第一次对话：先准备环境
 
-用户第一次召唤你，或者任何脚本报了缺依赖、缺 token、连不上数据库的错，先走一遍 `chstock-env-setup`：
+用户第一次召唤你，或者任何脚本报了缺依赖（`No module named ...`）、缺 token、连不上数据库的错，先走一遍 `chstock-env-setup`：
 
-1. 运行它的 `env_doctor.py check`，按它 SKILL.md 的顺序处理缺包、数据库和 token。数据库默认用 SQLite，跑一次 `env_doctor.py setup` 就好，不需要用户装任何服务。
-2. 用一两句话告诉用户现在能做什么。典型情况是"没有 Tushare token"：业绩预告扫描、资金面交叉验证和估值都能做；正式报告扫描要等配好 token，所以本期只能用推断模式。
-3. 用户没 token 也别卡住，先用能跑的部分把活干了，结尾提一句补 token 能多看到什么。
+1. 运行 `python3 <chstock-env-setup 技能目录>/scripts/env_doctor.py setup --install-deps`（Windows 上用 `python` 或 `py -3`）。它会在 `~/.ch-skills/venv` 建专用虚拟环境、从清华源装齐依赖、把数据库设为 SQLite，并输出这个专用解释器的路径 `CH_SKILLS_PYTHON`。约两分钟，先告诉用户在准备环境。失败时按该技能 SKILL.md 的说明处理（`--python` 指定一个完整安装的 Python 等）。
+2. 用专用解释器运行 `env_doctor.py check`，按它的 SKILL.md 处理 token 和网络问题。
+3. 用一两句话告诉用户现在能做什么。典型情况是"没有 Tushare token"：业绩预告扫描、资金面交叉验证和估值都能做；正式报告扫描要等配好 token，所以本期只能用推断模式。
+4. 用户没 token 也别卡住，先用能跑的部分把活干了，结尾提一句补 token 能多看到什么。
 
-环境确认过一次之后，同一台机器上不必每次重查；只有报错时再查。
+环境准备过一次之后，同一台机器上不必每次重做；只有报错时再查。
 
 ## 工作目录与运行方式
 
-- 所有命令都在固定工作目录里跑：`~/earnings-season/`（不存在就创建）。先进入这个目录，再用技能目录下的脚本路径执行，例如 `python3 <a-stock-earnings-forecast 技能目录>/scripts/forecast_scan.py --period 20260930`。产物都写到当前目录的 `reports/` 下，不写进技能安装目录。
-- Windows 上 `python3` 不存在就用 `python`。
-- SKILL.md 里提到的 PostgreSQL、`~/.zshrc`、自动化发布门禁（`--require-ann-cutoff`、`NEXT_ANN_DATE`）是给维护者用的，你不需要；token 和数据库已经写进 `~/.ch-skills/config.env`，脚本会自动读取。
-- **耗时预期要提前告诉用户**：预告首次扫描要下载并解析全部公告 PDF，平时几分钟，年报预告高峰可能二三十分钟；正式报告首次扫描约 30 分钟以上；资金面与估值每家几秒。增量重跑都很快。预计超过几分钟的命令放后台跑、输出写进 `reports/` 下的日志，隔一会儿看日志尾部。macOS/Linux 用 `nohup ... > reports/scan.log 2>&1 &`；Windows PowerShell 用 `Start-Process -NoNewWindow python -ArgumentList '...' -RedirectStandardOutput reports\scan.log -RedirectStandardError reports\scan.err`。
+- **所有技能脚本都用专用解释器运行**：`~/.ch-skills/venv/bin/python`（Windows：`%USERPROFILE%\.ch-skills\venv\Scripts\python.exe`），即 `env_doctor.py` 输出的 `CH_SKILLS_PYTHON`。不要用宿主自带的 `python3`：它通常是缺 pandas、tushare、PyMuPDF 的托管版本，照着技能文档里的 `python3 scripts/...` 直接跑会失败。技能文档里写的 `python3`，一律换成这个解释器。
+- 所有命令都在固定工作目录里跑：`~/earnings-season/`（不存在就创建）。先进入这个目录，再用技能目录下的脚本路径执行，例如 `~/.ch-skills/venv/bin/python <a-stock-earnings-forecast 技能目录>/scripts/forecast_scan.py --period 20260930`。产物都写到当前目录的 `reports/` 下，不写进技能安装目录。判分 JSON 也写在 `reports/` 下，`verdict.py` 按 `reports/` 的相对路径找证据文件。
+- 技能文档里的自动化发布门禁（`--require-ann-cutoff`、`NEXT_ANN_DATE`）用于定时任务，你在对话里不需要；token 和数据库已经写进 `~/.ch-skills/config.env`，脚本会自动读取。
+- **判分 JSON 的格式**：个股数组的键名是 `records`；业绩预告的产业结构综述 `period_overview` 是一段文字（字符串），不是对象。格式不对时 `verdict.py record` 会报 `invalid_payload` 并以非零退出，按报错改正后重试，不要当作成功。
+- **耗时预期要提前告诉用户**：预告首次扫描要下载并解析全部公告 PDF，平时几分钟，年报预告高峰可能二三十分钟；正式报告首次扫描约 30 分钟以上；资金面与估值每家几秒。增量重跑都很快。预计超过几分钟的命令放后台跑、输出写进 `reports/` 下的日志，隔一会儿看日志尾部。macOS/Linux 用 `nohup ~/.ch-skills/venv/bin/python ... > reports/scan.log 2>&1 &`；Windows PowerShell 用 `Start-Process -NoNewWindow "$env:USERPROFILE\.ch-skills\venv\Scripts\python.exe" -ArgumentList '...' -RedirectStandardOutput reports\scan.log -RedirectStandardError reports\scan.err`。
 
 ## 报告期与数据范围
 

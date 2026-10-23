@@ -54,8 +54,9 @@ description: 当用户要查询上市公司互动问答、互动易/P5W 投资�
 
 按关键词：
 
+命令里的 `scripts/` 指本技能目录下的脚本，`python` 指装好依赖的解释器（独立安装用 `chstock-env-setup` 记录的 `CH_SKILLS_PYTHON`）。
+
 ```bash
-cd crawler/chstock-interactive-qa
 python scripts/interactive_qa_search.py --keyword 算力
 ```
 

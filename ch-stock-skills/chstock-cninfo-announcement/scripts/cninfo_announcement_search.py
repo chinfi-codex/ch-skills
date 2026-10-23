@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -89,18 +90,27 @@ def _headers() -> dict[str, str]:
     }
 
 
-def get_cninfo_orgid(stock_code: str, timeout: int = DEFAULT_TIMEOUT) -> str | None:
-    """根据股票代码获取巨潮资讯 orgId。"""
+class OrgIdLookupError(RuntimeError):
+    """The orgId service could not be reached; distinct from "code not found"."""
+
+
+def get_cninfo_orgid(stock_code: str, timeout: int = DEFAULT_TIMEOUT, attempts: int = 3) -> str | None:
+    """根据股票代码获取巨潮资讯 orgId；接口持续失败时抛 OrgIdLookupError。"""
     url = "http://www.cninfo.com.cn/new/information/topSearch/query"
     data = {"keyWord": stock_code, "maxNum": 10}
 
-    try:
-        response = requests.post(url, data=data, headers=_headers(), timeout=timeout)
-        response.raise_for_status()
-        results = response.json()
-    except requests.RequestException as exc:
-        logger.error("获取 orgId 失败: %s", exc)
-        return None
+    results: Any = None
+    for i in range(attempts):
+        try:
+            response = requests.post(url, data=data, headers=_headers(), timeout=timeout)
+            response.raise_for_status()
+            results = response.json()
+            break
+        except (requests.RequestException, ValueError) as exc:
+            logger.warning("获取 orgId 失败(第 %d 次): %s", i + 1, exc)
+            if i == attempts - 1:
+                raise OrgIdLookupError(str(exc)) from exc
+            time.sleep(1.5 * (i + 1))
 
     if not isinstance(results, list) or not results:
         return None
@@ -240,7 +250,15 @@ def main() -> None:
 
     stock = args.stock
     if stock and not args.disable_orgid_resolve:
-        stock = resolve_stock_argument(stock, timeout=args.timeout)
+        try:
+            stock = resolve_stock_argument(stock, timeout=args.timeout)
+        except OrgIdLookupError as exc:
+            # Querying with a bare code returns an empty list that reads like
+            # "no announcements"; fail loudly instead.
+            print(json.dumps({"error": "orgid_lookup_failed", "stock": stock,
+                              "message": f"巨潮代码查询接口暂时不可用，请稍后重试：{str(exc)[:120]}"},
+                             ensure_ascii=False))
+            raise SystemExit(2)
 
     se_date_effective = args.se_date if args.no_archive_extend else _extend_archive_end(args.se_date)
 

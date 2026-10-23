@@ -3,15 +3,24 @@
 
 Two commands, both printing JSON for the model to read:
 
-    python3 scripts/env_doctor.py check [--skills a-stock-earnings-forecast,...] [--no-network]
-    python3 scripts/env_doctor.py setup [--tushare-token TOKEN | --tushare-token-stdin]
+    python3 scripts/env_doctor.py setup [--install-deps [--python PATH | --no-venv] [--index-url URL]]
+                                        [--tushare-token TOKEN | --tushare-token-stdin]
                                         [--db sqlite|postgresql] [--sqlite-dir DIR] [--pg-url URL]
+    <CH_SKILLS_PYTHON> scripts/env_doctor.py check [--skills a-stock-earnings-forecast,...] [--no-network]
 
-`check` reports what is installed, which Tushare endpoints the token can call,
-whether the database backend opens, and whether CNInfo / P5W are reachable,
-then maps that onto each skill's capability. `setup` writes the per-user config
-file (~/.ch-skills/config.env, or $CH_SKILLS_CONFIG) that db_core and the
-Tushare clients read when the environment is silent.
+`setup --install-deps` creates a dedicated interpreter (~/.ch-skills/venv) and
+installs the skills' packages from the Tsinghua PyPI mirror, then records it as
+CH_SKILLS_PYTHON — agent hosts often put a managed `python3` first on PATH that
+lacks these packages, so every skill script must run with this interpreter.
+`setup` also writes the per-user config file (~/.ch-skills/config.env, or
+$CH_SKILLS_CONFIG) that db_core and the Tushare clients read when the
+environment is silent. This script itself is stdlib-only: any Python 3.9+ can
+run it.
+
+`check` reports which interpreter the skills should use and whether it has the
+packages, which Tushare endpoints the token can call, whether the database
+backend opens, and whether the data sources are reachable, then maps that onto
+each skill's capability.
 
 Facts only: which endpoint answered, which import failed. Explaining the
 consequences to the user is the model's job.
@@ -27,11 +36,14 @@ import os
 import platform
 import sqlite3
 import stat
+import subprocess
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-CONFIG_KEYS = ("TUSHARE_TOKEN", "ALPHA_DB_BACKEND", "ALPHA_SQLITE_DIR", "ALPHA_PG_URL")
+CONFIG_KEYS = ("CH_SKILLS_PYTHON", "TUSHARE_TOKEN", "ALPHA_DB_BACKEND", "ALPHA_SQLITE_DIR", "ALPHA_PG_URL")
 DEFAULT_SQLITE_DIR = os.path.join("~", ".ch-skills", "db")
+DEFAULT_VENV = os.path.join("~", ".ch-skills", "venv")
+TSINGHUA_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 # import name -> pip package
 PIP_NAME = {
@@ -81,7 +93,7 @@ SKILLS: Dict[str, Dict[str, Any]] = {
         "required_endpoints": [],
         "endpoints": {},
     },
-    "chstock-cninfo-announcement": {
+    "cninfo-announcement-search": {
         "imports": ["requests"], "network": ["cninfo"],
         "required_endpoints": [], "endpoints": {},
     },
@@ -131,17 +143,51 @@ def mask(token: str) -> str:
     return f"{token[:4]}…{token[-4:]}" if len(token) > 10 else "***"
 
 
+def venv_python(venv_dir: str) -> str:
+    sub = ("Scripts", "python.exe") if os.name == "nt" else ("bin", "python")
+    return os.path.join(os.path.expanduser(venv_dir), *sub)
+
+
+def pip_command(python: str, packages: List[str], index_url: str = TSINGHUA_INDEX) -> List[str]:
+    return [python, "-m", "pip", "install", "-i", index_url, *packages]
+
+
+def all_packages(backend: str = "sqlite") -> List[str]:
+    names = sorted({n for spec in SKILLS.values() for n in spec["imports"]})
+    if backend == "postgresql":
+        names.append("psycopg2")
+    return [PIP_NAME[n] for n in names]
+
+
+def target_python(cfg: Dict[str, str]) -> Tuple[str, str]:
+    """(interpreter the skill scripts should run with, where that choice came from)."""
+    configured, source = effective("CH_SKILLS_PYTHON", cfg)
+    if configured and os.path.exists(os.path.expanduser(configured)):
+        return os.path.expanduser(configured), source
+    return sys.executable, "running_interpreter"
+
+
+def missing_modules(python: str, names: List[str]) -> Optional[List[str]]:
+    """Modules `python` cannot import; None when that interpreter cannot be run."""
+    if os.path.realpath(python) == os.path.realpath(sys.executable):
+        return [n for n in names if importlib.util.find_spec(n) is None]
+    code = ("import importlib.util, json, sys; "
+            "print(json.dumps([n for n in sys.argv[1:] if importlib.util.find_spec(n) is None]))")
+    try:
+        out = subprocess.run([python, "-c", code, *names], capture_output=True, text=True, timeout=60)
+        return json.loads(out.stdout.strip() or "null")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 # --------------------------------------------------------------------------- #
 # checks
 # --------------------------------------------------------------------------- #
-def check_imports(names: List[str]) -> Dict[str, Any]:
-    missing = [n for n in names if importlib.util.find_spec(n) is None]
-    return {
-        "ok": not missing,
-        "missing": missing,
-        "pip_install": (f"{sys.executable} -m pip install " + " ".join(PIP_NAME[n] for n in missing))
-        if missing else None,
-    }
+def check_imports(python: str, names: List[str]) -> Dict[str, Any]:
+    missing = missing_modules(python, names)
+    if missing is None:
+        return {"ok": False, "missing": list(names), "error": f"无法运行解释器 {python}"}
+    return {"ok": not missing, "missing": missing}
 
 
 def check_db(cfg: Dict[str, str]) -> Dict[str, Any]:
@@ -220,7 +266,7 @@ def check_tushare(token: str, endpoints: List[str]) -> Dict[str, Any]:
     if not token:
         return out
     if importlib.util.find_spec("tushare") is None:
-        out["error"] = "tushare 未安装，无法探测接口权限"
+        out["error"] = "当前解释器没有 tushare，无法探测接口权限：用 python.target 重跑 check"
         return out
     import tushare as ts  # type: ignore
 
@@ -241,7 +287,8 @@ def check_tushare(token: str, endpoints: List[str]) -> Dict[str, Any]:
 
 def check_network(targets: List[str]) -> Dict[str, Any]:
     if importlib.util.find_spec("requests") is None:
-        return {t: {"ok": False, "error": "requests 未安装"} for t in targets}
+        return {t: {"ok": None, "error": "当前解释器没有 requests，未测网络：用 python.target 重跑 check"}
+                for t in targets}
     import requests  # type: ignore
 
     probes = {
@@ -274,7 +321,7 @@ def skill_capability(skill: str, imports: Dict[str, Any], db: Dict[str, Any],
     if imports[skill]["missing"]:
         blockers.append("missing_python_packages")
     for target in spec["network"]:
-        if network and not network.get(target, {}).get("ok", False):
+        if network and network.get(target, {}).get("ok") is False:
             blockers.append(f"network_unreachable:{target}")
     endpoint_status = tushare.get("endpoints", {})
     unavailable = {
@@ -311,7 +358,8 @@ def cmd_check(args: argparse.Namespace) -> int:
     path = config_path()
     cfg = read_config(path)
     token, token_source = effective("TUSHARE_TOKEN", cfg)
-    imports = {s: check_imports(SKILLS[s]["imports"]) for s in skills}
+    target, target_source = target_python(cfg)
+    imports = {s: check_imports(target, SKILLS[s]["imports"]) for s in skills}
     db = check_db(cfg)
     endpoints = sorted({e for s in skills for e in SKILLS[s]["endpoints"]})
     tushare = check_tushare(token, endpoints) if not args.no_network else {
@@ -322,16 +370,27 @@ def cmd_check(args: argparse.Namespace) -> int:
     targets = sorted({t for s in skills for t in SKILLS[s]["network"]})
     network = {} if args.no_network else check_network(targets)
     all_missing = sorted({m for v in imports.values() for m in v["missing"]})
+    running_is_target = os.path.realpath(target) == os.path.realpath(sys.executable)
     report = {
-        "python": {"executable": sys.executable, "version": platform.python_version(),
-                   "ok": sys.version_info >= (3, 9)},
+        "python": {
+            "target": target,
+            "target_source": target_source,
+            "running": sys.executable,
+            "running_version": platform.python_version(),
+            "running_is_target": running_is_target,
+            "ok": sys.version_info >= (3, 9),
+            "note": None if target_source != "running_interpreter" else
+            "还没有专用解释器：运行 setup --install-deps 建 ~/.ch-skills/venv 并从清华源装依赖",
+        },
         "platform": platform.system(),
         "config_file": {"path": path, "exists": os.path.exists(path),
                         "keys": sorted(k for k in cfg if k in CONFIG_KEYS)},
         "packages": {
+            "interpreter": target,
             "missing": all_missing,
-            "pip_install": (f"{sys.executable} -m pip install "
-                            + " ".join(PIP_NAME[m] for m in all_missing)) if all_missing else None,
+            "fix": ("python3 scripts/env_doctor.py setup --install-deps" if all_missing else None),
+            "pip_install": (" ".join(pip_command(target, [PIP_NAME[m] for m in all_missing]))
+                            if all_missing else None),
         },
         "database": db,
         "tushare": tushare,
@@ -340,6 +399,41 @@ def cmd_check(args: argparse.Namespace) -> int:
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
+
+
+def install_deps(args: argparse.Namespace, backend: str) -> Dict[str, Any]:
+    """Create/choose the skills' interpreter and pip-install from the mirror."""
+    if args.python:
+        python = os.path.expanduser(args.python)
+    elif args.no_venv:
+        python = sys.executable
+    else:
+        venv_dir = os.path.expanduser(args.venv or DEFAULT_VENV)
+        python = venv_python(venv_dir)
+        if not os.path.exists(python):
+            made = subprocess.run([sys.executable, "-m", "venv", venv_dir],
+                                  capture_output=True, text=True, timeout=300)
+            if made.returncode != 0 or not os.path.exists(python):
+                return {"ok": False, "step": "venv", "python": sys.executable,
+                        "error": (made.stderr or made.stdout).strip()[-400:],
+                        "hint": "当前 Python 不能建虚拟环境：改用 --python <已装好的 Python 路径> 或 --no-venv"}
+    packages = all_packages(backend)
+    cmd = pip_command(python, packages, args.index_url)
+    try:
+        run = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "step": "pip", "python": python, "error": str(exc)[:400]}
+    result = {"ok": run.returncode == 0, "step": "pip", "python": python,
+              "command": " ".join(cmd), "packages": packages}
+    if run.returncode != 0:
+        result["error"] = (run.stderr or run.stdout).strip()[-600:]
+        if "externally-managed" in result["error"]:
+            result["hint"] = "该解释器受系统管理、禁止直接 pip 安装：去掉 --no-venv/--python，改用默认虚拟环境"
+    else:
+        still = missing_modules(python, sorted({n for s in SKILLS.values() for n in s["imports"]}))
+        result["missing_after_install"] = still
+        result["ok"] = still == []
+    return result
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -359,6 +453,11 @@ def cmd_setup(args: argparse.Namespace) -> int:
         cfg["ALPHA_SQLITE_DIR"] = args.sqlite_dir or cfg.get("ALPHA_SQLITE_DIR") or DEFAULT_SQLITE_DIR
     if args.pg_url:
         cfg["ALPHA_PG_URL"] = args.pg_url
+    deps: Optional[Dict[str, Any]] = None
+    if args.install_deps:
+        deps = install_deps(args, cfg["ALPHA_DB_BACKEND"])
+        if deps["ok"]:
+            cfg["CH_SKILLS_PYTHON"] = deps["python"]
     os.makedirs(os.path.dirname(path), exist_ok=True)
     lines = ["# Written by chstock-env-setup. Environment variables override these values."]
     lines += [f"{k}={cfg[k]}" for k in CONFIG_KEYS if cfg.get(k)]
@@ -370,9 +469,13 @@ def cmd_setup(args: argparse.Namespace) -> int:
     except OSError:
         pass
     shown = {k: (mask(v) if k == "TUSHARE_TOKEN" else v) for k, v in cfg.items() if k in CONFIG_KEYS}
-    print(json.dumps({"written": path, "values": shown,
-                      "next": "python3 scripts/env_doctor.py check"}, ensure_ascii=False, indent=2))
-    return 0
+    python = cfg.get("CH_SKILLS_PYTHON") or "python3"
+    out: Dict[str, Any] = {"written": path, "values": shown,
+                           "next": f"{python} scripts/env_doctor.py check"}
+    if deps is not None:
+        out["install_deps"] = deps
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0 if deps is None or deps["ok"] else 1
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -387,6 +490,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--db", choices=["sqlite", "postgresql"])
     s.add_argument("--sqlite-dir", help=f"默认 {DEFAULT_SQLITE_DIR}")
     s.add_argument("--pg-url")
+    s.add_argument("--install-deps", action="store_true",
+                   help=f"建专用虚拟环境（默认 {DEFAULT_VENV}）并从清华源安装全部依赖，记录为 CH_SKILLS_PYTHON")
+    s.add_argument("--python", help="不建虚拟环境，装进这个已有的解释器")
+    s.add_argument("--no-venv", action="store_true", help="装进当前运行本脚本的解释器")
+    s.add_argument("--venv", help=f"虚拟环境目录（默认 {DEFAULT_VENV}）")
+    s.add_argument("--index-url", default=TSINGHUA_INDEX, help="PyPI 镜像（默认清华源）")
     args = ap.parse_args(argv)
     return cmd_check(args) if args.cmd == "check" else cmd_setup(args)
 

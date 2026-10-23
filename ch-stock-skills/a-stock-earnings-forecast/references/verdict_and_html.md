@@ -11,7 +11,7 @@
 
 ## 二、主线匹配方法论（Agent 语义判断）
 
-目标：把每只预告股对上 daily-market-sense 正在跟踪的**在场主线**（`theme_registry` + `theme_daily_state`），不是套行业标签。
+目标：把每只预告股对上主线台账<!-- repo-only -->（daily-market-sense 维护）<!-- /repo-only -->正在跟踪的**在场主线**（`theme_registry` + `theme_daily_state`），不是套行业标签。
 
 匹配依据（context 已给全）：每条主线的 `name`、`aliases`（历年归一的别名）、`members_sample`（近日成员样本）、当前 `state`/`stars`。每只股的 `change_reason`（**最强信号**——业绩由什么驱动）、行业、名称。
 
@@ -24,7 +24,7 @@
    - `low`：只是沾边，渲染成"疑似【X】"，供人工复核。
 4. **对不上就填 `null`**。不要硬贴。`null`=无归属，是"业绩强但暂无主线关注"的**正向信号**（潜在未被市场发现），HTML 会单列。
 5. 一只股给**一条主线**（primary）。确实横跨两条，在 `theme_rationale` 里注明，`theme_id` 仍取最主要那条。
-6. `theme_registry` 为空（daily-market-sense 没跑）时，`theme_id` 一律 `null`，报告说明"主线台账未填充"。
+6. `theme_registry` 为空（未接入主线台账）时，`theme_id` 一律 `null`，报告说明"主线台账未填充"。
 
 注意主线的**当前状态**由 HTML 渲染时实时 join（`theme_daily_state` 最新一日），不写进 verdict——所以看到的"在场候选★★/退潮"永远是最新的；归"退潮"主线也合法（业绩兑现但主线在退，本身是有用对照）。
 

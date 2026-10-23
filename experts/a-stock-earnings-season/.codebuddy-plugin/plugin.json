@@ -1,6 +1,6 @@
 {
   "name": "a-stock-earnings-season",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Reviews each A-share quarter by combining earnings forecasts and periodic reports, checks profit quality, and cross-checks whether strong results are already priced in through price action and valuation.",
   "author": {
     "name": "chinfi",

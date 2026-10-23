@@ -873,8 +873,7 @@ def _load_shared_theme(theme: str) -> str:
 
 
 def render_html(view: Dict[str, Any], kline_assets: Optional[Dict[str, Any]] = None) -> str:
-    empty_note = ('<div class="foot">未接入主线台账——页面收录全部候选，主线归属与行业趋势栏为空；'
-                  '如需归属，先运行 daily-market-sense 填充 theme 台账、再跑 verdict 判分归属。</div>'
+    empty_note = ('<div class="foot">未接入主线台账——页面收录全部候选，主线归属与行业趋势栏为空。</div>'
                   if view["theme_registry_empty"] else "")
     cutoff = view["ann_cutoff"]
     cutoff_display = f"{cutoff[:4]}-{cutoff[4:6]}-{cutoff[6:]}"

@@ -57,6 +57,34 @@ class SetupTests(unittest.TestCase):
                              ("from-env", "env"))
 
 
+class InterpreterTests(unittest.TestCase):
+    def test_pip_uses_tsinghua_mirror_by_default(self) -> None:
+        cmd = env_doctor.pip_command("/venv/bin/python", ["pandas"])
+        self.assertEqual(cmd[:5], ["/venv/bin/python", "-m", "pip", "install", "-i"])
+        self.assertEqual(cmd[5], "https://pypi.tuna.tsinghua.edu.cn/simple")
+
+    def test_all_packages_cover_every_skill_import(self) -> None:
+        pkgs = env_doctor.all_packages()
+        for name in ("tushare", "pandas", "requests", "PyMuPDF", "PyPDF2"):
+            self.assertIn(name, pkgs)
+        self.assertNotIn("psycopg2-binary", pkgs)
+        self.assertIn("psycopg2-binary", env_doctor.all_packages("postgresql"))
+
+    def test_configured_interpreter_wins_over_running_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = os.path.join(tmp, "python")
+            open(fake, "w").close()
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("CH_SKILLS_PYTHON", None)
+                self.assertEqual(env_doctor.target_python({"CH_SKILLS_PYTHON": fake}), (fake, "config_file"))
+                self.assertEqual(env_doctor.target_python({"CH_SKILLS_PYTHON": fake + "x"})[1],
+                                 "running_interpreter")
+
+    def test_skill_names_match_packaged_names(self) -> None:
+        self.assertIn("cninfo-announcement-search", env_doctor.SKILLS)
+        self.assertNotIn("chstock-cninfo-announcement", env_doctor.SKILLS)
+
+
 class CapabilityTests(unittest.TestCase):
     ok_db = {"ok": True}
     imports = {s: {"missing": []} for s in env_doctor.SKILLS}

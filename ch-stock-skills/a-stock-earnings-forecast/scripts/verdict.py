@@ -4,7 +4,7 @@
 
 脑/手 boundary: this script is deterministic and calls no LLM. It only
   - `context`: assembles what the model must judge — the to-judge stock set
-    (newly disclosed + stale-vs-current-evidence), the daily-market-sense
+    (newly disclosed + stale-vs-current-evidence), the (read-only)
     theme registry (name/aliases/current lifecycle state) as the matching
     reference, per-theme member briefs split into 强表现 (up gap) / 弱表现
     (down gap) / 无断层 with each member's change_reason for trend attribution,
@@ -289,7 +289,7 @@ def build_context(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[s
             "含负向预告)写 period_overview 综述——把行业按业务事实聚成宏观组(如高端制造科技/消费/地产链/周期资源，以样本实际为准)，"
             "正向扎堆组说清共性驱动，负向扎堆组读原因共性并找筑底证据(环比中位、减亏占比)，(a)(b) 式分条+前瞻判断+样本偏差 caveat；"
             "细则见 references/methodology.md §十。",
-            "theme_registry_empty=true 时主线台账为空(需先跑 daily-market-sense)，theme_id 一律填 null、theme_trends 留空；产业结构综述不依赖主线台账，照常写。",
+            "theme_registry_empty=true 时主线台账为空(未接入)，theme_id 一律填 null、theme_trends 留空；产业结构综述不依赖主线台账，照常写。",
         ],
     }
 
@@ -370,6 +370,24 @@ def validate_trends(trends: List[Dict[str, Any]], themes: Dict[str, Dict[str, An
     return valid, errors
 
 
+
+def check_payload_shape(payload: Any, allowed: Tuple[str, ...]) -> List[str]:
+    """Structural errors that would otherwise make record a silent no-op."""
+    if not isinstance(payload, dict):
+        return ["顶层必须是 JSON 对象。"]
+    errors: List[str] = []
+    unknown = sorted(k for k in payload if k not in allowed)
+    if unknown:
+        errors.append(f"未知顶层键 {unknown}；允许的键：{list(allowed)}（个股数组的键名是 records）。")
+    if not isinstance(payload.get("records"), list):
+        errors.append("缺少 records 数组（每只个股一条判分）。")
+    if "theme_trends" in payload and not isinstance(payload["theme_trends"], list):
+        errors.append("theme_trends 必须是数组。")
+    if "period_overview" in payload and not (
+            isinstance(payload["period_overview"], str) and payload["period_overview"].strip()):
+        errors.append("period_overview 必须是非空字符串（综述成文），不能是对象。")
+    return errors
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Earnings-forecast verdict ledger (tier + 主线归属 + 行业趋势).")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -424,6 +442,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     payload = _load_json(args.input)
     if payload is None:
         print(json.dumps({"error": f"输入不存在: {args.input}"}, ensure_ascii=False))
+        return 2
+    shape_errors = check_payload_shape(payload, ("period", "records", "theme_trends", "period_overview"))
+    if shape_errors:
+        print(json.dumps({"error": "invalid_payload", "details": shape_errors}, ensure_ascii=False, indent=2))
         return 2
     period = payload.get("period") or period
     ev_path = args.evidence or os.path.join("reports", f"forecast_scan_{period}.json")

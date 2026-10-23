@@ -72,7 +72,8 @@ shared:
       skills:
         - ch-news-reporter
         - a-stock-daily-market-sense
-    # web_search 能力：Tavily 联网检索（WebFetch/WebSearch 在部分网络下不可达时的主路径）
+    # web_search 能力：Tavily / DeepSeek / 元宝搜索 三路联网检索（WebFetch/WebSearch 在部分网络下不可达时的主路径）。
+    # 三脚本同一输出契约（{"query","results"} / {"query","error"}），选型见 shared/web_search/README.md。
     - source: shared/web_search
       dest: scripts/_shared/web_search
       skills:

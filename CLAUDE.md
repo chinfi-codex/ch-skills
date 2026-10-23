@@ -89,6 +89,8 @@ skill-vetter <skill路径>   # 发布前必跑
 |---|---|
 | `TUSHARE_TOKEN` | 任何 `stock-skills/*` 取数 |
 | `TAVILY_API_KEY` | `iran-war-tracker - V2`、`ch-news-reporter` 的深度搜索 |
+| `DEEPSEEK_API_KEY` | `shared/web_search/deepseek_search.py`（中文/时效搜索） |
+| `TENCENTCLOUD_SECRET_ID` / `TENCENTCLOUD_SECRET_KEY` | `shared/web_search/yuanbao_search.py`（腾讯元宝搜索，需在腾讯云控制台开通） |
 | `CLAWHUB_TOKEN` | `clawhub publish` |
 
 脚本必须从环境变量读取敏感信息,**禁止硬编码**;`.env` 已在 `.gitignore`。

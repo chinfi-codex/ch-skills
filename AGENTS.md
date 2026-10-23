@@ -177,6 +177,8 @@ skill-vetter .
 |---|---|---|
 | `TUSHARE_TOKEN` | Tushare Pro API token | 股票相关 Skill |
 | `TAVILY_API_KEY` | Tavily 搜索 API key | 部分搜索类 Skill |
+| `DEEPSEEK_API_KEY` | DeepSeek 搜索 API key | `shared/web_search/deepseek_search.py` |
+| `TENCENTCLOUD_SECRET_ID` / `TENCENTCLOUD_SECRET_KEY` | 腾讯云 API 密钥（元宝搜索 WSA） | `shared/web_search/yuanbao_search.py` |
 | `CLAWHUB_TOKEN` | ClawHub CLI token | 发布 Skill 必需 |
 
 需要连接共享 PostgreSQL 的 Skill，参见 `references/postgresql.md`。

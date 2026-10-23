@@ -270,8 +270,9 @@ def compute_metrics(bars: list[dict], member: dict) -> Optional[dict]:
     peak_idx = e + max(idx for idx, v in enumerate(post_close) if v == peak_close)
 
     ma = {n: [_ma(close, k, n) for k in range(i + 1)] for n in (5, 10, 20)}
+    # 只数入池之后的日子：涨停当天还在 MA20 下方（超跌反弹）不算走坏
     below_ma20_streak = 0
-    for k in range(i, -1, -1):
+    for k in range(i, e, -1):
         if ma[20][k] is not None and close[k] < ma[20][k]:
             below_ma20_streak += 1
         else:

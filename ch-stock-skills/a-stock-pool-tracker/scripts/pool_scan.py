@@ -59,7 +59,7 @@ def main() -> int:
             continue
         for reason in reasons:
             counts[reason] += 1
-        if len(reasons) == 1 and reasons[0] in NEAR_MISS_REASONS:
+        if len(reasons) == 1 and reasons[0] in NEAR_MISS_REASONS and not pool_store.open_member(row["ts_code"]):
             near_miss.append(dict(facts, reject=reasons[0]))
 
     added, already = [], []

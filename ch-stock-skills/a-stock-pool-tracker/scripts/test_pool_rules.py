@@ -101,6 +101,17 @@ def test_manual_member_only_watched():
     assert d["to"] == "watch" and d["suggest_remove"]
 
 
+def test_below_ma20_streak_ignores_pre_entry_days():
+    # 入池前一路阴跌、涨停当天仍在 MA20 下方：入池当天不应进预警
+    bars, member = make_bars([])
+    for k, b in enumerate(bars[:25]):
+        b.update(close=14 - k * 0.15, high=14.1 - k * 0.15, low=13.9 - k * 0.15)
+    bars[24].update(close=10, low=9.9)
+    m = pool_rules.compute_metrics(bars, member)
+    assert m["above_ma20"] is False and m["below_ma20_streak"] == 0
+    assert not pool_rules.exit_hits(m, RULES)
+
+
 def test_watch_escalates_then_repairs():
     member = dict(status="watch", source="auto")
     hit = [{"rule": "below_ma20", "level": "watch", "fact": "x"}]

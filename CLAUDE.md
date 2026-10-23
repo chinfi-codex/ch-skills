@@ -20,6 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `ch-news-reporter/` —— 多源新闻采集与日报生成
 - `iran-war-tracker - V2/` —— 地缘冲突日报(同步时由 `skill-sync.yaml` 重命名为 `iran-war-tracker-v2`)
 - `ch-pd-flow/` —— 产品设计/工作流相关(占位中)
+- `ch-stock-skills/a-stock-earnings-review/` —— 季度业绩统一研判:业绩预告(推断模式)与正式报告(深挖模式)共用一套方法论,再做 K 线资金面交叉验证与定价;`a-stock-earnings-forecast` / `a-stock-quarterly-report` 是它的取数引擎
 - `ch-stock-skills/chstock-env-setup/` —— A 股技能的环境自检与首次配置(依赖、Tushare 逐接口权限、数据库、网络;写 `~/.ch-skills/config.env`)
 
 ### WorkBuddy 专家包(`experts/`)

@@ -16,6 +16,12 @@ skills:
     display_name_en: A-Share Research Environment Check
     description_zh: 检查依赖、Tushare 接口权限、数据库与网络，保存 token 和本地数据库配置。
     description_en: Checks dependencies, Tushare endpoint permissions, database and network, and saves the token and local database settings.
+  - source: ch-stock-skills/a-stock-earnings-review
+    package_name: a-stock-earnings-review
+    display_name: A股季度业绩统一研判
+    display_name_en: A-Share Quarterly Earnings Review
+    description_zh: 合看业绩预告与正式财报，推断与深挖两种模式统一分档，再用K线与估值判断业绩是否已被提前定价。
+    description_en: Combines earnings forecasts and periodic reports under one framework, then checks price action and valuation to judge whether results are already priced in.
   - source: ch-stock-skills/a-stock-earnings-forecast
     package_name: a-stock-earnings-forecast
     display_name: A股业绩预告扫描

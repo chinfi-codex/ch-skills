@@ -75,6 +75,12 @@ SKILLS: Dict[str, Dict[str, Any]] = {
             "trade_cal": "交易日定位",
         },
     },
+    "a-stock-earnings-review": {
+        "imports": ["requests"],
+        "network": ["sina", "eastmoney"],
+        "required_endpoints": [],
+        "endpoints": {},
+    },
     "chstock-cninfo-announcement": {
         "imports": ["requests"], "network": ["cninfo"],
         "required_endpoints": [], "endpoints": {},
@@ -242,6 +248,12 @@ def check_network(targets: List[str]) -> Dict[str, Any]:
         "cninfo": ("POST", "http://www.cninfo.com.cn/new/hisAnnouncement/query",
                    {"data": {"pageNum": 1, "pageSize": 1, "column": "szse", "tabName": "fulltext"}}),
         "p5w": ("GET", "https://ir.p5w.net/", {}),
+        # K 线（价格交叉验证）与估值历史的公开来源
+        "sina": ("GET", "https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData",
+                 {"params": {"symbol": "sh000300", "scale": 240, "ma": "no", "datalen": 1}}),
+        "eastmoney": ("GET", "https://datacenter-web.eastmoney.com/api/data/v1/get",
+                      {"params": {"reportName": "RPT_VALUEANALYSIS_DET", "columns": "TRADE_DATE",
+                                  "filter": '(SECURITY_CODE="600519")', "pageSize": 1}}),
     }
     out: Dict[str, Any] = {}
     for target in targets:

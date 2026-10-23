@@ -20,6 +20,7 @@ version: 1.0.0
 4. **各技能对 Tushare 的依赖不同**：
    - `a-stock-earnings-forecast`：没有 Tushare 也能跑，产出巨潮公告事实（预告区间、上年同期、扣非、变动原因、原文）；Tushare 补的是单季拆解、营收、年化 PE、股价断层、行业。
    - `a-stock-quarterly-report`：Tushare 是数值权威，`disclosure_date / income / fina_indicator / cashflow / balancesheet` 任一不可用就跑不了。
+   - `a-stock-earnings-review`：K 线与估值默认走公开接口（新浪、东财），不需要 Tushare；公开接口被网络拦截时才回退 Tushare。
    - `chstock-cninfo-announcement` / `chstock-interactive-qa`：不需要 Tushare。
 
 ## 工作流程

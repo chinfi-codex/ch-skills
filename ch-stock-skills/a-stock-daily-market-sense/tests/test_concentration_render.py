@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,7 +45,13 @@ def render_panel(rows, *, with_card=True, reading=READING):
 
 
 def rows_for(states):
-    return [{"date": f"2026-09-{i + 1:02d}", "cr_1pct": 17.92 + i / 10,
+    dates = []
+    current = date(2025, 1, 1)
+    while len(dates) < len(states):
+        if current.weekday() < 5:
+            dates.append(current.isoformat())
+        current += timedelta(days=1)
+    return [{"date": dates[i], "cr_1pct": 17.92 + i / 100,
              "state": state}
             for i, state in enumerate(states)]
 
@@ -86,15 +93,15 @@ class ConcentrationRenderTest(unittest.TestCase):
         self.assertEqual(page.locator(".concentration-timeline svg polyline").count(), 1)
         self.assertTrue(page.evaluate("window.__sec.contains('pos_gate', document.querySelector('.concentration-timeline'))"))
 
-    def test_normal_window_has_no_unused_driver_legend(self):
-        page = self.open_panel(rows_for(["normal"] * 30))
+    def test_full_200_day_window_keeps_hit_zones_and_legend_compact(self):
+        page = self.open_panel(rows_for(["normal"] * 200))
         legend = page.locator(".concentration-timeline .stl-legend").inner_text()
         self.assertIn("CR1%", legend)
         self.assertNotIn("CR5%", legend)
         self.assertNotIn("量能", legend)
         self.assertNotIn("驱动：", legend)
         hits = page.locator(".concentration-timeline svg rect[tabindex]")
-        self.assertEqual(hits.count(), 30)
+        self.assertEqual(hits.count(), 200)
         self.assertIn("17.92%", hits.first.get_attribute("aria-label"))
         self.assertIn("常态", hits.first.get_attribute("aria-label"))
 
@@ -109,7 +116,7 @@ class ConcentrationRenderTest(unittest.TestCase):
         self.assertIn("CR1% 缺失", page.locator(".concentration-timeline svg rect[tabindex]").last.get_attribute("aria-label"))
 
     def test_fallback_placement_and_mobile_page_do_not_overflow(self):
-        page = self.open_panel(rows_for(["normal"] * 30), with_card=False)
+        page = self.open_panel(rows_for(["normal"] * 200), with_card=False)
         self.assertEqual(page.locator(".concentration-reading li").inner_text(), READING)
         self.assertTrue(page.evaluate("window.__sec.contains('pos_gate', document.querySelector('.concentration-timeline'))"))
         self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"))

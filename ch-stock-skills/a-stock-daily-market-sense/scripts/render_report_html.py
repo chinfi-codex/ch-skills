@@ -22,6 +22,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPT_ROOT.parent
 DEFAULT_MARKET_DATA = SKILL_ROOT / "references" / "market_data.json"
 INDEX_KLINE_DISPLAY_DAYS = 120
+CARD_TIMELINE_DISPLAY_DAYS = 200
 MONTHLY_KLINE_DISPLAY_MONTHS = 72
 
 _BUNDLED_SHARED = SCRIPT_ROOT / "_shared"
@@ -360,7 +361,7 @@ def extract_stock_kline_payload(raw: dict, source_path: Optional[Path], missing:
 
 
 def extract_state_timeline_payload(evidence: dict) -> Optional[Dict[str, Any]]:
-    """状态卡的 30 日轨迹：趋势档 + 极值分 + 情绪脉冲，按交易日对齐画在一张图上。
+    """状态卡的 200 个交易日轨迹：趋势档 + 极值分 + 情绪脉冲，按交易日对齐画在一张图上。
 
     三根轴分别来自 `trend_state_card.history`、`extreme_state.recent` 与
     `forward_odds.pulse_history`，都由脚本按日算好；渲染层只负责画，不重算任何
@@ -389,10 +390,14 @@ def extract_state_timeline_payload(evidence: dict) -> Optional[Dict[str, Any]]:
     ] if forward.get("available") else []
     if not states and not scores and not pulse:
         return None
+    states = states[-CARD_TIMELINE_DISPLAY_DAYS:]
+    scores = scores[-CARD_TIMELINE_DISPLAY_DAYS:]
+    pulse = pulse[-CARD_TIMELINE_DISPLAY_DAYS:]
     return {
         "states": states,
         "scores": scores,
         "pulse": pulse,
+        "display_days": CARD_TIMELINE_DISPLAY_DAYS,
         "washout_max": (extreme.get("washout") or {}).get("max_score", 6),
         "top_max": (extreme.get("top") or {}).get("max_score", 5),
         "pulse_max": forward.get("max_legs", 4),
@@ -402,7 +407,7 @@ def extract_state_timeline_payload(evidence: dict) -> Optional[Dict[str, Any]]:
 
 
 def extract_concentration_payload(evidence: dict) -> Optional[Dict[str, Any]]:
-    """集中度卡的 30 日轨迹：CR1% 单线 + 逐日驱动状态点。
+    """集中度卡的 200 个交易日轨迹：CR1% 单线 + 逐日驱动状态点。
 
     数据全部来自 `turnover_concentration.recent`（脚本按日算好），渲染层只画不
     算。卡缺失或序列为空返回 None（不注册图表，门禁按 no_payload 记账）。
@@ -421,8 +426,10 @@ def extract_concentration_payload(evidence: dict) -> Optional[Dict[str, Any]]:
     ]
     if not recent:
         return None
+    recent = recent[-CARD_TIMELINE_DISPLAY_DAYS:]
     return {
         "recent": recent,
+        "display_days": CARD_TIMELINE_DISPLAY_DAYS,
         "data_through": card.get("data_through"),
     }
 
@@ -726,7 +733,7 @@ TREND_STATE_CARD_JS = r"""(function () {
 
 
 # --------------------------------------------------------------------------- #
-# 30 日轨迹时间轴：趋势档色带 + 极值分柱 + 情绪脉冲，全部按交易日对齐。
+# 200 个交易日轨迹时间轴：趋势档色带 + 极值分柱 + 情绪脉冲，全部按交易日对齐。
 # 读数来自脚本，这里只负责画。
 # --------------------------------------------------------------------------- #
 STATE_TIMELINE_JS = r"""
@@ -788,7 +795,7 @@ svg.setAttribute("width", String(W));
 svg.setAttribute("height", String(H));
 svg.style.minWidth = Math.min(W, 640) + "px";
 svg.setAttribute("role", "img");
-svg.setAttribute("aria-label", "近 30 个交易日的趋势档位、极值分与情绪脉冲轨迹");
+svg.setAttribute("aria-label", "近 " + n + " 个交易日的趋势档位、极值分与情绪脉冲轨迹");
 
 function label(x, y, text, opts) {
   const t = document.createElementNS(NS, "text");
@@ -973,7 +980,7 @@ REPORT.attest(hook, { rendered: 1, matched: 1, expected: 1, unmatched: [], el: w
 
 
 # --------------------------------------------------------------------------- #
-# 30 日成交额集中度轨迹：CR1% 单线 + 非常态日的驱动状态点。
+# 200 个交易日成交额集中度轨迹：CR1% 单线 + 非常态日的驱动状态点。
 # 读数来自 turnover_concentration 卡，这里只负责画。dms/2.4.0 起去掉量能色带与
 # CR5% 线：两档分歧已写在读数括号里，图只承担"头部占比怎么走"这一件事。
 # --------------------------------------------------------------------------- #
@@ -2812,11 +2819,11 @@ def build_job(args) -> RenderJob:
         state_timeline_expects = [
             # 2.x 读数 UL 在第 1 章 1.2（状态卡与时间轴跟着它走），不在第 2 章。
             HookExpectation(name="state-timeline", target_sec="pos_gate", expect_count=1,
-                            note="20 日趋势档色带 + 出清分 / 顶部分"),
+                            note="200 个交易日趋势档色带 + 出清分 / 顶部分 / 情绪脉冲"),
         ]
         concentration_expects = [
             HookExpectation(name="concentration-timeline", target_sec="pos_gate", expect_count=1,
-                            note="30 日 CR1% 单线 + 驱动状态点"),
+                            note="200 个交易日 CR1% 单线 + 驱动状态点"),
         ]
         lifecycle_target = "industry_mainline"
     else:
@@ -2844,7 +2851,7 @@ def build_job(args) -> RenderJob:
         ]
         state_timeline_expects = [
             HookExpectation(name="state-timeline", target_sec="sentiment_trend", expect_count=1,
-                            note="20 日趋势档色带 + 出清分 / 顶部分"),
+                            note="200 个交易日趋势档色带 + 出清分 / 顶部分 / 情绪脉冲"),
         ]
         concentration_expects = []  # legacy 不挂集中度图（无对应章节读数）
         lifecycle_target = "m3_mainline"

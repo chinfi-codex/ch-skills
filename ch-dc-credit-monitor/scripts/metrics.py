@@ -73,19 +73,42 @@ def _issuer_points(instruments: List[Dict[str, Any]],
     return grouped
 
 
-def _series_by_issuer(metric_prefix: str, since: str) -> Dict[str, List[Dict[str, Any]]]:
-    """从库里读发行人级固定期限序列（供 alpha 分解用）。"""
+def _series_by_issuer(metric_prefix: str, since: str
+                      ) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    """从库里读发行人级固定期限序列，**按期限分组**（供 alpha 分解用）。
+
+    drv.cm_spread_ 前缀下同时有 5y/10y/30y 三种期限。旧版把三种期限混进
+    一个 list，同日多行经 _series_lookup 的 dict 覆盖后，窗口端点落在哪个
+    期限由 PG 堆内行序随机决定，跨期限配对会造出 ±50bp 级伪 alpha
+    （2026-09-29~10-06 六期实证）。按 tenor 分组后，选链交给 _pick_cm_series。
+    """
     rows = db.load_metric_prefix(metric_prefix, since)
-    out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    out: Dict[str, Dict[str, List[Dict[str, Any]]]] = defaultdict(
+        lambda: defaultdict(list))
     for row in rows:
         key = str(row["instrument_key"])
         if not key.startswith("ISSUER:"):
             continue
-        out[key.split(":", 1)[1]].append(
+        tenor = str(row["metric"]).split("_")[-1]   # drv.cm_spread_5y -> 5y
+        out[key.split(":", 1)[1]][tenor].append(
             {"date": str(row["asof_date"]), "value": row["value"]})
-    for series in out.values():
-        series.sort(key=lambda p: p["date"])
+    for by_tenor in out.values():
+        for series in by_tenor.values():
+            series.sort(key=lambda p: p["date"])
     return out
+
+
+def _pick_cm_series(by_tenor: Dict[str, List[Dict[str, Any]]]
+                    ) -> tuple:
+    """按 5y → 10y → 30y 优先选一条固定期限序列。
+
+    梯级主口径是 5-10Y 桶，优先 5y；返回 (series, tenor)，无序列返回 (None, None)。
+    """
+    for tenor in ("5y", "10y", "30y"):
+        series = by_tenor.get(tenor)
+        if series:
+            return series, tenor
+    return None, None
 
 
 def _history(instrument_key: str, metric: str, asof: str,
@@ -336,22 +359,32 @@ def build(asof: Optional[str] = None, window_days: int = 90,
 
     # --- alpha 分解（判据 1）------------------------------------------------
     attr_cfg = thresholds["attribution"]
-    cm_series = _series_by_issuer("drv.cm_spread_", since)
+    cm_grouped = _series_by_issuer("drv.cm_spread_", since)
+    picked = {}
+    for issuer_key, by_tenor in cm_grouped.items():
+        series, tenor = _pick_cm_series(by_tenor)
+        if series:
+            picked[issuer_key] = (series, tenor)
     attributions: List[Dict[str, Any]] = []
     events: List[Dict[str, Any]] = []
     for issuer, block in curves.items():
         rung = block.get("rung")
-        peers = {k: cm_series.get(k, []) for k, v in curves.items()
-                 if v.get("rung") == rung and k != issuer}
         rung_meta = (universe["rungs"].get(rung)
                      or universe["rungs"].get(str(rung)) or {})
         segment = rung_meta.get("bench") or "ig"
         index_series = _market_index_series(bench["index_oas_bp"], segment, since)
+        own = picked.get(issuer)
+        issuer_series = own[0] if own else []
+        # peer 只取与发行人**同一条期限链**的序列：混期限的档位 beta 同样是伪影。
+        peers = {k: picked[k][0] for k, v in curves.items()
+                 if v.get("rung") == rung and k != issuer and k in picked
+                 and own is not None and picked[k][1] == own[1]}
         cum = attribution.cumulative(
-            issuer, issuer_series=cm_series.get(issuer, []), peer_series=peers,
+            issuer, issuer_series=issuer_series, peer_series=peers,
             index_series=index_series, windows=attr_cfg["cum_windows"],
             min_days=attr_cfg["min_days_for_alpha"])
         cum["segment"] = segment
+        cum["cm_tenor"] = own[1] if own else None
         attributions.append(cum)
         events.extend(attribution.notable_events(
             cum, segment=segment, thresholds=attr_cfg["notable_cum_bp"]))

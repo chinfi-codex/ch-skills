@@ -2,7 +2,7 @@
 
 SKILL.md 只放纲要，这里放判断锚点、拆解语义、字段字典和边界处理。模型据此**逐股判断并排序**，脚本不替你下结论。
 
-> **与业绩预告打通**：正式报告和业绩预告共用一套判断口径（a-stock-earnings-review 的 `references/unified_framework.md`）。正式报告是**深挖模式**：六个问题都能用报表回答。同一家公司若先出了预告，正式报告出来后要把预告期的判断拿出来逐项对照（统一框架 §五），说清确认了什么、推翻了什么。同一季度预告与正式报告合看、以及业绩是否已被股价提前定价，走 a-stock-earnings-review。
+> **与业绩预告打通**：正式报告和业绩预告共用一套判断口径（`skills/a-stock-earnings-review/references/unified_framework.md`）。正式报告是**深挖模式**：六个问题都能用报表回答。同一家公司若先出了预告，正式报告出来后要把预告期的判断拿出来逐项对照（统一框架 §五），说清确认了什么、推翻了什么。同一季度预告与正式报告合看、以及业绩是否已被股价提前定价，走 a-stock-earnings-review。
 
 ## 一、三口径 × 四条线：定义与拆解语义
 
@@ -111,7 +111,7 @@ SKILL.md 只放纲要，这里放判断锚点、拆解语义、字段字典和�
 - **年化（对照口径）**：`本期累计 ÷ 季数 × 4`。**未调季节性**，淡旺季分明的行业会被系统性高/低估。只作对照，引用必须注明。
 - `pe_ttm_market` 是 `daily_basic` 的市场口径 PE-TTM。它和 `pe_ttm_np` 应当接近；**明显不一致时以市场口径为准并检查报表取数**（实测格力 7.77 对 7.77、兆易 111.56 对 111.56，这是一条有效的自检线）。
 - **`*_note` 要读**：`np_nonpositive`（亏损，不给 PE）、`np_missing`、`mv_missing`。扭亏但绝对利润很小的票年化 PE 会飙到数百上千倍——那是低基数失真，不是"贵"，改讲绝对额。
-- 红线：PE 只是估值参照证据，"贵不贵、值不值"要结合成长性与质量由模型判断（估值深判见 a-stock-earnings-review 的 `pricing.md`<!-- repo-only -->，完整个股研究用 `a-stock-analyzer`<!-- /repo-only -->）。
+- 红线：PE 只是估值参照证据，"贵不贵、值不值"要结合成长性与质量由模型判断（估值深判见 `skills/a-stock-earnings-review/references/pricing.md`<!-- repo-only -->，完整个股研究用 `a-stock-analyzer`<!-- /repo-only -->）。
 
 ## 七、字段字典（`report_scan.py` 输出）
 
@@ -126,7 +126,7 @@ SKILL.md 只放纲要，这里放判断锚点、拆解语义、字段字典和�
 
 ## 八、业绩-股价断层（正式财报版）
 
-核心命题和预告一致：观察的不是业绩本身，而是「业绩 × 股价反应」。本节只看披露日前后的断层；若同季先出过预告，市场的第一次反应在预告日，正式报告更多是质量验证。公告前累计涨幅与超额、估值抬升占比与估值分位见 a-stock-earnings-review 的 `price_validation.md` 与 `pricing.md`。锚点是**实际披露日**（`price_reaction.anchor_ann_date`），正式财报多在盘后披露，反应落在次一交易日。
+核心命题和预告一致：观察的不是业绩本身，而是「业绩 × 股价反应」。本节只看披露日前后的断层；若同季先出过预告，市场的第一次反应在预告日，正式报告更多是质量验证。公告前累计涨幅与超额、估值抬升占比与估值分位见 `skills/a-stock-earnings-review/references/price_validation.md` 与 `skills/a-stock-earnings-review/references/pricing.md`。锚点是**实际披露日**（`price_reaction.anchor_ann_date`），正式财报多在盘后披露，反应落在次一交易日。
 
 | 字段 | 含义 |
 |---|---|

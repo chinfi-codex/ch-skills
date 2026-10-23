@@ -342,6 +342,44 @@ def _mentions(text: str, term: str, python: bool) -> list[int]:
     return hits
 
 
+FILE_REF = re.compile(r"`([^`\n]+)`|\]\(([^)\s]+)\)")
+FILE_EXT = re.compile(r"\.(py|md|json|ya?ml|txt|css|js|html|sql|csv)$")
+# Runtime artifacts and placeholders are not package files.
+NOT_A_PACKAGE_FILE = re.compile(r"[<>*{}$]|^~|^/|^https?:|^reports/|^\.\.")
+
+
+def audit_file_refs(stage: Path) -> list[str]:
+    """Every file a shipped Markdown names in backticks or a link must exist in the package.
+
+    Inside a skill, a reference resolves against the file's own folder or the skill
+    root, and a bare file name may live anywhere in that skill. Anything in another
+    skill, and anything named from agents/ or the package root, must be written
+    as a package path `skills/<skill>/...`. This mirrors the platform review, which
+    rejects a package whose documents name files it cannot find.
+    """
+    problems = []
+    for md in sorted(stage.rglob("*.md")):
+        rel = md.relative_to(stage)
+        in_skill = rel.parts[0] == "skills" and len(rel.parts) > 2
+        skill_root = stage / rel.parts[0] / rel.parts[1] if in_skill else None
+        skill_names = ({p.name for p in skill_root.rglob("*") if p.is_file()} if skill_root else set())
+        text = md.read_text(encoding="utf-8")
+        for m in FILE_REF.finditer(text):
+            token = (m.group(1) or m.group(2)).strip()
+            ref = token.split()[0]
+            if not FILE_EXT.search(ref) or NOT_A_PACKAGE_FILE.search(ref):
+                continue
+            if ref.startswith("skills/") and (stage / ref).is_file():
+                continue
+            if (md.parent / ref).is_file() or (skill_root and (skill_root / ref).is_file()):
+                continue
+            if in_skill and "/" not in ref and ref in skill_names:
+                continue
+            line = text[:m.start()].count("\n") + 1
+            problems.append(f"{rel}:{line} names missing file '{ref}'")
+    return problems
+
+
 def audit_references(stage: Path, manifest: dict[str, Any]) -> list[str]:
     """Shipped text must not send the model to skills or paths that are not in the package."""
     terms = outside_skill_names(manifest) + REPO_ONLY_TERMS
@@ -410,7 +448,7 @@ def build(expert_dir: Path, out_dir: Path, author_email: str | None, check_only:
     with tempfile.TemporaryDirectory() as tmp:
         stage = Path(tmp) / plugin["name"]
         warnings = assemble(expert_dir, plugin, manifest, stage)
-        problems = audit_stage(stage) + audit_references(stage, manifest)
+        problems = audit_stage(stage) + audit_references(stage, manifest) + audit_file_refs(stage)
         if problems:
             raise PackageError("; ".join(problems))
         out_dir.mkdir(parents=True, exist_ok=True)

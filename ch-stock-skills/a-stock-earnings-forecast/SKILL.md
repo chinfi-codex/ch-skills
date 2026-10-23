@@ -113,7 +113,7 @@ python3 scripts/render_period_html.py --period 20260630 --require-ann-cutoff "$N
 
 HTML 渲染参数：`--require-ann-cutoff YYYYMMDD` 是发布门禁；它要求 evidence 同时具备相同的 `meta.ann_cutoff`、`ann_cutoff_stock_count` 与 `clock_timezone=Asia/Shanghai`，否则返回非零并拒绝生成 HTML。
 
-HTML 产物不是孤立单文件：`reports/forecast_<period>.html` 是轻量首屏和完整股票/判分/趋势视图；`reports/forecast_<period>.klines/` 是 K 线按需分片（含 `_manifest.json`）。复制到 Site 时两者必须保持同级相对路径；若仅复制 HTML，列表仍可用，但 K 线会明确提示分片加载失败。
+HTML 产物不是孤立单文件：`reports/forecast_<period>.html` 是轻量首屏和完整股票/判分/趋势视图；`reports/forecast_<period>.klines/` 是 K 线按需分片（含 `forecast_<period>.klines/_manifest.json`）。复制到 Site 时两者必须保持同级相对路径；若仅复制 HTML，列表仍可用，但 K 线会明确提示分片加载失败。
 
 输出 JSON 结构（关键字段，完整字典见 `references/methodology.md`）：
 

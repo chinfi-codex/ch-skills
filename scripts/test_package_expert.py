@@ -67,6 +67,26 @@ class ReferenceAuditTests(unittest.TestCase):
             self.assertFalse(any(p.startswith("a.md") for p in problems), problems)
 
 
+class FileReferenceAuditTests(unittest.TestCase):
+    def test_references_must_resolve_inside_the_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = Path(tmp)
+            (stage / "agents").mkdir()
+            skill = stage / "skills" / "alpha"
+            (skill / "scripts").mkdir(parents=True)
+            (skill / "references").mkdir()
+            (skill / "scripts" / "run.py").write_text("", encoding="utf-8")
+            (skill / "references" / "guide.md").write_text(
+                "跑 `run.py --x`，见 `references/guide.md`，输出 `reports/out_<P>.json`；"
+                "另见 `references/other.md`", encoding="utf-8")
+            (stage / "agents" / "a.md").write_text(
+                "用 `run.py`；用 `skills/alpha/scripts/run.py --x`", encoding="utf-8")
+            problems = pe.audit_file_refs(stage)
+            self.assertEqual(len(problems), 2, problems)
+            self.assertTrue(any("other.md" in p for p in problems))       # missing in the skill
+            self.assertTrue(any(p.startswith("agents/a.md") and "'run.py'" in p for p in problems))
+
+
 class BuildTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

@@ -27,13 +27,13 @@ version: 1.0.0
 
 1. **定报告期，看披露进度**。用户没说哪一期时，取今天之前最近的季度末；在预告窗口（1 月、4 月、7 月、10 月）里，说明预告和正式报告各披露了多少。
 2. **两类数据都取**：
-   - 业绩预告：按 a-stock-earnings-forecast 的流程跑 `forecast_scan.py --period P`（没有 Tushare 也能跑，只出巨潮公告事实）。
-   - 正式报告：按 a-stock-quarterly-report 的流程跑 `report_scan.py --period P`（需要 Tushare 财报接口；没有权限时如实说明本期只有推断模式）。
+   - 业绩预告：按 a-stock-earnings-forecast 的流程跑 `skills/a-stock-earnings-forecast/scripts/forecast_scan.py --period P`（没有 Tushare 也能跑，只出巨潮公告事实）。
+   - 正式报告：按 a-stock-quarterly-report 的流程跑 `skills/a-stock-quarterly-report/scripts/report_scan.py --period P`（需要 Tushare 财报接口；没有权限时如实说明本期只有推断模式）。
    - 本期正式报告还没开始披露时，只跑预告；预告期已过、正式报告已齐时，预告扫描仍然要跑，用于兑现度和"预告期怎么判、正式报告怎么验证"的对照。
 3. **合并**：`python3 scripts/season_merge.py --period P`，得到 `reports/season_P.json`，每家公司一条，带 `mode`、预告块、正式报告块、两个公告锚点、已有判分，以及两类样本合用的 `industry_rollup`。缺 Tushare 时行业和市值用东财全市场快照补齐。
-4. **业绩判断**：按 `unified_framework.md` 逐只分档。文件可能有几千家，**不要整份读进对话**：用 Python 先按 `mode`、`headline` 增速、预告类型筛出候选，再分批（每批 30～50 家）读细节。推断模式的判断写进预告台账（a-stock-earnings-forecast 的 `verdict.py record`），深挖模式写进正式报告台账（a-stock-quarterly-report 的 `verdict.py record`）；已经判过的公司只看新增和需要复判的。
+4. **业绩判断**：按 `unified_framework.md` 逐只分档。文件可能有几千家，**不要整份读进对话**：用 Python 先按 `mode`、`headline` 增速、预告类型筛出候选，再分批（每批 30～50 家）读细节。推断模式的判断写进预告台账（`skills/a-stock-earnings-forecast/scripts/verdict.py record`），深挖模式写进正式报告台账（`skills/a-stock-quarterly-report/scripts/verdict.py record`）；已经判过的公司只看新增和需要复判的。
 5. **资金面与定价**：对强档和靠前的中档（一般 20～60 家）跑 `python3 scripts/price_context.py --period P --codes A,B,...`，读 `reports/price_context_P.json`，按 `price_validation.md` 判定价进度、按 `pricing.md` 判估值阶段。行业级景气明显的，挑几家同行一起跑，比较涨幅。
-6. **单家追问**：用户点名某家公司时，把它的预告块、正式报告块、价格事件和估值放在一起讲；需要同行中位时对 3～5 家可比公司跑 `price_context.py`；需要原文时用 `report_pdf.py` 或公告原文。
+6. **单家追问**：用户点名某家公司时，把它的预告块、正式报告块、价格事件和估值放在一起讲；需要同行中位时对 3～5 家可比公司跑 `price_context.py`；需要原文时用 `skills/a-stock-quarterly-report/scripts/report_pdf.py` 或公告原文。
 7. **出报告**，按下面的输出规范；HTML 仍由两个扫描技能各自渲染，结尾给出路径。
 
 ## 数据获取
@@ -55,17 +55,17 @@ python3 scripts/price_context.py --period 20260930 --codes ... --source tushare 
 - **数据库**：`season_merge.py` 读判分台账，走共享连接层 `scripts/_shared/db_core.py`<!-- repo-only -->（开发态为仓库 `shared/data/`）<!-- /repo-only -->；数据库不可用时判分为空，不影响合并。
 - 依赖：`requests`（行情与估值）；合并只用标准库。
 
-`season_P.json` 每条记录的关键字段：
+`reports/season_<P>.json` 每条记录的关键字段：
 
 - `mode`：`deep`（正式报告利润表已取到）/ `inference`（只有预告）。
 - `headline`：累计同比、单季同比、环比，`source` 标明取自正式报告还是预告。
 - `forecast`：预告类型、净利区间与中值、上年同期及其解析来源、三口径、扣非中值与置信度、trailing 营收、预告年化 PE、变动原因（截断 300 字）。
-- `formal`：营收与归母的累计和单季同比、环比，扣非占比，现金流覆盖，单季毛利率及同比变化，年化 ROE，合同负债同比，扣非 TTM PE，总市值，兑现度 `in_range`，机械命中 `hits`，是否进入正式报告决策包 `shortlisted`。深挖细节回到 `qreport_scan_P.json` 读。
+- `formal`：营收与归母的累计和单季同比、环比，扣非占比，现金流覆盖，单季毛利率及同比变化，年化 ROE，合同负债同比，扣非 TTM PE，总市值，兑现度 `in_range`，机械命中 `hits`，是否进入正式报告决策包 `shortlisted`。深挖细节回到 `reports/qreport_scan_<P>.json` 读。
 - `anchors`：`forecast`（预告首次披露日）、`formal`（正式报告披露日）。
 - `verdicts`：两本台账里已有的判分。
 - `market`：东财快照的总市值与 PE_TTM。
 
-`price_context_P.json` 的字段含义见 `price_validation.md` §一与 `pricing.md` §四。
+`reports/price_context_<P>.json` 的字段含义见 `price_validation.md` §一与 `pricing.md` §四。
 
 ## 输出规范
 

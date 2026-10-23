@@ -1,0 +1,42 @@
+# WorkBuddy expert package manifest (read by scripts/package_expert.py).
+#
+# plugin.json / agents / avatars / README.md in this directory are copied as-is;
+# each skill below is copied from its canonical source in this repo, given the
+# shared bundles skill-sync.yaml assigns it, stripped to runtime assets, and
+# has the WorkBuddy skill frontmatter fields added.
+#
+# `package_name` is the folder name inside the zip and must match the
+# plugin.json "skills" entry ("./skills/<package_name>") and the agent's
+# frontmatter `skills:` list.
+
+skills:
+  - source: ch-stock-skills/chstock-env-setup
+    package_name: chstock-env-setup
+    display_name: A股研究环境自检
+    display_name_en: A-Share Research Environment Check
+    description_zh: 检查依赖、Tushare 接口权限、数据库与网络，保存 token 和本地数据库配置。
+    description_en: Checks dependencies, Tushare endpoint permissions, database and network, and saves the token and local database settings.
+  - source: ch-stock-skills/a-stock-earnings-forecast
+    package_name: a-stock-earnings-forecast
+    display_name: A股业绩预告扫描
+    display_name_en: A-Share Earnings Forecast Scanner
+    description_zh: 以巨潮公告为主源扫描全市场业绩预告，拆三口径增速与扣非含金量，筛选优秀个股并生成 HTML。
+    description_en: Scans all A-share earnings forecasts from CNInfo filings, decomposes growth and recurring-profit quality, and renders an HTML screen.
+  - source: ch-stock-skills/a-stock-quarterly-report
+    package_name: a-stock-quarterly-report
+    display_name: A股正式财报扫描
+    display_name_en: A-Share Periodic Report Scanner
+    description_zh: 扫描全市场季报/半年报/年报，判扣非、现金流与应收存货等利润质量，筛选优秀个股并生成 HTML。
+    description_en: Scans all A-share periodic reports, checks profit quality via recurring profit, cash flow and working capital, and renders an HTML screen.
+  - source: ch-stock-skills/chstock-cninfo-announcement
+    package_name: cninfo-announcement-search
+    display_name: 巨潮公告检索
+    display_name_en: CNInfo Announcement Search
+    description_zh: 按公司、日期和类别检索巨潮资讯公告，筛选问询、回购、减持、合作等公告并导出证据。
+    description_en: Searches CNInfo announcements by company, date and category, and exports filtered filings as evidence.
+  - source: ch-stock-skills/chstock-interactive-qa
+    package_name: chstock-interactive-qa
+    display_name: 互动问答检索
+    display_name_en: Investor Q&A Search
+    description_zh: 检索上市公司在互动易/全景网的投资者问答，按公司和关键词过滤并导出证据。
+    description_en: Searches listed companies' investor Q&A replies by company and keyword, and exports them as evidence.

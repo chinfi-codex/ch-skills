@@ -46,7 +46,7 @@ description: A 股正式季报/半年报/年报全市场扫描与优秀个股筛
 3. **模型读证据做初筛**：读决策包（不要读全样本文件，它是给查询和渲染用的）。按方法论**逐股判断是否优秀并排序**——用 `growth`（四条线三口径）、`quality`（三件套）、`margins`（边际 pp）、`balance_signals`（前瞻）、`fulfillment`（兑现度）、`screen.hits`（机械命中，不是结论）。先圈出「强 / 中 / 观察」候选池。
 4. **需要原文才开 PDF**：数字之外的问题——增长来自哪个产品线？管理层怎么解释毛利率变化？非经常损益是处置还是补助？——用 `python3 scripts/report_pdf.py --period 20260630 --code 300750.SZ --sections segment,mdna,nonrecurring`。**不要凭数字编故事**：没读原文就说不出"因为某产品放量"。何时该开、开哪一节、季报和年报的差别见 `references/pdf_on_demand.md`。
 5. **判分 + 质量成色 + 兑现度 + 主线匹配 + 行业趋势落台账**：跑 `python3 scripts/verdict.py context --period 20260630` 拿到待判集合（新披露 + 追溯调整/增速漂移的待复判）、主线注册表（daily-market-sense 的 `theme_registry`，只读）与待判主线的强/弱/无断层成员简报。模型逐只判 **`tier`（强/中/观察/剔除）+ `quality_call`（扎实/尚可/存疑/虚高）+ `fulfillment`（超预告上限/落区间上沿/符合/落区间下沿/低于预告/无预告）+ `theme_id`**，逐主线判 `theme_trends[]`。写 `reports/qreport_verdict_<period>.json`，再 `python3 scripts/verdict.py record --period 20260630 --input reports/qreport_verdict_<period>.json` 落 `qreport_verdict` / `qreport_theme_trend`。台账增量累积，每天只判 context 列出的增量。细则见 `references/verdict_and_html.md`。
-6. **生成报告期 HTML**：`python3 scripts/render_period_html.py --period 20260630`；发布链路必须加 `--require-ann-cutoff "$NEXT_ANN_DATE"`。一期一页、每次从累积缓存整页重渲染：过滤条 → 左列表 + 右详情（详情以利润质量三件套开头，然后兑现度、资产负债表前瞻、K 线与断层）。**HTML 默认剔除 `theme_id=null` 的无归属主线个股**；仅在调试或人工复核时加 `--include-unassigned` 恢复全部候选。默认按**披露时间**排序。K 线走同级 `qreport_<period>.klines/` 分片，**发布时必须连同该目录一起复制**。
+6. **生成报告期 HTML**：`python3 scripts/render_period_html.py --period 20260630`；发布链路必须加 `--require-ann-cutoff "$NEXT_ANN_DATE"`。一期一页、每次从累积缓存整页重渲染：过滤条 → 左列表 + 右详情（详情以利润质量三件套开头，然后兑现度、资产负债表前瞻、K 线与断层）。**HTML 默认剔除 `theme_id=null` 的无归属主线个股**；仅在调试或人工复核时加 `--include-unassigned` 恢复全部候选。主线台账为空（独立安装、没跑 daily-market-sense）时自动包含全部候选，否则页面会是空的。默认按**披露时间**排序。K 线走同级 `qreport_<period>.klines/` 分片，**发布时必须连同该目录一起复制**。
 7. **（可选）写 Markdown 报告**：需要叙事版时按 `references/output_template.md` 输出。
 8. **诚实标注缺口**：`*_note` 里的 `base_missing/base_nonpositive/cur_missing`、`dedt_note=dedt_missing`、金融类公司无 `oper_cost` 导致毛利率为空、`pre_pos_bars` 不足一年、上游尚未收录本期报表的家数、`theme_registry` 为空（需先跑 daily-market-sense）都要如实说明。
 
@@ -57,13 +57,13 @@ description: A 股正式季报/半年报/年报全市场扫描与优秀个股筛
 环境变量：
 
 ```bash
-TUSHARE_TOKEN=your_token          # 见 ~/.zshrc 的 export；脚本也会回退读 cwd/.env
+TUSHARE_TOKEN=your_token          # 见 ~/.zshrc 的 export；脚本也会回退读 cwd/.env，再读 ~/.ch-skills/config.env
 ALPHA_DB_BACKEND=postgresql
 ALPHA_PG_URL=postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp
 # TUSHARE_CALLS_PER_MIN=180       # 每接口限速，默认 180（Tushare 上限 200）
 ```
 
-**PostgreSQL 是默认与推荐后端**，累积台账以它为准。DB 不可用时脚本降级为「全量抓取、不落库」（`meta.fetch_stats.cache=off`），仍能出报告，只是每次都重抓——这是容错，不是常态。
+**PostgreSQL 是默认与推荐后端**，累积台账以它为准；独立安装由 `chstock-env-setup` 在 `~/.ch-skills/config.env` 写入 SQLite。没有 token 时 `report_scan.py` 返回 `{"error": "tushare_required"}`（退出码 2），本 skill 没有非 Tushare 数值源。DB 不可用时脚本降级为「全量抓取、不落库」（`meta.fetch_stats.cache=off`），仍能出报告，只是每次都重抓——这是容错，不是常态。
 
 依赖：`pip install tushare pandas requests PyMuPDF PyPDF2 psycopg2-binary`（见 `requirements.txt`；PDF 两件只在 `report_pdf.py` 用到）。CNInfo 走公开披露接口，用 `requests` 直连（不经 WebFetch，避免本机代理拦截）。
 

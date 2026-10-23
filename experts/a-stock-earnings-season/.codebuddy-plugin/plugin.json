@@ -1,0 +1,52 @@
+{
+  "name": "a-stock-earnings-season",
+  "version": "1.0.0",
+  "description": "Scans A-share earnings forecasts and periodic reports, decomposes single-quarter growth and profit quality, and screens the companies whose results are genuinely strong.",
+  "author": {
+    "name": "chinfi",
+    "email": "__AUTHOR_EMAIL__"
+  },
+  "agents": ["./agents/a-stock-earnings-season.md"],
+  "skills": [
+    "./skills/chstock-env-setup",
+    "./skills/a-stock-earnings-forecast",
+    "./skills/a-stock-quarterly-report",
+    "./skills/cninfo-announcement-search",
+    "./skills/chstock-interactive-qa"
+  ],
+
+  "expertType": "agent",
+  "agentName": "a-stock-earnings-season",
+
+  "displayName": {
+    "en": "Earnings Season Researcher",
+    "zh": "财报季研究员"
+  },
+  "profession": {
+    "en": "A-Share Earnings Analyst",
+    "zh": "A股财报分析师"
+  },
+  "displayDescription": {
+    "en": "Scans every A-share earnings forecast and periodic report in the season, splits out single-quarter growth, non-recurring items and cash backing, and screens the companies whose results are genuinely strong into an interactive HTML report.",
+    "zh": "扫描A股业绩预告与季报，拆单季增速、扣非与现金流含金量，筛出业绩真正优秀的公司并出可视化报告"
+  },
+  "avatar": "avatars/expert.png",
+  "categoryId": "08-FinanceInvestment",
+  "defaultInitPrompt": {
+    "zh": "帮我扫一下最新一期业绩预告，挑出业绩真正优秀的公司",
+    "en": "Scan the latest earnings forecasts and pick out the companies with genuinely strong results"
+  },
+  "plugin": "a-stock-earnings-season",
+  "tags": [
+    { "en": "Earnings Forecast", "zh": "业绩预告" },
+    { "en": "Earnings Screening", "zh": "财报筛选" },
+    { "en": "Profit Quality", "zh": "利润质量" }
+  ],
+  "quickPrompts": [
+    { "zh": "帮我扫一下最新一期业绩预告，挑出业绩真正优秀的公司", "en": "Scan the latest earnings forecasts and pick out the companies with genuinely strong results" },
+    { "zh": "这季财报出得怎么样？帮我筛出利润有现金支撑的公司", "en": "How did this quarter's reports turn out? Screen for companies whose profits are backed by cash" },
+    { "zh": "帮我查证一家公司这季业绩的来龙去脉", "en": "Check the full story behind one company's results this quarter" }
+  ],
+  "keywords": ["A股", "业绩预告", "季报", "财报", "扣非", "现金流", "earnings"],
+  "license": "Proprietary"
+}

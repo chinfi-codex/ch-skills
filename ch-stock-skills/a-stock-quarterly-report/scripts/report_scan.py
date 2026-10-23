@@ -1180,7 +1180,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         "orderbook": args.th_orderbook, "capex": args.th_capex, "gap_pp": args.th_gap_pp,
     }
 
-    pro = TushareProxy(get_tushare_pro())
+    try:
+        pro = TushareProxy(get_tushare_pro())
+    except RuntimeError as exc:
+        # Formal statements have no non-Tushare source here; stop with a readable reason.
+        print(json.dumps({"error": "tushare_required", "message": str(exc)}, ensure_ascii=False))
+        return 2
     store = Store(enabled=not args.no_cache)
     if not store.available:
         notes.append(f"缓存不可用，本次全量抓取：{store.reason}")

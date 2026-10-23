@@ -42,7 +42,7 @@ import pandas as pd
 from cninfo_client import list_forecast_announcements
 from cninfo_enrich import enrich_announcement, forecast_row_from_enrich
 from store import FORECAST_COLS, Store
-from tushare_client import TushareProxy, get_tushare_pro
+from tushare_client import TushareProxy, TushareUnavailable, get_tushare_pro, get_tushare_token
 
 YI = 1e8            # 元 -> 亿元
 WAN = 1e4          # 万元 -> 元
@@ -195,7 +195,10 @@ def to_yi(x: Optional[float]) -> Optional[float]:
 # Forecast scan
 # --------------------------------------------------------------------------- #
 def trading_days(pro: TushareProxy, start: str, end: str) -> List[str]:
-    cal = pro.trade_cal(exchange="SSE", start_date=start, end_date=end, is_open="1")
+    try:
+        cal = pro.trade_cal(exchange="SSE", start_date=start, end_date=end, is_open="1")
+    except Exception:  # noqa: BLE001 - callers treat [] as "calendar unknown"
+        return []
     if cal is None or cal.empty:
         return []
     return sorted(str(d) for d in cal["cal_date"].tolist())
@@ -547,10 +550,18 @@ def build_cninfo_primary_forecasts(store: Store, period: str, announcements: Lis
                 "change_reason": "", "update_flag": "1" if any(t in title for t in ("修正", "更正")) else "0",
             }
             structured_source = "cninfo_unparsed"
+        base = parsed.get("parent_base_yi") or {}
+        if row.get("last_parent_net") in (None, "") and base.get("value") is not None:
+            # Tushare had no base (or is off): the unvalidated parse beats nothing,
+            # and its confidence travels with the record.
+            row["last_parent_net"] = float(base["value"]) * 10000.0
         cn_rows[code] = row
         source_index[code] = {
             "authority": "cninfo", "discovery_source": "cninfo",
             "structured_source": structured_source,
+            "sec_name": ann.get("name") or parsed.get("sec_name") or "",
+            "parent_base": ({"source": base.get("source"), "confidence": base.get("confidence")}
+                            if base.get("value") is not None else None),
             "announcement_id": ann.get("announcement_id"),
             "title": ann.get("title"), "url": ann.get("url"),
         }
@@ -615,6 +626,9 @@ def fetch_total_mv(pro: TushareProxy, today: dt.date, notes: List[str]) -> Tuple
     close, so step back through the last few trade days until rows appear."""
     days = trading_days(pro, (today - dt.timedelta(days=15)).strftime("%Y%m%d"),
                         today.strftime("%Y%m%d"))
+    if not days:
+        notes.append("trade_cal 不可用，无法定位最近交易日——本次无总市值，年化PE缺失。")
+        return {}, None
     for day in reversed(days[-3:]):
         try:
             df = pro.daily_basic(trade_date=day, fields=DAILY_BASIC_FIELDS)
@@ -773,7 +787,7 @@ def build_stock_record(row: pd.Series, cache: CumCache, period: str,
 
     return {
         "ts_code": ts_code,
-        "name": info.get("name", ""),
+        "name": info.get("name") or (source_info or {}).get("sec_name", ""),
         "industry": info.get("industry", ""),
         "area": info.get("area", ""),
         "market": info.get("market", ""),
@@ -876,12 +890,17 @@ def fetch_all_basic(pro: TushareProxy) -> Dict[str, Dict[str, str]]:
     return out
 
 
-def resolve_basic(pro: TushareProxy, store: Store, ts_codes: List[str]) -> Dict[str, Dict[str, str]]:
+def resolve_basic(pro: TushareProxy, store: Store, ts_codes: List[str],
+                  notes: List[str]) -> Dict[str, Dict[str, str]]:
     """Cache-first stock_basic: one Tushare bulk call only when new codes appear."""
     basic = store.load_basic(ts_codes)
     missing = [c for c in ts_codes if c not in basic]
     if missing:
-        fetched = fetch_all_basic(pro)
+        try:
+            fetched = fetch_all_basic(pro)
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"stock_basic 取数失败: {str(exc)[:80]}——{len(missing)} 家缺行业，名称改用公告简称。")
+            return basic
         store.upsert_basic(fetched)
         for c in ts_codes:
             if c in fetched:
@@ -907,15 +926,17 @@ def needed_income_periods(period: str) -> Set[str]:
 
 
 def fetch_income_periods(pro: TushareProxy, ts_code: str, period: str,
-                         needed: Set[str]) -> Dict[str, Dict[str, Any]]:
+                         needed: Set[str]) -> Optional[Dict[str, Dict[str, Any]]]:
     """ONE income range call → period-end -> {n_income_attr_p, revenue, ann_date}.
-    Periods the API doesn't return are NULL-filled so newly-listed gaps aren't re-queried."""
+    Periods the API doesn't return are NULL-filled so newly-listed gaps aren't re-queried.
+    A failed call returns None: caching NULLs for it would hide the actuals forever
+    once the token gains permission."""
     start = f"{quarter_of(period)[0] - 1}0101"
     end = beijing_today().strftime("%Y%m%d")
     try:
         df = pro.income(ts_code=ts_code, start_date=start, end_date=end, fields=INCOME_FIELDS)
     except Exception:  # noqa: BLE001
-        df = None
+        return None
 
     fetched: Dict[str, Dict[str, Any]] = {}
     if df is not None and not df.empty:
@@ -932,9 +953,10 @@ def fetch_income_periods(pro: TushareProxy, ts_code: str, period: str,
 
 
 def gather_income(pro: TushareProxy, store: Store, ts_codes: List[str], period: str,
-                  refresh: bool, workers: int) -> Tuple[Dict[str, Dict[str, Dict[str, Any]]], int]:
+                  refresh: bool, workers: int) -> Tuple[Dict[str, Dict[str, Dict[str, Any]]], int, int]:
     """Batch-load cached income for all candidates, concurrently fetch only the
-    misses, then batch-write them once. Returns {ts_code: {period: {...}}} + #API calls."""
+    misses, then batch-write them once. Returns {ts_code: {period: {...}}} + #API calls
+    + #failed calls (not cached, retried next run)."""
     needed = needed_income_periods(period)
     result: Dict[str, Dict[str, Dict[str, Any]]] = {
         c: dict(v) for c, v in store.load_income_many(ts_codes).items()
@@ -944,15 +966,19 @@ def gather_income(pro: TushareProxy, store: Store, ts_codes: List[str], period: 
     to_fetch = [c for c in ts_codes if refresh or not all(p in result[c] for p in needed)]
 
     upsert_records: List[Dict[str, Any]] = []
+    failed = 0
     if to_fetch:
         with ThreadPoolExecutor(max_workers=max(1, min(workers, len(to_fetch)))) as ex:
             fetched_all = ex.map(lambda c: fetch_income_periods(pro, c, period, needed), to_fetch)
             for code, by_period in zip(to_fetch, fetched_all):
+                if by_period is None:
+                    failed += 1
+                    continue
                 result[code].update(by_period)
                 for p, v in by_period.items():
                     upsert_records.append({"ts_code": code, "period": p, **v})
     store.upsert_income_many(upsert_records)
-    return result, len(to_fetch)
+    return result, len(to_fetch), failed
 
 
 # --------------------------------------------------------------------------- #
@@ -1214,6 +1240,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--gap-min", type=float, default=2.0,
                     help="跳空开盘幅度 >= N%% 记为断层(gap flag)，默认 2.0。")
     ap.add_argument("--no-price", action="store_true", help="跳过股价反应(净利润断层)计算。")
+    ap.add_argument("--no-tushare", action="store_true",
+                    help="不调用 Tushare：只出 CNInfo 公告事实（无 TUSHARE_TOKEN 时自动启用）。")
     ap.add_argument("--out", help="Output JSON path. Default: reports/forecast_scan_<period>.json")
     ap.add_argument("--stdout", action="store_true", help="Also print the full JSON to stdout.")
     args = ap.parse_args(argv)
@@ -1244,7 +1272,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     store = Store(enabled=not args.no_cache)
     refresh_income = args.refresh_income or args.rebuild
     workers = max(1, args.fetch_workers)
-    pro = TushareProxy(get_tushare_pro())
+    if args.no_tushare or not get_tushare_token():
+        tushare_reason = "--no-tushare" if args.no_tushare else "未配置 TUSHARE_TOKEN"
+        pro = TushareUnavailable(tushare_reason)
+        notes.append(
+            f"Tushare 未启用（{tushare_reason}）：本次只出 CNInfo 公告事实——归母/扣非预告区间、"
+            "上年同期、变动原因、公告原文。单季拆解、trailing 营收、年化PE、股价断层、行业"
+            "均为空；配置 Tushare 后重跑即可补齐（CNInfo 缓存复用，不重下 PDF）。"
+        )
+    else:
+        tushare_reason = ""
+        pro = TushareProxy(get_tushare_pro())
     cninfo_announcements, cninfo_stats = scan_cninfo_incremental(
         store, period, start_ann, end_ann, args.refetch_days, args.rebuild, workers, notes,
     )
@@ -1256,9 +1294,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             "message": "CNInfo是主发现源；公告扫描未完整成功，已停止且不会用Tushare替代生成新报告。",
         }, ensure_ascii=False, indent=2), file=sys.stderr)
         return 3
-    tushare_rows, tushare_stats = scan_forecasts_incremental(
-        pro, store, period, start_ann, end_ann, args.refetch_days, args.rebuild, workers, notes,
-    )
+    if tushare_reason:
+        tushare_rows, tushare_stats = [], {"forecasts_total": 0, "tushare": "skipped"}
+    else:
+        tushare_rows, tushare_stats = scan_forecasts_incremental(
+            pro, store, period, start_ann, end_ann, args.refetch_days, args.rebuild, workers, notes,
+        )
     forecasts, source_stats, enrich_payload, source_index = build_cninfo_primary_forecasts(
         store, period, cninfo_announcements, tushare_rows, workers, notes,
     )
@@ -1274,15 +1315,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     stocks: List[Dict[str, Any]] = []
     income_missing: List[str] = []
     income_calls = 0
+    income_failed = 0
     price_calls = 0
     mv_asof: Optional[str] = None
     if forecasts:
         all_codes = [str(f["ts_code"]) for f in forecasts]
-        basic = resolve_basic(pro, store, all_codes)
-        income_by_code, income_calls = gather_income(pro, store, all_codes, period, refresh_income, workers)
+        basic = resolve_basic(pro, store, all_codes, notes)
+        income_by_code, income_calls, income_failed = gather_income(
+            pro, store, all_codes, period, refresh_income, workers)
+        if income_failed and not tushare_reason:
+            notes.append(f"income 取数失败 {income_failed} 家（未缓存，下次重取）——这些股票缺单季拆解与 trailing 营收。")
         mv_map, mv_asof = fetch_total_mv(pro, today, notes)
         reactions: Dict[str, Dict[str, Any]] = {}
-        if not args.no_price:
+        if not args.no_price and not tushare_reason:
             anchors = {
                 str(f["ts_code"]): str(f.get("first_ann_date") or f.get("ann_date") or "")
                 for f in forecasts
@@ -1313,6 +1358,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     stocks.sort(key=_sort_key)
     ann_cutoff_stock_count = sum(1 for s in stocks if str(s.get("ann_date") or "") == end_ann)
     fetch_stats["income_calls"] = income_calls
+    fetch_stats["income_failed"] = income_failed
     fetch_stats["income_from_cache"] = max(len(forecasts) - income_calls, 0)
     fetch_stats["price_fetch_stocks"] = price_calls
     fetch_stats["mv_asof"] = mv_asof
@@ -1345,6 +1391,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             "data_notes": notes,
             "primary_source": "cninfo",
             "tushare_role": "reconciliation_and_exception_fallback",
+            "tushare_status": {
+                "enabled": not tushare_reason,
+                "reason": tushare_reason or None,
+                "income_failed": income_failed,
+                "mv_available": mv_asof is not None,
+            },
         },
         "industry_summary": build_industry_summary(stocks),
         "stocks": stocks,
@@ -1360,6 +1412,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "positive": sum(1 for s in stocks if s["flags"]["positive_type"]),
         "accelerating": sum(1 for s in stocks if s["flags"]["accelerating"]),
         "income_missing": len(income_missing),
+        "tushare_enabled": not tushare_reason,
         "ann_cutoff": end_ann,
         "ann_cutoff_stock_count": ann_cutoff_stock_count,
         "fetch_stats": fetch_stats,

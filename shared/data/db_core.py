@@ -11,6 +11,10 @@ TCP fallback:
 Offline fallback:
     export ALPHA_DB_BACKEND=sqlite
     export ALPHA_SQLITE_DIR="~/AlphaData/db"
+
+Per-user config file (packaged installs, e.g. WorkBuddy experts):
+    ~/.ch-skills/config.env (or $CH_SKILLS_CONFIG), KEY=VALUE lines written by
+    chstock-env-setup. Real environment variables always win over the file.
 """
 
 from __future__ import annotations
@@ -42,6 +46,44 @@ class Backend(Enum):
 # Configuration from environment
 # ---------------------------------------------------------------------------
 DEFAULT_PG_URL = "postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp"
+USER_CONFIG_KEYS = (
+    "ALPHA_DB_BACKEND", "ALPHA_SQLITE_DIR", "ALPHA_PG_URL",
+    "ALPHA_PG_CONNECT_TIMEOUT", "ALPHA_PG_POOL_MAX",
+)
+
+
+def user_config_path() -> str:
+    return os.path.expanduser(
+        os.getenv("CH_SKILLS_CONFIG") or os.path.join("~", ".ch-skills", "config.env")
+    )
+
+
+def read_user_config(path: str | None = None) -> dict[str, str]:
+    """Parse the per-user KEY=VALUE config file; missing file -> {}."""
+    target = path or user_config_path()
+    out: dict[str, str] = {}
+    try:
+        with open(target, "r", encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, value = stripped.split("=", 1)
+                out[key.strip()] = value.strip().strip('"').strip("'")
+    except OSError:
+        return {}
+    return out
+
+
+def _apply_user_config() -> None:
+    # Only DB keys, and only where the environment is silent: an operator's
+    # explicit export must never be overridden by a file a setup script wrote.
+    for key, value in read_user_config().items():
+        if key in USER_CONFIG_KEYS and value and not os.getenv(key):
+            os.environ[key] = value
+
+
+_apply_user_config()
 
 
 def _read_backend() -> Backend:

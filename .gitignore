@@ -60,3 +60,6 @@ ch-news-reporter/selected_targets.json
 
 # 金库产业链简报：私有 skill，不上传 git
 ch-vault-chain-brief/
+
+# package_expert.py 产物(WorkBuddy 专家 zip)
+dist/

@@ -511,6 +511,7 @@ def build_view(period: str, evidence: Dict[str, Any], enrich: Optional[Dict[str,
         "ann_cutoff_is_next_day": cutoff_info["ann_cutoff"] == (
             today + dt.timedelta(days=1)).strftime("%Y%m%d"),
         "theme_registry_empty": len(themes) == 0,
+        "tushare_enabled": ((evidence.get("meta") or {}).get("tushare_status") or {}).get("enabled", True),
         "pos_split": pos_split,
         "trend_net": TREND_NET,
         "pe_buckets": pe_bucket_options(),
@@ -909,8 +910,11 @@ renderList();
 
 
 def render_html(view: Dict[str, Any], kline_assets: Optional[Dict[str, Any]] = None) -> str:
-    empty_note = ('<div class="foot">主线台账为空——归属与行业趋势需先运行 daily-market-sense 填充 theme 台账、再跑 verdict 判分归属。</div>'
-                  if view["theme_registry_empty"] else "")
+    empty_note = ('<div class="foot">未接入主线台账——主线归属与行业趋势栏为空；如需归属，先运行 daily-market-sense '
+                  '填充 theme 台账、再跑 verdict 判分归属。</div>' if view["theme_registry_empty"] else "")
+    if not view.get("tushare_enabled", True):
+        empty_note += ('<div class="foot">未接入 Tushare——本页只含巨潮公告事实（预告区间、上年同期、变动原因、原文）；'
+                       '单季拆解、营收、年化PE、股价断层与行业为空，配置 TUSHARE_TOKEN 后重跑 scan 即可补齐。</div>')
     ov = view.get("overview")
     if ov:
         stale_badge = '<span class="badge bstale">样本已更新，待复判</span>' if ov["stale"] else ""

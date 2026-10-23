@@ -21,6 +21,7 @@ version: 1.3.0
 5. **只覆盖已披露预告的公司。** 业绩平稳、未触发强制预告的公司可能根本没有预告——“没有预告”≠“业绩差”。
 6. **季初样本会偏少、随时间累积。** 过几天重跑或放宽 `--start-ann` 可补全。
 7. **公告日期不等于交易日。** 按日历日扫描，默认截止北京时间运行日+1；自动化显式传 `--end-ann` 并用 `--require-ann-cutoff` 做同日门禁。
+8. **没有 Tushare 也能出报告。** 未配置 `TUSHARE_TOKEN`（或传 `--no-tushare`）时，脚本跳过全部 Tushare 调用，只交付 CNInfo 公告事实：预告区间、上年同期（从公告表格/“上年同期业绩情况”段/“与上年同期相比增加X”推出，`source.parent_base` 标来源与置信度）、扣非、变动原因、原文、公告简称。单季拆解、trailing 营收、年化 PE、股价断层与行业为空，`meta.tushare_status.enabled=false`，HTML 页脚会注明。token 有效但个别接口无权限时，该阶段同样按失败降级、写入 `data_notes`，失败的 income 不落缓存，补权限后重跑即补齐。报告里要如实说这些栏位为空，不能拿空栏位推“没加速”。
 
 ## 领域方法论（纲要，判断细则见 `references/methodology.md`）
 
@@ -55,14 +56,14 @@ version: 1.3.0
 环境变量：
 
 ```bash
-TUSHARE_TOKEN=your_token          # 见 ~/.zshrc 的 export；脚本也会回退读 cwd/.env（仅本地读取，不随包发布）
+TUSHARE_TOKEN=your_token          # 见 ~/.zshrc 的 export；脚本也会回退读 cwd/.env，再读 ~/.ch-skills/config.env（chstock-env-setup 写入）
 # 存储/增量缓存统一走仓库共享连接层 shared/data/db_core.py，正式路径是 PostgreSQL：
 ALPHA_DB_BACKEND=postgresql
 ALPHA_PG_URL=postgresql://alpha_user:alpha_pass@/alpha_data?host=/tmp
 # ALPHA_DB_BACKEND=sqlite ALPHA_SQLITE_DIR=~/AlphaData/db   # 仅本地调试/无 PG 时临时用，不当持久台账
 ```
 
-**PostgreSQL 是默认与推荐后端**，累积台账以它为准；sqlite 只作离线调试或无 PG 时的临时兜底，别把 sqlite/降级结果当持久 truth。若连 DB 都不可用，脚本会兜底降级为「全量抓取、不落库」（`meta.fetch_stats.cache` 显示 `off`），仍能出报告、只是不省抓取——这是容错，不是常态运行方式。
+独立安装（如 WorkBuddy 专家包）由 `chstock-env-setup` 把 `ALPHA_DB_BACKEND=sqlite` 写进 `~/.ch-skills/config.env`，环境变量为空时 `db_core` 读它；真实环境变量永远优先。**PostgreSQL 是默认与推荐后端**，累积台账以它为准；sqlite 只作离线调试或无 PG 时的临时兜底，别把 sqlite/降级结果当持久 truth。若连 DB 都不可用，脚本会兜底降级为「全量抓取、不落库」（`meta.fetch_stats.cache` 显示 `off`），仍能出报告、只是不省抓取——这是容错，不是常态运行方式。
 
 依赖：`pip install tushare pandas requests PyMuPDF PyPDF2`（见 `requirements.txt`；后三者用于 CNInfo 主源公告抓取与 PDF 解析）。cninfo 走公开披露接口，用 `requests` 直连（不经 WebFetch，避免本机代理拦截）。
 
@@ -104,6 +105,7 @@ python3 scripts/render_period_html.py --period 20260630 --require-ann-cutoff "$N
 | `--fetch-workers` | forecast/income/日线 并发线程数（限流时设 1 串行） | 4 |
 | `--gap-min` | 跳空开盘幅度 ≥ N% 记为断层 | 2.0 |
 | `--no-price` | 跳过股价反应(净利润断层)计算 | 关闭 |
+| `--no-tushare` | 不调用 Tushare，只出 CNInfo 公告事实（无 token 时自动启用） | 关闭 |
 | `--out` / `--stdout` | 输出路径 / 同时打印完整 JSON | `reports/forecast_scan_<period>.json` |
 
 HTML 渲染参数：`--require-ann-cutoff YYYYMMDD` 是发布门禁；它要求 evidence 同时具备相同的 `meta.ann_cutoff`、`ann_cutoff_stock_count` 与 `clock_timezone=Asia/Shanghai`，否则返回非零并拒绝生成 HTML。
@@ -129,7 +131,7 @@ HTML 产物不是孤立单文件：`reports/forecast_<period>.html` 是轻量首
 - `meta`：`requested/found/missing`、`se_date`、`notes`。
 - `stocks[]`：每个候选一条。
   - `announcement`：`title/ann_date/url`（原文 PDF 链接）。
-  - `parsed`：`kf_net_profit_yi`（**扣非净利**，亿元，`low/high/point`）、`revenue_yi`（营收，多数为空）、`parent_net_yi`（归母，与 Tushare 交叉核对）、`revenue_disclosed`。每项带 `raw`（原文片段）与 `confidence`（high=单位贴着数字、med=用表头“单位：万元”推断）。
+  - `parsed`：`kf_net_profit_yi`（**扣非净利**，亿元，`low/high/point`）、`revenue_yi`（营收，多数为空）、`parent_net_yi`（归母，与 Tushare 交叉核对）、`parent_base_yi`（上年同期归母，`source=table/prior_period_section/derived_from_change`；`confidence=high` 表示隐含增速落在公告同比区间内，才会优先于 Tushare 基数）、`sec_name`、`revenue_disclosed`。每项带 `raw`（原文片段）与 `confidence`（high=单位贴着数字、med=用表头“单位：万元”推断）。
   - `text`：预告全文（预告很短，直接给模型核对 `parsed`、读完整变动原因）。
   - `notes`：如“公告未披露营业收入”“未检出扣非净利”。
 

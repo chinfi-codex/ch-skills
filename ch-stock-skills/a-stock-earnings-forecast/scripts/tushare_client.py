@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Tushare Pro client factory and retry proxy for the earnings-forecast skill.
 
-Token resolution order: TUSHARE_TOKEN env var, then cwd/.env. The proxy adds
-exponential-backoff retry for transient network/rate-limit errors only; auth and
-parameter errors are never retried.
+Token resolution order: TUSHARE_TOKEN env var, then cwd/.env, then
+~/.ch-skills/config.env. The proxy adds exponential-backoff retry for transient
+network/rate-limit errors only; auth and parameter errors are never retried.
 """
 
 from __future__ import annotations
@@ -19,33 +19,62 @@ except ImportError as exc:  # pragma: no cover - dependency guard
     raise RuntimeError("Missing dependency: install tushare before using this fetcher.") from exc
 
 
-def get_tushare_token() -> str:
-    """Read TUSHARE_TOKEN from the environment or cwd/.env."""
-    token = os.environ.get("TUSHARE_TOKEN", "").strip()
-    if token:
-        return token
+def user_config_path() -> str:
+    """Per-user config written by chstock-env-setup (same file db_core reads)."""
+    return os.path.expanduser(
+        os.environ.get("CH_SKILLS_CONFIG") or os.path.join("~", ".ch-skills", "config.env")
+    )
 
-    env_path = os.path.join(os.getcwd(), ".env")
-    if not os.path.exists(env_path):
+
+def _read_env_key(path: str, wanted: str) -> str:
+    if not os.path.exists(path):
         return ""
-
-    with open(env_path, "r", encoding="utf-8") as env_file:
+    with open(path, "r", encoding="utf-8") as env_file:
         for line in env_file:
             stripped = line.strip()
             if not stripped or stripped.startswith("#") or "=" not in stripped:
                 continue
             key, value = stripped.split("=", 1)
-            if key.strip() == "TUSHARE_TOKEN":
+            if key.strip() == wanted:
                 return value.strip().strip('"').strip("'")
     return ""
+
+
+def get_tushare_token() -> str:
+    """Read TUSHARE_TOKEN from the environment, cwd/.env, then ~/.ch-skills/config.env."""
+    token = os.environ.get("TUSHARE_TOKEN", "").strip()
+    if token:
+        return token
+    return (_read_env_key(os.path.join(os.getcwd(), ".env"), "TUSHARE_TOKEN")
+            or _read_env_key(user_config_path(), "TUSHARE_TOKEN"))
 
 
 def get_tushare_pro(token: Optional[str] = None):
     """Create a Tushare Pro client."""
     resolved_token = token or get_tushare_token()
     if not resolved_token:
-        raise RuntimeError("Missing TUSHARE_TOKEN. Set it in the environment or cwd/.env.")
+        raise RuntimeError(
+            "Missing TUSHARE_TOKEN. Set it in the environment, cwd/.env, "
+            "or run chstock-env-setup to save it to ~/.ch-skills/config.env."
+        )
     return ts.pro_api(resolved_token)
+
+
+class TushareUnavailable:
+    """Stand-in for the Pro client when no token is configured.
+
+    Every endpoint raises, so each Tushare stage takes the same per-call
+    failure path it already has for permission errors on low-point accounts:
+    CNInfo facts still ship, Tushare-derived fields come back empty and noted.
+    """
+
+    def __init__(self, reason: str):
+        self.reason = reason
+
+    def __getattr__(self, name: str) -> Callable:
+        def unavailable(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError(f"tushare_unavailable: {self.reason}")
+        return unavailable
 
 
 class TushareProxy:
@@ -62,7 +91,7 @@ class TushareProxy:
     def _is_retriable(exc: Exception) -> bool:
         msg = str(exc).lower()
         # Auth / parameter / permission errors — never retry.
-        if any(k in msg for k in ("invalid", "unauthorized", "token", "param", "argument", "permission")):
+        if any(k in msg for k in ("invalid", "unauthorized", "token", "param", "argument", "permission", "权限")):
             return False
         # Transient network / server errors — retry.
         return any(k in msg for k in (

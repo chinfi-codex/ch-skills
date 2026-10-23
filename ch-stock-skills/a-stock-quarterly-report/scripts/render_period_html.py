@@ -873,8 +873,9 @@ def _load_shared_theme(theme: str) -> str:
 
 
 def render_html(view: Dict[str, Any], kline_assets: Optional[Dict[str, Any]] = None) -> str:
-    empty_note = ('<div class="foot">主线台账为空——归属与行业趋势需先运行 daily-market-sense 填充 theme 台账、'
-                  '再跑 verdict 判分归属。</div>' if view["theme_registry_empty"] else "")
+    empty_note = ('<div class="foot">未接入主线台账——页面收录全部候选，主线归属与行业趋势栏为空；'
+                  '如需归属，先运行 daily-market-sense 填充 theme 台账、再跑 verdict 判分归属。</div>'
+                  if view["theme_registry_empty"] else "")
     cutoff = view["ann_cutoff"]
     cutoff_display = f"{cutoff[:4]}-{cutoff[4:6]}-{cutoff[6:]}"
     progress = view.get("disclosure_progress_pct")
@@ -952,7 +953,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--require-ann-cutoff",
                     help="严格要求 evidence 披露截止日为 YYYYMMDD；不一致则拒绝渲染")
     ap.add_argument("--include-unassigned", action="store_true",
-                    help="包含 theme_id 为空的个股（默认从 HTML 剔除）")
+                    help="包含 theme_id 为空的个股（默认从 HTML 剔除；主线台账为空时自动包含）")
     ap.add_argument("--out")
     args = ap.parse_args(argv)
 
@@ -981,15 +982,19 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     store = Store()
     verdicts = store.load_verdicts(period)
+    themes = store.load_theme_registry()
+    # Without a theme ledger (standalone installs) no stock can carry a theme_id,
+    # so the theme filter would publish an empty page.
+    include_unassigned = args.include_unassigned or not themes
     codes = [str(s["ts_code"]) for s in evidence.get("stocks", [])
-             if args.include_unassigned or (verdicts.get(str(s["ts_code"])) or {}).get("theme_id")]
+             if include_unassigned or (verdicts.get(str(s["ts_code"])) or {}).get("theme_id")]
     bars_map = store.load_bars_many(codes)
     view = build_view(period, evidence, verdicts,
-                       store.load_theme_registry(), store.load_theme_latest_state(),
+                       themes, store.load_theme_latest_state(),
                        store.load_theme_trends(period), bars_map, today,
                        pos_split=args.pos_split, muted_max=args.muted_max,
                        kline_bars=args.kline_days,
-                       include_unassigned=args.include_unassigned)
+                       include_unassigned=include_unassigned)
     out_path = args.out or os.path.join("reports", f"qreport_{period}.html")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     kline_assets = write_kline_assets(out_path, view["klines"],

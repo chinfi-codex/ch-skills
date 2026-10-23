@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Tushare Pro client factory, per-endpoint rate limiter and retry proxy.
 
-Token resolution order: TUSHARE_TOKEN env var, then cwd/.env.
+Token resolution order: TUSHARE_TOKEN env var, then cwd/.env, then
+~/.ch-skills/config.env.
 
 Why a rate limiter here and not in the earnings-forecast skill: the financial
 statement endpoints (income / balancesheet / cashflow / fina_indicator) have no
@@ -33,32 +34,44 @@ except ImportError as exc:  # pragma: no cover - dependency guard
 DEFAULT_CALLS_PER_MIN = int(os.environ.get("TUSHARE_CALLS_PER_MIN", "180"))
 
 
-def get_tushare_token() -> str:
-    """Read TUSHARE_TOKEN from the environment or cwd/.env."""
-    token = os.environ.get("TUSHARE_TOKEN", "").strip()
-    if token:
-        return token
+def user_config_path() -> str:
+    """Per-user config written by chstock-env-setup (same file db_core reads)."""
+    return os.path.expanduser(
+        os.environ.get("CH_SKILLS_CONFIG") or os.path.join("~", ".ch-skills", "config.env")
+    )
 
-    env_path = os.path.join(os.getcwd(), ".env")
-    if not os.path.exists(env_path):
+
+def _read_env_key(path: str, wanted: str) -> str:
+    if not os.path.exists(path):
         return ""
-
-    with open(env_path, "r", encoding="utf-8") as env_file:
+    with open(path, "r", encoding="utf-8") as env_file:
         for line in env_file:
             stripped = line.strip()
             if not stripped or stripped.startswith("#") or "=" not in stripped:
                 continue
             key, value = stripped.split("=", 1)
-            if key.strip() == "TUSHARE_TOKEN":
+            if key.strip() == wanted:
                 return value.strip().strip('"').strip("'")
     return ""
+
+
+def get_tushare_token() -> str:
+    """Read TUSHARE_TOKEN from the environment, cwd/.env, then ~/.ch-skills/config.env."""
+    token = os.environ.get("TUSHARE_TOKEN", "").strip()
+    if token:
+        return token
+    return (_read_env_key(os.path.join(os.getcwd(), ".env"), "TUSHARE_TOKEN")
+            or _read_env_key(user_config_path(), "TUSHARE_TOKEN"))
 
 
 def get_tushare_pro(token: Optional[str] = None):
     """Create a Tushare Pro client."""
     resolved_token = token or get_tushare_token()
     if not resolved_token:
-        raise RuntimeError("Missing TUSHARE_TOKEN. Set it in the environment or cwd/.env.")
+        raise RuntimeError(
+            "Missing TUSHARE_TOKEN. Set it in the environment, cwd/.env, "
+            "or run chstock-env-setup to save it to ~/.ch-skills/config.env."
+        )
     return ts.pro_api(resolved_token)
 
 

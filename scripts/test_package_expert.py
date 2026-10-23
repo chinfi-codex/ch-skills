@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+import copy
+import json
+import sys
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import package_expert as pe  # noqa: E402
+
+EXPERT = pe.REPO_ROOT / "experts" / "a-stock-earnings-season"
+
+
+def _load() -> tuple[dict, dict]:
+    plugin = json.loads((EXPERT / ".codebuddy-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    manifest = pe.yaml.safe_load((EXPERT / "expert.yaml").read_text(encoding="utf-8"))
+    return plugin, manifest
+
+
+class ValidationTests(unittest.TestCase):
+    def test_shipped_expert_is_valid(self) -> None:
+        plugin, manifest = _load()
+        self.assertEqual(pe.validate_plugin(plugin, EXPERT, manifest), [])
+
+    def test_platform_rules_are_enforced(self) -> None:
+        plugin, manifest = _load()
+        cases = {
+            "defaultInitPrompt must equal quickPrompts[0]":
+                lambda p: p["defaultInitPrompt"].update(zh="别的开场白"),
+            "tags must be exactly 3":
+                lambda p: p["tags"].pop(),
+            "displayDescription.zh must be 40-50 chars":
+                lambda p: p["displayDescription"].update(zh="太短"),
+            "categoryId":
+                lambda p: p.update(categoryId="99-Unknown"),
+            "plugin must equal name":
+                lambda p: p.update(plugin="other"),
+            "plugin.json skills must list":
+                lambda p: p["skills"].pop(),
+        }
+        for expected, mutate in cases.items():
+            broken = copy.deepcopy(plugin)
+            mutate(broken)
+            errors = pe.validate_plugin(broken, EXPERT, manifest)
+            self.assertTrue(any(expected in e for e in errors), (expected, errors))
+
+
+class BuildTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.result = pe.build(EXPERT, Path(cls.tmp.name), "author@example.org", check_only=False)
+        cls.zip = zipfile.ZipFile(cls.result["zip"])
+        cls.names = cls.zip.namelist()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.zip.close()
+        cls.tmp.cleanup()
+
+    def test_single_top_folder_with_plugin_manifest(self) -> None:
+        self.assertTrue(all(n.startswith("a-stock-earnings-season/") for n in self.names))
+        plugin = json.loads(self.zip.read("a-stock-earnings-season/.codebuddy-plugin/plugin.json"))
+        self.assertEqual(plugin["author"]["email"], "author@example.org")
+
+    def test_skills_are_self_contained(self) -> None:
+        for skill in ("a-stock-earnings-forecast", "a-stock-quarterly-report"):
+            prefix = f"a-stock-earnings-season/skills/{skill}/scripts/_shared/"
+            self.assertIn(prefix + "db_core.py", self.names)
+            self.assertIn(prefix + "html_report/themes/default.css", self.names)
+
+    def test_no_dev_artifacts_ship(self) -> None:
+        for name in self.names:
+            base = name.rsplit("/", 1)[-1]
+            self.assertFalse(base.startswith("test_") or base == "conftest.py", name)
+            self.assertNotIn("/tests/", name)
+            self.assertNotIn("/reports/", name)
+            self.assertNotIn("invest-autoresearch", name)
+            self.assertNotIn("__pycache__", name)
+
+    def test_skill_frontmatter_has_workbuddy_fields(self) -> None:
+        text = self.zip.read(
+            "a-stock-earnings-season/skills/cninfo-announcement-search/SKILL.md").decode("utf-8")
+        fm, body = pe.split_frontmatter(text)
+        for key in ("name", "description", "description_zh", "description_en", "version", "author"):
+            self.assertTrue(fm.get(key), key)
+        self.assertEqual(fm["name"], "cninfo-announcement-search")
+        self.assertTrue(body.lstrip().startswith("# "))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -39,5 +39,59 @@ class AnnouncementCalendarTests(unittest.TestCase):
         self.assertFalse(scanner._same_day_structured_conflict(cn_row, ts_row))
 
 
+class _MemoryStore:
+    available = False
+
+    def __init__(self) -> None:
+        self.income_upserts: list = []
+        self.basic: dict = {}
+
+    def load_income_many(self, codes):
+        return {}
+
+    def upsert_income_many(self, records):
+        self.income_upserts.extend(records)
+
+    def load_basic(self, codes):
+        return dict(self.basic)
+
+    def upsert_basic(self, rows):
+        self.basic.update(rows)
+
+
+class TushareUnavailableTests(unittest.TestCase):
+    """No token / no permission must degrade to CNInfo-only, never crash or poison caches."""
+
+    def setUp(self) -> None:
+        self.pro = scanner.TushareUnavailable("未配置 TUSHARE_TOKEN")
+
+    def test_failed_income_is_not_cached_as_null(self) -> None:
+        store = _MemoryStore()
+        result, calls, failed = scanner.gather_income(
+            self.pro, store, ["000626.SZ", "301308.SZ"], "20260930", False, 2)
+        self.assertEqual((calls, failed), (2, 2))
+        self.assertEqual(store.income_upserts, [])
+        self.assertEqual(result["000626.SZ"], {})
+
+    def test_basic_and_calendar_degrade_with_note(self) -> None:
+        notes: list = []
+        self.assertEqual(scanner.resolve_basic(self.pro, _MemoryStore(), ["000626.SZ"], notes), {})
+        self.assertIn("stock_basic", notes[0])
+        self.assertEqual(scanner.trading_days(self.pro, "20261001", "20261023"), [])
+        mv, asof = scanner.fetch_total_mv(self.pro, dt.date(2026, 10, 23), notes)
+        self.assertEqual((mv, asof), ({}, None))
+
+    def test_record_name_falls_back_to_announcement_short_name(self) -> None:
+        import pandas as pd
+
+        row = pd.Series({"ts_code": "000626.SZ", "type": "预增", "net_profit_min": 31856.0,
+                         "net_profit_max": 35977.0, "last_parent_net": 3218.0,
+                         "p_change_min": 890.0, "p_change_max": 1018.0, "ann_date": "20261015"})
+        rec = scanner.build_stock_record(row, scanner.CumCache({}), "20260930", {}, 0.0,
+                                         source_info={"sec_name": "远大控股"})
+        self.assertEqual(rec["name"], "远大控股")
+        self.assertEqual(rec["net_profit"]["last_parent_yi"], 0.3218)
+
+
 if __name__ == "__main__":
     unittest.main()

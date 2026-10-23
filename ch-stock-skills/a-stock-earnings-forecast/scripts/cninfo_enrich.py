@@ -47,8 +47,13 @@ REVENUE_LABELS = ("营业总收入", "营业收入")
 # cell boundary like "668,700289,600" -> "668,700") OR a plain number.
 _NUM = r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?"
 _UNIT = r"亿元|万元|元"
-_RANGE = r"[至到~～–—─\-]"
-_PCT_NUM = r"-?\d+(?:\.\d+)?"
+_RANGE = r"[至到~～–—─－\-]"
+_PCT_NUM = r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?"
+# SZSE table cells flatten into run-together numbers ("29,000.006,402.93");
+# amounts there carry exactly two decimals, which is what splits the cells.
+_CELL = r"\d{1,3}(?:,\d{3})*\.\d{2}|\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?"
+_CELL_TOKEN = re.compile(rf"(亏损|盈利)?[：:约为人民币]*(-)?({_CELL})\s*({_UNIT})?")
+_RANGE_MARK = "\u2194"
 
 POSITIVE_WORDS = ("预增", "略增", "续盈", "扭亏", "减亏")
 NEGATIVE_WORDS = ("预减", "略减", "首亏", "续亏", "增亏")
@@ -162,19 +167,133 @@ def parse_parent_yoy(flat: str) -> Optional[Dict[str, Any]]:
             continue
         span = flat[idx: idx + 360]
         for match in re.finditer(
-            rf"(?:比上年同期|同比)(增长|上升|增加|下降|减少|降低)?[：:]?"
+            rf"(?:比上年同期|较上年同期|同比)(增长|上升|增加|下降|减少|降低)?约?[：:]?"
             rf"({_PCT_NUM})[%％](?:\s*{_RANGE}\s*({_PCT_NUM})[%％])?",
             span,
         ):
             direction = match.group(1) or ""
-            lo = float(match.group(2))
-            hi = float(match.group(3)) if match.group(3) is not None else lo
+            lo = float(match.group(2).replace(",", ""))
+            hi = float(match.group(3).replace(",", "")) if match.group(3) is not None else lo
             if direction in ("下降", "减少", "降低"):
                 lo, hi = -abs(lo), -abs(hi)
             lo, hi = sorted((lo, hi))
             return {"low": round(lo, 2), "high": round(hi, 2), "raw": match.group(0)[:80],
                     "confidence": "high"}
     return None
+
+
+def _yi(num: str, unit: str) -> float:
+    return float(num.replace(",", "")) * UNIT_TO_YI[unit]
+
+
+def _table_parent_base(flat: str, doc_unit: Optional[str]) -> Optional[Dict[str, Any]]:
+    """SZSE table row: 本期 (point or range) followed by 上年同期, then 比上年同期."""
+    for lab in PARENT_LABELS:
+        idx = flat.find(lab)
+        if idx < 0:
+            continue
+        seg = flat[idx + len(lab): idx + len(lab) + 220]
+        stop = re.search(r"比上年同期|同比", seg)
+        if not stop:
+            continue
+        seg = seg[:stop.start()]
+        # A dash after a digit/unit is a range separator, never a minus sign.
+        seg = re.sub(rf"(?<=[\d元])\s*{_RANGE}\s*(?=(?:亏损|盈利)?[：:]?-?\d)", _RANGE_MARK, seg)
+        tokens = list(_CELL_TOKEN.finditer(seg))
+        values: List[float] = []
+        for tok in tokens:
+            unit = tok.group(4) or doc_unit
+            if not unit:
+                return None
+            value = _yi(tok.group(3), unit)
+            values.append(-abs(value) if (tok.group(1) == "亏损" or tok.group(2)) else value)
+        is_range = len(tokens) >= 2 and seg[tokens[0].end():tokens[1].start()] == _RANGE_MARK
+        # 重组前/后 or any extra column makes the base ambiguous: emit nothing.
+        if len(values) != (3 if is_range else 2):
+            return None
+        current = (values[0] + values[1]) / 2 if is_range else values[0]
+        return {"value": values[-1], "current_mid": current, "source": "table",
+                "raw": seg.replace(_RANGE_MARK, "~")[:80]}
+    return None
+
+
+def _section_parent_base(flat: str) -> Optional[Dict[str, Any]]:
+    """SSE layout: a separate 上年同期业绩情况 section states the prior-period profit."""
+    m = re.search(r"上年同期(?:经营)?业绩(?:情况)?(?:和财务状况)?", flat)
+    if not m:
+        return None
+    seg = flat[m.end(): m.end() + 260]
+    for lab in PARENT_LABELS:
+        hit = re.search(rf"{lab}(?:为|：|:)?(?:人民币)?(-?{_NUM})\s*({_UNIT})", seg)
+        if hit:
+            return {"value": _yi(hit.group(1), hit.group(2)), "current_mid": None,
+                    "source": "prior_period_section", "raw": hit.group(0)[:80]}
+    return None
+
+
+def _change_parent_base(flat: str) -> Optional[Dict[str, Any]]:
+    """SSE prose: 本期X(~Y), 与上年同期相比增加/减少A(~B) → base = X ∓ A."""
+    amount = rf"(-?{_NUM})\s*({_UNIT})?"
+    pattern = re.compile(
+        rf"(?:人民币)?{amount}(?:\s*{_RANGE}\s*(?:人民币)?{amount})?[^。；]{{0,24}}?"
+        rf"与上年同期(?:（[^）]*）)?相比[，,]?将?(增加|减少)约?(?:人民币)?{amount}"
+        rf"(?:\s*{_RANGE}\s*(?:人民币)?{amount})?"
+    )
+    for lab in PARENT_LABELS:
+        for anchor in re.finditer(lab, flat):
+            seg = flat[anchor.end(): anchor.end() + 220]
+            hit = pattern.search(seg)
+            if not hit or hit.start() > 20:
+                continue
+            g = hit.groups()
+            cur_unit = g[1] or g[3]
+            chg_unit = g[6] or g[8]
+            if not cur_unit or not chg_unit:
+                continue
+            sign = 1.0 if g[4] == "增加" else -1.0
+            lo = _yi(g[0], cur_unit)
+            d_lo = _yi(g[5], chg_unit)
+            hi = _yi(g[2], g[3] or cur_unit) if g[2] else lo
+            d_hi = _yi(g[7], g[8] or chg_unit) if g[7] else d_lo
+            base_lo, base_hi = lo - sign * d_lo, hi - sign * d_hi
+            if abs(base_lo - base_hi) > max(1e-4, abs(base_lo) * 0.01):
+                continue  # both ends must imply the same base
+            return {"value": (base_lo + base_hi) / 2, "current_mid": (lo + hi) / 2,
+                    "source": "derived_from_change", "raw": hit.group(0)[:80]}
+    return None
+
+
+def parse_parent_base(flat: str, doc_unit: Optional[str],
+                      parent: Optional[Dict[str, Any]],
+                      yoy: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Prior-year 归母净利 (亿元) as disclosed in the announcement.
+
+    Needed when no structured source supplies last_parent_net. Confidence is
+    high only when the implied growth lands inside the disclosed YoY range; a
+    contradiction drops the value rather than shipping a misparsed base.
+    """
+    found = _table_parent_base(flat, doc_unit) or _section_parent_base(flat) or _change_parent_base(flat)
+    if not found:
+        return None
+    current = found.pop("current_mid")
+    if current is None and parent:
+        vals = [v for v in (parent.get("low"), parent.get("high"), parent.get("point")) if v is not None]
+        current = (min(vals) + max(vals)) / 2 if vals else None
+    base = found["value"]
+    confidence = "med"
+    if yoy and current is not None and base > 0:
+        implied = (current / base - 1.0) * 100.0
+        tol = max(2.0, abs(yoy["high"]) * 0.03)
+        if not (yoy["low"] - tol <= implied <= yoy["high"] + tol):
+            return None
+        confidence = "high"
+    found.update({"value": round(base, 4), "confidence": confidence})
+    return found
+
+
+def parse_security_name(text: str) -> str:
+    m = re.search(r"证券简称[：:]\s*([^\s，,；;公债]{2,8})", text or "")
+    return m.group(1) if m else ""
 
 
 def infer_forecast_type(title: str, flat: str) -> str:
@@ -207,11 +326,15 @@ def extract_change_reason(text: str) -> str:
 def parse_forecast_text(text: str, title: str = "") -> Dict[str, Any]:
     flat = re.sub(r"\s+", "", text or "")
     doc_unit = detect_doc_unit(flat)
+    parent = parse_amount(flat, PARENT_LABELS, doc_unit)
+    yoy = parse_parent_yoy(flat)
     return {
         "kf_net_profit_yi": parse_amount(flat, KF_LABELS, doc_unit),
         "revenue_yi": parse_amount(flat, REVENUE_LABELS, doc_unit),
-        "parent_net_yi": parse_amount(flat, PARENT_LABELS, doc_unit),
-        "parent_yoy_pct": parse_parent_yoy(flat),
+        "parent_net_yi": parent,
+        "parent_yoy_pct": yoy,
+        "parent_base_yi": parse_parent_base(flat, doc_unit, parent, yoy),
+        "sec_name": parse_security_name(text),
         "forecast_type": infer_forecast_type(title, flat),
         "change_reason": extract_change_reason(text),
         "revenue_disclosed": parse_amount(flat, REVENUE_LABELS, doc_unit) is not None,
@@ -265,6 +388,10 @@ def forecast_row_from_enrich(rec: Dict[str, Any], period: str) -> Optional[Dict[
     ann_date = re.sub(r"\D", "", str(ann.get("ann_date") or ""))[:8]
     title = normalize_title(str(ann.get("title") or ""))
     ftype = infer_forecast_type(title, "")
+    # Only a base cross-checked against the disclosed YoY outranks the structured
+    # reconciliation value; a med-confidence parse is filled in later as fallback.
+    base = parsed.get("parent_base_yi") or {}
+    last_parent = base["value"] * 10000.0 if base.get("confidence") == "high" else None
     return {
         "ts_code": rec["ts_code"], "end_date": period, "ann_date": ann_date,
         "type": ftype,
@@ -272,7 +399,7 @@ def forecast_row_from_enrich(rec: Dict[str, Any], period: str) -> Optional[Dict[
         "p_change_max": max(yvals) if yvals else None,
         "net_profit_min": lo_yi * 10000.0,
         "net_profit_max": hi_yi * 10000.0,
-        "last_parent_net": None,
+        "last_parent_net": last_parent,
         "first_ann_date": ann_date,
         "summary": f"CNInfo公告：归母净利润预计{lo_yi:.4f}-{hi_yi:.4f}亿元",
         "change_reason": str(parsed.get("change_reason") or ""),

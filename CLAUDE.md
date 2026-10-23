@@ -20,6 +20,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `ch-news-reporter/` —— 多源新闻采集与日报生成
 - `iran-war-tracker - V2/` —— 地缘冲突日报(同步时由 `skill-sync.yaml` 重命名为 `iran-war-tracker-v2`)
 - `ch-pd-flow/` —— 产品设计/工作流相关(占位中)
+- `ch-stock-skills/chstock-env-setup/` —— A 股技能的环境自检与首次配置(依赖、Tushare 逐接口权限、数据库、网络;写 `~/.ch-skills/config.env`)
+
+### WorkBuddy 专家包(`experts/`)
+
+`experts/<name>/` 是付费专家的源:`.codebuddy-plugin/plugin.json`(市场展示与运行配置)、`agents/<name>.md`(人设 + 串联技能的工作流)、`avatars/`、`README.md`,以及 `expert.yaml`(列出要打包的 skill 源路径与 WorkBuddy 技能元数据)。目录里没有 SKILL.md,不会被同步扫描。专家包里的 skill 不另存副本,打包时从各自的 canonical source 复制,所以改 skill 照常改源目录。
+
+```bash
+python3 scripts/package_expert.py experts/a-stock-earnings-season --check-only   # 只校验 plugin.json 规则
+python3 scripts/package_expert.py experts/a-stock-earnings-season                # 生成 dist/workbuddy/<name>-<version>.zip
+```
+
+打包脚本按 `skill-sync.yaml` 注入 shared bundles、按发布边界剔除测试/评估/报告产物、补 WorkBuddy 技能 frontmatter(`description_zh/description_en/author/version`)。作者邮箱不入库:plugin.json 留 `__AUTHOR_EMAIL__`,打包时取 `--author-email`、`WORKBUDDY_AUTHOR_EMAIL` 或 `git config user.email`。
+
+专家包面向非开发者,改动其中 skill 时要守住两条可用性约定:**环境不全时降级而不是崩溃**(如业绩预告在无 Tushare token 时只出巨潮事实),**脚本输出写到当前工作目录**(专家在 `~/earnings-season/` 下运行,不写进安装目录)。
 
 ### Skill 设计的核心准则(决定怎么改 SKILL.md)
 
@@ -90,6 +104,7 @@ skill-vetter <skill路径>   # 发布前必跑
 | `TUSHARE_TOKEN` | 任何 `stock-skills/*` 取数 |
 | `TAVILY_API_KEY` | `iran-war-tracker - V2`、`ch-news-reporter` 的深度搜索 |
 | `CLAWHUB_TOKEN` | `clawhub publish` |
+| `CH_SKILLS_CONFIG` | 可选,覆盖每用户配置文件路径(默认 `~/.ch-skills/config.env`);文件里的 `TUSHARE_TOKEN` 与 `ALPHA_*` 只在对应环境变量为空时生效 |
 
 脚本必须从环境变量读取敏感信息,**禁止硬编码**;`.env` 已在 `.gitignore`。
 

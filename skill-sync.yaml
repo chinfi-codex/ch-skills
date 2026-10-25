@@ -61,6 +61,7 @@ shared:
         - ch-gpu-compute-monitor
         - ch-dc-credit-monitor
         - ch-ai-eng-tracker
+        - a-stock-pool-tracker
     # 生产输出门禁：声明编译结果的确定性执行器。
     - source: shared/output_gate
       dest: scripts/_shared/output_gate

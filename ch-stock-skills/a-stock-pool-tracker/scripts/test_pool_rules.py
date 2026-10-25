@@ -157,6 +157,49 @@ def test_adjusted_anchor_survives_ex_dividend():
     assert not any(h["rule"] == "break_entry_low" for h in pool_rules.exit_hits(m, RULES))
 
 
+def test_kline_records_limits_to_200_and_forward_adjusts_ohlc():
+    bars = []
+    for k in range(205):
+        factor = 2.0 if k >= 200 else 1.0
+        bars.append(dict(trade_date=_day(k), open=10 * factor, high=11 * factor,
+                         low=9 * factor, close=10 * factor, pct_chg=1.234,
+                         amount=100000 + k, adj_factor=factor))
+    records = pool_rules.kline_records(bars, 200)
+    assert len(records) == 200
+    assert records[0]["trade_date"] == _day(5)
+    assert records[0]["open"] == 5.0 and records[0]["high"] == 5.5
+    assert records[0]["low"] == 4.5 and records[0]["close"] == 5.0
+    assert records[-1]["close"] == 20.0  # 最新交易日保持原始价格
+    assert records[-1]["amount"] == 100204
+
+
+def test_track_bars_backfills_when_calendar_window_has_under_200_sessions(monkeypatch):
+    import pool_data
+    import pool_track
+
+    early = [dict(trade_date=(date(2024, 1, 1) + timedelta(days=k)).isoformat(),
+                  open=10, high=11, low=9, close=10, amount=100000, adj_factor=1.0)
+             for k in range(100)]
+    recent = [dict(trade_date=(date(2026, 1, 1) + timedelta(days=k)).isoformat(),
+                   open=12, high=13, low=11, close=12, amount=120000, adj_factor=1.0)
+              for k in range(150)]
+    all_bars = early + recent
+    calls = []
+
+    def fake_bars(code, start, end):
+        calls.append((start, end))
+        return {"source": "test", "rows": [row for row in all_bars if start <= row["trade_date"] <= end]}
+
+    monkeypatch.setattr(pool_data, "bars", fake_bars)
+    fetched = pool_track.fetch_track_bars("600001.SH", recent[0]["trade_date"],
+                                          recent[-1]["trade_date"], RULES)
+    assert len(calls) == 2
+    assert calls[1] == ("1990-01-01", recent[0]["trade_date"])
+    assert len(fetched["rows"]) == 250
+    records = pool_rules.kline_records(fetched["rows"], 200)
+    assert len(records) == 200 and records[0]["trade_date"] == early[50]["trade_date"]
+
+
 # --------------------------------------------------------------------------- #
 # Entry signals
 # --------------------------------------------------------------------------- #
@@ -258,7 +301,13 @@ def test_track_member_end_to_end(tmp_path, monkeypatch):
         (11.5, 11.6, 11.1, 11.3, 60000),
     ])
     asof = bars[-1]["trade_date"]
-    monkeypatch.setattr(pool_data, "bars", lambda code, start, end: {"source": "test", "rows": bars})
+    fetch_windows = []
+
+    def fake_bars(code, start, end):
+        fetch_windows.append((code, start, end))
+        return {"source": "test", "rows": [row for row in bars if start <= row["trade_date"] <= end]}
+
+    monkeypatch.setattr(pool_data, "bars", fake_bars)
     pool_store.ensure_schema()
     pool_store.add_member(dict(member))
     stored = pool_store.open_member("600001.SH")
@@ -266,6 +315,15 @@ def test_track_member_end_to_end(tmp_path, monkeypatch):
     out = pool_track.track_member(stored, asof, RULES, True, {})
     assert out["decision"]["to"] == "active"
     assert [s["type"] for s in out["signals"]] == ["pullback"]
+    assert out["kline_days_requested"] == 200
+    assert len(out["kline_records"]) == len(bars)
+    assert out["kline_records"][-1]["trade_date"] == asof
+    assert out["kline_records"][-1]["close"] == 11.3
+    assert fetch_windows[0] == (
+        "600001.SH",
+        (date.fromisoformat(asof) - timedelta(days=400)).isoformat(),
+        asof,
+    )
     pool_track.track_member(pool_store.open_member("600001.SH"), asof, RULES, True, {})  # 重跑幂等
     kinds = [e["kind"] for e in pool_store.events("600001.SH")]
     assert kinds == ["entry", "signal"]

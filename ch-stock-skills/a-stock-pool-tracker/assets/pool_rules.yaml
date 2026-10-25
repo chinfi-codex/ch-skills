@@ -45,3 +45,5 @@ signal:
 
 track:
   lookback_calendar_days: 60        # 入池日之前多取多少自然日日线，保证 MA20 可算
+  kline_display_days: 200           # 报告中每只池内股票展示多少根交易日 K 线
+  kline_lookback_calendar_days: 400 # 初始取数窗口；不足 200 根时继续向前补到 1990 年，覆盖长停牌

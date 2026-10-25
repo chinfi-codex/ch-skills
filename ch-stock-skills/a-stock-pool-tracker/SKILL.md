@@ -92,7 +92,8 @@ description: A 股涨停强势股票池的入池、跟踪、移除与介入提�
 3. **每日跟踪**：`python scripts/pool_track.py --output reports/<date>/track.json`。规则状态转移在这一步自动落库；只想看结果不改状态时加 `--dry-run`。
 4. **消息面**：全池查公告和快讯；对 `deep_news_targets` 查互动易和联网。有价值的消息用 `pool_cli.py event` 记录；认定实质利空的用 `pool_cli.py remove`。
 5. **定性回写**：逐只给出四档定性，`pool_cli.py verdict <code> --verdict 分歧 --note "..."`。
-6. **写日报**：按输出规范写，保存到 `reports/<date>/pool_report.md`。
+6. **写日报**：按输出规范写，保存到 `reports/<date>/pool_report.md`。不要生成目录、历史记录或独立的数据说明；必要的取数与口径提示内联到对应章节。
+7. **渲染 HTML**：`python scripts/render_report_html.py --input reports/<date>/pool_report.md --strict`。默认读取同目录 `track.json`，用 shared 模板生成 `pool_report.html`，并在“池内全景”表后为每只池内股票插入 200 日 K 线。
 
 用户只问某一件事时（例如"把 XX 加进池子""池里有没有回踩的票"），只做对应的步骤，不必出整份日报。
 
@@ -104,6 +105,9 @@ python scripts/pool_scan.py [--date 2026-10-23] [--dry-run] [--output reports/20
 
 # 每日跟踪
 python scripts/pool_track.py [--date 2026-10-23] [--codes 600001.SH,300001.SZ] [--dry-run] [--output ...]
+
+# HTML 日报（默认读取 Markdown 同目录 track.json，默认使用 shared default 主题）
+python scripts/render_report_html.py --input reports/2026-10-23/pool_report.md [--track reports/2026-10-23/track.json] [--output ...] [--strict]
 
 # 池子维护
 python scripts/pool_cli.py list [--status active,watch,removed]
@@ -129,7 +133,7 @@ python scripts/web_search.py "公司名 涨停 原因" --max-results 8 --days 3
 关键输出字段：
 
 - `pool_scan`：`added[]`（含首次封板时间、成交额、换手率、`gain_5d_pct`）、`already_in_pool[]`、`near_miss[]`（只差一条规则的涨停票）、`reject_counts`、`theme_context`、`degraded`
-- `pool_track`：`members[].metrics / exit_hits / decision / signals / theme_state / recent_events`，以及汇总的 `transitions[]`、`signals[]`、`deep_news_targets[]`、`suspended[]`、`errors[]`
+- `pool_track`：`members[].metrics / exit_hits / decision / signals / theme_state / recent_events`，以及 `members[].entry_date / kline_days_requested / kline_records / kline_history_error`（截至当日的最近 200 根交易日前复权 OHLC 与成交额；初始窗口不足时向前补取，仍不足 200 根则保留实际数量）和汇总的 `transitions[]`、`signals[]`、`deep_news_targets[]`、`suspended[]`、`errors[]`
 
 ## 输出规范
 
@@ -141,12 +145,14 @@ python scripts/web_search.py "公司名 涨停 原因" --max-results 8 --days 3
 2. **介入提醒**：先写这一节，因为它最需要行动。每条说清形态、触发价、失效价、主线背景，以及模型对信号质量的判断。没有信号就写一句"今日无突破或缩量回踩信号"。
 3. **今日新入池**：逐只写涨停原因和主线归属。
 4. **移除与预警**：逐只写触发了哪条规则，手动股写"建议移除"。
-5. **池内全景表**：代码、名称、入池天数、入池以来涨幅、距高点回撤、四档定性、主线状态。
+5. **池内全景表**：代码、名称、入池天数、入池以来涨幅、距高点回撤、四档定性、主线状态。HTML 在表后展示每只池内股票的 200 日 K 线，桌面端一行四列；入池日在窗口内时用竖虚线和日期标签精确标出，早于窗口或无对应交易日时在卡片注明，不挪到邻近交易日。
 6. **消息面**：只写有增量的消息，按票归类，标出分类和来源。
-7. **数据说明**：降级、停牌、主线数据日期不一致等情况。
+
+HTML 样式与图表基础能力统一使用 `shared/html_report` 的 `default` 模板，不另写一套页面 CSS。渲染器会剥离旧稿中的“目录”“历史记录”和空的“数据说明”二级章节；旧稿的数据说明若仍有实质内容，渲染会报错，必须先内联，不能静默删掉。缺少 `track.json` 时同样报错，不生成没有 K 线的日报。
 
 纪律：
 
+- 日报只保留上述正文，不附目录、历史记录或独立的数据说明。取数降级写在受影响的入池或跟踪段落，停牌写在全景表后，主线数据日期不一致写在对应主线判断旁，跟踪报错写在相关股票条目里；这些提示不能随独立章节一起删掉。
 - 每个判断都回到数据或来源；一段话里最多带两三个关键数字，其余放表格。
 - 介入提醒必须同时写触发价和失效价，并在节末注明"以上为形态提醒，不构成买卖建议"。
 - 脚本的规则结论和模型的定性分开写，不要混为一谈。
@@ -165,6 +171,7 @@ python scripts/pool_cli.py annotate 603xxx.SH --reason "..." --theme-id TH-机�
 python scripts/pool_track.py --output reports/2026-10-23/track.json
 python ../chstock-cninfo-announcement/scripts/cninfo_announcement_search.py --tabtype fulltext --date 2026-10-21~2026-10-23 --stock 603xxx
 python scripts/pool_cli.py verdict 300xxx.SZ --verdict 分歧 --note "缩量回踩涨停价"
+python scripts/render_report_html.py --input reports/2026-10-23/pool_report.md --strict
 ```
 
 ### Output 片段

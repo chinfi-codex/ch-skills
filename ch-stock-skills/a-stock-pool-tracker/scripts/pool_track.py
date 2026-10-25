@@ -33,15 +33,45 @@ def _watch_days(rows: list[dict], watch_since: str | None, asof: str) -> int:
     return sum(1 for r in rows if watch_since <= r["trade_date"] < asof)
 
 
+def fetch_track_bars(ts_code: str, entry_date: str, asof: str, rules: dict) -> dict:
+    track_cfg = rules["track"]
+    display_days = int(track_cfg.get("kline_display_days", 200))
+    metric_start = (date.fromisoformat(entry_date)
+                    - timedelta(days=int(track_cfg["lookback_calendar_days"]))).isoformat()
+    chart_start = (date.fromisoformat(asof)
+                   - timedelta(days=int(track_cfg.get("kline_lookback_calendar_days", 400)))).isoformat()
+    start = min(metric_start, chart_start)
+    fetched = pool_data.bars(ts_code, start, asof)
+    rows = fetched["rows"]
+    if len(rows) >= display_days or start <= "1990-01-01":
+        return fetched
+
+    # 长停牌会让 400 个自然日不足 200 根；补到 A 股历史起点，不把缺口误当上市不足。
+    history_end = rows[0]["trade_date"] if rows else start
+    try:
+        earlier = pool_data.bars(ts_code, "1990-01-01", history_end)
+    except Exception as exc:  # noqa: BLE001 — 图表补历史失败不能中断既有规则跟踪
+        fetched["kline_history_error"] = str(exc)
+        return fetched
+    by_date = {str(row["trade_date"]): row for row in earlier["rows"] + rows}
+    if len(by_date) > len(rows):
+        fetched["rows"] = [by_date[key] for key in sorted(by_date)]
+        fetched["source"] = "+".join(dict.fromkeys((earlier["source"], fetched["source"])))
+    return fetched
+
+
 def track_member(member: dict, asof: str, rules: dict, apply: bool, themes: dict) -> dict:
-    start = (date.fromisoformat(member["entry_date"])
-             - timedelta(days=int(rules["track"]["lookback_calendar_days"]))).isoformat()
-    fetched = pool_data.bars(member["ts_code"], start, asof)
+    track_cfg = rules["track"]
+    display_days = int(track_cfg.get("kline_display_days", 200))
+    fetched = fetch_track_bars(member["ts_code"], member["entry_date"], asof, rules)
     rows = fetched["rows"]
     base = {"ts_code": member["ts_code"], "name": member.get("name"), "source": member["source"],
             "entry_date": member["entry_date"], "status": member["status"],
             "reason": member.get("reason"), "theme_id": member.get("theme_id"),
-            "theme_name": member.get("theme_name"), "bar_source": fetched["source"]}
+            "theme_name": member.get("theme_name"), "bar_source": fetched["source"],
+            "kline_days_requested": display_days,
+            "kline_history_error": fetched.get("kline_history_error"),
+            "kline_records": pool_rules.kline_records(rows, display_days)}
     if not rows or rows[-1]["trade_date"] != asof:
         return dict(base, suspended=True, last_bar=rows[-1]["trade_date"] if rows else None)
 

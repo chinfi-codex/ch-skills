@@ -68,7 +68,11 @@ DEFAULT_RULES: dict[str, Any] = {
             "fail_buffer_pct": 3,
         },
     },
-    "track": {"lookback_calendar_days": 60},
+    "track": {
+        "lookback_calendar_days": 60,
+        "kline_display_days": 200,
+        "kline_lookback_calendar_days": 400,
+    },
 }
 
 SUPPORT_LABELS = {"limit_price": "涨停价", "ma10": "MA10", "ma20": "MA20"}
@@ -362,6 +366,26 @@ def compute_metrics(bars: list[dict], member: dict) -> Optional[dict]:
         "vs_launch_pct": _pct(close[i] / launch_price - 1) if launch_price else None,
         "relimit_today": i > e and is_limit_close(_f(last["close"]), up_limit_today),
     }
+
+
+def kline_records(bars: list[dict], limit: int = 200) -> list[dict]:
+    """Return at most *limit* recent daily bars, forward-adjusted to the latest bar."""
+    if not bars or limit <= 0:
+        return []
+    adj_last = _f(bars[-1].get("adj_factor")) or 1.0
+    records = []
+    for bar in bars[-limit:]:
+        factor = (_f(bar.get("adj_factor")) or adj_last) / adj_last
+        records.append({
+            "trade_date": str(bar["trade_date"]),
+            "open": _r(_f(bar.get("open")) * factor if _f(bar.get("open")) is not None else None, 4),
+            "high": _r(_f(bar.get("high")) * factor if _f(bar.get("high")) is not None else None, 4),
+            "low": _r(_f(bar.get("low")) * factor if _f(bar.get("low")) is not None else None, 4),
+            "close": _r(_f(bar.get("close")) * factor if _f(bar.get("close")) is not None else None, 4),
+            "pct_chg": _r(_f(bar.get("pct_chg"))),
+            "amount": _f(bar.get("amount")),
+        })
+    return records
 
 
 # --------------------------------------------------------------------------- #

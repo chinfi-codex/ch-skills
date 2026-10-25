@@ -119,10 +119,12 @@ python scripts/pool_cli.py themes [--date 2026-10-23]
 python ../chstock-cninfo-announcement/scripts/cninfo_announcement_search.py --tabtype fulltext --date 2026-10-21~2026-10-23 --stock 600001
 python ../chstock-interactive-qa/scripts/interactive_qa_search.py --company 公司名 --date-from 2026-10-16 --date-to 2026-10-23
 python ../chstock-market-telegraphs/scripts/market_telegraph_fullfeed.py --hours 24 --format normalized
-python scripts/web_search.py "公司名 涨停 原因" --topic news --days 3
+python scripts/web_search.py "公司名 涨停 原因" --max-results 8 --days 3
 ```
 
-环境：`TUSHARE_TOKEN`（必需）、`ALPHA_PG_URL`（股票池状态库，见仓库 `shared/data/POSTGRESQL.md`）、`TAVILY_API_KEY`（联网检索）。数据表 `pool_member` / `pool_daily` / `pool_event` 首次运行时自动建表。日线优先读本地 `stock_daily` + `stock_adj_factor`，缺最新一天时走 Tushare。
+`web_search.py` 默认走 DeepSeek 搜索 API（单次 query ≤128 字符，超长请拆词）；`--days` 只是提示，DeepSeek 无时间窗参数，需要海外源时用 `--engine tavily`，需要官方中文站内时用 `--engine yuanbao --include-domains ...`，需要交叉验证时用 `--engine all`。
+
+环境：`TUSHARE_TOKEN`（必需）、`ALPHA_PG_URL`（股票池状态库，见仓库 `shared/data/POSTGRESQL.md`）、`DEEPSEEK_API_KEY`（联网检索，默认）、`TAVILY_API_KEY`（备选）。数据表 `pool_member` / `pool_daily` / `pool_event` 首次运行时自动建表。日线优先读本地 `stock_daily` + `stock_adj_factor`，缺最新一天时走 Tushare。
 
 关键输出字段：
 

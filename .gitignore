@@ -12,6 +12,8 @@ evals/
 .kimi/
 .codex/
 .openclaw/
+# ZCode 本地会话状态（plan/可视化等），运行时产物，不入库
+.zcode/
 # workbuddy 本地工具状态（会话记忆等），运行时自有数据，不入库
 .workbuddy/
 
@@ -50,6 +52,8 @@ ch-stock-skills/a-stock-daily-market-sense/reports/
 ch-stock-skills/a-stock-analyzer/reports/
 ch-stock-skills/chstock-usmarket-report/outputs/
 ch-news-reporter/reports/
+# AI 工程周报：原始取数 JSON 与成稿全部由脚本重建，不入库
+ch-ai-eng-tracker/reports/
 # GPU 算力监控：原始响应、证据包与报告（同放 evidence/），全部由 collect/metrics 重建，不入库
 ch-gpu-compute-monitor/raw/
 ch-gpu-compute-monitor/evidence/

@@ -1,0 +1,105 @@
+# ch-ai-eng-tracker 信源配置 —— 调信源改这里，不改脚本。
+#
+# 时间窗口径：滚动 N 天（默认 7）。所有脚本 --days 可覆盖。
+
+official_blogs:
+  # 官方工程博客 RSS。OpenAI 博客是本 skill 的固定主线；其他源验证稳定后可加。
+  - name: OpenAI Blog
+    url: https://openai.com/news/rss.xml
+    enabled: true
+
+openai_cookbook:
+  repo: openai/openai-cookbook
+  # true 时 commits 走 path=examples 过滤（PR 不受影响，PR 标题天然带教程语义）
+  commits_path_filter: true
+
+github_trending:
+  since: weekly # daily | weekly | monthly
+  enrich_top: 15 # 对榜单前 N 个仓库调 GitHub API 补 topics/created_at（0=关闭）
+  new_repo_search: true # 是否追加 Search API 找窗口期内新建的高星仓库
+  search_per_query: 20
+  # 新仓库搜索词：AI 工程口径，改这里即改搜索面
+  new_repo_queries:
+    - "agent framework"
+    - "mcp server"
+    - "llm agent"
+    - "rag"
+    - "context engineering"
+    - "llm inference"
+    - "ai coding"
+    - "prompt engineering"
+    - "llm eval"
+  # ai_eng_hint 关键词（命中任一 → ai_eng_hint=true；只做排序提示，不删条目）
+  hint_keywords:
+    - agent
+    - llm
+    - mcp
+    - rag
+    - prompt
+    - inference
+    - eval
+    - fine-tun
+    - context
+    - coding
+    - copilot
+    - transformer
+    - vllm
+    - tokenizer
+    - sandbox
+    - memory
+    - tool
+
+bilibili:
+  pages_per_keyword: 2
+  order: pubdate # pubdate=最新发布优先；click=播放最多优先
+  keywords:
+    - "AI编程"
+    - "Agent 开发实战"
+    - "MCP 教程"
+    - "RAG 实战"
+    - "大模型 部署"
+    - "Claude Code"
+    - "AI agent 开发"
+  # 官方搜索全失败时（-412 风控等）的搜索引擎降级链，按序 failover
+  fallback_engine: "yuanbao,tavily,deepseek"
+  fallback_keywords: 3 # 降级时最多取前 N 个关键词
+
+wechat:
+  # 大厂技术号 × 检索词。搜索走 multi_search（--site mp.weixin.qq.com），
+  # 按账号名检索是当前唯一可落地方案（公众号无官方 API）。
+  accounts:
+    - name: 腾讯技术工程
+      queries: ["大模型", "Agent"]
+    - name: 阿里云开发者
+      queries: ["大模型", "Agent"]
+    - name: 字节跳动技术团队
+      queries: ["大模型", "Agent"]
+    - name: 美团技术团队
+      queries: ["大模型", "Agent"]
+    - name: 百度Geek说
+      queries: ["大模型", "Agent"]
+    - name: 得物技术
+      queries: ["大模型", "Agent"]
+  fallback_engine: "yuanbao,tavily,deepseek"
+
+hackernews:
+  min_points: 50
+  hits_per_page: 200
+  pages: 2
+  # 标题/URL 命中任一关键词才保留（≤3 字符的按整词匹配，避免 ai 误中 mail）
+  keywords:
+    - ai
+    - llm
+    - gpt
+    - claude
+    - agent
+    - openai
+    - mcp
+    - rag
+    - prompt
+    - inference
+    - eval
+    - context
+    - copilot
+    - embedding
+    - fine-tun

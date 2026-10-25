@@ -1,5 +1,10 @@
 ---
 name: ch-gpu-compute-monitor
+version: 1.0.0
+display_name: "GPU 算力价格与供给监控"
+display_name_en: "GPU Compute Price & Supply Monitor"
+description_zh: "跟踪 GPU 算力租赁的成交价、挂牌报价与可用供给，覆盖 B200/H200/H100 三个 SKU 以及 Vast、Runpod、CoreWeave、Nebius、Ornn 等数据源；同时跟踪推理 token 的需求量与价格结构，产出算力供需监控日报与 HTML Dashboard。"
+description_en: "Track GPU compute rental transaction prices, listed rates and available supply across B200/H200/H100 SKUs from Vast, Runpod, CoreWeave, Nebius and Ornn, alongside inference token demand and price structure, and produce daily supply-demand reports with an HTML dashboard."
 description: 当用户要跟踪 GPU 算力租赁的价格与可用供给、判断算力供需是紧还是松、看 B200/H200/H100 的租金走势与代际溢价、比较 Vast/Runpod/CoreWeave/Nebius 等平台的报价、观察 Ornn OCPI 成交价指数、判断 spot 折价与库存档位变化，或要生成 GPU 算力供需监控日报与 HTML Dashboard 时使用此 skill。适用提问包括“现在 H100 租金多少”“B200 价格在涨还是在跌”“GPU 算力紧不紧张”“算力价格拐点到了吗”“Vast 上 H200 报价分布怎么样”“Runpod 库存什么情况”“B200 相对 H200 的溢价在收窄吗”“spot 折价扩大了吗”“出一份今天的算力监控日报”“把算力监控导成网页”，也用于跟踪推理需求端的 token 量与价——看 AI token 用量在涨还是在跌、token 价格跌里有多少是真降价多少是往便宜模型迁移、重建 OpenRouter 全站名义 spend、看付费与免费 token 的结构、判断算力涨价是真需求拉动还是供给收缩。适用提问还包括“AI token 用量涨了多少”“token 价格跌 20% 是真降价吗”“推理需求还在扩张吗”“下游收入池撑不撑得住这么贵的算力”，以及配置每日定时采集、回填历史 90 天数据、补录 CoreWeave/Nebius 挂牌价、排查某个数据源为什么没采到数。脚本只做采集、标准化、确定性统计与渲染；“这是不是真拐点、要不要采信这个信号”由模型判断。不覆盖 GPU 芯片二级市场买卖价、云厂商股票分析、推理毛利率与单位 token 成本地板（需人工吞吐表，尚未启用）；不给买卖建议、目标价或仓位。
 ---
 

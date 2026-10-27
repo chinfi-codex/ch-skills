@@ -364,7 +364,7 @@ def main() -> int:
             for value, prev in zip(frame["日期"].tolist(), existing_circ)
         ]
         frame["流通市值"] = circ_col
-        filled = sum(1 for v in circ_col if v is not None)
+        filled = sum(1 for v in circ_col if v is not None and v == v)
         print(f"[circ-mv] 回填后 {filled}/{len(frame)} 行有流通市值（窗口 {len(circ_days)} 天）", flush=True)
 
     market_panel.write_market_history_df(frame)

@@ -398,7 +398,7 @@ class StateTimelinePayloadTest(unittest.TestCase):
         self.assertEqual(p["pulse_max"], 4)
         self.assertEqual([x["date"] for x in p["pulse"] if x["gate"]], ["2026-08-19"])
 
-    def test_payload_is_capped_at_the_shared_200_day_chart_window(self):
+    def test_payload_is_capped_at_the_shared_100_day_chart_window(self):
         ev = _timeline_evidence()
         for key, field in (("trend_state_card", "history"), ("extreme_state", "recent"),
                            ("forward_odds", "pulse_history")):
@@ -412,7 +412,7 @@ class StateTimelinePayloadTest(unittest.TestCase):
         self.assertEqual(len(p["states"]), rr.CARD_TIMELINE_DISPLAY_DAYS)
         self.assertEqual(len(p["scores"]), rr.CARD_TIMELINE_DISPLAY_DAYS)
         self.assertEqual(len(p["pulse"]), rr.CARD_TIMELINE_DISPLAY_DAYS)
-        self.assertEqual(p["states"][0]["date"], str(date(2025, 1, 1) + timedelta(days=50)))
+        self.assertEqual(p["states"][0]["date"], str(date(2025, 1, 1) + timedelta(days=150)))
 
     def test_missing_forward_axis_degrades_to_two_axes(self):
         p = rr.extract_state_timeline_payload(_timeline_evidence(with_pulse=False))
@@ -469,11 +469,11 @@ class ExtremeStateSchemaTest(unittest.TestCase):
 
 class HistoryWindowTest(unittest.TestCase):
     def test_all_four_card_charts_share_the_same_window_length(self):
-        """四张机判卡的轨迹图统一为 200 个交易日，否则同轴图会左右错位。"""
+        """四张机判卡的轨迹图统一为 100 个交易日，否则同轴图会左右错位。"""
         import extreme_state_card as esc
         import trend_state_card as tsc
         import turnover_concentration as tc
-        self.assertEqual(fo.HISTORY_DAYS, 200)
+        self.assertEqual(fo.HISTORY_DAYS, 100)
         self.assertEqual(esc.HISTORY_DAYS, fo.HISTORY_DAYS)
         self.assertEqual(tsc.HISTORY_DAYS, fo.HISTORY_DAYS)
         self.assertEqual(tc.RECENT_DAYS, fo.HISTORY_DAYS)

@@ -190,20 +190,20 @@ def test_market_scale_invariance():
 
 
 def test_recent_states_series():
-    """近 200 个交易日逐日回算：被动场景末段逐日 state 应为 passive，字段齐全。"""
+    """近 100 个交易日逐日回算：被动场景末段逐日 state 应为 passive，字段齐全。"""
     n = 300
     head = [100.0] * (n - 5) + [99.0, 98.0, 97.5, 97.0, 96.0]
     frame = _history_frame(n, cr_today=40.0, head_path=head, total_path=[300.0] * n)
     recent = tc.recent_states(frame)
-    assert len(recent) == tc.RECENT_DAYS == 200
+    assert len(recent) == tc.RECENT_DAYS == 100
     assert all({"date", "cr_1pct", "cr_5pct", "env_bucket", "state"} <= set(r) for r in recent)
     assert recent[-1]["state"] == "passive"
     assert recent[-1]["cr_1pct"] == 40.0
-    # 短历史：不足 200 日返回全部，超过 200 日截最近 200 日，都不炸
+    # 短历史：不足 100 日返回全部，超过 100 日截最近 100 日，都不炸
     short = _history_frame(20, cr_today=40.0, head_path=[100.0] * 20, total_path=[300.0] * 20)
     assert len(tc.recent_states(short)) == 20
     mid = _history_frame(260, cr_today=40.0, head_path=[100.0] * 260, total_path=[300.0] * 260)
-    assert len(tc.recent_states(mid)) == 200
+    assert len(tc.recent_states(mid)) == 100
 
 
 def test_extract_concentration_payload():
@@ -232,8 +232,8 @@ def test_extract_concentration_payload():
     assert rrh.extract_concentration_payload({}) is None
 
 
-def test_extract_concentration_payload_caps_chart_window_at_200_days():
-    """渲染层兜底截尾：即使上游多送，集中度图也只画最近 200 个交易日。"""
+def test_extract_concentration_payload_caps_chart_window_at_100_days():
+    """渲染层兜底截尾：即使上游多送，集中度图也只画最近 100 个交易日。"""
     import render_report_html as rrh
 
     rows = [
@@ -245,6 +245,6 @@ def test_extract_concentration_payload_caps_chart_window_at_200_days():
         "turnover_concentration": {"available": True, "recent": rows}
     })
     assert payload is not None
-    assert payload["display_days"] == rrh.CARD_TIMELINE_DISPLAY_DAYS == 200
-    assert len(payload["recent"]) == 200
-    assert payload["recent"][0]["date"] == str(date(2025, 1, 1) + timedelta(days=50))
+    assert payload["display_days"] == rrh.CARD_TIMELINE_DISPLAY_DAYS == 100
+    assert len(payload["recent"]) == 100
+    assert payload["recent"][0]["date"] == str(date(2025, 1, 1) + timedelta(days=150))

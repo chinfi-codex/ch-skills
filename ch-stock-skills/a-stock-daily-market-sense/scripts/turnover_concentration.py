@@ -308,8 +308,8 @@ STATE_LABELS = {
     "insufficient_history": "历史不足，不出判读",
 }
 
-# HTML 轨迹图回看窗口：与极值卡 / 状态卡时间轴同宽（200 个交易日）
-RECENT_DAYS = 200
+# HTML 轨迹图回看窗口：与极值卡 / 状态卡时间轴同宽（100 个交易日）
+RECENT_DAYS = 100
 
 
 def recent_states(history: pd.DataFrame, days: int = RECENT_DAYS) -> List[Dict[str, Any]]:

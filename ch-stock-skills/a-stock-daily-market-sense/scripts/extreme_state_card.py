@@ -83,7 +83,7 @@ NEW_LOW_WINDOW = 60
 ROLL_WINDOW = 500                 # 滚动分位窗口（交易日）
 ROLL_MIN = 250                    # 不足此长度就退回固定水平
 ZONE_LOOKBACK = 10                # 出清区的回看窗口
-HISTORY_DAYS = 200                # 输出的分数轨迹长度（HTML 时间轴按这个宽度画）
+HISTORY_DAYS = 100                # 输出的分数轨迹长度（HTML 时间轴按这个宽度画）
 DIVERGENCE_STICKY = 15            # 宽度背离的粘性天数
 BREADTH_DROP_PCT = 5.0            # 宽度背离的判定落差（百分点）
 

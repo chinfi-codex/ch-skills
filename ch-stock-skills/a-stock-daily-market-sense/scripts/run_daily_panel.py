@@ -364,7 +364,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.no_extreme_state:
         extreme_state = build_extreme_state_card(resolved_date, args.extreme_backfill)
         evidence["extreme_state"] = extreme_state
-    # 趋势卡也进 evidence：HTML 的 200 个交易日轨迹图要从 evidence 读轨迹，而模块级
+    # 趋势卡也进 evidence：HTML 的 100 个交易日轨迹图要从 evidence 读轨迹，而模块级
     # JSON 只给模型看、渲染器不读它
     trend_card: Optional[Dict[str, Any]] = None
     if not args.no_module_context:

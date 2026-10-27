@@ -87,7 +87,9 @@ MARKET_HISTORY_COLUMNS = [
     "活跃度",
     "情绪值",
     "成交额",
+    "流通市值",
     "融资净买入",
+    "融资余额",
     "融资数据日",
     "全市场换手率",
 ]
@@ -109,7 +111,11 @@ MARKET_HISTORY_DB_COLUMNS = {
     "活跃度": "activity",
     "情绪值": "sentiment",
     "成交额": "amount",
+    # 流通市值：全A流通市值合计，单位元（daily_basic.circ_mv 万元 × 1e4）
+    "流通市值": "circ_mv_total",
     "融资净买入": "margin_net_buy",
+    # 融资余额：与融资净买入同一次 margin(T-1) 取数的 rzye 合计，单位元
+    "融资余额": "margin_balance",
     "融资数据日": "margin_data_date",
     "全市场换手率": "turnover_rate",
 }
@@ -995,14 +1001,34 @@ def calculate_market_turnover_rate(daily: pd.DataFrame, daily_basic: pd.DataFram
     return round(turnover_rate, 4), None
 
 
-def fetch_margin_net_buy(
+def calculate_market_circ_mv(
+    daily_basic: Optional[pd.DataFrame], target_date: str
+) -> Tuple[Optional[float], Optional[str]]:
+    """全A流通市值合计，单位元（daily_basic.circ_mv 单位万元，×1e4 归一到元）。"""
+    if daily_basic is None or daily_basic.empty:
+        return None, "daily_basic data is empty"
+
+    basic_day = daily_basic.loc[daily_basic["trade_date"].astype(str) == str(target_date)]
+    if basic_day.empty:
+        return None, f"daily_basic data missing target date {target_date}"
+    if "circ_mv" not in basic_day.columns:
+        return None, "daily_basic data missing circ_mv column"
+
+    circ_mv = pd.to_numeric(basic_day["circ_mv"], errors="coerce")
+    total_circ_mv_10k_yuan = circ_mv[circ_mv > 0].sum(min_count=1)
+    if pd.isna(total_circ_mv_10k_yuan) or float(total_circ_mv_10k_yuan) <= 0:
+        return None, "daily_basic circ_mv has no positive values"
+    return round(float(total_circ_mv_10k_yuan) * 10000.0, 2), None
+
+
+def fetch_margin_summary(
     pro,
     target_date: str,
     cache_enabled: bool = True,
     refresh_cache: bool = False,
-) -> Tuple[Optional[float], Optional[str]]:
-    """Return market-wide financing net buy (rzmre - rzche), in yuan."""
-    fields = "trade_date,exchange_id,rzmre,rzche"
+) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+    """Return market-wide margin totals: (net buy rzmre-rzche, balance rzye), in yuan."""
+    fields = "trade_date,exchange_id,rzye,rzmre,rzche"
     if cache_enabled and not refresh_cache:
         cached = read_cached_frame("margin", target_date, fields)
         if cached is not None:
@@ -1018,19 +1044,28 @@ def fetch_margin_net_buy(
             if margin is not None and not margin.empty and cache_enabled:
                 write_cached_frame("margin", target_date, margin)
     except Exception as exc:
-        return None, f"tushare margin failed for {target_date}: {exc}"
+        return None, None, f"tushare margin failed for {target_date}: {exc}"
 
     if margin is None or margin.empty:
-        return None, f"tushare margin returned no data for {target_date}"
+        return None, None, f"tushare margin returned no data for {target_date}"
     if "rzmre" not in margin.columns or "rzche" not in margin.columns:
-        return None, "tushare margin missing rzmre/rzche columns"
+        return None, None, "tushare margin missing rzmre/rzche columns"
 
     buy = pd.to_numeric(margin["rzmre"], errors="coerce")
     repay = pd.to_numeric(margin["rzche"], errors="coerce")
     net_buy = (buy - repay).sum(min_count=1)
     if pd.isna(net_buy):
-        return None, "tushare margin rzmre/rzche has no numeric values"
-    return round(float(net_buy), 2), None
+        return None, None, "tushare margin rzmre/rzche has no numeric values"
+
+    # 融资余额与净买入同批取数、同一 T-1 口径；旧缓存帧没有 rzye 列时只缺余额、
+    # 不拖垮净买入（read_cached_frame 遇到缺列会整帧判失效重取，这里只是兜底）。
+    balance: Optional[float] = None
+    if "rzye" in margin.columns:
+        rzye = pd.to_numeric(margin["rzye"], errors="coerce")
+        balance_sum = rzye.sum(min_count=1)
+        if not pd.isna(balance_sum):
+            balance = round(float(balance_sum), 2)
+    return round(float(net_buy), 2), balance, None
 
 
 def format_history_date(trade_date: str) -> str:
@@ -1396,7 +1431,9 @@ def write_market_history_json(
             "activity": "活跃度",
             "sentiment": "情绪值",
             "amount": "成交额",
+            "circ_mv_total": "流通市值",
             "margin_net_buy": "融资净买入",
+            "margin_balance": "融资余额",
             "margin_data_date": "融资数据日",
             "turnover_rate": "全市场换手率",
         }
@@ -1537,9 +1574,9 @@ def load_market_history_df(csv_path: Path = DEFAULT_MARKET_HISTORY_CSV) -> pd.Da
 def should_update_market_history_field(column: str, current_value: object, new_value: object) -> bool:
     if column == "成交额":
         return should_fill_turnover(current_value, new_value)
-    if column == "全市场换手率":
+    if column in {"全市场换手率", "流通市值"}:
         return should_fill_positive_numeric(current_value, new_value)
-    if column in {"情绪值", "活跃度", "融资净买入"}:
+    if column in {"情绪值", "活跃度", "融资净买入", "融资余额"}:
         return should_update_numeric(current_value, new_value)
     if column == "融资数据日":
         # 与融资净买入配对，新值非空即覆盖——两者不同步会让下游把 T-1 读数当成当日
@@ -1852,6 +1889,7 @@ def update_market_history(
     margin_net_buy: Optional[float] = None,
     margin_net_buy_reason: Optional[str] = None,
     margin_net_buy_trade_date: Optional[str] = None,
+    margin_balance: Optional[float] = None,
     csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
     defer_write: bool = False,
     limit_flags: Optional[pd.DataFrame] = None,
@@ -1891,6 +1929,7 @@ def update_market_history(
         daily_basic if daily_basic is not None else pd.DataFrame(),
         target_date,
     )
+    market_circ_mv, market_circ_mv_reason = calculate_market_circ_mv(daily_basic, target_date)
 
     fallback_reason = detail.get("fallback_reason")
     if not row:
@@ -1902,10 +1941,21 @@ def update_market_history(
     if "全市场换手率" not in columns:
         columns.append("全市场换手率")
 
+    if market_circ_mv is not None:
+        row["流通市值"] = market_circ_mv
+    if "流通市值" not in columns:
+        columns.append("流通市值")
+
     if margin_net_buy is not None:
         row["融资净买入"] = margin_net_buy
     if "融资净买入" not in columns:
         columns.append("融资净买入")
+
+    # 融资余额与融资净买入同一次 margin(T-1) 取数，口径日同列于融资数据日
+    if margin_balance is not None:
+        row["融资余额"] = margin_balance
+    if "融资余额" not in columns:
+        columns.append("融资余额")
 
     # 融资读数的实际数据日显式落库。融资在收盘后才公布，写入方取的是前一交易日，
     # 于是第 d 行的融资描述的是 d-1 的杠杆行为。以前这条只写在注释里靠下游推断，
@@ -1936,10 +1986,15 @@ def update_market_history(
         "market_turnover_rate": market_turnover_rate,
         "market_turnover_rate_unit": "percent",
         "market_turnover_rate_reason": market_turnover_reason,
+        "circ_mv_total": market_circ_mv,
+        "circ_mv_total_unit": "yuan",
+        "circ_mv_total_reason": market_circ_mv_reason,
         "margin_net_buy": margin_net_buy,
         "margin_net_buy_unit": "yuan",
         "margin_net_buy_trade_date": margin_net_buy_trade_date,
         "margin_net_buy_reason": margin_net_buy_reason,
+        "margin_balance": margin_balance,
+        "margin_balance_unit": "yuan",
         "fields": sorted(confirmed_values.keys()),
     }
     if not confirmed_values:
@@ -1995,6 +2050,7 @@ def update_market_history_window(
     margin_net_buy: Optional[float] = None,
     margin_net_buy_reason: Optional[str] = None,
     margin_net_buy_trade_date: Optional[str] = None,
+    margin_balance: Optional[float] = None,
     csv_path: Path = DEFAULT_MARKET_HISTORY_CSV,
     limit_flags: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Any]:
@@ -2020,14 +2076,16 @@ def update_market_history_window(
     for trade_date in dates_to_update:
         if trade_date == target_date:
             row_margin = margin_net_buy
+            row_margin_balance = margin_balance
             row_margin_reason = margin_net_buy_reason
             row_margin_trade_date = margin_net_buy_trade_date
         else:
             row_margin = None
+            row_margin_balance = None
             row_margin_reason = "not requested for backfill"
             row_margin_trade_date = previous_by_date.get(trade_date)
             if pro is not None and row_margin_trade_date:
-                row_margin, row_margin_reason = fetch_margin_net_buy(
+                row_margin, row_margin_balance, row_margin_reason = fetch_margin_summary(
                     pro,
                     row_margin_trade_date,
                     cache_enabled=cache_enabled,
@@ -2041,6 +2099,7 @@ def update_market_history_window(
             margin_net_buy=row_margin,
             margin_net_buy_reason=row_margin_reason,
             margin_net_buy_trade_date=row_margin_trade_date,
+            margin_balance=row_margin_balance,
             csv_path=csv_path,
             defer_write=True,
             limit_flags=limit_flags,
@@ -5327,7 +5386,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
             refresh_cache=args.refresh_cache,
         )
         margin_future = executor.submit(
-            fetch_margin_net_buy,
+            fetch_margin_summary,
             pro,
             margin_trade_date,
             cache_enabled,
@@ -5339,9 +5398,9 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         basic = basic_future.result()
         stock_basic = stock_basic_future.result()
         index_daily = index_daily_future.result()
-        margin_net_buy, margin_net_buy_reason = (
+        margin_net_buy, margin_balance, margin_net_buy_reason = (
             margin_future.result() if margin_future is not None
-            else (None, "no previous trade date available for the T-1 margin reading")
+            else (None, None, "no previous trade date available for the T-1 margin reading")
         )
     timer.mark("fetch_parallel")
 
@@ -5376,6 +5435,7 @@ def build_panel(args: argparse.Namespace) -> Dict[str, Any]:
         margin_net_buy=margin_net_buy,
         margin_net_buy_reason=margin_net_buy_reason,
         margin_net_buy_trade_date=margin_trade_date,
+        margin_balance=margin_balance,
         limit_flags=limit_flags,
     )
     timer.mark("market_history_update")

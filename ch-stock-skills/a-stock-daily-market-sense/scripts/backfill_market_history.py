@@ -15,11 +15,14 @@
      已存在的行**不动这些字段**；`--recount` 会连已有行一起重算，用于口径修正后
      回补历史（合并层只在新旧值不同时才落笔，没变的行不会被动到）。
   2. **统一融资列**：所有行（含已存在的）的 `margin_net_buy` 一律重取为
-     `margin(前一交易日)` 的 Tushare 值，并把 `margin_data_date` 显式写上。
+     `margin(前一交易日)` 的 Tushare 值，并把 `margin_data_date` 显式写上；
+     同批取数的 `rzye` 合计落 `融资余额` 列（同一 T-1 口径日）。
      顺带把同期 margin 明细写入 `stock_margin`，好让两张卡能算 bp 归一。
 
 未补的字段：`turnover_rate` 需要 `daily_basic` 的市值口径，历史段留空（它只
-进情绪表展示，不参与任何状态判定）。
+进情绪表展示，不参与任何状态判定）。`流通市值`（全A流通市值合计，元）同为
+daily_basic 口径，默认不补；图表只需近端窗口，用 `--circ-mv-last N` 回填最近
+N 个交易日即可（它会喂「融资余额 ÷ 流通市值」副轴）。
 
 接口限速 200 次/分，分日结果缓存在 `--cache-dir`，可断点续跑；把之前跑过的
 缓存目录传进来就不会重复取数。
@@ -29,6 +32,8 @@
   python scripts/backfill_market_history.py --start 20200601 --end 20260807
   # 分桶口径修正后回补历史（重算已有行的涨跌平/涨跌停/情绪值）
   python scripts/backfill_market_history.py --start 20200601 --end 20260828 --recount
+  # 顺带回填最近 130 个交易日的全A流通市值（喂融资余额占比副轴）
+  python scripts/backfill_market_history.py --start 20200601 --end 20260828 --circ-mv-last 130
 """
 
 from __future__ import annotations
@@ -78,12 +83,18 @@ class RateLimiter:
             time.sleep(wait)
 
 
-LIMITERS = {"daily": RateLimiter(), "limit": RateLimiter()}
+LIMITERS = {
+    "daily": RateLimiter(),
+    "limit": RateLimiter(),
+    # --circ-mv-last 的 daily_basic 分日取数也走 cached_frame -> call
+    "daily_basic": RateLimiter(150),
+}
 
 
 def call(endpoint: str, fn, tries: int = 6):
+    limiter = LIMITERS.setdefault(endpoint, RateLimiter())
     for i in range(tries):
-        LIMITERS[endpoint].acquire()
+        limiter.acquire()
         try:
             return fn()
         except Exception:  # noqa: BLE001
@@ -156,8 +167,8 @@ def fetch_margin(pro, start: str, end: str) -> pd.DataFrame:
     return out.loc[(out["trade_date"] >= start) & (out["trade_date"] <= end)]
 
 
-def daily_net_buy(margin: pd.DataFrame) -> Dict[str, float]:
-    """按交易日汇总净买入（元），剔除口径不全的日子。
+def complete_margin_days(margin: pd.DataFrame) -> set:
+    """口径齐全的交易日集合：和此前 20 个交易日出现过的交易所数对齐。
 
     "全"不能用全样本众数判：北交所 2023-02 才进这个接口，五年跨度里应有的
     交易所数本身是变的，用全局众数会把 2023 年之前只有两所的日子全判成缺数
@@ -171,13 +182,30 @@ def daily_net_buy(margin: pd.DataFrame) -> Dict[str, float]:
     分批发布只到一个所的情况。
     """
     if margin.empty:
-        return {}
+        return set()
     counts = margin.groupby("trade_date")["exchange_id"].nunique().sort_index()
     expected = counts.rolling(21, min_periods=1).max()
-    keep = set(counts.index[counts >= expected])
+    return set(counts.index[counts >= expected])
+
+
+def daily_net_buy(margin: pd.DataFrame) -> Dict[str, float]:
+    """按交易日汇总净买入（元），剔除口径不全的日子（规则见 complete_margin_days）。"""
+    if margin.empty:
+        return {}
+    keep = complete_margin_days(margin)
     sub = margin.loc[margin["trade_date"].isin(keep)]
     grouped = sub.groupby("trade_date").agg(net=("rzmre", "sum"), repay=("rzche", "sum"))
     return {d: float(r.net - r.repay) for d, r in grouped.iterrows()}
+
+
+def daily_balance(margin: pd.DataFrame) -> Dict[str, float]:
+    """按交易日汇总融资余额 rzye（元），与 daily_net_buy 同一套口径齐全集合。"""
+    if margin.empty:
+        return {}
+    keep = complete_margin_days(margin)
+    sub = margin.loc[margin["trade_date"].isin(keep)]
+    grouped = sub.groupby("trade_date")["rzye"].sum()
+    return {d: float(v) for d, v in grouped.items()}
 
 
 def write_stock_margin(margin: pd.DataFrame) -> int:
@@ -198,6 +226,9 @@ def main() -> int:
     ap.add_argument("--cache-dir", default=str(DEFAULT_CACHE), help="分日取数缓存目录，可断点续跑")
     ap.add_argument("--recount", action="store_true",
                     help="连已有行的涨跌平/涨跌停/情绪值一起重算（修分桶口径后回补历史用）")
+    ap.add_argument("--circ-mv-last", type=int, default=0, metavar="N",
+                    help="回填区间内最近 N 个交易日的全A流通市值（daily_basic.circ_mv 合计，元），"
+                         "供「融资余额 ÷ 流通市值」副轴使用；0 表示不补")
     ap.add_argument("--dry-run", action="store_true", help="只报告将要发生什么，不写库")
     args = ap.parse_args()
 
@@ -227,7 +258,9 @@ def main() -> int:
 
     margin = fetch_margin(pro, args.start, args.end)
     net_by_date = daily_net_buy(margin)
-    print(f"[margin] 取到 {len(net_by_date)} 个交易日的净买入", flush=True)
+    balance_by_date = daily_balance(margin)
+    print(f"[margin] 取到 {len(net_by_date)} 个交易日的净买入、"
+          f"{len(balance_by_date)} 个交易日的融资余额", flush=True)
 
     if args.dry_run:
         sample = [d for d in days if d in existing_dates][:3]
@@ -235,7 +268,10 @@ def main() -> int:
             i = days.index(d)
             prev = days[i - 1] if i > 0 else None
             print(f"  {d}  margin_net_buy <- margin({prev}) = "
-                  f"{net_by_date.get(prev, float('nan')) / 1e8:.1f} 亿")
+                  f"{net_by_date.get(prev, float('nan')) / 1e8:.1f} 亿；"
+                  f"rzye = {balance_by_date.get(prev, float('nan')) / 1e12:.2f} 万亿")
+        if args.circ_mv_last:
+            print(f"  [circ-mv] 将回填最近 {args.circ_mv_last} 个交易日的流通市值")
         print("[dry-run] 未写库")
         return 0
 
@@ -277,11 +313,12 @@ def main() -> int:
         frame = market_panel.merge_market_history_row(frame, row, list(row.keys()))
 
     prev_of = {d: days[i - 1] for i, d in enumerate(days) if i > 0}
-    margin_col, margin_date_col, rewritten = [], [], 0
+    margin_col, margin_date_col, balance_col, rewritten = [], [], [], 0
     for value in frame["日期"].tolist():
         day = market_panel.history_date_to_trade_date(value)
         prev = prev_of.get(day)
         net = net_by_date.get(prev) if prev else None
+        balance = balance_by_date.get(prev) if prev else None
         if net is None:
             margin_col.append(None)
             margin_date_col.append(None)
@@ -289,9 +326,46 @@ def main() -> int:
             margin_col.append(round(net, 2))
             margin_date_col.append(market_panel.format_history_date(prev))
             rewritten += 1
+        # 余额与净买入同一口径日；净买入缺失的日子余额通常也缺，各自独立判空
+        balance_col.append(round(balance, 2) if balance is not None else None)
     frame["融资净买入"] = margin_col
     frame["融资数据日"] = margin_date_col
-    print(f"[margin] 重写 {rewritten}/{len(frame)} 行为 T-1 口径", flush=True)
+    frame["融资余额"] = balance_col
+    print(f"[margin] 重写 {rewritten}/{len(frame)} 行为 T-1 口径（含融资余额列）", flush=True)
+
+    # 4) 可选：回填最近 N 天的全A流通市值（元）。daily_basic 单日一次全量调用，
+    #    只取 circ_mv 三列，走同一个分日缓存目录，可断点续跑。
+    if args.circ_mv_last > 0:
+        circ_days = days[-args.circ_mv_last:]
+        circ_by_date: Dict[str, float] = {}
+
+        def fetch_circ(day: str):
+            basic = cached_frame(cache_dir, "daily_basic", day, lambda: pro.daily_basic(
+                trade_date=day, fields="ts_code,trade_date,circ_mv"))
+            return day, market_panel.calculate_market_circ_mv(basic, day)
+
+        t0 = time.time()
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for i, (day, (circ_mv, reason)) in enumerate(pool.map(fetch_circ, circ_days)):
+                if circ_mv is not None:
+                    circ_by_date[day] = circ_mv
+                else:
+                    print(f"[circ-mv] {day} 跳过：{reason}", flush=True)
+                if (i + 1) % 50 == 0:
+                    print(f"[circ-mv] {i + 1}/{len(circ_days)} {round(time.time() - t0)}s", flush=True)
+
+        # 按位置整列构建（frame 的 index 在合并后不保证连续唯一，at[] 会错位）；
+        # 窗口外的行保留已有值，不因为一次回填被抹掉
+        existing_circ = (
+            frame["流通市值"].tolist() if "流通市值" in frame.columns else [None] * len(frame)
+        )
+        circ_col = [
+            circ_by_date.get(market_panel.history_date_to_trade_date(value), prev)
+            for value, prev in zip(frame["日期"].tolist(), existing_circ)
+        ]
+        frame["流通市值"] = circ_col
+        filled = sum(1 for v in circ_col if v is not None)
+        print(f"[circ-mv] 回填后 {filled}/{len(frame)} 行有流通市值（窗口 {len(circ_days)} 天）", flush=True)
 
     market_panel.write_market_history_df(frame)
     print(f"[done] market_history 现有 {len(frame)} 行", flush=True)

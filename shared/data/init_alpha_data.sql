@@ -200,10 +200,17 @@ CREATE TABLE IF NOT EXISTS market_history (
     -- 但历史上这条约定并不稳定，下游若靠推断就会在转向日把前一天的读数按在
     -- 盘面相反的一天上。这一列把口径显式落库，消费方一律读它而不是自己推。
     margin_data_date DATE,
+    -- 融资余额（元）：与 margin_net_buy 同一次 margin(T-1) 取数的 rzye 三所合计，
+    -- 口径日同样是 margin_data_date。流通市值（元）：daily_basic.circ_mv 全市场合计，
+    -- 当日口径。两者之比即「融资余额 ÷ 全A流通市值」，供情绪趋势图副轴使用。
+    margin_balance  DECIMAL(18,4),
+    circ_mv_total   DECIMAL(20,4),
     turnover_rate   DECIMAL(8,4)
 );
 
 ALTER TABLE market_history ADD COLUMN IF NOT EXISTS margin_data_date DATE;
+ALTER TABLE market_history ADD COLUMN IF NOT EXISTS margin_balance DECIMAL(18,4);
+ALTER TABLE market_history ADD COLUMN IF NOT EXISTS circ_mv_total DECIMAL(20,4);
 
 
 -- -------------------------------------------------------------------------

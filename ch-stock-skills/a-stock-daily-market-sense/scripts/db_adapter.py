@@ -270,9 +270,11 @@ def write_market_history(df: "pd.DataFrame") -> None:
     with get_connection() as conn:
         try:
             cur = conn.cursor()
-            # 自愈式迁移：margin_data_date 是后加的列，老库里可能没有。加在 TRUNCATE
-            # 之前，避免整批写入因为一列缺失而失败。
+            # 自愈式迁移：margin_data_date / margin_balance / circ_mv_total 是后加的列，
+            # 老库里可能没有。加在 TRUNCATE 之前，避免整批写入因为一列缺失而失败。
             cur.execute("ALTER TABLE market_history ADD COLUMN IF NOT EXISTS margin_data_date DATE")
+            cur.execute("ALTER TABLE market_history ADD COLUMN IF NOT EXISTS margin_balance DECIMAL(18,4)")
+            cur.execute("ALTER TABLE market_history ADD COLUMN IF NOT EXISTS circ_mv_total DECIMAL(20,4)")
             cur.execute("TRUNCATE TABLE market_history")
 
             columns = list(df.columns)

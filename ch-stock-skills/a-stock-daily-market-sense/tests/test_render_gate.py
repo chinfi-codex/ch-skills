@@ -515,6 +515,69 @@ class RenderGateTest(unittest.TestCase):
         self.assertEqual(result["detail"]["content_contract"]["status"], "ok")
         self.assertEqual(result["detail"]["content_contract"]["section_count"], 15)
 
+    def test_margin_chart_draws_ratio_secondary_axis(self) -> None:
+        """融资图副轴：记录里带上 融资余额/流通市值 时，融资图必须画出
+        「融资余额 ÷ 流通市值」折线、两个右轴 % 端值标签和图例项；
+        fixture 不带这两列时（见上个用例）则退化为纯净买入柱。"""
+        payload = json.loads((FIXTURES / "market_data.json").read_text(encoding="utf-8"))
+        records = payload.get("records") or []
+        self.assertTrue(records, "fixture market_data.json has no records")
+        for rec in records:
+            rec["融资余额"] = 2615560000000.0
+            rec["流通市值"] = 101234000000000.0
+        enriched = self.out_dir / "market_data_dual.json"
+        enriched.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        dual = self.out_dir / "dual_axis.html"
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS / "render_report_html.py"),
+             "--input", str(self.out_dir / "report_20260803.md"), "--output", str(dual),
+             "--market-data", str(enriched),
+             "--no-lifecycle"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr.strip())
+
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch()
+            try:
+                page = browser.new_page()
+                page.goto(dual.as_uri())
+                page.wait_for_function(
+                    "() => document.documentElement.hasAttribute('data-render-status')",
+                    timeout=30000,
+                )
+                dom = page.evaluate("""
+                  () => {
+                    const card = [...document.querySelectorAll('.chart-card')]
+                      .find(c => {
+                        const title = c.querySelector('.chart-title');
+                        return title && title.textContent.includes('融资净买入');
+                      });
+                    if (!card) return null;
+                    const svg = card.querySelector('svg');
+                    return {
+                      lines: svg.querySelectorAll('path.series-line').length,
+                      bars: svg.querySelectorAll('rect[opacity="0.85"]').length,
+                      rightLabels: [...svg.querySelectorAll('text')]
+                        .filter(t => t.getAttribute('text-anchor') === 'end')
+                        .map(t => t.textContent),
+                      cardText: card.textContent,
+                    };
+                  }
+                """)
+            finally:
+                browser.close()
+        self.assertIsNotNone(dom, "margin chart card not found")
+        self.assertGreater(dom["bars"], 0, "net-buy bars missing")
+        self.assertEqual(dom["lines"], 1, "ratio line (secondary axis) missing")
+        self.assertEqual(len(dom["rightLabels"]), 2, "right axis should carry max/min end labels")
+        self.assertTrue(all(label.endswith("%") for label in dom["rightLabels"]),
+                        f"right axis labels must be percents: {dom['rightLabels']}")
+        self.assertIn("融资余额/流通市值", dom["cardText"])
+
     def test_unmatched_rows_are_allowed_but_must_carry_a_reason(self) -> None:
         """Two fixture stocks deliberately have no K-line data."""
         result = _gate(self.html)

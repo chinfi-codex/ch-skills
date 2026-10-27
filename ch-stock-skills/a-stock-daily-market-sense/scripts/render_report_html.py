@@ -2381,10 +2381,23 @@ const chartSection = document.createElement("div");
 chartSection.className = "chart-grid";
 chartSection.style.marginTop = "18px";
 
+/* 融资余额 ÷ 全A流通市值：分子是 T-1 口径的融资余额（口径日见「融资数据日」列），
+   分母是当日全A流通市值。两列都在同一条记录里自取，不引入跨行对齐；分子晚一天
+   对 90 日趋势图的形状影响可忽略。历史行在回填前缺这两列，比例点自动缺省。 */
+records.forEach(row => {
+  const balance = row["融资余额"];
+  const circMv = row["流通市值"];
+  row["融资余额/流通市值"] = Number.isFinite(balance) && Number.isFinite(circMv) && circMv > 0
+    ? balance / circMv * 100
+    : null;
+});
+
 const charts = [
   { title: "成交额趋势", fields: [{ key: "成交额", color: "var(--blue)", scale: 1e9, unit: "万亿" }] },
   { title: "活跃度 / 情绪值", fields: [{ key: "活跃度", color: "var(--orange)" }, { key: "情绪值", color: "var(--purple)" }] },
-  { title: "融资净买入", type: "bar", fields: [{ key: "融资净买入", color: "var(--green)", scale: 1e8, unit: "亿" }] },
+  { title: "融资净买入 × 融资余额/流通市值", type: "bar",
+    fields: [{ key: "融资净买入", color: "var(--green)", scale: 1e8, unit: "亿" }],
+    secondary: { key: "融资余额/流通市值", color: "var(--blue)", unit: "%" } },
   { title: "上涨 vs 下跌家数占比", type: "share", fields: [{ key: "上涨", color: "var(--red)" }, { key: "下跌", color: "var(--green)" }] },
   { title: "涨停 vs 跌停家数", fields: [{ key: "涨停", color: "var(--red)" }, { key: "跌停", color: "var(--green)" }] },
 ];
@@ -2400,7 +2413,8 @@ charts.forEach(config => {
   card.appendChild(title);
   const drawable = drawChart(records, config, card, subtitle);
   card.appendChild(drawable);
-  card.appendChild(CK.legend(config.fields.map(field => [field.key, field.color])));
+  const legendFields = config.secondary ? config.fields.concat([config.secondary]) : config.fields;
+  card.appendChild(CK.legend(legendFields.map(field => [field.key, field.color])));
   chartSection.appendChild(card);
 });
 
@@ -2437,24 +2451,28 @@ function drawChart(rows, config, card, subtitle) {
   if (config.type === "share") return drawShareChart(rows, config, card, subtitle);
   const width = 480;
   const height = 200;
-  const pad = { left: 42, right: 16, top: 14, bottom: 28 };
+  /* 有副轴时右侧要留出刻度标签的位置 */
+  const pad = { left: 42, right: config.secondary ? 46 : 16, top: 14, bottom: 28 };
   const usableW = width - pad.left - pad.right;
   const usableH = height - pad.top - pad.bottom;
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img" });
+  const toPoints = field => rows.map((row, idx) => {
+    const raw = row[field.key];
+    const value = typeof raw === "number" ? raw / (field.scale || 1) : null;
+    return { idx, date: row.trade_date, value };
+  }).filter(p => Number.isFinite(p.value));
   const series = config.fields.map(field => {
-    const points = rows.map((row, idx) => {
-      const raw = row[field.key];
-      const value = typeof raw === "number" ? raw / (field.scale || 1) : null;
-      return { idx, date: row.trade_date, value };
-    }).filter(p => Number.isFinite(p.value));
-    return { field, points };
+    return { field, points: toPoints(field) };
   }).filter(item => item.points.length);
-  if (!series.length) {
+  /* 副轴系列（如 融资余额/流通市值 %）：独立值域、画成折线，不参与左轴缩放 */
+  const secondary = config.secondary ? { field: config.secondary, points: toPoints(config.secondary) } : null;
+  if (!series.length && !(secondary && secondary.points.length)) {
     svg.appendChild(svgText(width / 2, height / 2, "暂无数据", "middle", "var(--text-tertiary)"));
     subtitle.textContent = "该列暂无可绘制数值";
     return svg;
   }
-  const allValues = series.flatMap(item => item.points.map(p => p.value));
+  const leftSource = series.length ? series.flatMap(item => item.points) : secondary.points;
+  const allValues = leftSource.map(p => p.value);
   let min = Math.min(...allValues);
   let max = Math.max(...allValues);
   if (min === max) { min -= 1; max += 1; }
@@ -2463,6 +2481,20 @@ function drawChart(rows, config, card, subtitle) {
   max += span * 0.08;
   const x = idx => pad.left + (rows.length <= 1 ? usableW / 2 : idx / (rows.length - 1) * usableW);
   const y = value => pad.top + (max - value) / (max - min) * usableH;
+
+  let yRight = null;
+  let rmin = 0;
+  let rmax = 0;
+  if (secondary && secondary.points.length) {
+    const rightValues = secondary.points.map(p => p.value);
+    rmin = Math.min(...rightValues);
+    rmax = Math.max(...rightValues);
+    if (rmin === rmax) { rmin -= 1; rmax += 1; }
+    const rspan = rmax - rmin;
+    rmin -= rspan * 0.08;
+    rmax += rspan * 0.08;
+    yRight = value => pad.top + (rmax - value) / (rmax - rmin) * usableH;
+  }
   for (let i = 0; i <= 4; i += 1) {
     const gy = pad.top + usableH * i / 4;
     svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: gy, y2: gy, class: "grid-line" }));
@@ -2534,8 +2566,36 @@ function drawChart(rows, config, card, subtitle) {
       });
     }
   });
-  svg.appendChild(svgText(4, pad.top + 4, formatValue(max, config.fields[0].unit), "start", "var(--text-tertiary)"));
-  svg.appendChild(svgText(4, height - pad.bottom, formatValue(min, config.fields[0].unit), "start", "var(--text-tertiary)"));
+
+  if (secondary && secondary.points.length && yRight) {
+    const item = secondary;
+    const d = item.points.map((p, i) => `${i === 0 ? "M" : "L"} ${x(p.idx).toFixed(2)} ${yRight(p.value).toFixed(2)}`).join(" ");
+    svg.appendChild(svgEl("path", { d, class: "series-line", style: `stroke: ${item.field.color}` }));
+    item.points.forEach(p => {
+      svg.appendChild(svgEl("circle", {
+        cx: x(p.idx).toFixed(2), cy: yRight(p.value).toFixed(2),
+        r: 3.5, fill: item.field.color, stroke: "#ffffff", "stroke-width": 1.5
+      }));
+      const hit = svgEl("circle", {
+        cx: x(p.idx).toFixed(2), cy: yRight(p.value).toFixed(2),
+        r: 10, fill: "transparent", stroke: "none",
+        style: "cursor:pointer"
+      });
+      hit.addEventListener("mouseenter", () => {
+        tooltip.innerHTML = `<div style="color:#94a3b8;font-size:11px;margin-bottom:2px;">${formatDate(p.date)}</div><div style="font-weight:600;">${item.field.key}: ${formatValue(p.value, item.field.unit)}</div>`;
+        tooltip.style.opacity = "1";
+      });
+      hit.addEventListener("mousemove", e => CK.moveTip(tooltip, card, e));
+      hit.addEventListener("mouseleave", () => { tooltip.style.opacity = "0"; });
+      svg.appendChild(hit);
+    });
+    /* 右轴只标上下两个端值，与左轴标注密度对齐；用系列色标出归属 */
+    svg.appendChild(svgText(width - 4, pad.top + 4, formatValue(rmax, item.field.unit), "end", item.field.color));
+    svg.appendChild(svgText(width - 4, height - pad.bottom, formatValue(rmin, item.field.unit), "end", item.field.color));
+  }
+  const leftUnit = series.length ? config.fields[0].unit : (secondary ? secondary.field.unit : "");
+  svg.appendChild(svgText(4, pad.top + 4, formatValue(max, leftUnit), "start", "var(--text-tertiary)"));
+  svg.appendChild(svgText(4, height - pad.bottom, formatValue(min, leftUnit), "start", "var(--text-tertiary)"));
   return svg;
 }
 
@@ -2806,7 +2866,7 @@ def build_job(args) -> RenderJob:
         ]
         market_trend_expects = [
             HookExpectation(name="market-trends", target_sec="temp_macro", expect_count=5,
-                            note="成交额 / 活跃度 / 融资净买入 / 涨跌家数 / 涨跌停家数"),
+                            note="成交额 / 活跃度 / 融资净买入（副轴：融资余额÷流通市值）/ 涨跌家数 / 涨跌停家数"),
         ]
         pe_expects = [
             HookExpectation(name="chinext-pe-ttm", target_sec="temp_macro", expect_count=1,
@@ -2839,7 +2899,7 @@ def build_job(args) -> RenderJob:
         ]
         market_trend_expects = [
             HookExpectation(name="market-trends", target_sec="sentiment_trend", expect_count=5,
-                            note="成交额 / 活跃度 / 融资净买入 / 涨跌家数 / 涨跌停家数"),
+                            note="成交额 / 活跃度 / 融资净买入（副轴：融资余额÷流通市值）/ 涨跌家数 / 涨跌停家数"),
         ]
         pe_expects = [
             HookExpectation(name="chinext-pe-ttm", target_sec="sentiment_trend", expect_count=1,

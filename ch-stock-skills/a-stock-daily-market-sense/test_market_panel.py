@@ -180,6 +180,138 @@ def test_market_history_json_preserves_margin_data_date_as_a_date():
         mp.read_market_history = original_reader
 
 
+def test_market_history_json_maps_margin_balance_and_circ_mv():
+    """融资余额/流通市值两列要从 DB 列名映射回中文列，进 records 和 series——
+    情绪趋势图的「融资余额 ÷ 流通市值」副轴在 JS 里按这两个键取数。"""
+    original_backend = mp.BACKEND
+    original_reader = mp.read_market_history
+    try:
+        mp.BACKEND = mp.Backend.POSTGRESQL
+        mp.read_market_history = lambda: pd.DataFrame([{
+            "date": "20260807",
+            "rise": 2855, "limit_up": 76, "fall": 2536, "limit_down": 4, "flat": 144,
+            "activity": 51.84, "sentiment": 51.84, "amount": 2683401729.382,
+            "margin_net_buy": 11057565565,
+            "margin_balance": 2615570000000.0,
+            "margin_data_date": "20260806",
+            "circ_mv_total": 101234500000000.0,
+            "turnover_rate": 2.6757,
+        }])
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "market_data.json"
+            mp.write_market_history_json(json_path=out)
+            payload = json.loads(out.read_text(encoding="utf-8"))
+        record = payload["records"][0]
+        assert "融资余额" in payload["columns"] and "margin_balance" not in payload["columns"]
+        assert "流通市值" in payload["columns"] and "circ_mv_total" not in payload["columns"]
+        assert record["融资余额"] == 2615570000000.0
+        assert record["流通市值"] == 101234500000000.0
+        # 两个都是数值列，必须进 series 供图表取点
+        assert payload["series"]["融资余额"][0]["value"] == 2615570000000.0
+        assert payload["series"]["流通市值"][0]["value"] == 101234500000000.0
+    finally:
+        mp.BACKEND = original_backend
+        mp.read_market_history = original_reader
+
+
+def test_calculate_market_circ_mv():
+    """全A流通市值合计：剔除 circ_mv 非正值，万元归一到元。"""
+    daily_basic = pd.DataFrame({
+        "trade_date": ["20260609", "20260609", "20260609"],
+        "circ_mv": [10000.0, 5000.0, -1.0],
+    })
+    value, reason = mp.calculate_market_circ_mv(daily_basic, "20260609")
+    assert reason is None
+    assert value == 15000.0 * 10000.0
+
+    missing, reason = mp.calculate_market_circ_mv(daily_basic, "20260610")
+    assert missing is None and "missing target date" in reason
+
+    empty, reason = mp.calculate_market_circ_mv(pd.DataFrame(), "20260609")
+    assert empty is None and reason == "daily_basic data is empty"
+
+    no_col, reason = mp.calculate_market_circ_mv(
+        pd.DataFrame({"trade_date": ["20260609"]}), "20260609")
+    assert no_col is None and "missing circ_mv column" in reason
+
+
+def test_fetch_margin_summary_returns_net_buy_and_balance():
+    """同一次 margin 取数同时给出净买入与融资余额，余额缺失不拖垮净买入。"""
+
+    class FakePro:
+        def margin(self, trade_date=None, fields=None):
+            assert "rzye" in fields
+            return pd.DataFrame({
+                "trade_date": [trade_date] * 3,
+                "exchange_id": ["SSE", "SZSE", "BSE"],
+                "rzye": [100.0, 200.0, 50.0],
+                "rzmre": [10.0, 20.0, 5.0],
+                "rzche": [8.0, 15.0, 4.0],
+            })
+
+    net, balance, reason = mp.fetch_margin_summary(FakePro(), "20260609", cache_enabled=False)
+    assert reason is None
+    assert net == 8.0        # (10-8) + (20-15) + (5-4)
+    assert balance == 350.0  # 三所 rzye 合计
+
+    class FakeProNoBalance(FakePro):
+        def margin(self, trade_date=None, fields=None):
+            df = super().margin(trade_date=trade_date, fields=fields)
+            return df.drop(columns=["rzye"])
+
+    net, balance, reason = mp.fetch_margin_summary(FakeProNoBalance(), "20260609", cache_enabled=False)
+    assert reason is None and net == 8.0 and balance is None
+
+    class FakeProEmpty:
+        def margin(self, trade_date=None, fields=None):
+            return pd.DataFrame()
+
+    net, balance, reason = mp.fetch_margin_summary(FakeProEmpty(), "20260609", cache_enabled=False)
+    assert net is None and balance is None and "no data" in reason
+
+
+def test_update_market_history_writes_margin_balance_and_circ_mv():
+    """新列落行：融资余额跟随 T-1 取数入参，流通市值由当日 daily_basic 算出。"""
+    daily = pd.DataFrame({
+        "trade_date": ["20260609"] * 4,
+        "pct_chg": [2.0, -1.0, 0.0, 3.0],
+        "amount": [100.0, 100.0, 100.0, 100.0],
+    })
+    daily_basic = pd.DataFrame({
+        "trade_date": ["20260609"] * 2,
+        "circ_mv": [20000.0, 30000.0],
+    })
+    result = mp.update_market_history(
+        "20260609",
+        daily,
+        daily_basic,
+        margin_net_buy=1.0,
+        margin_net_buy_reason="ok",
+        margin_net_buy_trade_date="20260608",
+        margin_balance=2615570000000.0,
+        defer_write=True,
+    )
+    row = result["_market_history_row"]
+    assert row["融资余额"] == 2615570000000.0
+    assert row["流通市值"] == 50000.0 * 10000.0
+    assert row["融资净买入"] == 1.0
+    assert result["margin_balance"] == 2615570000000.0
+    assert result["circ_mv_total"] == 50000.0 * 10000.0
+    assert result["margin_balance_unit"] == "yuan"
+    assert result["circ_mv_total_unit"] == "yuan"
+
+
+def test_should_update_rules_for_margin_balance_and_circ_mv():
+    # 融资余额与融资净买入同规则：新值非空且不同即覆盖（T-1 口径重写）
+    assert mp.should_update_market_history_field("融资余额", None, 2.6e12) is True
+    assert mp.should_update_market_history_field("融资余额", 1.0, 2.0) is True
+    assert mp.should_update_market_history_field("融资余额", 1.0, None) is False
+    # 流通市值与全市场换手率同规则：只填空/纠正非正值，不反复改写
+    assert mp.should_update_market_history_field("流通市值", None, 1.0e14) is True
+    assert mp.should_update_market_history_field("流通市值", 9.0e13, 1.0e14) is False
+    assert mp.should_update_market_history_field("流通市值", -1, 1.0e14) is True
+
+
 # --------------------------------------------------------------------------- #
 # Sentiment
 # --------------------------------------------------------------------------- #

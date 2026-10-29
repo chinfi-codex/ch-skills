@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from proactive_config import load_settings
+from proactive_config import SETTINGS_ENV, load_settings, settings_snapshot
 
 SETTINGS = load_settings()
 ROOT = SETTINGS.vault_root
@@ -115,6 +115,7 @@ def ensure_hermes_python(home: Path) -> None:
     for candidate in candidates:
         if not candidate.is_file() or candidate.resolve() == Path(sys.executable).resolve():
             continue
+        os.environ[SETTINGS_ENV] = settings_snapshot()
         os.execv(str(candidate), [str(candidate), str(Path(__file__).resolve()), *sys.argv[1:]])
     raise ValueError("未找到 Hermes 自带的 Python 3.11+ 解释器")
 

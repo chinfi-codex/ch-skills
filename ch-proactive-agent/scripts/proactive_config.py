@@ -13,17 +13,32 @@ import os
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 SKILL_DIR = Path(__file__).resolve().parents[1]
 CONFIG_DIR = SKILL_DIR / "config"
+# 安装器切换到 Hermes 自带解释器（无 PyYAML）时，用它传递已解析的配置快照。
+SETTINGS_ENV = "PROACTIVE_SETTINGS_JSON"
 
 
 def _load_yaml(name: str) -> dict[str, Any]:
+    import yaml
+
     data = yaml.safe_load((CONFIG_DIR / name).read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"配置文件格式无效：config/{name}")
     return data
+
+
+def _load_config() -> dict[str, Any]:
+    snapshot = os.environ.get(SETTINGS_ENV)
+    if snapshot:
+        return json.loads(snapshot)
+    return {"goals": _load_yaml("goals.yaml"), "policy": _load_yaml("policy.yaml"),
+            "sources": _load_yaml("sources.yaml")}
+
+
+def settings_snapshot() -> str:
+    """序列化当前配置，供子进程在没有 PyYAML 的解释器里复用。"""
+    return json.dumps(_load_config(), ensure_ascii=False)
 
 
 def _expand(value: str) -> Path:
@@ -34,10 +49,11 @@ class Settings:
     """一次性解析的配置快照；路径不做存在性检查，缺失由调用方按场景报错。"""
 
     def __init__(self) -> None:
-        goals = _load_yaml("goals.yaml")
+        config = _load_config()
+        goals = config["goals"]
         self.goals = goals
-        self.policy = _load_yaml("policy.yaml")
-        self.sources = (_load_yaml("sources.yaml").get("sources") or {})
+        self.policy = config["policy"]
+        self.sources = (config["sources"].get("sources") or {})
         self.goal_id = str(goals["goal_id"])
         paths = goals.get("paths") or {}
         self.vault_root = _expand(os.environ.get("ALPHAVAULT_ROOT") or paths["vault_root"])

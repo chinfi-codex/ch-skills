@@ -84,10 +84,21 @@ class InstallHermesTest(unittest.TestCase):
             python.parent.mkdir(parents=True)
             python.touch()
             with patch.object(installer.sys, "version_info", (3, 9)), \
+                    patch.dict(os.environ, {}, clear=False), \
                     patch.object(installer.os, "execv", side_effect=RuntimeError("exec-called")) as execv:
                 with self.assertRaisesRegex(RuntimeError, "exec-called"):
                     installer.ensure_hermes_python(home)
+                snapshot = json.loads(os.environ[installer.SETTINGS_ENV])
             execv.assert_called_once()
+            self.assertEqual(snapshot["goals"]["goal_id"], installer.GOAL_ID)
+
+    def test_settings_snapshot_loads_without_yaml(self):
+        snapshot = installer.settings_snapshot()
+        with patch.dict(os.environ, {installer.SETTINGS_ENV: snapshot}, clear=False), \
+                patch.dict(sys.modules, {"yaml": None}):
+            settings = installer.load_settings()
+        self.assertEqual(settings.goal_id, installer.GOAL_ID)
+        self.assertEqual(settings.policy, installer.SETTINGS.policy)
 
     def test_wrapper_channel_switch_is_limited_to_managed_versions(self):
         with tempfile.TemporaryDirectory() as tmp:

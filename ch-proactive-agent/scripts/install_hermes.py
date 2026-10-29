@@ -30,6 +30,10 @@ LEGACY_NAME = "AlphaVault 主动投研提醒"
 EVALUATION_WRAPPER = "alphavault-proactive-evaluate.py"
 DELIVERY_WRAPPER = "alphavault-proactive-delivery.py"
 REQUIRED_MODULES = ("psycopg2", "yaml", "jsonschema")
+EVALUATION_SCHEDULE = "*/30 * * * *"
+# 投递错开 5 分钟：同一秒启动时投递会先占住状态锁，扫描只等 0.2 秒就放弃本轮。
+# 错开后投递也能在 5 分钟内处理刚完成的评估，而不是等下一个半小时。
+DELIVERY_SCHEDULE = "5,35 * * * *"
 # 规则只保留在 SKILL.md 一处；这里只标识目标并指向已加载的技能。
 PROMPT = f"""[{GOAL_ID}]
 按已加载的 ch-proactive-agent 完成本轮无工具评估。下方是预检注入的候选包；只输出 SKILL 规定的 JSON 对象。
@@ -86,7 +90,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 
 def evaluation_config(home: Path, interpreter: Path, paused: bool) -> dict[str, Any]:
     return {
-        "name": EVALUATION_NAME, "prompt": PROMPT, "schedule": "*/30 * * * *",
+        "name": EVALUATION_NAME, "prompt": PROMPT, "schedule": EVALUATION_SCHEDULE,
         "deliver": "local", "failure_deliver": "local", "skills": [SKILL_NAME],
         "enabled_toolsets": [], "script": str(home / "scripts" / EVALUATION_WRAPPER),
         "context_from": [], "workdir": str(RUNTIME), "no_agent": False,
@@ -97,7 +101,7 @@ def evaluation_config(home: Path, interpreter: Path, paused: bool) -> dict[str, 
 
 def delivery_config(home: Path, interpreter: Path, live: bool, paused: bool) -> dict[str, Any]:
     return {
-        "name": DELIVERY_NAME, "prompt": None, "schedule": "*/30 * * * *",
+        "name": DELIVERY_NAME, "prompt": None, "schedule": DELIVERY_SCHEDULE,
         "deliver": "weixin" if live else "local", "failure_deliver": "local",
         "skills": [], "enabled_toolsets": [], "script": str(home / "scripts" / DELIVERY_WRAPPER),
         "context_from": [], "workdir": str(RUNTIME), "no_agent": True,

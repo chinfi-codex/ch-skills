@@ -52,7 +52,7 @@ Hermes no-agent 任务：local 影子 或 微信提醒
 - 影子模式 `deliver=local`，正式提醒 `deliver=weixin`。`--enable-live` 只影响投递段，评估段永远 `local`。
 - `failure_deliver=local`，基础设施错误不进入市场提醒通道。`attach_to_session` 只在正式微信投递开启，保留用户追问的上下文。
 
-两段使用不同 Cron 时刻，投递可晚一个周期获取已经完成的评估；不假设长评估一定在同一 tick 内结束。任务工作目录均为运行态目录，wrapper 从 Hermes 已同步的技能副本运行；解释器固定为已通过 `psycopg2`、`yaml`、`jsonschema` 预检的 Python 3.9+。
+两段使用不同 Cron 时刻：评估在整点和半点（`*/30`），投递在每小时 :05 和 :35（`5,35`）。同一秒启动时投递会先占住状态锁，扫描只等 0.2 秒就放弃本轮，所以两者必须错开。投递通常在 5 分钟内取到刚完成的评估；长评估未结束时顺延到下一次投递，不假设评估一定在 5 分钟内完成。任务工作目录均为运行态目录，wrapper 从 Hermes 已同步的技能副本运行；解释器固定为已通过 `psycopg2`、`yaml`、`jsonschema` 预检的 Python 3.9+。
 
 ## 能力范围：数据复用，调用只限原子能力
 

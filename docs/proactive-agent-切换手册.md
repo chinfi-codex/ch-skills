@@ -60,7 +60,9 @@
    hermes cron resume 835e252c3d65
    ```
 
-7. 观察下一轮：`~/.hermes/cron/output/bba5ba3f1faf/` 出现新运行记录，`~/AlphaData/proactive/state.json` 的 `last_scan_at` 更新，金库 `主动目标状态.json` 不再变化。
+7. 观察下一轮：`~/.hermes/cron/output/bba5ba3f1faf/` 出现新运行记录，`~/AlphaData/proactive/state.json` 的 `last_scan_at` 更新到整点或半点，金库 `主动目标状态.json` 不再变化。投递任务在每小时 :05 和 :35 运行，和扫描错开，避免抢状态锁。
+
+> 2026-10-29 实际切换记录：12:13 迁移，12:14 恢复任务。12:30 两个任务同一秒启动，投递先拿到锁，扫描被跳过，于是把投递改到 `5,35 * * * *`。
 
 ## 回滚
 

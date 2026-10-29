@@ -45,6 +45,13 @@ class InstallHermesTest(unittest.TestCase):
         self.assertEqual(job["interpreter"], "/usr/bin/python3")
         self.assertEqual(job["schedule"], "*/30 * * * *")
 
+    def test_delivery_never_starts_in_the_same_minute_as_scan(self):
+        home = Path("/tmp/hermes-home")
+        scan = installer.evaluation_config(home, Path("/usr/bin/python3"), False)["schedule"].split()[0]
+        delivery = installer.delivery_config(home, Path("/usr/bin/python3"), True, False)["schedule"].split()[0]
+        scan_minutes = set(range(0, 60, 30)) if scan == "*/30" else {int(m) for m in scan.split(",")}
+        self.assertFalse(scan_minutes & {int(m) for m in delivery.split(",")})
+
     def test_job_prompt_defers_rules_to_skill(self):
         self.assertIn(installer.GOAL_ID, installer.PROMPT)
         self.assertNotIn("27-主动目标协议", installer.PROMPT)
@@ -58,7 +65,7 @@ class InstallHermesTest(unittest.TestCase):
         self.assertEqual(job["deliver"], "weixin")
         self.assertTrue(job["attach_to_session"])
         self.assertEqual(job["failure_deliver"], "local")
-        self.assertEqual(job["schedule"], "*/30 * * * *")
+        self.assertEqual(job["schedule"], "5,35 * * * *")
         shadow = installer.delivery_config(home, Path("/usr/bin/python3"), False, False)
         self.assertEqual(shadow["deliver"], "local")
         self.assertFalse(shadow["attach_to_session"])

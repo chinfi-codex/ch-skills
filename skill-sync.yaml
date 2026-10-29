@@ -156,6 +156,11 @@ exclude:
     ch-gpu-compute-monitor:
       - raw
       - evidence
+      - reports
+    # 日报与证据包:运行时重建,不进发布包
+    ch-dc-credit-monitor:
+      - reports
+      - evidence
     # 周报原始取数与成稿,运行时重建,不进发布包
     ch-ai-eng-tracker:
       - reports

@@ -1,0 +1,72 @@
+# 长期目标定义：目标是什么、看哪些方法论、数据从哪来、授权到哪一步。
+# 运行时由 scripts/proactive_config.py 读取；环境变量优先于本文件中的路径。
+schema_version: 1
+
+goal_id: alphavault-trading-fundamental-watch
+title: AlphaVault 交易与基本面长期关注
+statement: >-
+  持续对照用户已有的交易与基本面方法论，识别需要复核的交易决策、目标仓位变化、
+  基本面边际变化、产业拐点和证伪条件。达到证据门槛时向用户发送提醒；没有增量时保持安静。
+authorized_on: "2026-10-27"   # 用户明确授权本目标范围内的提醒发送
+
+paths:
+  # AlphaVault 根目录，只读数据源。环境变量 ALPHAVAULT_ROOT 覆盖。
+  vault_root: ~/Library/CloudStorage/OneDrive-个人/Obsidian-Vault/1-AlphaVault
+  # 运行态目录：状态、候选包、决策审计、锁。本机磁盘，不进 OneDrive、不进 git。环境变量 PROACTIVE_HOME 覆盖。
+  runtime_home: ~/AlphaData/proactive
+
+# 以下路径均相对 vault_root。
+inputs:
+  catalyst_events: ledgers/catalyst-events/events.jsonl
+  industry_board: ledgers/industry-board/board.json
+  industry_board_history: ledgers/industry-board/board_history.jsonl
+  board_review_framework: system/frameworks/供需平衡框架.md
+  trend_tool: system/tools/trend_state.py
+
+# 用户方法论：内容变化会产生 framework_change 候选，用于重新对齐目标。
+methodology:
+  files:
+    - system/frameworks/00-治理总则.md
+    - system/frameworks/能力注册表.md
+    - wiki/04-交易方法论/交易系统总纲.md
+    - wiki/04-交易方法论/仓位体系.md
+    - wiki/04-交易方法论/买点体系.md
+    - system/frameworks/21-盘前简报协议.md
+    - system/frameworks/个股词条框架.md
+    - system/frameworks/产业链图谱框架.md
+    - system/frameworks/供需平衡框架.md
+    - system/frameworks/10-摄取协议.md
+    - system/frameworks/催化事件台账协议.md
+  rules_dir: wiki/04-交易方法论/经验法则   # 其下 R-*.md 全部纳入
+
+data_scope:
+  - AlphaVault files
+  - AlphaVault PostgreSQL
+
+# 长任务 Skill 只提供已落在 AlphaVault 文件或 PG 中的产物，绝不直接调用。
+long_task_skill_outputs:
+  invocation: output_only_never_invoke
+  skills:
+    - a-stock-daily-market-sense
+    - a-stock-pool-tracker
+    - a-stock-analyzer
+    - a-stock-earnings-forecast
+    - a-stock-quarterly-report
+    - ch-news-reporter
+    - ch-ai-eng-tracker
+    - ch-gpu-compute-monitor
+    - ch-dc-credit-monitor
+    - chstock-usmarket-report
+    - us-ai-semi-earnings
+
+authorization:
+  automatic:
+    - 读取 AlphaVault 文件与 PostgreSQL、生成候选
+    - 向用户发送本目标范围内的提醒
+  separate_approval:
+    - 写 Wiki、修改方法论或交易规则
+    - 形成正式研究报告
+    - 开通外部数据源或执行其他有副作用的子任务
+  never:
+    - 自动交易、下单或调整真实仓位
+    - 修改本目标、调度或通知策略（只能由用户在交互会话中进行）

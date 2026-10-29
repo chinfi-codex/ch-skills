@@ -1,0 +1,56 @@
+# 数据源适配器登记：扫描逻辑与触发方式同源登记。
+#
+# 当前已消费：enabled、rank。rank 沿用迁移前的 priority 映射，collect 按 (rank, observed_at)
+# 倒序排列后截断到 max_candidates_per_wake，迁移不改变这一行为（rank 大的反而靠前，属已知问题，P1 修正）。
+# 由 P2 Pulse 消费：watch、debounce、topic_key、cooldown_days、default_priority。
+# 新增数据源先在这里登记、local 影子验证，再进入微信投递。
+schema_version: 1
+
+sources:
+  trend_state:
+    enabled: true
+    rank: 0
+    watch:
+      skills: [a-stock-daily-market-sense]
+      pg_tables: []            # 待补：trend_state.py 依赖的日线与融资表
+    debounce: {quiet_seconds: 120, max_wait_seconds: 300}
+    topic_key: "trend:axis"
+    default_priority: P1
+
+  framework_review:
+    enabled: true
+    rank: 1
+    watch:
+      files:
+        - ledgers/industry-board/board.json
+        - ledgers/industry-board/board_history.jsonl
+      schedule: "daily@08:35"
+    topic_key: "framework_review:industry-board"
+    cooldown_days: 7
+    default_priority: P3
+
+  framework_change:
+    enabled: true
+    rank: 2
+    watch:
+      files: ["wiki/04-交易方法论/**/*.md", "system/frameworks/*框架.md"]
+    debounce: {quiet_seconds: 600, max_wait_seconds: 3600}
+    topic_key: "framework_change:{path}"
+    default_priority: P3
+
+  catalyst:
+    enabled: true
+    rank: 3
+    watch:
+      files: [ledgers/catalyst-events/events.jsonl]
+    debounce: {quiet_seconds: 180, max_wait_seconds: 600}
+    topic_key: "catalyst:{industry}:{driver}"
+    default_priority: P2
+
+  scheduled_review:
+    enabled: true
+    rank: 4
+    watch:
+      schedule: "trading_days@08:35,15:40"
+    topic_key: "scheduled:{window}"
+    default_priority: P2

@@ -1,0 +1,389 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AlphaVault 主动目标最小运行状态",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "goal_id",
+    "workspace",
+    "status",
+    "created_at",
+    "updated_at",
+    "initialized",
+    "policy",
+    "framework_versions",
+    "candidates",
+    "scheduled_windows",
+    "outbox",
+    "processed_runs",
+    "notification_requests_today",
+    "delivery",
+    "source_errors"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "proactive-goal/v2"
+    },
+    "goal_id": {
+      "const": "alphavault-trading-fundamental-watch"
+    },
+    "workspace": {
+      "const": ".",
+      "description": "指 config/goals.yaml 配置的 AlphaVault 根目录"
+    },
+    "status": {
+      "enum": [
+        "active",
+        "paused"
+      ]
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string"
+    },
+    "initialized": {
+      "type": "boolean"
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "heartbeat_minutes",
+        "active_start",
+        "active_end",
+        "scheduled_reviews",
+        "quiet_start",
+        "quiet_end",
+        "min_notification_interval_minutes",
+        "max_notifications_per_day",
+        "max_candidates_per_wake",
+        "max_decision_attempts",
+        "max_trend_age_days",
+        "catalyst_max_age_days",
+        "pending_notification_ttl_hours"
+      ],
+      "properties": {
+        "active_start": {
+          "type": "string",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+        },
+        "active_end": {
+          "type": "string",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+        },
+        "timezone": {
+          "const": "Asia/Shanghai"
+        },
+        "heartbeat_minutes": {
+          "type": "integer",
+          "minimum": 5
+        },
+        "scheduled_reviews": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+          }
+        },
+        "quiet_start": {
+          "type": "string"
+        },
+        "quiet_end": {
+          "type": "string"
+        },
+        "min_notification_interval_minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_notifications_per_day": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_candidates_per_wake": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_decision_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_trend_age_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "catalyst_max_age_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pending_notification_ttl_hours": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "evaluation_lease_minutes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "framework_versions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "candidates": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "evidence_hash",
+          "kind",
+          "attempts",
+          "last_action"
+        ],
+        "properties": {
+          "evidence_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "kind": {
+            "enum": [
+              "trend_state",
+              "catalyst",
+              "framework_review",
+              "framework_change",
+              "scheduled_review"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_action": {
+            "enum": [
+              "pending",
+              "silent",
+              "defer",
+              "notify",
+              "needs_user",
+              "baseline",
+              "acknowledged",
+              "superseded",
+              "dead",
+              "backfill"
+            ]
+          },
+          "review_after": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "valid_until": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "freshness_class": {
+            "enum": [
+              "current",
+              "backfill"
+            ]
+          },
+          "raw_available": {
+            "type": "boolean"
+          },
+          "fingerprint_version": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "scheduled_windows": {
+      "type": "object"
+    },
+    "outbox": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "candidate_id",
+          "native_id",
+          "kind",
+          "evidence_hash",
+          "message",
+          "message_sha256",
+          "status",
+          "not_before",
+          "created_at"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": "string"
+          },
+          "native_id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "trend_state",
+              "catalyst",
+              "framework_review",
+              "framework_change",
+              "scheduled_review"
+            ]
+          },
+          "evidence_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "raw_available": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "attempted",
+              "delivered",
+              "failed",
+              "unknown",
+              "cancelled",
+              "expired"
+            ]
+          },
+          "not_before": {
+            "type": "string"
+          },
+          "valid_until": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "attempted_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "processed_runs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "status",
+          "at"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "recorded",
+              "invalid"
+            ]
+          },
+          "at": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "last_scan_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "last_notification_request_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "notification_requests_today": {
+      "type": "object",
+      "required": [
+        "date",
+        "count"
+      ],
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "mute_until": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "delivery": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "idle",
+            "pending",
+            "attempted",
+            "delivered",
+            "failed",
+            "unknown",
+            "cancelled",
+            "expired"
+          ]
+        },
+        "last_candidate_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_message_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "source_errors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$comment": "主动目标运行状态契约，由 ch-proactive-agent 项目维护（迁自 AlphaVault 编译产物）。修改后同步更新 tests/。",
+  "$id": "ch-proactive-agent/config/schemas/state.schema.json"
+}

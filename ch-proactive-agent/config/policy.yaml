@@ -1,0 +1,16 @@
+# 频控、时效与活跃时段的默认值。状态文件中的 policy 覆盖这里（control 子命令写入）。
+timezone: Asia/Shanghai
+heartbeat_minutes: 30
+active_start: "06:00"
+active_end: "23:00"
+scheduled_reviews: ["08:35", "15:40"]
+quiet_start: "23:00"
+quiet_end: "06:00"
+min_notification_interval_minutes: 120
+max_notifications_per_day: 4
+max_candidates_per_wake: 6
+max_decision_attempts: 4
+max_trend_age_days: 3
+evaluation_lease_minutes: 10
+catalyst_max_age_days: 7
+pending_notification_ttl_hours: 24

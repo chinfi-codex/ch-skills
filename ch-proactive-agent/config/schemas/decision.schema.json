@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ch-proactive-agent/config/schemas/decision.schema.json",
+  "title": "主动目标评估输出（SKILL.md v0.4 输出契约）",
+  "$comment": "评估 Agent 的最终回复必须满足本契约。priority 与 topic_key 为 v0.4 新增的可选字段，当前投递器忽略它们。",
+  "type": "object",
+  "required": ["decisions"],
+  "additionalProperties": false,
+  "properties": {
+    "decisions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["candidate_id", "evidence_hash", "action", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {"type": "string", "pattern": "^PG-[0-9a-f]{16}$"},
+          "evidence_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "action": {"enum": ["silent", "defer", "notify", "needs_user"]},
+          "priority": {"enum": ["P1", "P2", "P3", null]},
+          "topic_key": {"type": ["string", "null"], "maxLength": 200},
+          "reason": {"type": "string"},
+          "review_after": {"type": ["string", "null"]},
+          "message": {"type": ["string", "null"], "maxLength": 2000},
+          "missing_inputs": {"type": "array", "items": {"type": "string"}},
+          "falsifier": {"type": ["string", "null"]}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"action": {"const": "defer"}}},
+            "then": {"required": ["review_after"], "properties": {"review_after": {"type": "string"}}}
+          },
+          {
+            "if": {"properties": {"action": {"enum": ["notify", "needs_user"]}}},
+            "then": {"required": ["message"], "properties": {"message": {"type": "string", "minLength": 1}}}
+          }
+        ]
+      }
+    }
+  }
+}

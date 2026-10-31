@@ -66,13 +66,19 @@
 
 ## 回滚
 
-切换后 24 小时内，金库原件都还在。回滚只需把 wrapper 换回旧版本：
+金库清理（下一节）已于 2026-10-31 完成，旧代码只保存在备份包里。回滚到金库运行时需要先还原：
 
 1. 暂停两个任务。
-2. 在 AlphaVault 内运行旧安装器：`python3 system/tools/install_proactive_hermes.py --apply --enable-live`。新 wrapper 不在旧安装器的托管列表里，需要先手动删除 `~/.hermes/scripts/alphavault-proactive-{evaluate,delivery}.py`。
-3. 恢复任务。切换期间新运行时产生的决策只在 `~/AlphaData/proactive/` 里，不会回写金库。
+2. 在 AlphaVault 根目录还原备份：`tar -xzf ~/AlphaData/proactive/archive/vault-legacy-20261031.tar.gz`。这一步同时会把治理文件覆盖回 10-31 清理前的版本。
+3. 把 `~/AlphaData/proactive/state.json` 改写回金库路径。注意 `packet_path` 要改回 `ledgers/runs/proactive/packets/…` 前缀，否则延期候选无法恢复。
+4. 删除 `~/.hermes/scripts/alphavault-proactive-{evaluate,delivery}.py`（新 wrapper 不在旧安装器的托管列表里），再在金库内运行 `python3 system/tools/install_proactive_hermes.py --apply --enable-live`。
+5. 在金库内运行 `python system/tools/compile_protocol_contracts.py`，然后恢复任务。
 
-## 观察稳定后（建议 2 个交易日）清理金库
+切换前的 wrapper 与任务定义另存于 `~/AlphaData/proactive/archive/pre-cutover-20261029/`。
+
+## 观察稳定后清理金库（2026-10-31 已完成）
+
+> 实际执行记录：10-29 12:14 至 10-31 10:22 共 184 次运行全部成功，金库状态哈希始终未变，之后执行清理。备份为 `~/AlphaData/proactive/archive/vault-legacy-20261031.tar.gz`（124 项，含清理前的治理文件）。重新编译后，`compile_protocol_contracts.py --check` 通过（派生产物从 11 个减到 10 个）；`lint_wiki.py --check` 前后都是 51 个错误，错误列表完全相同，均为既有的 Wiki 内容问题。`ledgers/runs/2026-10-27/` 下的两条历史运行台账保留未动。协议清单里的 `proactive_goal` 任务保留，改为指向接入说明，`allowed_write_paths` 为空。
 
 这一步会删除金库里未入 git 的文件，删除前先做一次备份：
 

@@ -35,22 +35,21 @@ class InstallHermesTest(unittest.TestCase):
         home = Path("/tmp/hermes-home")
         job = installer.evaluation_config(home, Path("/usr/bin/python3"), True)
         self.assertEqual(job["workdir"], str(installer.RUNTIME))
-        self.assertEqual(job["deliver"], "local")
-        self.assertEqual(job["failure_deliver"], "local")
+        self.assertEqual((job["deliver"], job["failure_deliver"]), ("local", "local"))
         self.assertEqual(job["skills"], ["ch-proactive-agent"])
         self.assertEqual(job["enabled_toolsets"], [])
         self.assertFalse(job["no_agent"])
         self.assertFalse(job["attach_to_session"])
         self.assertEqual(job["context_from"], [])
         self.assertEqual(job["interpreter"], "/usr/bin/python3")
-        self.assertEqual(job["schedule"], "*/30 * * * *")
+        self.assertEqual(job["schedule"], "17 * * * *")
 
     def test_delivery_never_starts_in_the_same_minute_as_scan(self):
         home = Path("/tmp/hermes-home")
-        scan = installer.evaluation_config(home, Path("/usr/bin/python3"), False)["schedule"].split()[0]
+        evaluation = installer.evaluation_config(home, Path("/usr/bin/python3"), False)["schedule"].split()[0]
         delivery = installer.delivery_config(home, Path("/usr/bin/python3"), True, False)["schedule"].split()[0]
-        scan_minutes = set(range(0, 60, 30)) if scan == "*/30" else {int(m) for m in scan.split(",")}
-        self.assertFalse(scan_minutes & {int(m) for m in delivery.split(",")})
+        pulse_minutes = set(range(0, 60, int(delivery[2:]))) if delivery.startswith("*/") else {int(m) for m in delivery.split(",")}
+        self.assertNotIn(int(evaluation), pulse_minutes)
 
     def test_job_prompt_defers_rules_to_skill(self):
         self.assertIn(installer.GOAL_ID, installer.PROMPT)
@@ -65,7 +64,7 @@ class InstallHermesTest(unittest.TestCase):
         self.assertEqual(job["deliver"], "weixin")
         self.assertTrue(job["attach_to_session"])
         self.assertEqual(job["failure_deliver"], "local")
-        self.assertEqual(job["schedule"], "5,35 * * * *")
+        self.assertEqual(job["schedule"], "*/2 * * * *")
         shadow = installer.delivery_config(home, Path("/usr/bin/python3"), False, False)
         self.assertEqual(shadow["deliver"], "local")
         self.assertFalse(shadow["attach_to_session"])
@@ -73,16 +72,19 @@ class InstallHermesTest(unittest.TestCase):
     def test_wrappers_run_synced_skill_with_fixed_arguments(self):
         home = Path("/tmp/hermes-home")
         evaluation = installer.wrapper_source("evaluation", home)
-        delivery = installer.wrapper_source("delivery", home, "a" * 12, "local")
-        self.assertIn('"scan"', evaluation)
-        self.assertIn('"dispatch"', delivery)
+        delivery = installer.wrapper_source("delivery", home, "a" * 12, "local", "b" * 12)
+        self.assertIn('["gate"]', evaluation)
+        self.assertIn('"pulse"', delivery)
         self.assertIn("a" * 12, delivery)
+        self.assertIn("b" * 12, delivery)
         self.assertIn(str(home / "skills" / "ch-proactive-agent"), evaluation)
         self.assertIn(str(installer.RUNTIME), evaluation)
-        self.assertNotIn("system/tools", evaluation + delivery)
-        self.assertNotIn("subprocess", evaluation + delivery)
-        self.assertNotIn("send_message", evaluation + delivery)
-        self.assertNotIn("hermes send", evaluation + delivery)
+        for text in (evaluation, delivery):
+            self.assertNotIn("system/tools", text)
+            self.assertNotIn("subprocess", text)
+            self.assertNotIn("hermes send", text)
+        with self.assertRaises(ValueError):
+            installer.wrapper_source("delivery", home, "a" * 12, "local")
 
     def test_old_python_uses_hermes_managed_venv(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -111,8 +113,8 @@ class InstallHermesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             path = home / "scripts" / installer.DELIVERY_WRAPPER
-            local = installer.wrapper_source("delivery", home, "a" * 12, "local")
-            live = installer.wrapper_source("delivery", home, "a" * 12, "weixin")
+            local = installer.wrapper_source("delivery", home, "a" * 12, "local", "b" * 12)
+            live = installer.wrapper_source("delivery", home, "a" * 12, "weixin", "b" * 12)
             installer.write_wrapper(path, local)
             installer.write_wrapper(path, live, managed_variants=(local,))
             self.assertEqual(path.read_text(), live)
@@ -121,17 +123,19 @@ class InstallHermesTest(unittest.TestCase):
                 installer.write_wrapper(path, local, managed_variants=(live,))
             self.assertEqual(path.read_text(), "operator-owned custom wrapper")
 
-    def test_legacy_vault_wrapper_can_be_upgraded_in_place(self):
+    def test_v04_dispatch_wrapper_can_be_upgraded_in_place(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             path = home / "scripts" / installer.DELIVERY_WRAPPER
             path.parent.mkdir(parents=True)
-            path.write_text(installer.legacy_wrapper_source("delivery", home, "a" * 12, "weixin"), encoding="utf-8")
-            new = installer.wrapper_source("delivery", home, "a" * 12, "weixin")
-            installer.write_wrapper(path, new, managed_variants=installer.managed_variants("delivery", home, "a" * 12))
+            v04 = installer._render(home, installer._previous_argv_text("delivery", "a" * 12, "weixin"))
+            self.assertIn("\"dispatch\", \"--evaluation-job-id\", 'aaaaaaaaaaaa'", v04)
+            path.write_text(v04, encoding="utf-8")
+            new = installer.wrapper_source("delivery", home, "a" * 12, "weixin", "b" * 12)
+            installer.write_wrapper(path, new, managed_variants=installer.managed_variants("delivery", home, "a" * 12, "b" * 12))
             self.assertEqual(path.read_text(encoding="utf-8"), new)
 
-    def test_preflight_refuses_before_runtime_is_migrated(self):
+    def test_preflight_refuses_before_runtime_exists(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             skill = home / "skills" / "ch-proactive-agent"
@@ -139,7 +143,7 @@ class InstallHermesTest(unittest.TestCase):
                 (skill / rel).parent.mkdir(parents=True, exist_ok=True)
                 (skill / rel).write_text("x", encoding="utf-8")
             with patch.object(installer, "RUNTIME", home / "runtime"):
-                with self.assertRaisesRegex(ValueError, "migrate_from_vault"):
+                with self.assertRaisesRegex(ValueError, "运行态尚未初始化"):
                     installer.preflight(Path(sys.executable), home)
 
 

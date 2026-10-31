@@ -1,8 +1,13 @@
 # 数据源适配器登记：扫描逻辑与触发方式同源登记。
 #
-# 当前已消费：enabled、rank。rank 沿用迁移前的 priority 映射，collect 按 (rank, observed_at)
-# 倒序排列后截断到 max_candidates_per_wake，迁移不改变这一行为（rank 大的反而靠前，属已知问题，P1 修正）。
-# 由 P2 Pulse 消费：watch、debounce、topic_key、cooldown_days、default_priority。
+# 字段：
+# - enabled / rank：是否采集；呈现顺序（rank 小的在前，同源内观察日新的在前），超出
+#   max_candidates_per_wake 的部分留到下一轮。
+# - watch：pulse 的水位来源。files 为金库内相对路径 glob；pg_watermarks 为只读水位查询；
+#   skills 为收尾时会发 `signal --source skill:<名称>` 的长任务 Skill。
+# - debounce：水位变化后安静 quiet_seconds 或最长等 max_wait_seconds 才扫描，合并批量写入。
+# - cooldown_hours：同一主题（topic_key，由代码确定）上次发出后多久内不再提醒。
+# - default_priority：仅作文档参考，实际优先级由评估模型给出。
 # 新增数据源先在这里登记、local 影子验证，再进入微信投递。
 schema_version: 1
 
@@ -12,9 +17,14 @@ sources:
     rank: 0
     watch:
       skills: [a-stock-daily-market-sense]
-      pg_tables: []            # 待补：trend_state.py 依赖的日线与融资表
+      # trend_state.py 读取的三张表；融资数据会回补历史日期，所以取近 10 天的聚合而不只看最大日期
+      pg_watermarks:
+        - "SELECT max(date), count(*), sum(coalesce(margin_net_buy, 0)) FROM market_history WHERE date >= current_date - 10"
+        - "SELECT max(trade_date), count(*) FROM stock_index_daily WHERE trade_date >= current_date - 10"
+        - "SELECT max(trade_date) FROM stock_daily"
     debounce: {quiet_seconds: 120, max_wait_seconds: 300}
     topic_key: "trend:axis"
+    cooldown_hours: 6
     default_priority: P1
 
   framework_review:
@@ -25,8 +35,9 @@ sources:
         - ledgers/industry-board/board.json
         - ledgers/industry-board/board_history.jsonl
       schedule: "daily@08:35"
+    debounce: {quiet_seconds: 60, max_wait_seconds: 300}
     topic_key: "framework_review:industry-board"
-    cooldown_days: 7
+    cooldown_hours: 168
     default_priority: P3
 
   framework_change:
@@ -36,6 +47,7 @@ sources:
       files: ["wiki/04-交易方法论/**/*.md", "system/frameworks/*框架.md"]
     debounce: {quiet_seconds: 600, max_wait_seconds: 3600}
     topic_key: "framework_change:{path}"
+    cooldown_hours: 72
     default_priority: P3
 
   catalyst:
@@ -44,7 +56,8 @@ sources:
     watch:
       files: [ledgers/catalyst-events/events.jsonl]
     debounce: {quiet_seconds: 180, max_wait_seconds: 600}
-    topic_key: "catalyst:{industry}:{driver}"
+    topic_key: "catalyst:{event_id}"
+    cooldown_hours: 72
     default_priority: P2
 
   scheduled_review:
@@ -52,5 +65,6 @@ sources:
     rank: 4
     watch:
       schedule: "trading_days@08:35,15:40"
-    topic_key: "scheduled:{window}"
+    topic_key: "trend:axis"      # 固定窗口的提醒内容就是趋势复核，与趋势共用冷却
+    cooldown_hours: 6
     default_priority: P2

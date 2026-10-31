@@ -11,6 +11,9 @@ max_notifications_per_day: 4
 max_candidates_per_wake: 6
 max_decision_attempts: 4
 max_trend_age_days: 3
-evaluation_lease_minutes: 10
+evaluation_lease_minutes: 30        # 从备好批次到评估返回的最长等待；超时计一次失败
 catalyst_max_age_days: 7
 pending_notification_ttl_hours: 24
+max_evaluations_per_hour: 4          # 事件唤醒的限流，防止批量写入引发评估风暴
+max_evaluations_per_day: 30
+compact_after_days: 3                # 终态候选在主状态保留多久后压缩进索引

@@ -4,26 +4,29 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version",
-    "goal_id",
-    "workspace",
-    "status",
-    "created_at",
-    "updated_at",
-    "initialized",
-    "policy",
-    "framework_versions",
     "candidates",
-    "scheduled_windows",
-    "outbox",
-    "processed_runs",
-    "notification_requests_today",
+    "created_at",
     "delivery",
-    "source_errors"
+    "framework_versions",
+    "goal_id",
+    "health",
+    "initialized",
+    "notification_requests_today",
+    "outbox",
+    "policy",
+    "processed_runs",
+    "scheduled_windows",
+    "schema_version",
+    "signals",
+    "source_errors",
+    "status",
+    "topics",
+    "updated_at",
+    "workspace"
   ],
   "properties": {
     "schema_version": {
-      "const": "proactive-goal/v2"
+      "const": "proactive-goal/v3"
     },
     "goal_id": {
       "const": "alphavault-trading-fundamental-watch"
@@ -260,9 +263,11 @@
               "attempted",
               "delivered",
               "failed",
-              "unknown",
+              "not_sent",
+              "unverified",
               "cancelled",
-              "expired"
+              "expired",
+              "suppressed_cooldown"
             ]
           },
           "not_before": {
@@ -281,6 +286,20 @@
             ]
           },
           "channel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "priority": {
+            "enum": [
+              "P1",
+              "P2",
+              "P3",
+              null
+            ]
+          },
+          "topic_key": {
             "type": [
               "string",
               "null"
@@ -357,9 +376,11 @@
             "attempted",
             "delivered",
             "failed",
-            "unknown",
+            "not_sent",
+            "unverified",
             "cancelled",
-            "expired"
+            "expired",
+            "suppressed_cooldown"
           ]
         },
         "last_candidate_id": {
@@ -382,6 +403,135 @@
       "items": {
         "type": "string"
       }
+    },
+    "health": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "code",
+          "at"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          },
+          "last_at": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "topics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "last_at"
+        ],
+        "properties": {
+          "last_at": {
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "P1",
+              "P2",
+              "P3",
+              null
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "signals": {
+      "type": "object",
+      "required": [
+        "watermarks",
+        "pending",
+        "offset",
+        "evaluations",
+        "inflight"
+      ],
+      "properties": {
+        "watermarks": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "pending": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "first_at",
+              "last_at"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_full_scan_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evaluations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inflight": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "batch_id",
+                "created_at",
+                "candidate_ids",
+                "status"
+              ],
+              "properties": {
+                "status": {
+                  "enum": [
+                    "ready",
+                    "taken"
+                  ]
+                }
+              },
+              "additionalProperties": true
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "last_compact_at": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "$comment": "主动目标运行状态契约，由 ch-proactive-agent 项目维护（迁自 AlphaVault 编译产物）。修改后同步更新 tests/。",

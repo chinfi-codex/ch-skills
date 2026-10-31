@@ -27,32 +27,30 @@
 
 ```text
 长任务 Skills 独立运行 → AlphaVault 文件 / PostgreSQL
-                              ↓
-每 30 分钟确定性扫描：新证据、状态变化、到期复核
-                              ↓ 有候选才唤醒
-评估 Agent（无工具）→ 本地 JSON 决策，永不直接外发
-                              ↓
-无模型投递器：解析 JSON → 最新版本校验 → 去重/延期/频控
-                              ↓ 只有合格的通知意图
-Hermes no-agent 任务：local 影子 或 微信提醒
+            ↓ 水位变化 / Skill 收尾信号 / 固定窗口 / 延期到期 / 心跳
+pulse（no-agent，每 2 分钟）：防抖、限流 → 确定性扫描 → 有候选才备批并触发评估
+            ↓ hermes cron run
+评估 Agent（零工具，gate 只交出备好的一批）→ 本地 JSON 决策，永不直接外发
+            ↓
+pulse：逐项校验 → 主题冷却 / 频控 → 投递 → 下一轮读 Hermes 执行记录对账回执
 ```
 
 ### 评估段
 
 - Hermes 任务 `AlphaVault 主动评估`，`deliver=local`、`enabled_toolsets=[]`、`attach_to_session=false`。空列表同时禁止原生工具与 MCP 并入。
-- 预检只注入当前候选、相关 R-XXX/方法论片段和 Raw 证据摘录。模型没有终端、Skill 工具、联网、子代理、任务调度或文件编辑入口，不能读取范围外数据或调用长任务。
-- 模型只输出一个 `{"decisions":[...]}` JSON 对象，逐项选择 `silent / defer / notify / needs_user`。每批最多一项 `notify` 或 `needs_user`，其他项静默或延期。
-- 它的最终回复只是本地待校验输入。非 JSON、编造候选、过期证据或一批多个通知均不能被投递器接受。
+- 预检脚本是 `proactive_goal.py gate`：只交出 pulse 已备好的批次（`ready_batch.json`），一批只交一次，没有就 `wakeAgent=false`。gate 自己不扫描。
+- 评估包只含当前候选、相关 R-XXX 的可执行部分、近 14 天已推送提醒（`recent_notifications`）和候选里出现的术语表（`glossary`）。模型没有终端、Skill 工具、联网、子代理、任务调度或文件编辑入口。
+- 模型只输出一个 `{"decisions":[...]}` JSON 对象，逐项选择 `silent / defer / notify / needs_user`；提醒内容写在 `brief` 字段，标签、日期与版式由代码渲染。
+- 评估任务按 pulse 触发运行；`17 * * * *` 的定时只是兜底，触发失败时最迟一小时内交出已备好的批次。
 
-### 投递段
+### 投递段（pulse）
 
-- Hermes 任务 `AlphaVault 主动提醒` 以 `no_agent` 运行 `proactive_goal.py dispatch`，不调用模型。
-- 它读取评估任务的本地运行记录，解析结构化决策，重新核对最新候选版本，再写入最小状态和通知意图。
+- Hermes 任务 `AlphaVault 主动提醒` 以 `no_agent` 每 2 分钟运行 `proactive_goal.py pulse`，不调用模型。每次依次：回执对账 → 处理评估输出 → 信号检测与扫描 → 投递。
 - `stdout` 为空即静默；只有校验通过且到期的通知意图才会成为 `stdout`，由 Hermes 投递。模型自行写的一段散文没有这条投递路径。
 - 影子模式 `deliver=local`，正式提醒 `deliver=weixin`。`--enable-live` 只影响投递段，评估段永远 `local`。
 - `failure_deliver=local`，基础设施错误不进入市场提醒通道。`attach_to_session` 只在正式微信投递开启，保留用户追问的上下文。
 
-两段使用不同 Cron 时刻：评估在整点和半点（`*/30`），投递在每小时 :05 和 :35（`5,35`）。同一秒启动时投递会先占住状态锁，扫描只等 0.2 秒就放弃本轮，所以两者必须错开。投递通常在 5 分钟内取到刚完成的评估；长评估未结束时顺延到下一次投递，不假设评估一定在 5 分钟内完成。任务工作目录均为运行态目录，wrapper 从 Hermes 已同步的技能副本运行；解释器固定为已通过 `psycopg2`、`yaml`、`jsonschema` 预检的 Python 3.9+。
+两个任务分别在偶数分钟（pulse）和第 17 分钟（评估兜底）运行，不会同一秒抢状态锁；gate 等锁最多 20 秒。任务工作目录均为运行态目录，wrapper 从 Hermes 已同步的技能副本运行；解释器固定为已通过 `psycopg2`、`yaml`、`jsonschema` 预检的 Python 3.9+。
 
 ## 能力范围：数据复用，调用只限原子能力
 
@@ -71,7 +69,7 @@ Hermes no-agent 任务：local 影子 或 微信提醒
 - AlphaVault `system/tools/trend_state.py`：按既有口径读取 PG 并输出趋势状态、计数器和规则武装读数。
 - AlphaVault `system/tools/query_source_registry.py`：定向查询来源元数据，不全量读取来源登记表。
 - 本项目 `scripts/proactive_goal.py`：扫描候选、查看状态、校验决策与通知意图。
-- 本项目 `scripts/install_hermes.py`、`scripts/migrate_from_vault.py`：仅用于安装/迁移宿主任务与运行态，不属于评估期工具。
+- 本项目 `scripts/install_hermes.py`：仅用于安装/维护宿主任务，不属于评估期工具。
 
 这些原子脚本由**预检和投递器**执行，不是给评估 Agent 的通用终端权限。长任务内部脚本若确有独立价值，须单独登记为原子工具，不等于放行所属长任务。`md-pushplus` 不参与提醒链路，避免双通道重复发送。
 
@@ -128,13 +126,14 @@ AI 供需 `board.json` 超过其 30 天体检期限时，只产生**框架体检
 
 ## 唤醒、评估与通知
 
-Hermes 每 30 分钟在整点和半点执行确定性扫描，本地时间 06:00–23:00 为唤醒窗口，23:00–06:00 不扫描也不投递。以下情况才允许唤醒评估：
+触发器只产生“信号”，是否叫醒模型仍由确定性扫描决定；新增触发方式不会多出一条绕过去重、时效和频控的通道。本地时间 06:00–23:00 为唤醒窗口，23:00–06:00 信号照收但不扫描也不投递。
 
-- 新的或实质变化的候选证据；
-- 交易日 08:35 / 15:40 的评估窗口；
-- 到延期复核时间或框架复核期限。
+- **水位**：pulse 每次比较 `config/sources.yaml` 登记的金库文件（mtime+size）和 PG 只读水位查询。变化后按源防抖（安静 `quiet_seconds` 或最长等 `max_wait_seconds`），合并批量写入。
+- **信号收件箱**：长任务 Skill 收尾或用户手动执行 `proactive_goal.py signal --source skill:<名称>|manual`，只追加一行，不扫描、不唤醒。
+- **时间**：交易日 08:35 / 15:40 固定窗口到点、延期复核到期、30 分钟心跳兜底，这些立即就绪。
+- **限流**：每小时最多 4 次、每天最多 30 次评估；有批次在途（`signals.inflight`）时不再备新批，在途超过 30 分钟视为超时，计一次失败后放开。
 
-无变化时最后一行输出 `{"wakeAgent": false}`，不调用模型、不投递消息。扫描异常采用 fail-closed：记录本地 `source_errors` 并以成功退出返回静默 gate，不能利用非零退出触发 Hermes 的错误唤醒路径。PG 暂时失败时，待发意图保留为 `pending`，不能误判为旧证据取消。延期包缺失、损坏或链接越界必须显式报错，不得静默丢弃延期事项。该循环不是实时行情订阅，只能发现已有数据、既定窗口和到期事项带来的变化。
+扫描后没有候选就不调用模型。扫描异常采用 fail-closed：记录 `source_errors` 与健康告警，不利用非零退出触发 Hermes 的错误唤醒路径。PG 暂时失败时，待发意图保留为 `pending`。延期包缺失、损坏或链接越界必须显式报错。该循环不是实时行情订阅，只能发现已有数据、既定窗口和到期事项带来的变化。
 
 ### 通知判断
 
@@ -149,18 +148,18 @@ Hermes 每 30 分钟在整点和半点执行确定性扫描，本地时间 06:00
 
 ## 状态、去重与恢复
 
-运行态目录下的 `state.json` 保存目标 ID、启停、框架版本、候选指纹、通知意图、已处理运行记录和通知策略，不保存方法论或研究正文；结构契约为 `config/schemas/state.schema.json`。完整候选包位于 `packets/`，决策审计追加到 `decisions.jsonl`，迁移回执为 `migration.json`。
+运行态目录下的 `state.json` 只保存活跃候选、待办与近期通知意图、游标、主题冷却、信号水位和健康记录；终态候选压缩进 `index.json`（去重只需要它），过期的意图与运行记录滚动到 `archive/`。结构契约为 `config/schemas/state.schema.json`（v3）。完整候选包位于 `packets/`，决策审计追加到 `decisions.jsonl`，信号收件箱为 `signals.jsonl`。
 
-只有 `proactive_goal.py` 可持锁读-改-写并原子替换状态；模型不得编辑状态。锁位于运行态目录 `locks/`，由操作系统在进程退出时释放；运行态不在 OneDrive 中，避免云盘同步与 stale 清理竞态。
+只有 `proactive_goal.py` 可持锁读-改-写并原子替换状态；模型不得编辑状态。锁位于运行态目录 `locks/`，由操作系统在进程退出时释放；运行态不在 OneDrive 中。
 
-- 首次初始化建立当前游标，不补发历史事件；到期的框架体检除外。
-- 同一候选同一证据版本只通知一次。旧版本候选即使曾合法登记，在新版本出现后也不能再通知。
-- 延期候选按落盘包恢复，不依赖文件 diff 或原定时窗口再次出现；框架 hash 扫描不会吞掉延期，跨日窗口也不会丢失。
-- 每批最多一项通知，避免后一条决定覆盖前一条重要消息。
-- 免打扰、最小通知间隔和每日上限由投递器执行，不依赖模型自觉。
-- `pending` 表示尚未尝试投递，可以安全恢复；`attempted` 表示已产生投递尝试，结果须查 Hermes 收据，不能自动重发。不得把 `attempted` 说成已送达。
-- 投递前证据已更新时取消旧意图；重试次数耗尽转为可见 `dead`，不能静默遗弃。
-- 崩溃后从状态文件恢复，使用短会话接力。不向定时评估注入上一轮回答，避免复用历史故障或旧结论。
+- **版本与去重**：指纹只覆盖语义字段，逾期天数、注入的规则摘要和固定说明文字变化不产生新版本。同一候选同一证据版本只通知一次；旧版本在新版本出现后不能再通知。指纹算法升级时，用旧候选包按新算法重算，语义相同的继承原终态，不因算法变化重新唤醒。
+- **主题冷却**：主题键（`topic_key`）由代码确定，例如 `trend:axis`、`framework_review:industry-board`、`catalyst:<事件ID>`。同一主题上次发出后，在 `sources.yaml` 的 `cooldown_hours` 内不再发；冷却截止晚于意图有效期的，记为 `suppressed_cooldown`，不补发。
+- **逐项校验**：一项不合格只作废该项，并计入该候选的重试次数；其余照常入账。defer 越过有效期就夹紧，有效期已到就转静默；非 defer 带的 `review_after` 忽略；一批多条提醒时只保留优先级最高的一条，其余改为 30 分钟后复核。修正都写进审计 `repairs`。整份响应无法解析时，给这一批在途候选各计一次失败。外发安全问题（附件、控制标记）不修正，直接作废。
+- **消息**：模型给 `brief`，代码负责渲染标签、事件日与版式，把术语表里的节点代号换成名称、删掉免责套话；残留的内部标识只记 warning。
+- **频控**：免打扰、最小通知间隔、每日上限、主题冷却都由投递器执行，不依赖模型自觉；同时有多条到期时优先级高的先发。
+- **回执**：`pending` 尚未尝试，可以安全恢复；`attempted` 已产生投递尝试，不自动重发。下一轮 pulse 读 Hermes 执行记录，把它推进为 `delivered` / `failed` / `not_sent`，2 小时内查不到记录的标 `unverified`。只有 `delivered` 才算送达。
+- **恢复**：延期候选按落盘包恢复，不依赖文件 diff 或原定时窗口再次出现。投递前证据已更新时取消旧意图；重试次数耗尽转为可见 `dead`。不向定时评估注入上一轮回答。
+- **健康**：Response 段解析不出、评估输出即将被轮转、PG 水位查询失败、回执查询失败、评估超时、触发失败、被限流，都写进 `state.health` 与审计，`status` 可见；不进入市场提醒通道。
 
 ## 权限与控制
 
@@ -174,7 +173,7 @@ Hermes 每 30 分钟在整点和半点执行确定性扫描，本地时间 06:00
 
 ## 必做校验
 
-- 在 ch-skills 根目录运行 `python3 -m unittest discover -s ch-proactive-agent/tests`，覆盖无变化不唤醒、历史不补发、延期恢复、旧版本拒绝、夜间频控、并发、恶意输入、无工具评估、安装边界、投递幂等、运行态迁移和配置契约。
+- 在 ch-skills 根目录运行 `python3 -m unittest discover -s ch-proactive-agent/tests`，覆盖无变化不唤醒、历史不补发、延期恢复、旧版本拒绝、夜间频控、并发、恶意输入、无工具评估、安装边界、投递幂等、主题冷却、逐项校验、回执对账、压缩、事件唤醒、brief 渲染和配置契约。
 - 修改评估输出字段时，同步更新 `SKILL.md` 输出契约与 `config/schemas/decision.schema.json`（测试会比对两者）。
 - 改动经 git 提交后由 post-commit hook 同步到 Hermes 技能副本，才会上线。
 - 若改动涉及金库侧接入说明或能力注册表，在 AlphaVault 内运行 `python system/tools/compile_protocol_contracts.py` 与 `--check`。

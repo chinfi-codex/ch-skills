@@ -26,30 +26,37 @@ GOAL_ID = SETTINGS.goal_id
 SKILL_NAME = "ch-proactive-agent"
 EVALUATION_NAME = "AlphaVault 主动评估"
 DELIVERY_NAME = "AlphaVault 主动提醒"
-LEGACY_NAME = "AlphaVault 主动投研提醒"
 EVALUATION_WRAPPER = "alphavault-proactive-evaluate.py"
 DELIVERY_WRAPPER = "alphavault-proactive-delivery.py"
 REQUIRED_MODULES = ("psycopg2", "yaml", "jsonschema")
-EVALUATION_SCHEDULE = "*/30 * * * *"
-# 投递错开 5 分钟：同一秒启动时投递会先占住状态锁，扫描只等 0.2 秒就放弃本轮。
-# 错开后投递也能在 5 分钟内处理刚完成的评估，而不是等下一个半小时。
-DELIVERY_SCHEDULE = "5,35 * * * *"
+# 评估由 pulse 用 `hermes cron run` 按需触发；这里的定时只是兜底：触发失败时最迟一小时内交出已备好的批次。
+# 选奇数分钟，与偶数分钟运行的 pulse 错开。
+EVALUATION_SCHEDULE = "17 * * * *"
+# pulse：回执对账、处理评估输出、水位/信号检测与投递。2 分钟一次，发现延迟约 2–5 分钟。
+DELIVERY_SCHEDULE = "*/2 * * * *"
 # 规则只保留在 SKILL.md 一处；这里只标识目标并指向已加载的技能。
 PROMPT = f"""[{GOAL_ID}]
 按已加载的 ch-proactive-agent 完成本轮无工具评估。下方是预检注入的候选包；只输出 SKILL 规定的 JSON 对象。
 """
 
 
-def _argv(kind: str, evaluation_job_id: str, channel: str) -> str:
+def _argv(kind: str, evaluation_job_id: str, channel: str, delivery_job_id: str = "") -> list[str]:
+    if kind == "evaluation":
+        return ["gate"]
+    if not evaluation_job_id or not delivery_job_id:
+        raise ValueError("pulse wrapper 需要 evaluation_job_id 与 delivery_job_id")
+    return ["pulse", "--evaluation-job-id", evaluation_job_id, "--delivery-job-id", delivery_job_id,
+            "--channel", channel]
+
+
+def _previous_argv_text(kind: str, evaluation_job_id: str, channel: str) -> str:
+    """0.4 版写入 wrapper 的参数文本（定时 scan + dispatch），逐字复现，仅用于识别可升级的旧 wrapper。"""
     if kind == "evaluation":
         return '["scan"]'
-    if not evaluation_job_id:
-        raise ValueError("投递 wrapper 需要 evaluation_job_id")
     return f'["dispatch", "--evaluation-job-id", {evaluation_job_id!r}, "--channel", {channel!r}]'
 
 
-def wrapper_source(kind: str, home: Path, evaluation_job_id: str = "", channel: str = "local") -> str:
-    argv = _argv(kind, evaluation_job_id, channel)
+def _render(home: Path, argv_text: str) -> str:
     skill = home / "skills" / SKILL_NAME
     return f'''#!/usr/bin/env python3
 import os
@@ -65,27 +72,15 @@ os.environ["ALPHAVAULT_ROOT"] = {str(ROOT)!r}
 os.environ["PROACTIVE_HOME"] = {str(RUNTIME)!r}
 os.chdir(os.environ["PROACTIVE_HOME"])
 sys.path.insert(0, str(SKILL / "scripts"))
-sys.argv = [str(SKILL / "scripts" / "proactive_goal.py"), *{argv}]
+sys.argv = [str(SKILL / "scripts" / "proactive_goal.py"), *{argv_text}]
 runpy.run_path(sys.argv[0], run_name="__main__")
 '''
 
 
-def legacy_wrapper_source(kind: str, home: Path, evaluation_job_id: str = "", channel: str = "local") -> str:
-    """迁移前由 AlphaVault system/tools/install_proactive_hermes.py 生成的版本，允许被本安装器升级。"""
-    argv = _argv(kind, evaluation_job_id, channel)
-    return f'''#!/usr/bin/env python3
-import os
-import runpy
-import sys
-from pathlib import Path
-
-ROOT = Path({str(ROOT)!r})
-os.chdir(ROOT)
-os.environ.setdefault("HERMES_HOME", {str(home)!r})
-sys.path.insert(0, str(ROOT / "system" / "tools"))
-sys.argv = [str(ROOT / "system" / "tools" / "proactive_goal.py"), *{argv}]
-runpy.run_path(sys.argv[0], run_name="__main__")
-'''
+def wrapper_source(kind: str, home: Path, evaluation_job_id: str = "", channel: str = "local",
+                   delivery_job_id: str = "") -> str:
+    argv = _argv(kind, evaluation_job_id, channel, delivery_job_id)
+    return _render(home, json.dumps(argv, ensure_ascii=False))
 
 
 def evaluation_config(home: Path, interpreter: Path, paused: bool) -> dict[str, Any]:
@@ -132,10 +127,16 @@ def write_wrapper(path: Path, content: str, *, managed_variants: tuple[str, ...]
     path.chmod(0o700)
 
 
-def managed_variants(kind: str, home: Path, evaluation_job_id: str = "") -> tuple[str, ...]:
+def managed_variants(kind: str, home: Path, evaluation_job_id: str = "", delivery_job_id: str = "") -> tuple[str, ...]:
+    """本安装器生成过的版本都可升级：当前版的两种通道，以及 0.4 版 scan / dispatch wrapper。"""
     channels = ("local", "weixin") if kind == "delivery" else ("local",)
-    return tuple(builder(kind, home, evaluation_job_id, channel)
-                 for builder in (wrapper_source, legacy_wrapper_source) for channel in channels)
+    variants = []
+    for channel in channels:
+        if kind == "evaluation" or delivery_job_id:
+            variants.append(wrapper_source(kind, home, evaluation_job_id, channel, delivery_job_id))
+        if kind == "evaluation" or evaluation_job_id:
+            variants.append(_render(home, _previous_argv_text(kind, evaluation_job_id, channel)))
+    return tuple(variants)
 
 
 def preflight(interpreter: Path, home: Path) -> None:
@@ -149,7 +150,7 @@ def preflight(interpreter: Path, home: Path) -> None:
         if not (skill / rel).is_file():
             raise ValueError(f"{SKILL_NAME} 尚未完整同步到 Hermes skills（缺 {rel}）；先提交 ch-skills 触发同步")
     if not (RUNTIME / "state.json").is_file():
-        raise ValueError(f"运行态尚未初始化：{RUNTIME / 'state.json'}；先运行 migrate_from_vault.py --apply")
+        raise ValueError(f"运行态尚未初始化：{RUNTIME / 'state.json'}；先运行 proactive_goal.py init")
 
 
 def upsert(job: dict[str, Any], existing: dict[str, Any] | None) -> tuple[str, dict[str, Any]]:
@@ -193,7 +194,7 @@ def main() -> int:
     from cron.jobs import list_jobs  # noqa: E402
 
     jobs = list_jobs(include_disabled=True)
-    eval_matches = [job for job in jobs if job.get("name") in {EVALUATION_NAME, LEGACY_NAME}]
+    eval_matches = [job for job in jobs if job.get("name") == EVALUATION_NAME]
     delivery_matches = [job for job in jobs if job.get("name") == DELIVERY_NAME]
     if len(eval_matches) > 1 or len(delivery_matches) > 1:
         raise ValueError("存在重复主动目标任务，未猜测修改对象")
@@ -204,16 +205,17 @@ def main() -> int:
 
     eval_action, eval_job = upsert(evaluation, eval_matches[0] if eval_matches else None)
     evaluation_id = eval_job["id"]
+    delivery_action, delivery_job = upsert(delivery, delivery_matches[0] if delivery_matches else None)
+    delivery_id = delivery_job["id"]
     write_wrapper(home / "scripts" / EVALUATION_WRAPPER, wrapper_source("evaluation", home),
                   managed_variants=managed_variants("evaluation", home))
     write_wrapper(home / "scripts" / DELIVERY_WRAPPER,
-                  wrapper_source("delivery", home, evaluation_id, "weixin" if args.enable_live else "local"),
-                  managed_variants=managed_variants("delivery", home, evaluation_id))
-    delivery_action, delivery_job = upsert(delivery, delivery_matches[0] if delivery_matches else None)
+                  wrapper_source("delivery", home, evaluation_id, "weixin" if args.enable_live else "local", delivery_id),
+                  managed_variants=managed_variants("delivery", home, evaluation_id, delivery_id))
     print(json.dumps({
         "evaluation": {"action": eval_action, "job_id": evaluation_id, "deliver": eval_job["deliver"],
                        "enabled_toolsets": eval_job.get("enabled_toolsets"), "workdir": eval_job.get("workdir")},
-        "delivery": {"action": delivery_action, "job_id": delivery_job["id"], "deliver": delivery_job["deliver"],
+        "delivery": {"action": delivery_action, "job_id": delivery_id, "deliver": delivery_job["deliver"],
                      "no_agent": delivery_job.get("no_agent"), "attach_to_session": delivery_job.get("attach_to_session")},
         "note": "仅注册双段任务；没有发送测试消息",
     }, ensure_ascii=False, indent=2))

@@ -81,7 +81,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     try:
         with locked(CTX.state_path, timeout=0.2):
             state = load_state()
-            if state["status"] != "active" or not state.get("initialized") or not outbox.is_active_time(state["policy"], now):
+            if state["status"] != "active" or not state.get("initialized") or not outbox.can_evaluate(state["policy"], now):
                 emit({"status": "outside_active_hours", "candidates": []}, False)
                 return 0
             with sources.tick_cache():
@@ -113,7 +113,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
         with locked(CTX.state_path):
             state = load_state()
             payload = None
-            if state["status"] == "active" and outbox.is_active_time(state["policy"], now):
+            if state["status"] == "active" and outbox.can_evaluate(state["policy"], now):
                 payload = pulse.take_batch(state, now)
                 save_state(state)
     except Exception as exc:
@@ -138,7 +138,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     message = None
     with locked(CTX.state_path):
         state = load_state()
-        if state["status"] != "active" or not outbox.is_active_time(state["policy"], now):
+        if state["status"] != "active" or not outbox.can_evaluate(state["policy"], now):
             return 0
         with sources.tick_cache():
             _intake(state, now, args)
@@ -156,7 +156,7 @@ def cmd_pulse(args: argparse.Namespace) -> int:
     trigger = False
     with locked(CTX.state_path):
         state = load_state()
-        if state["status"] != "active" or not state.get("initialized") or not outbox.is_active_time(state["policy"], now):
+        if state["status"] != "active" or not state.get("initialized") or not outbox.can_evaluate(state["policy"], now):
             return 0
         with sources.tick_cache():
             _intake(state, now, args)

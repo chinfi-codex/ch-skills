@@ -8,6 +8,7 @@ import sqlite3
 import unittest
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from helpers import DELIVERY_JOB, JOB, NOW, RuntimeCase, catalyst, parse_time, pulse, sources, store, trend
 from proactive import evaluate, outbox, render, runs
@@ -87,7 +88,9 @@ class FingerprintInheritanceTest(RuntimeCase):
         a = sources.candidate("trend_state", "2026-10-26", "2026-10-26", {**base, "note": "旧说明", "rule_texts": {"R-1": "x"}})
         b = sources.candidate("trend_state", "2026-10-26", "2026-10-26", {**base, "note": "新说明", "rule_texts": {"R-1": "y"}})
         c = sources.candidate("trend_state", "2026-10-26", "2026-10-26", {**base, "state": "修复"})
+        d = sources.candidate("trend_state", "2026-10-26", "2026-10-26", {**base, "note": "旧说明", "plan_date": "2026-10-28"})
         self.assertEqual(a["candidate_id"], b["candidate_id"])
+        self.assertEqual(a["candidate_id"], d["candidate_id"])
         self.assertNotEqual(a["candidate_id"], c["candidate_id"])
 
 
@@ -257,12 +260,25 @@ class PulseTest(RuntimeCase):
         cid = inflight["candidate_ids"][0]
         self.assertEqual(state["candidates"][cid]["attempts"], 1)
 
-    def test_night_pulse_does_nothing(self):
-        self.init()
-        self.add_event()
-        self.pulse("2026-10-27T23:30:00+08:00")
-        self.assertIsNone(self.state()["signals"]["inflight"])
-        pulse.trigger_evaluation.assert_not_called()
+    def test_night_data_is_evaluated_on_arrival_but_delivered_after_quiet_hours(self):
+        self.init("2026-10-27T22:00:00+08:00")
+        CTX.events.write_text("{}\n", encoding="utf-8")
+        self.pulse("2026-10-28T00:00:00+08:00")                     # 建立水位
+        item = self.add_event(observed_at="2026-10-28")
+        CTX.events.write_text('{"event_id": "night"}\n', encoding="utf-8")   # 00:10 台账写入
+        self.pulse("2026-10-28T00:12:00+08:00")
+        self.pulse("2026-10-28T00:16:00+08:00")                     # 防抖结束 → 当场备批并触发评估
+        self.assertEqual(self.state()["signals"]["inflight"]["status"], "ready")
+        pulse.trigger_evaluation.assert_called_with(JOB)
+        _, payload, gate = self.gate("2026-10-28T00:17:00+08:00")
+        self.assertTrue(gate["wakeAgent"])
+        self.write_run({"decisions": [self.row(payload["candidates"][0], "notify", "夜间到达的提醒")]}, name="night.md")
+        _, message, _ = self.pulse("2026-10-28T00:20:00+08:00")     # 评估结果夜里就入账
+        self.assertIsNone(message)
+        intent = next(iter(self.state()["outbox"].values()))
+        self.assertEqual((intent["status"], intent["not_before"]), ("pending", "2026-10-28T06:00:00+08:00"))
+        _, message, _ = self.pulse("2026-10-28T06:00:00+08:00")
+        self.assertEqual(message, "夜间到达的提醒")
 
     def test_rate_limit_records_health_instead_of_scanning(self):
         self.init()
@@ -317,6 +333,53 @@ class RenderTest(RuntimeCase):
         message = next(iter(self.state()["outbox"].values()))["message"]
         self.assertTrue(message.startswith("【P2 基本面】燃机订单价上修"))
         self.assertTrue(message.endswith("事件日 10-27"))
+
+
+class ArrivalTimingTest(RuntimeCase):
+    def test_trend_tool_is_asked_for_tomorrows_plan(self):
+        self.patches[0].stop()
+        try:
+            with patch.object(trend.subprocess, "run") as run:
+                run.return_value.returncode = 1
+                run.return_value.stderr = "x"
+                trend.trading_candidate(parse_time("2026-11-09T17:05:00+08:00"), {"max_trend_age_days": 3})
+            argv = run.call_args[0][0]
+            self.assertEqual(argv[argv.index("--date") + 1], "2026-11-10")
+        finally:
+            self.patches[0].start()
+
+    def test_v3_trend_differing_only_in_plan_date_is_inherited(self):
+        self.init()
+        evidence = {"ref_date": "2026-11-06", "state": "退潮", "arming": [], "plan_date": "2026-11-10"}
+        self.trend = sources.candidate("trend_state", "2026-11-06", "2026-11-06", evidence)
+        old_evidence = dict(evidence, plan_date="2026-11-09")
+        old_id = "PG-" + digest({"kind": "trend_state", "native_id": "2026-11-06",
+                                 "evidence": {k: v for k, v in old_evidence.items()}})[:16]
+        CTX.packets.mkdir(parents=True, exist_ok=True)
+        (CTX.packets / f"{old_id}.json").write_text(json.dumps({"candidate_id": old_id, "evidence": old_evidence}), encoding="utf-8")
+        state = self.state()
+        state["_index"][old_id] = {"native_id": "2026-11-06", "kind": "trend_state", "last_action": "notify",
+                                   "packet_path": f"packets/{old_id}.json", "fingerprint_version": 3}
+        self.save(state)
+        _, payload, _gate = self.scan("2026-11-09T12:00:00+08:00")
+        # 当天 08:35 固定窗口会另成候选；这里只关心趋势没有被重新呈现
+        self.assertNotIn("trend_state", [row["kind"] for row in payload["candidates"]])
+        self.assertEqual(self.state()["candidates"][self.trend["candidate_id"]]["last_action"], "notify")
+
+    def test_trigger_does_not_wait_for_the_evaluation(self):
+        self.patches[4].stop()
+        try:
+            with patch.object(pulse.subprocess, "Popen") as popen:
+                popen.return_value.pid = 4242
+                ok, detail = pulse.trigger_evaluation(JOB)
+            self.assertTrue(ok)
+            self.assertIn("4242", detail)
+            kwargs = popen.call_args[1]
+            self.assertTrue(kwargs["start_new_session"])
+            popen.return_value.wait.assert_not_called()
+            self.assertTrue((CTX.runtime / "logs" / "trigger.log").is_file())
+        finally:
+            self.patches[4].start()
 
 
 if __name__ == "__main__":

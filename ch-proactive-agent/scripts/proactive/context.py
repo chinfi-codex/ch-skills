@@ -16,7 +16,7 @@ from proactive_config import SKILL_DIR, Settings, load_settings
 
 SCHEMA_VERSION = "proactive-goal/v3"
 LOCAL_TZ = timezone(timedelta(hours=8))
-FINGERPRINT_VERSION = 3
+FINGERPRINT_VERSION = 4
 FINAL_ACTIONS = {"silent", "notify", "needs_user", "baseline", "acknowledged", "superseded", "dead", "backfill"}
 NOTIFY_ACTIONS = {"notify", "needs_user"}
 PRIORITY_RANK = {"P1": 1, "P2": 2, "P3": 3}

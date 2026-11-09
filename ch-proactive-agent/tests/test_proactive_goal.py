@@ -280,16 +280,26 @@ class ProactiveGoalTest(RuntimeCase):
         self.assertEqual((policy["quiet_start"], policy["quiet_end"], policy["heartbeat_minutes"]), ("23:00", "06:00", 30))
         self.call("control", action="freshness", trend_max_age_days=3, pending_ttl_hours=24, mute_hours=12)
         self.add_event()
+        # 静默期照常评估（数据到了就判断），只推迟投递
         _, payload, gate = self.scan("2026-10-27T05:59:00+08:00")
-        self.assertEqual(payload["status"], "outside_active_hours")
-        _, payload, gate = self.scan("2026-10-27T06:00:00+08:00")
         self.assertTrue(gate["wakeAgent"])
         item = next(row for row in payload["candidates"] if row["kind"] == "catalyst")
-        self.decide(item, "notify", "2026-10-27T06:00:00+08:00")
-        _, message, _ = self.dispatch("2026-10-27T23:00:00+08:00")
+        self.decide(item, "notify", "2026-10-27T05:59:00+08:00")
+        _, message, _ = self.dispatch("2026-10-27T05:59:30+08:00")
         self.assertIsNone(message)
-        _, message, _ = self.dispatch("2026-10-28T06:00:00+08:00")
+        _, message, _ = self.dispatch("2026-10-27T06:00:00+08:00")
         self.assertEqual(message, "合格的真实提醒")
+
+    def test_25b_quiet_hours_can_still_disable_evaluation(self):
+        self.init()
+        state = self.state()
+        state["policy"]["evaluate_in_quiet_hours"] = False
+        self.save(state)
+        self.add_event()
+        _, payload, gate = self.scan("2026-10-27T05:59:00+08:00")
+        self.assertEqual(payload["status"], "outside_active_hours")
+        _, _, gate = self.scan("2026-10-27T06:00:00+08:00")
+        self.assertTrue(gate["wakeAgent"])
 
     def test_26_raw_and_verification_metadata_do_not_refresh_catalyst_version(self):
         self.patches[1].stop()

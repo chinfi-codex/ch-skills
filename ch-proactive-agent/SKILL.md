@@ -15,7 +15,7 @@ description: 当用户要设置长期主动目标、让 Agent 后台关注交易
 
 ## 你会拿到什么
 
-- `evaluated_at`：本次评估时间，是判断“现在”的唯一依据。
+- `evaluated_at`：本次评估时间，是判断“现在”的唯一依据。评估在数据到达后立即进行，可能是夜里；静默期内的提醒由系统留到静默期结束再发，你不需要因为“现在是夜里”而改判 silent 或 defer。
 - `candidates[]`：每项含 `candidate_id`、`evidence_hash`、`kind`、`observed_at`、`evidence`，部分含 `freshness`、`valid_until`、`prior_version`、`industry_baseline`。
   - `trend_state`：趋势状态机读数和相关 R-XXX 规则的可执行部分（规则陈述、适用环境、执行细节、例外）。
   - `catalyst`：催化事件台账中新增或实质变化的事件。

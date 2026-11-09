@@ -1,8 +1,9 @@
 # 频控、时效与活跃时段的默认值。状态文件中的 policy 覆盖这里（control 子命令写入）。
 timezone: Asia/Shanghai
 heartbeat_minutes: 30
-active_start: "06:00"
+active_start: "06:00"                # 可投递时段；静默期 = 其补集
 active_end: "23:00"
+evaluate_in_quiet_hours: true        # 静默期照常扫描与评估，只推迟投递；false 则静默期完全不扫描
 scheduled_reviews: ["08:35", "15:40"]
 quiet_start: "23:00"
 quiet_end: "06:00"

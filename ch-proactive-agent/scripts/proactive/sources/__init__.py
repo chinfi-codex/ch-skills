@@ -43,9 +43,10 @@ def topic_for(kind: str, native_id: str, evidence: dict[str, Any]) -> str:
 
 
 def default_fingerprint(kind: str, native_id: str, evidence: dict[str, Any]) -> dict[str, Any]:
-    """指纹只覆盖语义字段：派生值（逾期天数）、注入的参考正文和固定说明文字变化不产生新版本。"""
+    """指纹只覆盖语义字段：派生值（逾期天数、计划日）、注入的参考正文和固定说明文字变化不产生新版本。"""
     if kind == "trend_state":
-        evidence = {k: v for k, v in evidence.items() if k not in {"rule_texts", "note"}}
+        # plan_date 每个自然日都变，留在指纹里会让同一份收盘数据每天被重新评估一次
+        evidence = {k: v for k, v in evidence.items() if k not in {"rule_texts", "note", "plan_date"}}
     elif kind == "framework_review":
         evidence = {"version": evidence.get("version"), "review_due": evidence.get("review_due")}
     return {"kind": kind, "native_id": native_id, "evidence": evidence}

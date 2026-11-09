@@ -7,7 +7,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -51,8 +51,11 @@ def rule_files() -> dict[str, Path]:
 def trading_candidate(now: datetime, policy: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
     from . import candidate
 
+    # trend_state 的 --date 是“计划日”，参考日取它之前最近一个交易日。按明天调用，
+    # 收盘数据一入库当天就能读到；数据未到时读数与按今天调用完全一致（只差 plan_date）。
+    plan_for = (now + timedelta(days=1)).date().isoformat()
     proc = subprocess.run(
-        [sys.executable, str(CTX.trend_tool), "--date", now.date().isoformat(), "--json"],
+        [sys.executable, str(CTX.trend_tool), "--date", plan_for, "--json"],
         cwd=CTX.root, text=True, capture_output=True, timeout=60, check=False,
         env={**os.environ, "PYTHONUTF8": "1"},
     )

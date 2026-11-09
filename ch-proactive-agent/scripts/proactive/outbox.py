@@ -25,6 +25,11 @@ def is_active_time(policy: dict[str, Any], now: datetime) -> bool:
     return str(policy["active_start"]) <= current < str(policy["active_end"])
 
 
+def can_evaluate(policy: dict[str, Any], now: datetime) -> bool:
+    """数据到了就评估：静默期默认照常扫描、评估、入账，只把投递推迟到静默期结束。"""
+    return bool(policy.get("evaluate_in_quiet_hours", True)) or is_active_time(policy, now)
+
+
 def next_notification_time(state: dict[str, Any], now: datetime) -> datetime:
     policy = state["policy"]
     start_h, start_m = map(int, policy["quiet_start"].split(":"))

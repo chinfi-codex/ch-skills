@@ -204,10 +204,21 @@ def take_batch(state: dict[str, Any], now: datetime) -> dict[str, Any] | None:
 
 
 def trigger_evaluation(job_id: str) -> tuple[bool, str]:
-    """请 Hermes 在下一个调度 tick 运行评估任务；失败由评估任务的定时兜底接手。"""
+    """让 Hermes 立即运行评估任务，不等待结果。
+
+    `hermes cron run` 会同步跑完整个评估（含模型调用，通常 1–3 分钟）才返回，
+    所以放进独立会话的子进程里，pulse 不阻塞，也不会把“没等到”误记成触发失败。
+    评估结果仍由下一次 pulse 从运行记录读取；子进程失败由评估任务的定时兜底接手。
+    """
     binary = os.environ.get("HERMES_BIN") or shutil.which("hermes") or str(hermes_home().parent / ".local" / "bin" / "hermes")
+    log_path = CTX.runtime / "logs" / "trigger.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        proc = subprocess.run([binary, "cron", "run", job_id], text=True, capture_output=True, timeout=30, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        with log_path.open("ab") as log:
+            log.write(f"\n--- {iso(parse_time())} cron run {job_id}\n".encode("utf-8"))
+            log.flush()
+            proc = subprocess.Popen([binary, "cron", "run", job_id], stdin=subprocess.DEVNULL, stdout=log,
+                                    stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+    except OSError as exc:
         return False, short(exc, 200)
-    return proc.returncode == 0, short(proc.stderr or proc.stdout, 200)
+    return True, f"spawned pid {proc.pid}"

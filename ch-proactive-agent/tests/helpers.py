@@ -32,6 +32,9 @@ class RuntimeCase(unittest.TestCase):
         root = Path(self.tmp.name)
         self.root = root
         CTX.configure(vault_root=root / "vault", runtime_home=root / "runtime")
+        self.zcode_db = root / "zcode.sqlite"
+        CTX.settings.upstream = {"zcode": {"runs_db": str(self.zcode_db), "automations": {
+            "auto-catalyst": ["catalyst"], "auto-trend": ["trend_state"]}}}
         vault = CTX.root
         for path in (CTX.events, CTX.board, CTX.runtime):
             (path if path == CTX.runtime else path.parent).mkdir(parents=True, exist_ok=True)

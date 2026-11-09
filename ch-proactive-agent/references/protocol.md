@@ -28,7 +28,7 @@
 ```text
 长任务 Skills 独立运行 → AlphaVault 文件 / PostgreSQL
             ↓ 水位变化 / Skill 收尾信号 / 固定窗口 / 延期到期 / 心跳
-pulse（no-agent，每 2 分钟）：防抖、限流 → 确定性扫描 → 有候选才备批并触发评估
+pulse（no-agent，06–09 点与 15–24 点每 15 分钟）：长任务收尾 / 水位 → 防抖、限流 → 确定性扫描 → 有候选才备批并触发评估
             ↓ hermes cron run
 评估 Agent（零工具，gate 只交出备好的一批）→ 本地 JSON 决策，永不直接外发
             ↓
@@ -41,16 +41,16 @@ pulse：逐项校验 → 主题冷却 / 频控 → 投递 → 下一轮读 Herme
 - 预检脚本是 `proactive_goal.py gate`：只交出 pulse 已备好的批次（`ready_batch.json`），一批只交一次，没有就 `wakeAgent=false`。gate 自己不扫描。
 - 评估包只含当前候选、相关 R-XXX 的可执行部分、近 14 天已推送提醒（`recent_notifications`）和候选里出现的术语表（`glossary`）。模型没有终端、Skill 工具、联网、子代理、任务调度或文件编辑入口。
 - 模型只输出一个 `{"decisions":[...]}` JSON 对象，逐项选择 `silent / defer / notify / needs_user`；提醒内容写在 `brief` 字段，标签、日期与版式由代码渲染。
-- 评估任务按 pulse 触发运行；`17 * * * *` 的定时只是兜底，触发失败时最迟一小时内交出已备好的批次。
+- 评估任务按 pulse 触发运行；`17 6-8,15-23 * * *` 的定时只是兜底，触发失败时最迟一小时内交出已备好的批次。
 
 ### 投递段（pulse）
 
-- Hermes 任务 `AlphaVault 主动提醒` 以 `no_agent` 每 2 分钟运行 `proactive_goal.py pulse`，不调用模型。每次依次：回执对账 → 处理评估输出 → 信号检测与扫描 → 投递。
+- Hermes 任务 `AlphaVault 主动提醒` 以 `no_agent` 运行 `proactive_goal.py pulse`，不调用模型。为降低功耗只在 `policy.yaml` 的 `pulse_windows`（默认 06:00–09:00、15:00–24:00）内每 `pulse_interval_minutes`（默认 15）分钟一次，安装器据此生成 cron；时段外的变化等下一个时段开始时统一处理。每次依次：回执对账 → 处理评估输出 → 信号检测与扫描 → 投递。
 - `stdout` 为空即静默；只有校验通过且到期的通知意图才会成为 `stdout`，由 Hermes 投递。模型自行写的一段散文没有这条投递路径。
 - 影子模式 `deliver=local`，正式提醒 `deliver=weixin`。`--enable-live` 只影响投递段，评估段永远 `local`。
 - `failure_deliver=local`，基础设施错误不进入市场提醒通道。`attach_to_session` 只在正式微信投递开启，保留用户追问的上下文。
 
-两个任务分别在偶数分钟（pulse）和第 17 分钟（评估兜底）运行，不会同一秒抢状态锁；gate 等锁最多 20 秒。任务工作目录均为运行态目录，wrapper 从 Hermes 已同步的技能副本运行；解释器固定为已通过 `psycopg2`、`yaml`、`jsonschema` 预检的 Python 3.9+。
+两个任务分别在整 15 分钟（pulse）和第 17 分钟（评估兜底）运行，不会同一秒抢状态锁；gate 等锁最多 20 秒。任务工作目录均为运行态目录，wrapper 从 Hermes 已同步的技能副本运行；解释器固定为已通过 `psycopg2`、`yaml`、`jsonschema` 预检的 Python 3.9+。
 
 ## 能力范围：数据复用，调用只限原子能力
 
@@ -130,7 +130,8 @@ AI 供需 `board.json` 超过其 30 天体检期限时，只产生**框架体检
 
 全天都扫描和评估，包括 23:00–06:00 静默期（`evaluate_in_quiet_hours: true`）。静默期只约束投递：夜里评估出的提醒保留为 `pending`，静默期一结束即按优先级发出。设为 false 则恢复静默期完全不扫描。
 
-- **水位**：pulse 每次比较 `config/sources.yaml` 登记的金库文件（mtime+size）和 PG 只读水位查询。变化后按源防抖（安静 `quiet_seconds` 或最长等 `max_wait_seconds`），合并批量写入。
+- **长任务收尾**：长任务配置在 zcode 定时任务里。pulse 只读 zcode 运行记录（`sources.yaml` 的 `upstream.zcode`），登记过的长任务成功结束即标记对应数据源立即就绪、跳过防抖；登记过的长任务失败写进健康记录 `upstream_task_failed`。首次运行只建游标，不回放历史。不修改 zcode 任务本身。
+- **水位（文件变更检查）**：pulse 每次比较 `config/sources.yaml` 登记的金库文件（mtime+size）和 PG 只读水位查询。文件变化的防抖从文件真实修改时间算起（安静 `quiet_seconds` 或最长等 `max_wait_seconds`），所以 15 分钟的 pulse 间隔不会再额外多等一轮。
 - **信号收件箱**：长任务 Skill 收尾或用户手动执行 `proactive_goal.py signal --source skill:<名称>|manual`，只追加一行，不扫描、不唤醒。
 - **时间**：交易日 08:35 / 15:40 固定窗口到点、延期复核到期、30 分钟心跳兜底，这些立即就绪。固定窗口只是复核机会，不是推送时刻；不需要时可在 `sources.yaml` 关闭 `scheduled_review`。
 - **趋势时效**：`trend_state.py --date` 是计划日，参考日取它之前最近一个交易日。pulse 始终按“明天”调用，收盘数据一入库当天就能读到；数据未到时读数与按今天调用完全一致。计划日不进指纹，同一份收盘数据不会每天重新评估。

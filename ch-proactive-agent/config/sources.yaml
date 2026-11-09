@@ -17,6 +17,7 @@ sources:
     rank: 0
     watch:
       skills: [a-stock-daily-market-sense]
+      files: ["journal/趋势复盘/*.md"]   # 趋势复盘产出；与 PG 水位互为兜底
       # trend_state.py 读取的三张表；融资数据会回补历史日期，所以取近 10 天的聚合而不只看最大日期
       pg_watermarks:
         - "SELECT max(date), count(*), sum(coalesce(margin_net_buy, 0)) FROM market_history WHERE date >= current_date - 10"
@@ -68,3 +69,16 @@ sources:
     topic_key: "trend:axis"      # 固定窗口的提醒内容就是趋势复核，与趋势共用冷却
     cooldown_hours: 6
     default_priority: P2
+
+# 长任务收尾：pulse 只读 zcode 的运行记录（automation_runs），登记过的长任务成功结束即视为
+# 对应数据源已就绪，跳过防抖立即扫描；失败的写进健康记录。未登记的长任务不触发扫描。
+upstream:
+  zcode:
+    runs_db: ~/.zcode/v2/tasks-index.sqlite
+    automations:
+      automation-9da13005-69d7-4b7e-b8c9-d774c325963b: [catalyst]          # 00:10 催化事件台账
+      automation-a684a63c-6cd4-4c6f-8739-22f0fd8c5062: [catalyst]          # 23:30 inbox + crawler 摄取
+      automation-21c6fabe-ff7f-4db9-b7ce-aba112baada0: [trend_state]       # 19:00 A 股趋势复盘
+      automation-1b618756-0038-4d8d-890b-e05597507b81: [trend_state]       # 20:00 大 A 情绪指数
+      automation-8376841f-0578-485f-90dc-b83ef70dcaa4: [trend_state, framework_change]  # 周日 23:30 金库清扫与基础数据
+

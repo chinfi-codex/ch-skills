@@ -42,7 +42,7 @@ class InstallHermesTest(unittest.TestCase):
         self.assertFalse(job["attach_to_session"])
         self.assertEqual(job["context_from"], [])
         self.assertEqual(job["interpreter"], "/usr/bin/python3")
-        self.assertEqual(job["schedule"], "17 * * * *")
+        self.assertEqual(job["schedule"], "17 6-8,15-23 * * *")
 
     def test_delivery_never_starts_in_the_same_minute_as_scan(self):
         home = Path("/tmp/hermes-home")
@@ -50,6 +50,13 @@ class InstallHermesTest(unittest.TestCase):
         delivery = installer.delivery_config(home, Path("/usr/bin/python3"), True, False)["schedule"].split()[0]
         pulse_minutes = set(range(0, 60, int(delivery[2:]))) if delivery.startswith("*/") else {int(m) for m in delivery.split(",")}
         self.assertNotIn(int(evaluation), pulse_minutes)
+
+    def test_pulse_windows_become_cron_hours(self):
+        self.assertEqual(installer.window_hours(["06:00-09:00", "15:00-24:00"]), "6-8,15-23")
+        self.assertEqual(installer.window_hours(["07:00-08:00"]), "7")
+        for bad in (["06:30-09:00"], ["09:00-06:00"]):
+            with self.assertRaises(ValueError):
+                installer.window_hours(bad)
 
     def test_job_prompt_defers_rules_to_skill(self):
         self.assertIn(installer.GOAL_ID, installer.PROMPT)
@@ -64,7 +71,7 @@ class InstallHermesTest(unittest.TestCase):
         self.assertEqual(job["deliver"], "weixin")
         self.assertTrue(job["attach_to_session"])
         self.assertEqual(job["failure_deliver"], "local")
-        self.assertEqual(job["schedule"], "*/2 * * * *")
+        self.assertEqual(job["schedule"], "*/15 6-8,15-23 * * *")
         shadow = installer.delivery_config(home, Path("/usr/bin/python3"), False, False)
         self.assertEqual(shadow["deliver"], "local")
         self.assertFalse(shadow["attach_to_session"])

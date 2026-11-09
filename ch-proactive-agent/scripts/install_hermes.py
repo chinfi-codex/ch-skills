@@ -29,11 +29,29 @@ DELIVERY_NAME = "AlphaVault 主动提醒"
 EVALUATION_WRAPPER = "alphavault-proactive-evaluate.py"
 DELIVERY_WRAPPER = "alphavault-proactive-delivery.py"
 REQUIRED_MODULES = ("psycopg2", "yaml", "jsonschema")
-# 评估由 pulse 用 `hermes cron run` 按需触发；这里的定时只是兜底：触发失败时最迟一小时内交出已备好的批次。
-# 选奇数分钟，与偶数分钟运行的 pulse 错开。
-EVALUATION_SCHEDULE = "17 * * * *"
-# pulse：回执对账、处理评估输出、水位/信号检测与投递。2 分钟一次，发现延迟约 2–5 分钟。
-DELIVERY_SCHEDULE = "*/2 * * * *"
+
+
+def window_hours(windows: list[str]) -> str:
+    """把 ["06:00-09:00", "15:00-24:00"] 转成 cron 的小时字段 "6-8,15-23"（时段左闭右开，须为整点）。"""
+    parts = []
+    for window in windows:
+        start, end = window.split("-")
+        if not (start.endswith(":00") and end.endswith(":00")):
+            raise ValueError(f"pulse_windows 只支持整点时段：{window}")
+        first, last = int(start[:2]), int(end[:2]) - 1
+        if not 0 <= first <= last <= 23:
+            raise ValueError(f"pulse_windows 时段无效：{window}")
+        parts.append(str(first) if first == last else f"{first}-{last}")
+    return ",".join(parts)
+
+
+HOURS = window_hours(list(SETTINGS.policy.get("pulse_windows") or ["00:00-24:00"]))
+INTERVAL = int(SETTINGS.policy.get("pulse_interval_minutes") or 15)
+# pulse：回执对账、处理评估输出、水位/信号检测与投递；只在 pulse_windows 内运行。
+DELIVERY_SCHEDULE = f"*/{INTERVAL} {HOURS} * * *"
+# 评估由 pulse 用 `hermes cron run` 按需触发；这里的定时只是兜底，同样只在运行时段内。
+# 取第 17 分钟，与整 15 分钟运行的 pulse 错开。
+EVALUATION_SCHEDULE = f"17 {HOURS} * * *"
 # 规则只保留在 SKILL.md 一处；这里只标识目标并指向已加载的技能。
 PROMPT = f"""[{GOAL_ID}]
 按已加载的 ch-proactive-agent 完成本轮无工具评估。下方是预检注入的候选包；只输出 SKILL 规定的 JSON 对象。

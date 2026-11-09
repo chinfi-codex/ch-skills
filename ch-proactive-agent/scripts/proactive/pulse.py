@@ -1,6 +1,7 @@
 """事件唤醒：触发器只产生“信号”，是否叫醒模型仍由确定性扫描决定。
 
 信号来源：
+- 长任务收尾：只读 zcode 运行记录，登记过的长任务成功结束即标记对应数据源立即就绪；
 - 水位：sources.yaml 登记的金库文件（mtime+size）与 PG 水位查询，每次 pulse 比较；
 - 收件箱：signals.jsonl，由 `proactive_goal.py signal` 追加（长任务 Skill 收尾、手动）；
 - 时间：固定复核窗口到点、延期复核到期、心跳兜底。
@@ -13,9 +14,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from proactive_config import atomic_write_json, read_json
@@ -28,8 +31,10 @@ IMMEDIATE = {"manual", "schedule", "defer", "heartbeat"}
 PG_TIMEOUT_SECONDS = 5
 
 
-def _file_watermark(patterns: list[str]) -> str | None:
+def _file_watermark(patterns: list[str]) -> tuple[str | None, float | None]:
+    """返回（水位摘要, 最新修改时间）。防抖从文件真实修改时间算起，pulse 间隔再长也不额外多等一轮。"""
     stamps = []
+    latest = None
     for pattern in patterns:
         for path in sorted(CTX.root.glob(pattern)):
             try:
@@ -37,7 +42,8 @@ def _file_watermark(patterns: list[str]) -> str | None:
             except OSError:
                 continue
             stamps.append([path.relative_to(CTX.root).as_posix(), stat.st_mtime_ns, stat.st_size])
-    return digest(stamps) if stamps else None
+            latest = stat.st_mtime if latest is None else max(latest, stat.st_mtime)
+    return (digest(stamps) if stamps else None), latest
 
 
 def _database_url() -> str:
@@ -62,7 +68,8 @@ def _pg_watermark(queries: list[str]) -> str | None:
         conn.close()
 
 
-def watermarks(state: dict[str, Any], now: datetime) -> dict[str, str]:
+def watermarks(state: dict[str, Any], now: datetime, hints: dict[str, datetime] | None = None) -> dict[str, str]:
+    """各数据源的水位摘要；hints 收集文件最新修改时间，供防抖使用。"""
     result: dict[str, str] = {}
     for kind, cfg in CTX.sources.items():
         if not cfg.get("enabled", True):
@@ -70,7 +77,10 @@ def watermarks(state: dict[str, Any], now: datetime) -> dict[str, str]:
         watch = cfg.get("watch") or {}
         parts = []
         if watch.get("files"):
-            parts.append(_file_watermark(list(watch["files"])))
+            value, latest = _file_watermark(list(watch["files"]))
+            parts.append(value)
+            if latest is not None and hints is not None:
+                hints[kind] = datetime.fromtimestamp(latest, tz=now.tzinfo)
         if watch.get("pg_watermarks"):
             try:
                 parts.append(_pg_watermark(list(watch["pg_watermarks"])))
@@ -122,21 +132,66 @@ def _sources_for_skill(skill: str) -> list[str]:
     return [kind for kind, cfg in CTX.sources.items() if skill in ((cfg.get("watch") or {}).get("skills") or [])]
 
 
-def _mark(pending: dict[str, Any], key: str, now: datetime, why: str) -> None:
-    row = pending.setdefault(key, {"first_at": iso(now), "reasons": []})
-    row["last_at"] = iso(now)
+def _mark(pending: dict[str, Any], key: str, now: datetime, why: str,
+          at: datetime | None = None, immediate: bool = False) -> None:
+    """登记一个待扫描的信号。at 是变化的真实发生时间（取不到就用 now），immediate 跳过防抖。"""
+    when = min(at or now, now)
+    row = pending.setdefault(key, {"first_at": iso(when), "reasons": []})
+    row["last_at"] = iso(max(parse_time(row.get("last_at") or iso(when)), when))
+    if immediate:
+        row["immediate"] = True
     if why not in row["reasons"]:
         row["reasons"] = (row["reasons"] + [why])[-5:]
+
+
+def _zcode_runs(state: dict[str, Any], now: datetime) -> None:
+    """长任务收尾：只读 zcode 运行记录。首次只建游标，不回放历史。"""
+    cfg = (CTX.settings.upstream or {}).get("zcode") or {}
+    path = Path(os.path.expanduser(str(cfg.get("runs_db") or "")))
+    if not cfg or not path.is_file():
+        return
+    mapping = cfg.get("automations") or {}
+    signals = state["signals"]
+    cursor = signals.get("zcode_cursor")
+    try:
+        conn = sqlite3.connect(str(path), timeout=2)
+        try:
+            conn.execute("PRAGMA query_only = ON")
+            rows = conn.execute(
+                "SELECT r.automation_id, r.outcome, r.updated_at, coalesce(a.title, r.automation_id) "
+                "FROM automation_runs r LEFT JOIN automations a USING(automation_id) "
+                "WHERE r.outcome IN ('succeeded', 'failed') AND r.updated_at > ? ORDER BY r.updated_at",
+                (int(cursor or 0),)).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        add_health(state, "zcode_runs_unreadable", short(exc, 160), now)
+        return
+    if cursor is None:
+        signals["zcode_cursor"] = max([row[2] for row in rows], default=0)
+        return
+    for automation_id, outcome, updated_at, title in rows:
+        signals["zcode_cursor"] = max(int(signals["zcode_cursor"] or 0), int(updated_at))
+        kinds = mapping.get(automation_id) or []
+        if outcome == "failed":
+            if kinds:
+                add_health(state, "upstream_task_failed", short(title, 80), now)
+            continue
+        finished = datetime.fromtimestamp(int(updated_at) / 1000, tz=now.tzinfo)
+        for kind in kinds:
+            _mark(signals.setdefault("pending", {}), kind, now, "task_done:" + short(title, 30), finished, immediate=True)
 
 
 def detect(state: dict[str, Any], now: datetime) -> None:
     signals = state["signals"]
     pending = signals.setdefault("pending", {})
-    current = watermarks(state, now)
+    _zcode_runs(state, now)
+    hints: dict[str, datetime] = {}
+    current = watermarks(state, now, hints)
     previous = signals.get("watermarks") or {}
     for kind, value in current.items():
         if kind in previous and previous[kind] != value:
-            _mark(pending, kind, now, "watermark")
+            _mark(pending, kind, now, "watermark", hints.get(kind))
     signals["watermarks"] = {**previous, **current}
     for row in _read_inbox(state):
         source = str(row["source"])
@@ -160,7 +215,7 @@ def detect(state: dict[str, Any], now: datetime) -> None:
 def ready(state: dict[str, Any], now: datetime) -> list[str]:
     result = []
     for key, row in (state["signals"].get("pending") or {}).items():
-        if key in IMMEDIATE:
+        if key in IMMEDIATE or row.get("immediate"):
             result.append(key)
             continue
         debounce = CTX.source(key).get("debounce") or {}

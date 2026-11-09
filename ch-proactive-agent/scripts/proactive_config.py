@@ -54,6 +54,7 @@ class Settings:
         self.goals = goals
         self.policy = config["policy"]
         self.sources = (config["sources"].get("sources") or {})
+        self.upstream = (config["sources"].get("upstream") or {})
         self.goal_id = str(goals["goal_id"])
         paths = goals.get("paths") or {}
         self.vault_root = _expand(os.environ.get("ALPHAVAULT_ROOT") or paths["vault_root"])

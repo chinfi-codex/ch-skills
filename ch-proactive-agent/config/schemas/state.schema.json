@@ -523,6 +523,12 @@
               "additionalProperties": true
             }
           ]
+        },
+        "zcode_cursor": {
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "additionalProperties": false

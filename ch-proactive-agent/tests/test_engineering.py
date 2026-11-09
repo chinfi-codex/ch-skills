@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import unittest
 from datetime import timedelta
@@ -380,6 +381,55 @@ class ArrivalTimingTest(RuntimeCase):
             self.assertTrue((CTX.runtime / "logs" / "trigger.log").is_file())
         finally:
             self.patches[4].start()
+
+
+class UpstreamCompletionTest(RuntimeCase):
+    def _zcode(self, rows):
+        conn = sqlite3.connect(self.zcode_db)
+        conn.execute("CREATE TABLE IF NOT EXISTS automations (automation_id TEXT, title TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS automation_runs (automation_id TEXT, outcome TEXT, updated_at INTEGER)")
+        conn.executemany("INSERT INTO automations VALUES (?, ?)", [("auto-catalyst", "00:10 催化台账"), ("auto-trend", "19:00 趋势复盘")])
+        conn.executemany("INSERT INTO automation_runs VALUES (?, ?, ?)", rows)
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def _ms(text):
+        return int(parse_time(text).timestamp() * 1000)
+
+    def test_finished_long_task_triggers_scan_without_debounce(self):
+        self.init()
+        self._zcode([("auto-catalyst", "succeeded", self._ms("2026-10-27T09:00:00+08:00"))])
+        self.pulse("2026-10-27T10:00:00+08:00")                     # 首次只建游标，不回放历史
+        self.assertNotIn("catalyst", self.state()["signals"]["pending"])
+        self.add_event()
+        self._zcode([("auto-catalyst", "succeeded", self._ms("2026-10-27T10:10:00+08:00"))])
+        self.pulse("2026-10-27T10:15:00+08:00")                     # 同一次 pulse 内立即扫描并备批
+        inflight = self.state()["signals"]["inflight"]
+        self.assertIsNotNone(inflight)
+        pulse.trigger_evaluation.assert_called_with(JOB)
+
+    def test_failed_long_task_is_a_health_record_not_a_scan(self):
+        self.init()
+        self._zcode([])
+        self.pulse("2026-10-27T10:00:00+08:00")
+        self._zcode([("auto-trend", "failed", self._ms("2026-10-27T10:05:00+08:00")),
+                     ("auto-unknown", "failed", self._ms("2026-10-27T10:06:00+08:00"))])
+        self.pulse("2026-10-27T10:15:00+08:00")
+        health = self.state()["health"]
+        self.assertEqual([row["code"] for row in health], ["upstream_task_failed"])
+        self.assertIn("趋势复盘", health[0]["detail"])
+
+    def test_file_debounce_counts_from_modification_time(self):
+        self.init()
+        CTX.events.write_text("{}\n", encoding="utf-8")
+        self.pulse("2026-10-27T10:00:00+08:00")
+        self.add_event()
+        CTX.events.write_text('{"event_id": "x"}\n', encoding="utf-8")
+        written = parse_time("2026-10-27T10:05:00+08:00").timestamp()
+        os.utime(CTX.events, (written, written))
+        self.pulse("2026-10-27T10:15:00+08:00")                     # 写入已过 10 分钟 > 180 秒，不再多等一轮
+        self.assertIsNotNone(self.state()["signals"]["inflight"])
 
 
 if __name__ == "__main__":

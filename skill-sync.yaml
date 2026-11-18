@@ -57,7 +57,7 @@ shared:
         - a-stock-daily-market-sense
         - ch-tech-explainer
         - us-ai-semi-earnings
-        - md-pushplus
+        - notify_push
         - ch-gpu-compute-monitor
         - ch-dc-credit-monitor
         - ch-ai-eng-tracker

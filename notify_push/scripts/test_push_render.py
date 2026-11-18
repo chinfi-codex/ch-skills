@@ -1,8 +1,8 @@
 """push_render 的确定性变换测试。
 
 跑法（本机没装 pytest 时用后者，断言都是纯 assert，两种都能跑）：
-    cd md-pushplus/scripts && python3 -m pytest test_push_render.py -q
-    cd md-pushplus/scripts && python3 -c "import test_push_render as t; \
+    cd notify_push/scripts && python3 -m pytest test_push_render.py -q
+    cd notify_push/scripts && python3 -c "import test_push_render as t; \
         [f() for n, f in vars(t).items() if n.startswith('test_')]; print('ok')"
 """
 from __future__ import annotations

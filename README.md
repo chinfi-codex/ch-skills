@@ -82,8 +82,8 @@
   所有数据库型 skill 统一走 `db_core`,默认 PostgreSQL(优先读 `ALPHA_PG_URL`),带自检脚本 `db_ping`、建表 SQL 与连接契约文档。谁都不自建私有连接方案,同步后各 Agent 目录里就有一份 `scripts/_shared/db_core.py`,`from db_core import` 一行不用改。
 - **`shared/web_search` — Tavily 联网检索**
   当 WebFetch / WebSearch 在本机网络下不可达时,Tavily HTTP API 是最稳的联网主路径。所有需要联网核查催化、找第三方评测的技能复用这一个入口,只要配好 `TAVILY_API_KEY` 就能用。
-- **`md-pushplus` — Markdown 渲染并推送(独立 skill)**
-  把上游任何技能产出的 Markdown 报告渲染成带样式的 HTML,经 PushPlus 通道推送到微信 / 邮箱。它只做「渲染 + 送达」这一件事,不生成报告内容,让日报 / 研报写完能一键落到手机。
+- **`notify_push` — 多渠道推送(独立 skill)**
+  把上游任何技能产出的 Markdown 报告——原样渲染或先由模型总结成摘要——按渠道推送到用户手上:pushplus(微信/邮箱,HTML 长文)、hermes(微信纯文本)、飞书(lark-cli)。它只做「(可选)总结 + 投递」这一件事,不生成报告内容,让日报 / 研报写完能一键落到手机。
 
 ---
 
